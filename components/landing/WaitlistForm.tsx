@@ -63,13 +63,6 @@ export function WaitlistForm({ initialCount }: WaitlistFormProps) {
       {!isSubmitted ? (
         <form onSubmit={handleSubmit} className="w-full max-w-[420px] mx-auto">
           <div className="relative flex flex-col sm:flex-row gap-2 bg-white/10 border border-white/20 rounded-xl p-1.5 backdrop-blur-sm shadow-sm overflow-hidden">
-            {/* Animated glow effect */}
-            <div className="absolute inset-0 rounded-xl overflow-hidden pointer-events-none">
-              <div className="absolute inset-0 opacity-50">
-                <div className="absolute inset-[-100%] animate-glow-rotate bg-gradient-conic from-transparent via-white/40 to-transparent"></div>
-              </div>
-            </div>
-
             {/* Content with relative positioning */}
             <div className="relative flex flex-col sm:flex-row gap-2 w-full">
               <Input
