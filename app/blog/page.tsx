@@ -29,13 +29,27 @@ export default function BlogPage() {
           >
             <span className="text-3xl font-brand italic">Xenode</span>
           </Link>
-          <Link
-            href="/"
-            className="flex items-center gap-2 text-sm opacity-70 hover:opacity-100 transition-opacity"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Home
-          </Link>
+          <div className="flex items-center gap-6">
+            <Link
+              href="/pricing"
+              className="text-sm font-medium opacity-70 hover:opacity-100 transition-opacity"
+            >
+              Pricing
+            </Link>
+            <Link
+              href="/changelog"
+              className="text-sm font-medium opacity-70 hover:opacity-100 transition-opacity"
+            >
+              Changelog
+            </Link>
+            <Link
+              href="/"
+              className="flex items-center gap-2 text-sm opacity-70 hover:opacity-100 transition-opacity"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Home
+            </Link>
+          </div>
         </div>
       </nav>
 

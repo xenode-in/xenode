@@ -71,6 +71,12 @@ export default function Home() {
               Pricing
             </Link>
             <Link
+              href="/changelog"
+              className="text-sm font-medium opacity-70 hover:opacity-100 transition-opacity"
+            >
+              Changelog
+            </Link>
+            <Link
               href="/blog"
               className="text-sm font-medium opacity-70 hover:opacity-100 transition-opacity"
             >
