@@ -3,7 +3,8 @@ import Link from "next/link";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import { getPostBySlug, getAllSlugs } from "@/lib/blog";
 import { useMDXComponents } from "@/mdx-components";
-import { ArrowLeft, Calendar, Clock, User } from "lucide-react";
+import { Navbar } from "@/components/Navbar";
+import { Calendar, Clock, User } from "lucide-react";
 import remarkGfm from "remark-gfm";
 
 interface BlogPostPageProps {
@@ -55,23 +56,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
       />
 
       {/* Navigation */}
-      <nav className="relative z-10 px-8 py-6">
-        <div className="max-w-[1200px] mx-auto flex justify-between items-center">
-          <Link
-            href="/"
-            className="flex items-center gap-3 hover:opacity-80 transition-opacity"
-          >
-            <span className="text-3xl font-brand italic">Xenode</span>
-          </Link>
-          <Link
-            href="/blog"
-            className="flex items-center gap-2 text-sm opacity-70 hover:opacity-100 transition-opacity"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Blog
-          </Link>
-        </div>
-      </nav>
+      <Navbar />
 
       {/* Article */}
       <main className="flex-1 relative z-10 px-8 py-12">

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { Navbar } from "@/components/Navbar";
 import PricingComparison from "@/components/PricingComparison";
 import { Button } from "@/components/ui/button";
 
@@ -26,31 +26,7 @@ export default function PricingPage() {
       />
 
       {/* Navigation */}
-      <nav className="relative z-10 px-8 py-6">
-        <div className="max-w-[1200px] mx-auto flex justify-between items-center">
-          <Link
-            href="/"
-            className="flex items-center gap-3 hover:opacity-80 transition-opacity"
-          >
-            <span className="text-3xl font-brand italic">Xenode</span>
-          </Link>
-          <div className="flex items-center gap-6">
-            <Link
-              href="/blog"
-              className="text-sm font-medium opacity-70 hover:opacity-100 transition-opacity"
-            >
-              Blog
-            </Link>
-            <Link
-              href="/"
-              className="flex items-center gap-2 text-sm opacity-70 hover:opacity-100 transition-opacity"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Back to Home
-            </Link>
-          </div>
-        </div>
-      </nav>
+      <Navbar />
 
       {/* Main Content */}
       <main className="flex-1 relative z-10">

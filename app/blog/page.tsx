@@ -1,6 +1,7 @@
 import Link from "next/link";
+import { Navbar } from "@/components/Navbar";
 import { getAllPosts } from "@/lib/blog";
-import { ArrowLeft, Calendar, Clock, User } from "lucide-react";
+import { Calendar, Clock, User } from "lucide-react";
 
 export default function BlogPage() {
   const posts = getAllPosts();
@@ -21,37 +22,7 @@ export default function BlogPage() {
       />
 
       {/* Navigation */}
-      <nav className="relative z-10 px-8 py-6">
-        <div className="max-w-[1200px] mx-auto flex justify-between items-center">
-          <Link
-            href="/"
-            className="flex items-center gap-3 hover:opacity-80 transition-opacity"
-          >
-            <span className="text-3xl font-brand italic">Xenode</span>
-          </Link>
-          <div className="flex items-center gap-6">
-            <Link
-              href="/pricing"
-              className="text-sm font-medium opacity-70 hover:opacity-100 transition-opacity"
-            >
-              Pricing
-            </Link>
-            <Link
-              href="/changelog"
-              className="text-sm font-medium opacity-70 hover:opacity-100 transition-opacity"
-            >
-              Changelog
-            </Link>
-            <Link
-              href="/"
-              className="flex items-center gap-2 text-sm opacity-70 hover:opacity-100 transition-opacity"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Home
-            </Link>
-          </div>
-        </div>
-      </nav>
+      <Navbar />
 
       {/* Main Content */}
       <main className="flex-1 relative z-10 px-8 py-12">

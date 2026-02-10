@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef, useMemo } from "react";
-import Link from "next/link";
-import { ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
+import { Navbar } from "@/components/Navbar";
+import { ChevronDown, ChevronUp } from "lucide-react";
 
 interface ChangelogEntryMeta {
   slug: string;
@@ -209,37 +209,7 @@ export default function ChangelogPage() {
       />
 
       {/* Navigation */}
-      <nav className="relative z-10 px-8 py-6">
-        <div className="max-w-[1200px] mx-auto flex justify-between items-center">
-          <Link
-            href="/"
-            className="flex items-center gap-3 hover:opacity-80 transition-opacity"
-          >
-            <span className="text-3xl font-brand italic">Xenode</span>
-          </Link>
-          <div className="flex items-center gap-6">
-            <Link
-              href="/pricing"
-              className="text-sm font-medium opacity-70 hover:opacity-100 transition-opacity"
-            >
-              Pricing
-            </Link>
-            <Link
-              href="/blog"
-              className="text-sm font-medium opacity-70 hover:opacity-100 transition-opacity"
-            >
-              Blog
-            </Link>
-            <Link
-              href="/"
-              className="flex items-center gap-2 text-sm opacity-70 hover:opacity-100 transition-opacity"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Home
-            </Link>
-          </div>
-        </div>
-      </nav>
+      <Navbar />
 
       {/* Header */}
       <header className="relative z-10 px-8 pt-8 pb-12 md:pt-12 md:pb-16">

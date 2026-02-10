@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import Link from "next/link";
+import { useEffect, useState } from "react";
+import { Navbar } from "@/components/Navbar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CheckCircle } from "lucide-react";
 
 export default function Home() {
   const [email, setEmail] = useState("");
+  const [waitlistCount, setWaitlistCount] = useState(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [message, setMessage] = useState("");
@@ -42,6 +43,16 @@ export default function Home() {
     }
   };
 
+  const getWaitlistCount = async () => {
+    const response = await fetch("/api/waitlist");
+    const data = await response.json();
+    setWaitlistCount(data.count);
+  };
+
+  useEffect(() => {
+    getWaitlistCount();
+  }, []);
+
   return (
     <div
       className="relative min-h-screen flex flex-col text-[#e8e4d9] font-sans"
@@ -58,33 +69,7 @@ export default function Home() {
       />
 
       {/* Navigation */}
-      <nav className="relative z-10 px-8 py-6">
-        <div className="max-w-[1200px] mx-auto flex justify-between items-center">
-          <div className="flex items-center gap-3">
-            <span className="text-3xl font-brand italic">Xenode</span>
-          </div>
-          <div className="flex items-center gap-6">
-            <Link
-              href="/pricing"
-              className="text-sm font-medium opacity-70 hover:opacity-100 transition-opacity"
-            >
-              Pricing
-            </Link>
-            <Link
-              href="/changelog"
-              className="text-sm font-medium opacity-70 hover:opacity-100 transition-opacity"
-            >
-              Changelog
-            </Link>
-            <Link
-              href="/blog"
-              className="text-sm font-medium opacity-70 hover:opacity-100 transition-opacity"
-            >
-              Blog
-            </Link>
-          </div>
-        </div>
-      </nav>
+      <Navbar />
 
       {/* Hero Section */}
       <main className="flex-1 flex items-center justify-center p-8 relative z-10">
@@ -131,6 +116,10 @@ export default function Home() {
               </span>
             </div>
           )}
+
+          <p className="mt-4 text-sm opacity-80">
+            Joined {100 + waitlistCount} waitlist members.
+          </p>
         </div>
       </main>
 
