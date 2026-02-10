@@ -24,11 +24,11 @@ export const metadata: Metadata = {
     process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
   ),
   title: {
-    default: "Xenode - S3-Compatible Object Storage for India",
+    default: "Xenode - S3 Compatible Object Storage for India",
     template: "%s | Xenode",
   },
   description:
-    "High-performance, S3-compatible object storage optimized for Indian developers. Simple pricing, local infrastructure, and developer-first experience.",
+    "S3-compatible object storage optimized for Indian developers. Simple pricing, local infrastructure, and developer first experience.",
   keywords: [
     "object storage",
     "s3 compatible",
@@ -43,26 +43,26 @@ export const metadata: Metadata = {
     type: "website",
     locale: "en_US",
     url: "/",
-    title: "Xenode - S3-Compatible Object Storage for India",
+    title: "Xenode - S3 Compatible Object Storage for India",
     description:
-      "High-performance, S3-compatible object storage optimized for Indian developers. Simple pricing, local infrastructure, and developer-first experience.",
+      "S3-compatible object storage optimized for Indian developers. Simple pricing, local infrastructure, and developer first experience.",
     siteName: "Xenode",
     images: [
       {
-        url: "/og-image.png", // Assuming we will have an OG image eventually, or use one if it exists
-        width: 1200,
-        height: 630,
+        url: "/icons/apple-icon-180x180.png",
+        width: 180,
+        height: 180,
         alt: "Xenode - Object Storage for India",
       },
     ],
   },
   twitter: {
-    card: "summary_large_image",
-    title: "Xenode - S3-Compatible Object Storage for India",
+    card: "summary",
+    title: "Xenode - S3 Compatible Object Storage for India",
     description:
       "High-performance, S3-compatible object storage optimized for Indian developers.",
     creator: "@xenode",
-    images: ["/og-image.png"],
+    images: ["/icons/apple-icon-180x180.png"],
   },
   icons: {
     icon: [
