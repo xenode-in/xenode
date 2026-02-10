@@ -233,7 +233,7 @@ export default function ChangelogPage() {
 
           {/* Subtle divider */}
           <div
-            className={`mt-10 h-px bg-gradient-to-r from-[#e8e4d9]/20 via-[#e8e4d9]/10 to-transparent transition-all duration-1000 delay-300 ${
+            className={`mt-10 h-px bg-linear-to-r from-[#e8e4d9]/20 via-[#e8e4d9]/10 to-transparent transition-all duration-1000 delay-300 ${
               isLoaded ? "opacity-100 scale-x-100" : "opacity-0 scale-x-0"
             } origin-left`}
           />

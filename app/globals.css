@@ -125,3 +125,27 @@
     @apply bg-background text-foreground;
   }
 }
+
+@layer utilities {
+  .bg-gradient-conic {
+    background: conic-gradient(
+      from 0deg,
+      transparent 0deg 60deg,
+      rgba(232, 228, 217, 0.4) 90deg 120deg,
+      transparent 150deg 360deg
+    );
+  }
+
+  .animate-glow-rotate {
+    animation: glow-rotate 4s linear infinite;
+  }
+}
+
+@keyframes glow-rotate {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
