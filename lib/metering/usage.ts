@@ -1,0 +1,181 @@
+import dbConnect from "@/lib/mongodb";
+import Usage from "@/models/Usage";
+import Bucket from "@/models/Bucket";
+import StorageObject from "@/models/StorageObject";
+
+/**
+ * Get or create usage record for a user
+ */
+export async function getOrCreateUsage(userId: string) {
+  await dbConnect();
+
+  let usage = await Usage.findOne({ userId });
+  if (!usage) {
+    usage = await Usage.create({ userId });
+  }
+
+  return usage;
+}
+
+/**
+ * Recalculate usage from source of truth (objects and buckets)
+ */
+export async function recalculateUsage(userId: string) {
+  await dbConnect();
+
+  const [storageAgg, objectCount, bucketCount] = await Promise.all([
+    StorageObject.aggregate([
+      { $match: { userId } },
+      { $group: { _id: null, totalSize: { $sum: "$size" } } },
+    ]),
+    StorageObject.countDocuments({ userId }),
+    Bucket.countDocuments({ userId }),
+  ]);
+
+  const totalStorageBytes = storageAgg[0]?.totalSize || 0;
+
+  const usage = await Usage.findOneAndUpdate(
+    { userId },
+    {
+      $set: {
+        totalStorageBytes,
+        totalObjects: objectCount,
+        totalBuckets: bucketCount,
+      },
+    },
+    { upsert: true, new: true },
+  );
+
+  return usage;
+}
+
+/**
+ * Increment storage usage when an object is uploaded
+ */
+export async function incrementStorage(userId: string, sizeBytes: number) {
+  await dbConnect();
+
+  return Usage.findOneAndUpdate(
+    { userId },
+    {
+      $inc: {
+        totalStorageBytes: sizeBytes,
+        totalObjects: 1,
+      },
+    },
+    { upsert: true, new: true },
+  );
+}
+
+/**
+ * Decrement storage usage when an object is deleted
+ */
+export async function decrementStorage(userId: string, sizeBytes: number) {
+  await dbConnect();
+
+  return Usage.findOneAndUpdate(
+    { userId },
+    {
+      $inc: {
+        totalStorageBytes: -sizeBytes,
+        totalObjects: -1,
+      },
+    },
+    { new: true },
+  );
+}
+
+/**
+ * Increment egress usage when an object is downloaded
+ */
+export async function incrementEgress(userId: string, sizeBytes: number) {
+  await dbConnect();
+
+  return Usage.findOneAndUpdate(
+    { userId },
+    {
+      $inc: {
+        totalEgressBytes: sizeBytes,
+      },
+    },
+    { new: true },
+  );
+}
+
+/**
+ * Increment bucket count
+ */
+export async function incrementBucketCount(userId: string) {
+  await dbConnect();
+
+  return Usage.findOneAndUpdate(
+    { userId },
+    {
+      $inc: {
+        totalBuckets: 1,
+      },
+    },
+    { upsert: true, new: true },
+  );
+}
+
+/**
+ * Decrement bucket count
+ */
+export async function decrementBucketCount(userId: string) {
+  await dbConnect();
+
+  return Usage.findOneAndUpdate(
+    { userId },
+    {
+      $inc: {
+        totalBuckets: -1,
+      },
+    },
+    { new: true },
+  );
+}
+
+/**
+ * Update bucket-level object stats
+ */
+export async function updateBucketStats(
+  bucketId: string,
+  objectCountDelta: number,
+  sizeDelta: number,
+) {
+  await dbConnect();
+
+  return Bucket.findByIdAndUpdate(
+    bucketId,
+    {
+      $inc: {
+        objectCount: objectCountDelta,
+        totalSizeBytes: sizeDelta,
+      },
+    },
+    { new: true },
+  );
+}
+
+/**
+ * Format bytes to human-readable string
+ */
+export function formatBytes(bytes: number, decimals: number = 2): string {
+  if (bytes === 0) return "0 Bytes";
+
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ["Bytes", "KB", "MB", "GB", "TB", "PB"];
+
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
+}
+
+/**
+ * Convert bytes to GB
+ */
+export function bytesToGB(bytes: number): number {
+  return Number((bytes / (1024 * 1024 * 1024)).toFixed(2));
+}

@@ -1,0 +1,145 @@
+import {
+  PutObjectCommand,
+  DeleteObjectCommand,
+  ListObjectsV2Command,
+  GetObjectCommand,
+  HeadObjectCommand,
+} from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { getS3Client } from "./client";
+
+export interface B2ObjectInfo {
+  key: string;
+  size: number;
+  lastModified?: Date;
+  contentType?: string;
+}
+
+/**
+ * Upload an object to a B2 bucket
+ */
+export async function uploadObject(
+  bucketName: string,
+  key: string,
+  body: Buffer | ReadableStream | Uint8Array,
+  contentType: string = "application/octet-stream",
+  size?: number,
+): Promise<{ etag: string; b2FileId: string }> {
+  const command = new PutObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+    Body: body,
+    ContentType: contentType,
+    ContentLength: size,
+  });
+
+  const response = await getS3Client().send(command);
+  return {
+    etag: response.ETag || "",
+    b2FileId: response.VersionId || `${bucketName}/${key}`,
+  };
+}
+
+/**
+ * Delete an object from a B2 bucket
+ */
+export async function deleteObject(
+  bucketName: string,
+  key: string,
+): Promise<void> {
+  const command = new DeleteObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+  });
+
+  await getS3Client().send(command);
+}
+
+/**
+ * List objects in a B2 bucket with optional prefix filtering
+ */
+export async function listObjects(
+  bucketName: string,
+  prefix?: string,
+  maxKeys: number = 1000,
+  continuationToken?: string,
+): Promise<{
+  objects: B2ObjectInfo[];
+  nextContinuationToken?: string;
+  isTruncated: boolean;
+}> {
+  const command = new ListObjectsV2Command({
+    Bucket: bucketName,
+    Prefix: prefix,
+    MaxKeys: maxKeys,
+    ContinuationToken: continuationToken,
+  });
+
+  const response = await getS3Client().send(command);
+
+  const objects: B2ObjectInfo[] = (response.Contents || []).map((obj) => ({
+    key: obj.Key || "",
+    size: obj.Size || 0,
+    lastModified: obj.LastModified,
+  }));
+
+  return {
+    objects,
+    nextContinuationToken: response.NextContinuationToken,
+    isTruncated: response.IsTruncated || false,
+  };
+}
+
+/**
+ * Get object metadata without downloading the body
+ */
+export async function getObjectMetadata(
+  bucketName: string,
+  key: string,
+): Promise<{ size: number; contentType: string; lastModified?: Date }> {
+  const command = new HeadObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+  });
+
+  const response = await getS3Client().send(command);
+  return {
+    size: response.ContentLength || 0,
+    contentType: response.ContentType || "application/octet-stream",
+    lastModified: response.LastModified,
+  };
+}
+
+/**
+ * Generate a pre-signed URL for downloading an object
+ */
+export async function getDownloadUrl(
+  bucketName: string,
+  key: string,
+  expiresIn: number = 3600,
+): Promise<string> {
+  const command = new GetObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+  });
+
+  return getSignedUrl(getS3Client(), command, { expiresIn });
+}
+
+/**
+ * Generate a pre-signed URL for uploading an object
+ */
+export async function getUploadUrl(
+  bucketName: string,
+  key: string,
+  contentType: string = "application/octet-stream",
+  expiresIn: number = 3600,
+): Promise<string> {
+  const command = new PutObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+    ContentType: contentType,
+  });
+
+  return getSignedUrl(getS3Client(), command, { expiresIn });
+}
