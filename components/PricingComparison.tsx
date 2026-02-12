@@ -119,7 +119,7 @@ export default function PricingComparison() {
           <div className="inline-flex items-center gap-2 bg-white/5 border border-white/10 rounded-full px-4 py-2 text-sm text-[#e8e4d9]/70">
             <span>📦 1 TB Storage</span>
             <span className="w-1 h-1 bg-[#e8e4d9]/40 rounded-full" />
-            <span>📤 500 GB Egress/mo</span>
+            <span>📤 3TB Egress/mo</span>
           </div>
         </div>
 

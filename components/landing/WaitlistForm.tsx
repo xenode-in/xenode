@@ -93,7 +93,7 @@ export function WaitlistForm({ initialCount }: WaitlistFormProps) {
       )}
 
       <p className="mt-4 text-sm opacity-80">
-        Joined {100 + waitlistCount} waitlist members.
+        Joined {waitlistCount} waitlist members.
       </p>
     </div>
   );
