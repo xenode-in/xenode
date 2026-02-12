@@ -21,12 +21,21 @@ export function getS3Client(): S3Client {
       );
     }
 
+    const keyId = B2_KEY_ID.trim();
+    const appKey = B2_APPLICATION_KEY.trim();
+
+    console.log(`[B2] Initializing S3 Client with:`);
+    console.log(`[B2] Endpoint: ${B2_ENDPOINT}`);
+    console.log(`[B2] Region: ${B2_REGION}`);
+    console.log(`[B2] Key ID Length: ${keyId.length}`);
+    console.log(`[B2] App Key Length: ${appKey.length}`);
+
     _client = new S3Client({
       endpoint: B2_ENDPOINT,
       region: B2_REGION,
       credentials: {
-        accessKeyId: B2_KEY_ID,
-        secretAccessKey: B2_APPLICATION_KEY,
+        accessKeyId: keyId,
+        secretAccessKey: appKey,
       },
       forcePathStyle: true,
     });
