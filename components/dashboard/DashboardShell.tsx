@@ -24,7 +24,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetTrigger,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
 import { useState } from "react";
 
 interface DashboardShellProps {
@@ -162,6 +168,10 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
                 side="left"
                 className="w-[280px] bg-[#121e15] border-white/5 p-0"
               >
+                <SheetTitle className="sr-only">Navigation Menu</SheetTitle>
+                <SheetDescription className="sr-only">
+                  Main navigation menu
+                </SheetDescription>
                 <div className="px-6 py-5 border-b border-white/5">
                   <span className="text-xl font-brand italic text-[#e8e4d9]">
                     Xenode

@@ -35,6 +35,7 @@ import {
   DownloadCloud,
 } from "lucide-react";
 import Link from "next/link";
+import { useUpload } from "@/contexts/UploadContext";
 
 interface ObjectData {
   _id: string;
@@ -89,7 +90,6 @@ export default function BucketDetailPage() {
   }>({ folders: [], files: [] });
 
   // Actions State
-  const [uploading, setUploading] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
@@ -101,6 +101,9 @@ export default function BucketDetailPage() {
 
   // Downloading State
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  // Global upload context
+  const { addTasks } = useUpload();
 
   const fetchData = useCallback(async () => {
     try {
@@ -166,36 +169,18 @@ export default function BucketDetailPage() {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    setUploading(true);
-    setError("");
+    // Add files to global upload queue
+    addTasks(Array.from(files), bucketId, currentPrefix);
 
-    try {
-      for (const file of Array.from(files)) {
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("bucketId", bucketId);
-        formData.append("prefix", currentPrefix);
-
-        const res = await fetch("/api/objects/upload", {
-          method: "POST",
-          body: formData,
-        });
-
-        if (!res.ok) {
-          const data = await res.json();
-          setError(data.error || `Failed to upload ${file.name}`);
-        }
-      }
-
-      fetchData();
-    } catch {
-      setError("Upload failed");
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
+    // Clear the input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
     }
+
+    // Refresh data after a short delay to show uploaded files
+    setTimeout(() => {
+      fetchData();
+    }, 1000);
   };
 
   const handleCreateFolder = async () => {
@@ -376,14 +361,9 @@ export default function BucketDetailPage() {
           />
           <Button
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
             className="bg-[#7cb686] text-[#0f1a12] hover:bg-[#6ba876] font-medium"
           >
-            {uploading ? (
-              <Loader2 className="w-4 h-4 animate-spin mr-2" />
-            ) : (
-              <Upload className="w-4 h-4 mr-2" />
-            )}
+            <Upload className="w-4 h-4 mr-2" />
             Upload Files
           </Button>
         </div>
