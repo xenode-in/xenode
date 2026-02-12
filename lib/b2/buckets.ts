@@ -21,6 +21,7 @@ export async function createB2Bucket(bucketName: string): Promise<string> {
   });
 
   const response = await getS3Client().send(command);
+
   return response.Location || bucketName;
 }
 
