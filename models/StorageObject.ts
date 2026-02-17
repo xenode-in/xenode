@@ -8,6 +8,8 @@ export interface IStorageObject extends Document {
   size: number;
   contentType: string;
   b2FileId: string;
+  tags: string[];
+  position: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -42,6 +44,14 @@ const StorageObjectSchema = new Schema<IStorageObject>(
     b2FileId: {
       type: String,
       required: true,
+    },
+    tags: {
+      type: [String],
+      default: [],
+    },
+    position: {
+      type: Number,
+      default: 0,
     },
   },
   {

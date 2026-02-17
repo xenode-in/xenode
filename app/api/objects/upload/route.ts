@@ -35,16 +35,30 @@ export async function POST(request: NextRequest) {
     await dbConnect();
 
     // Verify bucket ownership
-    const bucket = await Bucket.findOne({ _id: bucketId, userId });
+    const bucket = await Bucket.findOne({
+      _id: bucketId,
+      $or: [{ userId }, { userId: "system" }],
+    });
+
     if (!bucket) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
+    }
+
+    // Enforce prefix for system bucket
+    if (bucket.userId === "system") {
+      if (!prefix.startsWith(`users/${userId}/`)) {
+        return NextResponse.json(
+          { error: "Access denied to this folder" },
+          { status: 403 },
+        );
+      }
     }
 
     const key = `${prefix}${file.name}`;
     const buffer = Buffer.from(await file.arrayBuffer());
     const size = buffer.length;
     const contentType = file.type || "application/octet-stream";
-    const b2BucketName = `xn-${userId.slice(0, 8)}-${bucket.name}`;
+    const b2BucketName = bucket.b2BucketId;
 
     // Upload to B2
     let uploadResult: { etag: string; b2FileId: string };

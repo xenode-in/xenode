@@ -24,7 +24,12 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 
     await dbConnect();
 
-    const bucket = await Bucket.findOne({ _id: id, userId }).lean();
+    // Check for user ownership OR system bucket
+    const bucket = await Bucket.findOne({
+      _id: id,
+      $or: [{ userId }, { userId: "system" }],
+    }).lean();
+
     if (!bucket) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }

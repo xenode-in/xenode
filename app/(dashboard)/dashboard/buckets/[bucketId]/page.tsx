@@ -33,9 +33,13 @@ import {
   Home,
   ChevronRight,
   DownloadCloud,
+  LayoutGrid,
+  List as ListIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { useUpload } from "@/contexts/UploadContext";
+import { useDropzone } from "react-dropzone";
+import { FilePreviewDialog } from "@/components/dashboard/FilePreviewDialog";
 
 interface ObjectData {
   _id: string;
@@ -102,6 +106,12 @@ export default function BucketDetailPage() {
   // Downloading State
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
+  // Preview State
+  const [previewFile, setPreviewFile] = useState<ObjectData | null>(null);
+
+  // View Mode State
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+
   // Global upload context
   const { addTasks } = useUpload();
 
@@ -132,6 +142,24 @@ export default function BucketDetailPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  const onDrop = useCallback(
+    (acceptedFiles: File[]) => {
+      if (acceptedFiles.length > 0) {
+        addTasks(acceptedFiles, bucketId, currentPrefix);
+        setTimeout(() => {
+          fetchData();
+        }, 1000);
+      }
+    },
+    [addTasks, bucketId, currentPrefix, fetchData],
+  );
+
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    onDrop,
+    noClick: true,
+    noKeyboard: true,
+  });
 
   // Process objects for current view
   useEffect(() => {
@@ -302,7 +330,27 @@ export default function BucketDetailPage() {
   const breadcrumbs = currentPrefix.split("/").filter(Boolean);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6" {...getRootProps()}>
+      <input {...getInputProps()} />
+
+      {/* Drag Overlay */}
+      {isDragActive && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0f1a12]/90 backdrop-blur-sm pointer-events-none">
+          <div className="flex flex-col items-center gap-4 text-center">
+            <div className="p-6 rounded-full bg-[#7cb686]/20 text-[#7cb686] animate-bounce">
+              <Upload className="w-12 h-12" />
+            </div>
+            <h2 className="text-3xl font-bold text-[#e8e4d9]">
+              Drop files here
+            </h2>
+            <p className="text-[#e8e4d9]/60">
+              to upload to{" "}
+              {currentPrefix ? currentPrefix : bucket?.name || "bucket"}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
@@ -316,7 +364,7 @@ export default function BucketDetailPage() {
             <div className="flex items-center gap-2">
               <FolderOpen className="w-5 h-5 text-[#7cb686]" />
               <h1 className="text-2xl font-semibold text-[#e8e4d9]">
-                {bucket.name}
+                {bucket && bucket.name}
               </h1>
             </div>
           </div>
@@ -344,6 +392,33 @@ export default function BucketDetailPage() {
         </div>
 
         <div className="flex items-center gap-3">
+          <div className="flex items-center bg-white/5 rounded-lg p-1 mr-2 border border-white/5">
+            <Button
+              variant="ghost"
+              size="sm"
+              className={`h-7 w-7 p-0 ${
+                viewMode === "list"
+                  ? "bg-white/10 text-[#e8e4d9]"
+                  : "text-[#e8e4d9]/40 hover:text-[#e8e4d9]"
+              }`}
+              onClick={() => setViewMode("list")}
+            >
+              <ListIcon className="w-4 h-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={`h-7 w-7 p-0 ${
+                viewMode === "grid"
+                  ? "bg-white/10 text-[#e8e4d9]"
+                  : "text-[#e8e4d9]/40 hover:text-[#e8e4d9]"
+              }`}
+              onClick={() => setViewMode("grid")}
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </Button>
+          </div>
+
           <Button
             onClick={() => setIsCreateFolderOpen(true)}
             className="bg-white/5 text-white"
@@ -393,7 +468,7 @@ export default function BucketDetailPage() {
               Upload files here
             </Button>
           </div>
-        ) : (
+        ) : viewMode === "list" ? (
           <Table>
             <TableHeader>
               <TableRow className="border-white/5 hover:bg-transparent">
@@ -452,7 +527,9 @@ export default function BucketDetailPage() {
               {viewObjects.files.map((obj) => (
                 <TableRow
                   key={obj._id}
-                  className="border-white/5 hover:bg-white/5"
+                  className="border-white/5 hover:bg-white/5 cursor-pointer"
+                  onClick={() => setPreviewFile(obj)}
+                  onDoubleClick={() => setPreviewFile(obj)}
                 >
                   <TableCell>
                     <div className="flex items-center gap-3 text-[#e8e4d9]">
@@ -481,7 +558,22 @@ export default function BucketDetailPage() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => handleDownload(obj)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPreviewFile(obj);
+                        }}
+                        className="text-[#e8e4d9]/40 hover:text-[#7cb686] hover:bg-[#7cb686]/10"
+                        title="Preview"
+                      >
+                        <FileText className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownload(obj);
+                        }}
                         disabled={downloadingId === obj._id}
                         className="text-[#e8e4d9]/40 hover:text-[#7cb686] hover:bg-[#7cb686]/10"
                         title="Download"
@@ -495,7 +587,10 @@ export default function BucketDetailPage() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => setDeleteId(obj._id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteId(obj._id);
+                        }}
                         className="text-[#e8e4d9]/40 hover:text-red-400 hover:bg-red-400/10"
                         title="Delete"
                       >
@@ -507,8 +602,124 @@ export default function BucketDetailPage() {
               ))}
             </TableBody>
           </Table>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 p-4">
+            {/* Back Button for Subfolders */}
+            {currentPrefix && (
+              <div
+                onClick={navigateUp}
+                className="aspect-square bg-white/5 rounded-xl border border-white/5 flex flex-col items-center justify-center cursor-pointer hover:bg-white/10 transition-all hover:scale-[1.02]"
+              >
+                <ArrowLeft className="w-8 h-8 text-[#e8e4d9]/50 mb-2" />
+                <span className="text-[#e8e4d9]/70 font-medium text-sm">
+                  Back
+                </span>
+              </div>
+            )}
+
+            {/* Folders */}
+            {viewObjects.folders.map((folderName) => (
+              <div
+                key={`folder-${folderName}`}
+                onClick={() => navigateToFolder(folderName)}
+                className="aspect-square bg-[#1a2e1d] rounded-xl border border-white/5 flex flex-col items-center justify-center cursor-pointer hover:bg-[#1a2e1d]/80 transition-all hover:scale-[1.02] p-4 group"
+              >
+                <Folder className="w-12 h-12 text-[#7cb686] mb-3 fill-[#7cb686]/20 transition-transform group-hover:scale-110" />
+                <span className="text-[#e8e4d9] font-medium text-sm text-center truncate w-full px-2">
+                  {folderName}
+                </span>
+                <span className="text-[#e8e4d9]/40 text-xs mt-1">Folder</span>
+              </div>
+            ))}
+
+            {/* Files */}
+            {viewObjects.files.map((obj) => (
+              <div
+                key={obj._id}
+                onDoubleClick={() => setPreviewFile(obj)}
+                onClick={() => setPreviewFile(obj)}
+                className="group relative aspect-square bg-[#1a2e1d] rounded-xl border border-white/5 flex flex-col items-center justify-center cursor-pointer hover:bg-[#1a2e1d]/80 transition-all hover:scale-[1.02] overflow-hidden"
+              >
+                {/* Icon/Thumbnail */}
+                <div className="flex-1 flex items-center justify-center w-full p-4 pb-0">
+                  {obj.contentType.startsWith("image/") ? (
+                    <div className="relative w-full h-full flex items-center justify-center">
+                      <FileText className="w-10 h-10 text-[#7cb686]" />
+                    </div>
+                  ) : obj.contentType.startsWith("video/") ? (
+                    <div className="relative w-full h-full flex items-center justify-center">
+                      <FileText className="w-10 h-10 text-[#7cb686]" />
+                    </div>
+                  ) : (
+                    <FileText className="w-10 h-10 text-[#e8e4d9]/20 group-hover:text-[#7cb686] transition-colors" />
+                  )}
+                </div>
+
+                {/* Footer Info */}
+                <div className="w-full bg-black/20 p-3 flex flex-col gap-0.5 mt-2">
+                  <span className="text-[#e8e4d9] text-xs font-medium truncate w-full text-center px-1">
+                    {obj.key.replace(currentPrefix, "")}
+                  </span>
+                  <span className="text-[#e8e4d9]/40 text-[10px] text-center">
+                    {formatBytes(obj.size)}
+                  </span>
+                </div>
+
+                {/* Action Overlay */}
+                <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 rounded-md bg-black/50 hover:bg-[#7cb686] hover:text-[#0f1a12] text-[#e8e4d9] backdrop-blur-sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPreviewFile(obj);
+                    }}
+                    title="Preview"
+                  >
+                    <FileText className="w-3.5 h-3.5" />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 rounded-md bg-black/50 hover:bg-[#7cb686] hover:text-[#0f1a12] text-[#e8e4d9] backdrop-blur-sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDownload(obj);
+                    }}
+                    disabled={downloadingId === obj._id}
+                    title="Download"
+                  >
+                    {downloadingId === obj._id ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <DownloadCloud className="w-3.5 h-3.5" />
+                    )}
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="h-7 w-7 rounded-md bg-black/50 hover:bg-red-500 hover:text-white text-[#e8e4d9] backdrop-blur-sm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteId(obj._id);
+                    }}
+                    title="Delete"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
+
+      <FilePreviewDialog
+        file={previewFile}
+        isOpen={!!previewFile}
+        onClose={() => setPreviewFile(null)}
+      />
 
       {/* Create Folder Dialog */}
       <Dialog open={isCreateFolderOpen} onOpenChange={setIsCreateFolderOpen}>
