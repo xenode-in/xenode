@@ -722,7 +722,7 @@ export default function FilesPage() {
 
         <div className="flex items-center justify-end gap-2 lg:gap-3 w-full lg:w-auto">
           {/* View Mode Toggle - Hidden on mobile */}
-          <div className="hidden sm:flex items-center bg-white/5 rounded-lg p-1 mr-2 border border-white/5">
+          <div className="flex items-center bg-white/5 rounded-lg p-1 mr-2 border border-white/5">
             <Button
               variant="ghost"
               size="sm"
