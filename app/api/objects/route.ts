@@ -25,12 +25,23 @@ export async function GET(request: NextRequest) {
     await dbConnect();
 
     // Verify bucket ownership
-    const bucket = await Bucket.findOne({ _id: bucketId, userId }).lean();
+    // Verify bucket ownership (User or System)
+    const bucket = await Bucket.findOne({
+      _id: bucketId,
+      $or: [{ userId }, { userId: "system" }],
+    }).lean();
+
     if (!bucket) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
 
-    const objects = await StorageObject.find({ bucketId })
+    // If system bucket, restrict to user's folder
+    const query: any = { bucketId };
+    if (bucket.userId === "system") {
+      query.key = { $regex: `^users/${userId}/` };
+    }
+
+    const objects = await StorageObject.find(query)
       .sort({ createdAt: -1 })
       .lean();
 

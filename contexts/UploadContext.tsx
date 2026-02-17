@@ -1,6 +1,13 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback } from "react";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+} from "react";
 
 export interface UploadTask {
   id: string;
@@ -26,55 +33,134 @@ const MAX_CONCURRENT_UPLOADS = 5;
 export function UploadProvider({ children }: { children: React.ReactNode }) {
   const [tasks, setTasks] = useState<UploadTask[]>([]);
   const [activeUploads, setActiveUploads] = useState(0);
+  const uploadingIds = useRef(new Set<string>());
 
-  const uploadFile = useCallback(async (task: UploadTask) => {
+  // Prevent page reload/close during active uploads
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      const hasActiveUploads = tasks.some(
+        (t) => t.status === "uploading" || t.status === "pending",
+      );
+
+      if (hasActiveUploads) {
+        e.preventDefault();
+        e.returnValue = ""; // Chrome requires returnValue to be set
+        return "You have uploads in progress. Are you sure you want to leave?";
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [tasks]);
+
+  const uploadFileDirectly = useCallback(async (task: UploadTask) => {
+    // Prevent double upload (React Strict Mode)
+    if (uploadingIds.current.has(task.id)) {
+      return;
+    }
+
+    uploadingIds.current.add(task.id);
+
     setTasks((prev) =>
-      prev.map((t) => (t.id === task.id ? { ...t, status: "uploading" } : t)),
+      prev.map((t) =>
+        t.id === task.id ? { ...t, status: "uploading", progress: 0 } : t,
+      ),
     );
 
     try {
-      const formData = new FormData();
-      formData.append("file", task.file);
-      formData.append("bucketId", task.bucketId);
-      formData.append("prefix", task.prefix);
-
-      const xhr = new XMLHttpRequest();
-
-      // Track progress
-      xhr.upload.addEventListener("progress", (e) => {
-        if (e.lengthComputable) {
-          const progress = Math.round((e.loaded / e.total) * 100);
-          setTasks((prev) =>
-            prev.map((t) => (t.id === task.id ? { ...t, progress } : t)),
-          );
-        }
+      // Step 1: Get presigned URL from server
+      const presignResponse = await fetch("/api/objects/presign-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileName: task.file.name,
+          fileSize: task.file.size,
+          fileType: task.file.type,
+          bucketId: task.bucketId,
+          prefix: task.prefix,
+        }),
       });
 
-      // Handle completion
+      if (!presignResponse.ok) {
+        const error = await presignResponse.json();
+        throw new Error(error.error || "Failed to get upload URL");
+      }
+
+      const {
+        uploadUrl,
+        objectKey,
+        bucketId: returnedBucketId,
+      } = await presignResponse.json();
+
+      // Step 2: Upload directly to B2 with XHR for progress tracking
       await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+
+        xhr.upload.addEventListener("progress", (e) => {
+          if (e.lengthComputable) {
+            const progress = Math.round((e.loaded / e.total) * 100);
+            setTasks((prev) =>
+              prev.map((t) => (t.id === task.id ? { ...t, progress } : t)),
+            );
+          }
+        });
+
         xhr.addEventListener("load", () => {
           if (xhr.status >= 200 && xhr.status < 300) {
-            setTasks((prev) =>
-              prev.map((t) =>
-                t.id === task.id
-                  ? { ...t, status: "completed", progress: 100 }
-                  : t,
-              ),
-            );
             resolve();
           } else {
-            reject(new Error(`Upload failed: ${xhr.statusText}`));
+            reject(
+              new Error(
+                `Upload to B2 failed: ${xhr.status} - ${xhr.statusText}`,
+              ),
+            );
           }
         });
 
         xhr.addEventListener("error", () => {
-          reject(new Error("Network error"));
+          reject(new Error("Network error during upload"));
         });
 
-        xhr.open("POST", "/api/objects/upload");
-        xhr.send(formData);
+        xhr.addEventListener("abort", () => {
+          reject(new Error("Upload aborted"));
+        });
+
+        xhr.open("PUT", uploadUrl);
+        xhr.setRequestHeader(
+          "Content-Type",
+          task.file.type || "application/octet-stream",
+        );
+        xhr.send(task.file);
       });
+
+      // Step 3: Notify server of completion
+      const completeResponse = await fetch("/api/objects/complete-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          objectKey,
+          bucketId: returnedBucketId,
+          size: task.file.size,
+          contentType: task.file.type,
+        }),
+      });
+
+      if (!completeResponse.ok) {
+        const error = await completeResponse.json();
+        throw new Error(error.error || "Failed to save file metadata");
+      }
+
+      // Mark as completed
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id ? { ...t, status: "completed", progress: 100 } : t,
+        ),
+      );
     } catch (error) {
+      console.error("Upload error:", error);
       setTasks((prev) =>
         prev.map((t) =>
           t.id === task.id
@@ -87,6 +173,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         ),
       );
     } finally {
+      uploadingIds.current.delete(task.id);
       setActiveUploads((prev) => prev - 1);
     }
   }, []);
@@ -100,13 +187,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         const toStart = pending.slice(0, canStart);
         toStart.forEach((task) => {
           setActiveUploads((prev) => prev + 1);
-          uploadFile(task);
+          uploadFileDirectly(task);
         });
       }
 
       return currentTasks;
     });
-  }, [activeUploads, uploadFile]);
+  }, [activeUploads, uploadFileDirectly]);
 
   const addTasks = useCallback(
     (files: File[], bucketId: string, prefix: string) => {

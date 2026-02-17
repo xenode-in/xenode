@@ -45,7 +45,7 @@ interface DashboardShellProps {
 
 const sidebarItems = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
-  { label: "Buckets", href: "/dashboard/buckets", icon: FolderOpen },
+  { label: "My Files", href: "/dashboard/files", icon: FolderOpen },
   { label: "Usage", href: "/dashboard/usage", icon: BarChart3 },
   { label: "API Keys", href: "/dashboard/keys", icon: Key },
   { label: "Billing", href: "/dashboard/billing", icon: CreditCard },

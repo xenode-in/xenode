@@ -45,7 +45,7 @@ export function UploadProgress() {
       : 0;
 
   return (
-    <div className="fixed bottom-4 left-4 z-50 w-96 max-w-[calc(100vw-2rem)]">
+    <div className="fixed bottom-4 right-4 z-50 w-96 max-w-[calc(100vw-2rem)]">
       <div className="bg-[#1a2e1d] border border-white/10 rounded-lg shadow-2xl overflow-hidden">
         {/* Header */}
         <div

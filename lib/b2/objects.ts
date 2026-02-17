@@ -4,6 +4,7 @@ import {
   ListObjectsV2Command,
   GetObjectCommand,
   HeadObjectCommand,
+  CopyObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getS3Client } from "./client";
@@ -142,4 +143,22 @@ export async function getUploadUrl(
   });
 
   return getSignedUrl(getS3Client(), command, { expiresIn });
+}
+
+/**
+ * Copy an object within B2 (or between buckets)
+ */
+export async function copyObject(
+  sourceBucket: string,
+  sourceKey: string,
+  destinationBucket: string,
+  destinationKey: string,
+): Promise<void> {
+  const command = new CopyObjectCommand({
+    CopySource: `${sourceBucket}/${encodeURIComponent(sourceKey)}`,
+    Bucket: destinationBucket,
+    Key: destinationKey,
+  });
+
+  await getS3Client().send(command);
 }
