@@ -74,7 +74,7 @@ const FilePreviewDialog = dynamic(
 );
 
 interface ObjectData {
-  _id: string;
+  id: string; // use id, not _id
   key: string;
   size: number;
   contentType: string;
@@ -95,6 +95,7 @@ interface BucketData {
 export default function FilesPage() {
   const router = useRouter();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
 
   const [bucketId, setBucketId] = useState<string | null>(null);
   const [bucket, setBucket] = useState<BucketData | null>(null);
@@ -119,7 +120,12 @@ export default function FilesPage() {
       }
 
       setBucket(bucketData.bucket);
-      setObjects(objectsData.objects || []);
+      setObjects(
+        (objectsData.objects || []).map((o: any) => ({
+          ...o,
+          id: o._id || o.id,
+        })),
+      );
     } catch {
       setError("Failed to load bucket data");
     } finally {
@@ -158,7 +164,7 @@ export default function FilesPage() {
   }>({ folders: [], files: [] });
 
   // Actions State
-  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [deleteIds, setDeleteIds] = useState<string[]>([]);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
 
@@ -186,6 +192,17 @@ export default function FilesPage() {
 
   const [activeId, setActiveId] = useState<string | null>(null);
 
+  // Selection State
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
+  const [isSelecting, setIsSelecting] = useState(false);
+  const [selectionBox, setSelectionBox] = useState<{
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+  } | null>(null);
+
   // DnD Sensors
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -198,8 +215,144 @@ export default function FilesPage() {
     }),
   );
 
+  const handleSelect = useCallback(
+    (item: ObjectData, e: React.MouseEvent) => {
+      const id = item.id;
+      e.stopPropagation();
+      e.preventDefault();
+
+      const newSelected = new Set(selectedIds);
+
+      if (e.ctrlKey || e.metaKey) {
+        // Toggle selection
+        if (newSelected.has(id)) {
+          newSelected.delete(id);
+        } else {
+          newSelected.add(id);
+          setLastSelectedId(id);
+        }
+      } else if (e.shiftKey && lastSelectedId) {
+        // Range select
+        const allItems = [...viewObjects.folders, ...viewObjects.files];
+        const lastIndex = allItems.findIndex(
+          (item) => item.id === lastSelectedId,
+        );
+        const currentIndex = allItems.findIndex((item) => item.id === id);
+
+        if (lastIndex !== -1 && currentIndex !== -1) {
+          const start = Math.min(lastIndex, currentIndex);
+          const end = Math.max(lastIndex, currentIndex);
+          const range = allItems.slice(start, end + 1);
+
+          // Add range to existing selection if CTRL is also held? No, standard behavior is clear others.
+          // Unless we want to behave like Windows Explorer which keeps Ctrl pressed.
+          // For simple Shift+Click, we clear and select range.
+          newSelected.clear();
+          range.forEach((item) => newSelected.add(item.id));
+        }
+      } else {
+        // Single select
+        newSelected.clear();
+        newSelected.add(id);
+        setLastSelectedId(id);
+      }
+
+      setSelectedIds(newSelected);
+    },
+    [selectedIds, lastSelectedId, viewObjects],
+  );
+
+  // Clear selection when clicking background
+  const handleBackgroundClick = (e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      setSelectedIds(new Set());
+      setLastSelectedId(null);
+    }
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+
+    // If clicked directly on an item, do NOT start box selection
+    if (target.closest(".file-item-selectable")) return;
+
+    setIsSelecting(true);
+    setSelectionBox({
+      startX: e.clientX,
+      startY: e.clientY,
+      currentX: e.clientX,
+      currentY: e.clientY,
+    });
+
+    // Clear selection when starting a new box (unless Ctrl is held)
+    if (!e.ctrlKey) setSelectedIds(new Set());
+  };
+
+  function rectsIntersect(
+    a: DOMRect,
+    b: { left: number; top: number; right: number; bottom: number },
+  ) {
+    return !(
+      a.right < b.left ||
+      a.left > b.right ||
+      a.bottom < b.top ||
+      a.top > b.bottom
+    );
+  }
+
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!isSelecting || !selectionBox) return;
+
+      const newBox = {
+        ...selectionBox,
+        currentX: e.clientX,
+        currentY: e.clientY,
+      };
+      setSelectionBox(newBox);
+
+      const boxRect = {
+        left: Math.min(newBox.startX, newBox.currentX),
+        right: Math.max(newBox.startX, newBox.currentX),
+        top: Math.min(newBox.startY, newBox.currentY),
+        bottom: Math.max(newBox.startY, newBox.currentY),
+      };
+
+      const nextSelected = new Set<string>();
+
+      for (const [id, el] of itemRefs.current.entries()) {
+        const rect = el.getBoundingClientRect();
+        if (rectsIntersect(rect, boxRect)) {
+          nextSelected.add(id);
+        }
+      }
+
+      setSelectedIds(nextSelected);
+    },
+    [isSelecting, selectionBox],
+  );
+
+  const handleMouseUp = () => {
+    if (isSelecting) {
+      setIsSelecting(false);
+      setSelectionBox(null);
+    }
+  };
+
   const handleDragStart = (event: DragStartEvent) => {
-    setActiveId(event.active.id as string);
+    const id = event.active.id as string;
+    setActiveId(id);
+
+    // If dragging an item NOT in selection, select it and clear others
+    if (
+      !selectedIds.has(id) &&
+      !event.active.data.current?.sortable?.items?.includes(id)
+    ) {
+      // Logic: if user drags an unselected item, usually that becomes the selection.
+      // But if CTRL is held? Drag event usually suppresses click.
+      // Let's assume standard behavior: drag unselected = select only that one.
+      setSelectedIds(new Set([id]));
+    }
   };
 
   const handleDragEnd = async (event: DragEndEvent) => {
@@ -208,86 +361,134 @@ export default function FilesPage() {
 
     if (!over || active.id === over.id) return;
 
-    // Determine if folder or file
-    const isFolder = viewObjects.folders.some((f) => f._id === active.id);
-    const isFile = viewObjects.files.some((f) => f._id === active.id);
+    // Items to move: all selected IDs
+    // If active ID is not in selected set (shouldn't happen due to DragStart logic, but safety check)
+    // we use just active ID.
+    const itemsToMoveIds = selectedIds.has(active.id as string)
+      ? Array.from(selectedIds)
+      : [active.id as string];
 
-    if (isFolder) {
-      const oldIndex = viewObjects.folders.findIndex(
-        (f) => f._id === active.id,
-      );
-      const newIndex = viewObjects.folders.findIndex((f) => f._id === over.id);
+    // Determine context (Folders or Files)
+    // We assume we don't drag mix of folders/files for reordering usually,
+    // or if we do, we handle them in their respective lists.
+    // Simplifying assumption: We only reorder within the same Type since we have two SortableContexts.
+    // If I drag a File, it can only be dropped on a File in this setup usually, unless we unify.
+    // Wait, SortableContext items are separated.
 
-      if (oldIndex !== -1 && newIndex !== -1) {
-        // Optimistic update
-        const newFolders = arrayMove(viewObjects.folders, oldIndex, newIndex);
-        setViewObjects({ ...viewObjects, folders: newFolders });
+    // Check if active item is folder or file
+    const isFolder = viewObjects.folders.some((f) => f.id === active.id);
+    const isFile = viewObjects.files.some((f) => f.id === active.id);
 
-        // Persist
-        try {
-          // Calculate new positions for ALL affected items or just swap?
-          // ArrayMove just moves.
-          // We typically assign position = index.
-          const updates = newFolders
-            .map((item, index) => ({
-              id: item._id,
-              position: index,
-            }))
-            .filter((item) => !item.id.startsWith("virtual-")); // Skip virtual
+    const list = isFolder ? viewObjects.folders : viewObjects.files;
+    const setList = isFolder
+      ? (items: ObjectData[]) =>
+          setViewObjects((prev) => ({ ...prev, folders: items }))
+      : (items: ObjectData[]) =>
+          setViewObjects((prev) => ({ ...prev, files: items }));
 
-          if (updates.length > 0) {
-            const res = await fetch("/api/objects/reorder", {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ bucketId, items: updates }),
-            });
-            if (!res.ok) {
-              const errData = await res.json();
-              console.error("Reorder failed response:", errData);
-            } else {
-              console.log("Reorder success");
-            }
-          }
-        } catch (err) {
-          console.error("Failed to reorder folders", err);
+    if (
+      (isFolder && !viewObjects.folders.some((f) => f.id === over.id)) ||
+      (isFile && !viewObjects.files.some((f) => f.id === over.id))
+    ) {
+      // Dropped on different type?
+      // If we support mixed reordering, we need a unified list.
+      // Current UI has separate prompts. We'll stick to same-type reordering for now.
+      return;
+    }
+
+    // Filter out items to move from the list to get the "base" list
+    const baseList = list.filter((item) => !itemsToMoveIds.includes(item.id));
+
+    // Find index of `over` item in the original list
+    const overIndexOriginal = list.findIndex((item) => item.id === over.id);
+    // But `over` item might be one of the moving items?
+    // If I drag selection onto itself, usually nothing happens or specific reorder.
+    if (itemsToMoveIds.includes(over.id as string)) return;
+
+    // We need the index of `over` in the *base* list to know where to insert?
+    // Actually, `dnd-kit` gives us `over`.
+    // If we drag A,B to C. C is in base list.
+    // We want to insert A,B after or before C.
+    // Simpler: Find index of `over` in `list`.
+    // If we move down, we insert after. If up, before.
+    // Since we are removing items, indices shift.
+
+    // Let's use `dnd-kit`'s approach:
+    // When dragging, `over` is the target.
+    // New index logic:
+    const overIndex = list.findIndex((f) => f.id === over.id);
+    const activeIndex = list.findIndex((f) => f.id === active.id);
+
+    // Implementation:
+    // 1. Remove items from list.
+    // 2. Insert at new index.
+    // Careful with index shifting.
+
+    let newItems = [...list];
+    // Sort items to move by their current index to maintain relative order?
+    // or just move them as a block? usually block.
+    // But if they are non-contiguous? Explorer usually gathers them.
+
+    const movingItems = itemsToMoveIds
+      .map((id) => list.find((item) => item.id === id))
+      .filter(Boolean) as ObjectData[];
+
+    // Remove
+    newItems = newItems.filter((item) => !itemsToMoveIds.includes(item.id));
+
+    // Find new insertion index
+    // We want to insert where `over` is.
+    // But `over` is in `newItems`? Yes, because we checked `!itemsToMoveIds.includes(over.id)`.
+    const newOverIndex = newItems.findIndex((item) => item.id === over.id);
+
+    // visual quirk: if we drag from top to bottom, usually we insert AFTER over.
+    // if bottom to top, BEFORE over.
+    // But `arrayMove` handles this via indices.
+    // Since we removed items, `newOverIndex` is the spot.
+    // If original activeIndex < overIndex, we moved down.
+
+    const modifier = activeIndex < overIndex ? 1 : 0;
+    // This valid for single item. for multiple?
+    // Let's just insert at `newOverIndex` + modifier.
+
+    newItems.splice(newOverIndex + modifier, 0, ...movingItems);
+
+    setList(newItems);
+
+    // Persist
+    try {
+      const updates = newItems
+        .map((item, index) => ({
+          id: item.id,
+          position: index,
+        }))
+        .filter((item) => !item.id.startsWith("virtual-"));
+
+      if (updates.length > 0) {
+        const res = await fetch("/api/objects/reorder", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bucketId, items: updates }),
+        });
+        if (!res.ok) {
+          console.error("Reorder failed");
         }
       }
-    } else if (isFile) {
-      const oldIndex = viewObjects.files.findIndex((f) => f._id === active.id);
-      const newIndex = viewObjects.files.findIndex((f) => f._id === over.id);
-
-      if (oldIndex !== -1 && newIndex !== -1) {
-        const newFiles = arrayMove(viewObjects.files, oldIndex, newIndex);
-        setViewObjects({ ...viewObjects, files: newFiles });
-
-        try {
-          const updates = newFiles.map((item, index) => ({
-            id: item._id,
-            position: index,
-          }));
-
-          if (updates.length > 0) {
-            const res = await fetch("/api/objects/reorder", {
-              method: "PATCH",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ bucketId, items: updates }),
-            });
-            if (!res.ok) {
-              const errData = await res.json();
-              console.error("Reorder failed response:", errData);
-            } else {
-              console.log("Reorder success");
-            }
-          }
-        } catch (err) {
-          console.error("Failed to reorder files", err);
-        }
-      }
+    } catch (err) {
+      console.error(err);
     }
   };
 
   const handleCut = (obj: ObjectData) => {
-    setClipboard({ action: "move", items: [obj] });
+    if (selectedIds.has(obj.id)) {
+      // Cut all selected
+      const items = [...viewObjects.folders, ...viewObjects.files].filter((i) =>
+        selectedIds.has(i.id),
+      );
+      setClipboard({ action: "move", items });
+    } else {
+      setClipboard({ action: "move", items: [obj] });
+    }
   };
 
   const handlePaste = async () => {
@@ -333,7 +534,7 @@ export default function FilesPage() {
     const updatedTags = [...currentTags, newTag.trim()];
 
     try {
-      const res = await fetch(`/api/objects/${taggingObj._id}`, {
+      const res = await fetch(`/api/objects/${taggingObj.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tags: updatedTags }),
@@ -355,7 +556,7 @@ export default function FilesPage() {
     const updatedTags = currentTags.filter((t) => t !== tagToRemove);
 
     try {
-      const res = await fetch(`/api/objects/${taggingObj._id}`, {
+      const res = await fetch(`/api/objects/${taggingObj.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ tags: updatedTags }),
@@ -462,7 +663,7 @@ export default function FilesPage() {
           } else {
             // Virtual folder
             folderMap.set(folderName, {
-              _id: `virtual-${folderName}`,
+              id: `virtual-${folderName}`,
               key: folderKey,
               size: 0,
               contentType: "application/x-directory",
@@ -551,34 +752,59 @@ export default function FilesPage() {
   };
 
   const handleDelete = async () => {
-    if (!deleteId) return;
+    if (deleteIds.length === 0) return;
     setDeleting(true);
     setError("");
 
     try {
-      const res = await fetch(`/api/objects/${deleteId}`, {
-        method: "DELETE",
-      });
+      // Parallelize deletions
+      await Promise.all(
+        deleteIds.map(async (id) => {
+          // Check if it's a folder (virtual or real)
+          const isVirtual = id.startsWith("virtual-");
+          // Find the object to get its key/prefix
+          const folderObj = viewObjects.folders.find((f) => f.id === id);
 
-      if (!res.ok) {
-        const data = await res.json();
-        setError(data.error || "Failed to delete object");
-        return;
-      }
+          if (isVirtual || folderObj) {
+            // It's a folder. We need to delete by prefix.
+            // For virtual folders, the ID is virtual-[name], we need the key.
+            // folderObj should exist in viewObjects if it's selected from there.
+            const prefix = folderObj?.key;
 
-      setDeleteId(null);
+            if (prefix) {
+              const res = await fetch("/api/objects/folder", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ bucketId, prefix }),
+              });
+              if (!res.ok) throw new Error("Failed to delete folder");
+            }
+          } else {
+            // It's a file (or we couldn't find the folder obj)
+            const res = await fetch(`/api/objects/${id}`, { method: "DELETE" });
+            if (!res.ok) throw new Error("Failed to delete item");
+          }
+        }),
+      );
+
+      setDeleteIds([]);
       fetchData();
-    } catch {
-      setError("Failed to delete object");
+      // If deleted items were selected, clear selection
+      const newSelected = new Set(selectedIds);
+      deleteIds.forEach((id) => newSelected.delete(id));
+      setSelectedIds(newSelected);
+    } catch (err) {
+      console.error(err);
+      setError("Failed to delete object(s)");
     } finally {
       setDeleting(false);
     }
   };
 
   const handleDownload = async (obj: ObjectData) => {
-    setDownloadingId(obj._id);
+    setDownloadingId(obj.id);
     try {
-      const res = await fetch(`/api/objects/${obj._id}`);
+      const res = await fetch(`/api/objects/${obj.id}`);
       const data = await res.json();
       if (!res.ok) {
         throw new Error(data.error || "Failed to get download URL");
@@ -656,13 +882,17 @@ export default function FilesPage() {
     : currentPrefix;
   const breadcrumbs = relativePrefix.split("/").filter(Boolean);
 
-  const folderIds = viewObjects.folders.map((f) => f._id);
-  const fileIds = viewObjects.files.map((f) => f._id);
+  const folderIds = viewObjects.folders.map((f) => f.id);
+  const fileIds = viewObjects.files.map((f) => f.id);
 
   return (
     <div
-      className="space-y-6 relative h-full min-h-[calc(100vh-100px)] outline-none"
+      className="space-y-6 relative h-full min-h-[calc(100vh-100px)] outline-none select-none"
       {...getRootProps()}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onClick={handleBackgroundClick}
     >
       <input {...getInputProps()} />
 
@@ -866,14 +1096,26 @@ export default function FilesPage() {
                 >
                   {viewObjects.folders.map((folder) => (
                     <FileItem
-                      key={folder._id}
+                      key={folder.id}
                       item={folder}
                       viewMode="list"
                       currentPrefix={currentPrefix}
                       onNavigate={navigateToFolder}
                       onTag={() => setTaggingObj(folder)}
                       onCut={handleCut}
-                      onDelete={(item) => setDeleteId(item._id)}
+                      onDelete={(item) => {
+                        if (selectedIds.has(item.id)) {
+                          setDeleteIds(Array.from(selectedIds));
+                        } else {
+                          setDeleteIds([item.id]);
+                        }
+                      }}
+                      isSelected={selectedIds.has(folder.id)}
+                      onSelect={handleSelect}
+                      registerItemRef={(id, el) => {
+                        if (!el) itemRefs.current.delete(id);
+                        else itemRefs.current.set(id, el);
+                      }}
                     />
                   ))}
                 </SortableContext>
@@ -884,15 +1126,27 @@ export default function FilesPage() {
                 >
                   {viewObjects.files.map((file) => (
                     <FileItem
-                      key={file._id}
+                      key={file.id}
                       item={file}
                       viewMode="list"
                       currentPrefix={currentPrefix}
                       onPreview={setPreviewFile}
                       onDownload={handleDownload}
                       onCut={handleCut}
-                      onDelete={(item) => setDeleteId(item._id)}
-                      isDownloading={downloadingId === file._id}
+                      onDelete={(item) => {
+                        if (selectedIds.has(item.id)) {
+                          setDeleteIds(Array.from(selectedIds));
+                        } else {
+                          setDeleteIds([item.id]);
+                        }
+                      }}
+                      isDownloading={downloadingId === file.id}
+                      isSelected={selectedIds.has(file.id)}
+                      onSelect={handleSelect}
+                      registerItemRef={(id, el) => {
+                        if (!el) itemRefs.current.delete(id);
+                        else itemRefs.current.set(id, el);
+                      }}
                     />
                   ))}
                 </SortableContext>
@@ -916,14 +1170,26 @@ export default function FilesPage() {
               <SortableContext items={folderIds} strategy={rectSortingStrategy}>
                 {viewObjects.folders.map((folder) => (
                   <FileItem
-                    key={folder._id}
+                    key={folder.id}
                     item={folder}
                     viewMode="grid"
                     currentPrefix={currentPrefix}
                     onNavigate={navigateToFolder}
                     onTag={() => setTaggingObj(folder)}
                     onCut={handleCut}
-                    onDelete={(item) => setDeleteId(item._id)}
+                    onDelete={(item) => {
+                      if (selectedIds.has(item.id)) {
+                        setDeleteIds(Array.from(selectedIds));
+                      } else {
+                        setDeleteIds([item.id]);
+                      }
+                    }}
+                    isSelected={selectedIds.has(folder.id)}
+                    onSelect={handleSelect}
+                    registerItemRef={(id, el) => {
+                      if (!el) itemRefs.current.delete(id);
+                      else itemRefs.current.set(id, el);
+                    }}
                   />
                 ))}
               </SortableContext>
@@ -931,15 +1197,27 @@ export default function FilesPage() {
               <SortableContext items={fileIds} strategy={rectSortingStrategy}>
                 {viewObjects.files.map((file) => (
                   <FileItem
-                    key={file._id}
+                    key={file.id}
                     item={file}
                     viewMode="grid"
                     currentPrefix={currentPrefix}
                     onPreview={setPreviewFile}
                     onDownload={handleDownload}
                     onCut={handleCut}
-                    onDelete={(item) => setDeleteId(item._id)}
-                    isDownloading={downloadingId === file._id}
+                    onDelete={(item) => {
+                      if (selectedIds.has(item.id)) {
+                        setDeleteIds(Array.from(selectedIds));
+                      } else {
+                        setDeleteIds([item.id]);
+                      }
+                    }}
+                    isDownloading={downloadingId === file.id}
+                    isSelected={selectedIds.has(file.id)}
+                    onSelect={handleSelect}
+                    registerItemRef={(id, el) => {
+                      if (!el) itemRefs.current.delete(id);
+                      else itemRefs.current.set(id, el);
+                    }}
                   />
                 ))}
               </SortableContext>
@@ -949,25 +1227,39 @@ export default function FilesPage() {
             {activeId
               ? (() => {
                   const item =
-                    viewObjects.folders.find((f) => f._id === activeId) ||
-                    viewObjects.files.find((f) => f._id === activeId);
+                    viewObjects.folders.find((f) => f.id === activeId) ||
+                    viewObjects.files.find((f) => f.id === activeId);
                   if (!item) return null;
                   if (viewMode === "list")
                     return (
-                      <FileRow
+                      <div className="relative">
+                        <FileRow
+                          item={item}
+                          viewMode="list"
+                          currentPrefix={currentPrefix}
+                          isOverlay={true}
+                        />
+                        {selectedIds.size > 1 && (
+                          <Badge className="absolute -top-2 -right-2 bg-[#7cb686] text-[#0f1a12] border-white/10 z-50">
+                            {selectedIds.size}
+                          </Badge>
+                        )}
+                      </div>
+                    );
+                  return (
+                    <div className="relative">
+                      <FileCard
                         item={item}
-                        viewMode="list"
+                        viewMode="grid"
                         currentPrefix={currentPrefix}
                         isOverlay={true}
                       />
-                    );
-                  return (
-                    <FileCard
-                      item={item}
-                      viewMode="grid"
-                      currentPrefix={currentPrefix}
-                      isOverlay={true}
-                    />
+                      {selectedIds.size > 1 && (
+                        <Badge className="absolute -top-2 -right-2 bg-[#7cb686] text-[#0f1a12] border-white/10 z-50">
+                          {selectedIds.size}
+                        </Badge>
+                      )}
+                    </div>
                   );
                 })()
               : null}
@@ -1084,21 +1376,26 @@ export default function FilesPage() {
 
       {/* Delete Confirmation Dialog */}
       <Dialog
-        open={!!deleteId}
-        onOpenChange={(open) => !open && setDeleteId(null)}
+        open={deleteIds.length > 0}
+        onOpenChange={(open) => !open && setDeleteIds([])}
       >
         <DialogContent className="bg-[#1a2e1d] border-white/10 text-[#e8e4d9]">
           <DialogHeader>
-            <DialogTitle>Delete Object</DialogTitle>
+            <DialogTitle>
+              Delete {deleteIds.length > 1 ? "Objects" : "Object"}
+            </DialogTitle>
             <DialogDescription className="text-[#e8e4d9]/50">
-              This will permanently delete this object. This action cannot be
-              undone.
+              This will permanently delete{" "}
+              {deleteIds.length > 1
+                ? `these ${deleteIds.length} objects`
+                : "this object"}
+              . This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button
               variant="ghost"
-              onClick={() => setDeleteId(null)}
+              onClick={() => setDeleteIds([])}
               className="text-[#e8e4d9]/60 hover:text-[#e8e4d9] hover:bg-white/5"
             >
               Cancel
@@ -1113,11 +1410,24 @@ export default function FilesPage() {
               ) : (
                 <Trash2 className="w-4 h-4 mr-2" />
               )}
-              Delete Object
+              Delete {deleteIds.length > 1 ? "Objects" : "Object"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Selection Box */}
+      {selectionBox && (
+        <div
+          className="fixed border border-[#7cb686] bg-[#7cb686]/10 z-50 pointer-events-none"
+          style={{
+            left: Math.min(selectionBox.startX, selectionBox.currentX),
+            top: Math.min(selectionBox.startY, selectionBox.currentY),
+            width: Math.abs(selectionBox.currentX - selectionBox.startX),
+            height: Math.abs(selectionBox.currentY - selectionBox.startY),
+          }}
+        />
+      )}
     </div>
   );
 }
