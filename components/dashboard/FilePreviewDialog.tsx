@@ -7,7 +7,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Plyr } from "plyr-react";
 import "plyr-react/plyr.css";
 import DocViewer, { DocViewerRenderers } from "@cyntler/react-doc-viewer";
@@ -27,6 +27,30 @@ interface FilePreviewDialogProps {
   isOpen: boolean;
   onClose: () => void;
 }
+
+const MediaPlayer = ({ url, type }: { url: string; type: string }) => {
+  const isAudio = type.startsWith("audio/");
+  return (
+    <div className={isAudio ? "w-full p-4" : "w-full"}>
+      <Plyr
+        source={{
+          type: isAudio ? "audio" : "video",
+          sources: [
+            {
+              src: url,
+              type: type,
+            },
+          ],
+        }}
+        options={{
+          autoplay: true,
+        }}
+      />
+    </div>
+  );
+};
+// Memoize to prevent re-renders if props haven't changed
+const MemoizedMediaPlayer = React.memo(MediaPlayer);
 
 export function FilePreviewDialog({
   file,
@@ -108,26 +132,15 @@ export function FilePreviewDialog({
       );
     }
 
-    // Video
-    if (type.startsWith("video/")) {
+    // Video or Audio
+    if (type.startsWith("video/") || type.startsWith("audio/")) {
       return (
-        <div className="rounded-lg overflow-hidden bg-black aspect-video w-full flex items-center justify-center">
-          <div className="w-full">
-            <Plyr
-              source={{
-                type: "video",
-                sources: [
-                  {
-                    src: url,
-                    type: type,
-                  },
-                ],
-              }}
-              options={{
-                autoplay: true,
-              }}
-            />
-          </div>
+        <div
+          className={`rounded-lg overflow-hidden bg-black w-full flex items-center justify-center ${
+            type.startsWith("video/") ? "aspect-video" : "min-h-[150px]"
+          }`}
+        >
+          <MemoizedMediaPlayer url={url} type={type} />
         </div>
       );
     }
@@ -190,14 +203,6 @@ export function FilePreviewDialog({
                 Download
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={onClose}
-              className="text-muted-foreground/60 hover:text-foreground h-8 w-8"
-            >
-              <span className="sr-only">Close</span>
-            </Button>
           </div>
         </div>
         <div className="p-6 bg-muted/50 flex items-center justify-center">

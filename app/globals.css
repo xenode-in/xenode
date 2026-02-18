@@ -72,6 +72,8 @@
 
 :root {
   --radius: 0.625rem;
+  /* Plyr Video Player Customization */
+  --plyr-color-main: var(--primary);
   /* Premium Light Theme - soft blue tint */
   --background: #f0f4ff; /* Very bright pale blue */
   --foreground: #001031; /* Deep Imperial Blue text */
