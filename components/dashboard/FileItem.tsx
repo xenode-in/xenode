@@ -19,7 +19,7 @@ import {
   Scissors,
 } from "lucide-react";
 import { formatBytes, formatDate } from "@/lib/utils";
-import { forwardRef, useRef } from "react";
+import { forwardRef, useRef, useCallback } from "react";
 
 interface ObjectData {
   id: string; // use id, not _id
@@ -434,7 +434,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
         )}
 
         {/* Action Overlay (Hover) */}
-        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1.5">
+        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex-col gap-1.5 hidden md:flex">
           <Button
             size="icon"
             variant="ghost"
@@ -542,13 +542,107 @@ export function FileItem(props: ItemProps) {
     registerItemRef?.(props.item.id, el);
   };
 
+  // Mobile Long Press Hook
+  const useLongPress = (
+    callback: (e: React.TouchEvent | React.MouseEvent) => void,
+    ms = 500,
+  ) => {
+    const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+    const start = useCallback(
+      (e: React.TouchEvent | React.MouseEvent) => {
+        // Prevent long press if context menu is triggered or multiple touches
+        if (
+          (e.type === "touchstart" &&
+            (e as React.TouchEvent).touches.length > 1) ||
+          (e as React.MouseEvent).button !== 0 // Only left click (or touch)
+        ) {
+          return;
+        }
+
+        e.persist(); // Persist event for async usage if needed
+        timerRef.current = setTimeout(() => {
+          callback(e);
+        }, ms);
+      },
+      [callback, ms],
+    );
+
+    const stop = useCallback(() => {
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+    }, []);
+
+    return {
+      onMouseDown: start,
+      onMouseUp: stop,
+      onMouseLeave: stop,
+      onTouchStart: start,
+      onTouchEnd: stop,
+      onTouchMove: stop, // Cancel on scroll/move
+    };
+  };
+
+  const onLongPress = (e: React.TouchEvent | React.MouseEvent) => {
+    // Simulate Ctrl+Click for toggle selection
+    if (props.onSelect) {
+      // Create a synthetic event-like object or modify the real one if possible.
+      // Since we can't easily modify React synthetic events, we'll pass a mock.
+      // But props.onSelect expects React.MouseEvent.
+      // We can cast a custom object.
+      const mockEvent = {
+        ...e,
+        ctrlKey: true,
+        stopPropagation: () => e.stopPropagation(),
+        preventDefault: () => e.preventDefault(),
+      } as unknown as React.MouseEvent;
+
+      props.onSelect(props.item, mockEvent);
+
+      // Optional: Vibration
+      if (typeof navigator !== "undefined" && navigator.vibrate) {
+        navigator.vibrate(50);
+      }
+    }
+  };
+
+  const longPressProps = useLongPress(onLongPress);
+
+  // Combine DnD props with Long Press props
+  // We need to be careful not to override DnD listeners if they overlap.
+  // DnD uses Pointer events usually. useSortable gives listeners.
+  // We might need to merge them.
+  // Actually, useSortable listeners (onPointerDown) handle dragging.
+  // Long press should strictly trigger IF drag hasn't started?
+  // Or maybe we treat long press as the drag initiator?
+  // Wait, if we long press -> select. If we drag -> move.
+  // They can conflict.
+  // Dnd-kit usually handles delay or activation constraint.
+  // For selection, if we long press and hold, we select.
+  // If we start moving immediately, it's a drag (handled by sensors).
+
+  const mergedHandleProps = {
+    ...handleProps,
+    // We attach long press handlers to the container,
+    // but DnD `listeners` are usually attached to the drag handle.
+    // Here we pass `dragHandleProps` to the row/card root.
+    // Let's merge properly.
+    ...longPressProps,
+    // If listeners has onKeyDown etc, they are preserved.
+    // If listeners has onPointerDown (which it does), we need to ensure functionality.
+    // onPointerDown vs onTouchStart/onMouseDown:
+    // React events bubble.
+    // We probably want long press specifically for logic, independent of DnD activation.
+  };
+
   if (props.viewMode === "list") {
-    // Pass handleProps to Row
     return (
       <FileRow
         ref={refCallback}
         style={style}
-        dragHandleProps={handleProps}
+        dragHandleProps={mergedHandleProps}
         {...props}
       />
     );
@@ -558,7 +652,7 @@ export function FileItem(props: ItemProps) {
     <FileCard
       ref={refCallback}
       style={style}
-      dragHandleProps={handleProps}
+      dragHandleProps={mergedHandleProps}
       {...props}
     />
   );
