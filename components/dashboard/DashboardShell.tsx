@@ -31,7 +31,7 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 interface DashboardShellProps {
   children: React.ReactNode;
@@ -67,20 +67,20 @@ function SidebarNav({ pathname }: { pathname: string }) {
             href={item.href}
             className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group ${
               isActive
-                ? "bg-[#7cb686]/15 text-[#7cb686]"
-                : "text-[#e8e4d9]/60 hover:text-[#e8e4d9] hover:bg-white/5"
+                ? "bg-sidebar-accent text-sidebar-accent-foreground"
+                : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
             }`}
           >
             <Icon
               className={`w-4 h-4 ${
                 isActive
-                  ? "text-[#7cb686]"
-                  : "text-[#e8e4d9]/40 group-hover:text-[#e8e4d9]/60"
+                  ? "text-sidebar-accent-foreground"
+                  : "text-sidebar-foreground/70 group-hover:text-sidebar-foreground"
               }`}
             />
             {item.label}
             {isActive && (
-              <ChevronRight className="w-3 h-3 ml-auto text-[#7cb686]/60" />
+              <ChevronRight className="w-3 h-3 ml-auto text-primary/60" />
             )}
           </Link>
         );
@@ -93,6 +93,12 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  // Prevent hydration mismatch for Radix UI primitives
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const handleSignOut = async () => {
     await signOut();
@@ -109,16 +115,16 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
     : user.email[0].toUpperCase();
 
   return (
-    <div className="min-h-screen flex bg-[#0f1a12]">
+    <div className="min-h-screen flex bg-background">
       {/* Desktop Sidebar */}
-      <aside className="hidden lg:flex flex-col w-[260px] border-r border-white/5 bg-[#121e15]">
+      <aside className="hidden lg:flex flex-col w-[260px] border-r border-sidebar-border bg-sidebar">
         {/* Logo */}
-        <div className="px-6 py-5 border-b border-white/5">
+        <div className="px-6 py-5 border-b border-sidebar-border">
           <Link href="/dashboard" className="flex items-center gap-2">
-            <span className="text-xl font-brand italic text-[#e8e4d9]">
+            <span className="text-xl font-brand italic text-sidebar-foreground">
               Xenode
             </span>
-            <span className="text-xs font-medium text-[#7cb686] bg-[#7cb686]/10 px-2 py-0.5 rounded-full">
+            <span className="text-xs font-medium text-sidebar-primary bg-sidebar-primary/10 px-2 py-0.5 rounded-full">
               Storage
             </span>
           </Link>
@@ -130,19 +136,21 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
         </div>
 
         {/* User section at bottom */}
-        <div className="border-t border-white/5 p-4">
+        <div className="border-t border-sidebar-border p-4">
           <div className="flex items-center gap-3">
             <Avatar className="w-8 h-8">
               <AvatarImage src={user.image} />
-              <AvatarFallback className="bg-[#7cb686]/20 text-[#7cb686] text-xs">
+              <AvatarFallback className="bg-sidebar-primary/20 text-sidebar-primary text-xs">
                 {initials}
               </AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-[#e8e4d9] truncate">
+              <p className="text-sm font-medium text-sidebar-foreground truncate">
                 {user.name}
               </p>
-              <p className="text-xs text-[#e8e4d9]/40 truncate">{user.email}</p>
+              <p className="text-xs text-muted-foreground truncate">
+                {user.email}
+              </p>
             </div>
           </div>
         </div>
@@ -151,91 +159,120 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
       {/* Main content area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Topbar */}
-        <header className="sticky top-0 z-40 border-b border-white/5 bg-[#0f1a12]/80 backdrop-blur-xl">
+        <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-xl">
           <div className="flex items-center justify-between px-4 lg:px-8 h-14">
             {/* Mobile menu */}
-            <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-              <SheetTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="lg:hidden text-[#e8e4d9]/60 hover:text-[#e8e4d9] hover:bg-white/5"
+            {mounted ? (
+              <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+                <SheetTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="lg:hidden text-muted-foreground hover:text-foreground hover:bg-accent"
+                  >
+                    <Menu className="w-5 h-5" />
+                  </Button>
+                </SheetTrigger>
+                <SheetContent
+                  side="left"
+                  className="w-[280px] bg-sidebar border-sidebar-border p-0"
                 >
-                  <Menu className="w-5 h-5" />
-                </Button>
-              </SheetTrigger>
-              <SheetContent
-                side="left"
-                className="w-[280px] bg-[#121e15] border-white/5 p-0"
+                  <SheetTitle className="sr-only">Navigation Menu</SheetTitle>
+                  <SheetDescription className="sr-only">
+                    Main navigation menu
+                  </SheetDescription>
+                  <div className="px-6 py-5 border-b border-sidebar-border">
+                    <span className="text-xl font-brand italic text-sidebar-foreground">
+                      Xenode
+                    </span>
+                    <span className="ml-2 text-xs font-medium text-sidebar-primary bg-sidebar-primary/10 px-2 py-0.5 rounded-full">
+                      Storage
+                    </span>
+                  </div>
+                  <div className="py-4">
+                    <SidebarNav pathname={pathname} />
+                  </div>
+                </SheetContent>
+              </Sheet>
+            ) : (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="lg:hidden text-muted-foreground hover:text-foreground hover:bg-accent"
               >
-                <SheetTitle className="sr-only">Navigation Menu</SheetTitle>
-                <SheetDescription className="sr-only">
-                  Main navigation menu
-                </SheetDescription>
-                <div className="px-6 py-5 border-b border-white/5">
-                  <span className="text-xl font-brand italic text-[#e8e4d9]">
-                    Xenode
-                  </span>
-                  <span className="ml-2 text-xs font-medium text-[#7cb686] bg-[#7cb686]/10 px-2 py-0.5 rounded-full">
-                    Storage
-                  </span>
-                </div>
-                <div className="py-4">
-                  <SidebarNav pathname={pathname} />
-                </div>
-              </SheetContent>
-            </Sheet>
+                <Menu className="w-5 h-5" />
+              </Button>
+            )}
 
             {/* Breadcrumb area */}
             <div className="hidden lg:block" />
 
             {/* User dropdown */}
             <div className="ml-auto">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    className="flex items-center gap-2 hover:bg-white/5 px-2"
-                  >
-                    <Avatar className="w-7 h-7">
-                      <AvatarImage src={user.image} />
-                      <AvatarFallback className="bg-[#7cb686]/20 text-[#7cb686] text-xs">
-                        {initials}
-                      </AvatarFallback>
-                    </Avatar>
-                    <span className="text-sm text-[#e8e4d9]/80 hidden sm:inline">
-                      {user.name}
-                    </span>
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent
-                  align="end"
-                  className="w-56 bg-[#1a2e1d] border-white/10 text-[#e8e4d9]"
-                >
-                  <div className="px-3 py-2">
-                    <p className="text-sm font-medium">{user.name}</p>
-                    <p className="text-xs text-[#e8e4d9]/50">{user.email}</p>
-                  </div>
-                  <DropdownMenuSeparator className="bg-white/10" />
-                  <DropdownMenuItem asChild>
-                    <Link
-                      href="/dashboard/settings"
-                      className="cursor-pointer hover:bg-white/5 text-[#e8e4d9]/80 focus:bg-white/5 focus:text-[#e8e4d9]"
+              {mounted ? (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      className="flex items-center gap-2 hover:bg-accent px-2"
                     >
-                      <Settings className="w-4 h-4 mr-2" />
-                      Account Settings
-                    </Link>
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator className="bg-white/10" />
-                  <DropdownMenuItem
-                    onClick={handleSignOut}
-                    className="cursor-pointer text-red-400 hover:bg-red-400/10 focus:bg-red-400/10 focus:text-red-400"
+                      <Avatar className="w-7 h-7">
+                        <AvatarImage src={user.image} />
+                        <AvatarFallback className="bg-primary/20 text-primary text-xs">
+                          {initials}
+                        </AvatarFallback>
+                      </Avatar>
+                      <span className="text-sm text-foreground/80 hidden sm:inline">
+                        {user.name}
+                      </span>
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    align="end"
+                    className="w-56 bg-card border-border text-foreground"
                   >
-                    <LogOut className="w-4 h-4 mr-2" />
-                    Sign Out
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                    <div className="px-3 py-2">
+                      <p className="text-sm font-medium">{user.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {user.email}
+                      </p>
+                    </div>
+                    <DropdownMenuSeparator className="bg-border" />
+                    <DropdownMenuItem asChild>
+                      <Link
+                        href="/dashboard/settings"
+                        className="cursor-pointer hover:bg-accent text-foreground/80 focus:bg-accent focus:text-foreground"
+                      >
+                        <Settings className="w-4 h-4 mr-2" />
+                        Account Settings
+                      </Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator className="bg-border" />
+                    <DropdownMenuItem
+                      onClick={handleSignOut}
+                      className="cursor-pointer text-destructive hover:bg-destructive/10 focus:bg-destructive/10 focus:text-destructive"
+                    >
+                      <LogOut className="w-4 h-4 mr-2" />
+                      Sign Out
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <Button
+                  variant="ghost"
+                  className="flex items-center gap-2 hover:bg-accent px-2"
+                >
+                  <Avatar className="w-7 h-7">
+                    <AvatarImage src={user.image} />
+                    <AvatarFallback className="bg-primary/20 text-primary text-xs">
+                      {initials}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="text-sm text-foreground/80 hidden sm:inline">
+                    {user.name}
+                  </span>
+                </Button>
+              )}
             </div>
           </div>
         </header>

@@ -908,7 +908,7 @@ export default function FilesPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Loader2 className="w-6 h-6 animate-spin text-[#7cb686]" />
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
       </div>
     );
   }
@@ -923,13 +923,13 @@ export default function FilesPage() {
     }
     return (
       <div className="text-center py-20">
-        <p className="text-[#e8e4d9]/50 mb-4">
+        <p className="text-muted-foreground/50 mb-4">
           {error || "Drive inaccessible"}
         </p>
         <Button
           onClick={() => window.location.reload()}
           variant="ghost"
-          className="text-[#7cb686] hover:bg-[#7cb686]/10"
+          className="text-primary hover:bg-primary/10"
         >
           Retry
         </Button>
@@ -958,15 +958,15 @@ export default function FilesPage() {
 
       {/* Drop Zone Overlay */}
       {isDragActive && (
-        <div className="absolute inset-0 z-50 bg-[#0f1a12]/90 backdrop-blur-sm flex items-center justify-center border-2 border-dashed border-[#7cb686] rounded-xl transition-all duration-200">
+        <div className="absolute inset-0 z-50 bg-background/90 backdrop-blur-sm flex items-center justify-center border-2 border-dashed border-primary rounded-xl transition-all duration-200">
           <div className="flex flex-col items-center gap-4">
-            <div className="p-6 bg-[#7cb686]/10 rounded-full animate-bounce">
-              <Upload className="w-12 h-12 text-[#7cb686]" />
+            <div className="p-6 bg-primary/10 rounded-full animate-bounce">
+              <Upload className="w-12 h-12 text-primary" />
             </div>
-            <p className="text-2xl font-medium text-[#e8e4d9]">
+            <p className="text-2xl font-medium text-foreground">
               Drop files to upload
             </p>
-            <p className="text-[#e8e4d9]/50">
+            <p className="text-muted-foreground/50">
               Release to start uploading to this folder
             </p>
           </div>
@@ -984,23 +984,23 @@ export default function FilesPage() {
           <div className="flex items-center gap-2 ml-3 lg:ml-7 mt-3 text-sm overflow-x-auto scrollbar-hide">
             <button
               onClick={() => setCurrentPrefix(rootPrefix)}
-              className={`flex items-center hover:text-[#7cb686] transition-colors shrink-0 ${
+              className={`flex items-center hover:text-primary transition-colors shrink-0 ${
                 currentPrefix === rootPrefix
-                  ? "text-[#e8e4d9]"
-                  : "text-[#e8e4d9]/60"
+                  ? "text-foreground"
+                  : "text-muted-foreground/60"
               }`}
             >
               <Home className="w-4 h-4" />
             </button>
             {breadcrumbs.map((part, i) => (
               <div key={i} className="flex items-center gap-2 shrink-0">
-                <ChevronRight className="w-4 h-4 text-[#e8e4d9]/30" />
+                <ChevronRight className="w-4 h-4 text-muted-foreground/30" />
                 <button
                   onClick={() => navigateToBreadcrumb(i)}
-                  className={`hover:text-[#7cb686] transition-colors whitespace-nowrap ${
+                  className={`hover:text-primary transition-colors whitespace-nowrap ${
                     i === breadcrumbs.length - 1
-                      ? "text-[#e8e4d9] font-medium"
-                      : "text-[#e8e4d9]/60"
+                      ? "text-foreground font-medium"
+                      : "text-muted-foreground/60"
                   }`}
                 >
                   {part}
@@ -1012,14 +1012,14 @@ export default function FilesPage() {
 
         <div className="flex items-center justify-end gap-2 lg:gap-3 w-full lg:w-auto">
           {/* View Mode Toggle - Hidden on mobile */}
-          <div className="flex items-center bg-white/5 rounded-lg p-1 mr-2 border border-white/5">
+          <div className="flex items-center bg-secondary/50 rounded-lg p-1 mr-2 border border-border">
             <Button
               variant="ghost"
               size="sm"
               className={`h-7 w-7 p-0 ${
                 viewMode === "list"
-                  ? "bg-white/10 text-[#e8e4d9]"
-                  : "text-[#e8e4d9]/40 hover:text-[#e8e4d9]"
+                  ? "bg-secondary text-foreground"
+                  : "text-muted-foreground/40 hover:text-foreground"
               }`}
               onClick={() => toggleViewMode("list")}
             >
@@ -1030,8 +1030,8 @@ export default function FilesPage() {
               size="sm"
               className={`h-7 w-7 p-0 ${
                 viewMode === "grid"
-                  ? "bg-white/10 text-[#e8e4d9]"
-                  : "text-[#e8e4d9]/40 hover:text-[#e8e4d9]"
+                  ? "bg-secondary text-foreground"
+                  : "text-muted-foreground/40 hover:text-foreground"
               }`}
               onClick={() => toggleViewMode("grid")}
             >
@@ -1041,15 +1041,15 @@ export default function FilesPage() {
 
           {/* Selection Indicator */}
           {selectedIds.size > 0 && (
-            <div className="flex items-center gap-2 mr-2 animate-in fade-in slide-in-from-right-4 duration-200 bg-[#7cb686]/10 px-2 py-1 rounded-lg border border-[#7cb686]/20">
-              <span className="text-sm font-medium text-[#7cb686] ml-1">
+            <div className="flex items-center gap-2 mr-2 animate-in fade-in slide-in-from-right-4 duration-200 bg-primary/10 px-2 py-1 rounded-lg border border-primary/20">
+              <span className="text-sm font-medium text-primary ml-1">
                 {selectedIds.size} selected
               </span>
               <Button
                 variant="ghost"
                 size="icon"
                 onClick={() => setSelectedIds(new Set())}
-                className="h-6 w-6 text-[#7cb686]/60 hover:text-[#7cb686] hover:bg-[#7cb686]/20 rounded-md"
+                className="h-6 w-6 text-primary/60 hover:text-primary hover:bg-primary/20 rounded-md"
               >
                 <X className="w-3 h-3" />
               </Button>
@@ -1061,7 +1061,7 @@ export default function FilesPage() {
             <Button
               onClick={handlePaste}
               disabled={processingPaste}
-              className="bg-[#7cb686] text-[#0f1a12] hover:bg-[#6ba876] shrink-0"
+              className="bg-primary text-primary-foreground hover:bg-primary/90 shrink-0"
               size="sm"
             >
               {processingPaste ? (
@@ -1078,7 +1078,7 @@ export default function FilesPage() {
           {/* New Folder Button */}
           <Button
             onClick={() => setIsCreateFolderOpen(true)}
-            className="bg-white/5 text-white shrink-0"
+            className="bg-secondary text-secondary-foreground hover:bg-secondary/80 shrink-0"
             size="sm"
           >
             <FolderPlus className="w-4 h-4 sm:mr-2" />
@@ -1095,7 +1095,7 @@ export default function FilesPage() {
           />
           <Button
             onClick={() => fileInputRef.current?.click()}
-            className="bg-[#7cb686] text-[#0f1a12] hover:bg-[#6ba876] font-medium shrink-0"
+            className="bg-primary text-primary-foreground hover:bg-primary/90 font-medium shrink-0"
             size="sm"
           >
             <Upload className="w-4 h-4 sm:mr-2" />
@@ -1111,7 +1111,7 @@ export default function FilesPage() {
       )}
 
       {/* Table / Grid */}
-      <div className="bg-[#1a2e1d]/50 border border-white/5 rounded-xl overflow-hidden min-h-[500px]">
+      <div className="bg-card/50 border border-border rounded-xl overflow-hidden min-h-[500px]">
         <DndContext
           sensors={sensors}
           collisionDetection={closestCenter}
@@ -1121,8 +1121,8 @@ export default function FilesPage() {
           {viewObjects.folders.length === 0 &&
           viewObjects.files.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 px-4 h-full">
-              <FileText className="w-12 h-12 text-[#e8e4d9]/10 mb-4" />
-              <p className="text-[#e8e4d9]/40 text-sm mb-4">
+              <FileText className="w-12 h-12 text-muted-foreground/10 mb-4" />
+              <p className="text-muted-foreground/40 text-sm mb-4">
                 {currentPrefix
                   ? "This folder is empty."
                   : "This bucket is empty."}
@@ -1130,7 +1130,7 @@ export default function FilesPage() {
               <Button
                 onClick={() => fileInputRef.current?.click()}
                 variant="link"
-                className="text-[#7cb686]"
+                className="text-primary"
               >
                 Upload files here
               </Button>
@@ -1138,16 +1138,20 @@ export default function FilesPage() {
           ) : viewMode === "list" ? (
             <Table>
               <TableHeader>
-                <TableRow className="border-white/5 hover:bg-transparent">
-                  <TableHead className="text-[#e8e4d9]/50 w-[50%]">
+                <TableRow className="border-border hover:bg-transparent">
+                  <TableHead className="text-muted-foreground/50 w-[50%]">
                     Name
                   </TableHead>
-                  <TableHead className="text-[#e8e4d9]/50">Size</TableHead>
-                  <TableHead className="text-[#e8e4d9]/50">Type</TableHead>
-                  <TableHead className="text-[#e8e4d9]/50">
+                  <TableHead className="text-muted-foreground/50">
+                    Size
+                  </TableHead>
+                  <TableHead className="text-muted-foreground/50">
+                    Type
+                  </TableHead>
+                  <TableHead className="text-muted-foreground/50">
                     Last Modified
                   </TableHead>
-                  <TableHead className="text-[#e8e4d9]/50 text-right">
+                  <TableHead className="text-muted-foreground/50 text-right">
                     Actions
                   </TableHead>
                 </TableRow>
@@ -1155,11 +1159,11 @@ export default function FilesPage() {
               <TableBody>
                 {currentPrefix && currentPrefix !== rootPrefix && (
                   <TableRow
-                    className="border-white/5 hover:bg-white/5 cursor-pointer"
+                    className="border-border hover:bg-secondary/50 cursor-pointer"
                     onClick={navigateUp}
                   >
                     <TableCell colSpan={5}>
-                      <div className="flex items-center gap-2 text-[#e8e4d9]/70">
+                      <div className="flex items-center gap-2 text-muted-foreground/70">
                         <ArrowLeft className="w-4 h-4" />
                         <span>..</span>
                       </div>
@@ -1317,7 +1321,7 @@ export default function FilesPage() {
                           isOverlay={true}
                         />
                         {selectedIds.size > 1 && (
-                          <Badge className="absolute -top-2 -right-2 bg-[#7cb686] text-[#0f1a12] border-white/10 z-50">
+                          <Badge className="absolute -top-2 -right-2 bg-primary text-primary-foreground border-border z-50">
                             {selectedIds.size}
                           </Badge>
                         )}
@@ -1332,7 +1336,7 @@ export default function FilesPage() {
                         isOverlay={true}
                       />
                       {selectedIds.size > 1 && (
-                        <Badge className="absolute -top-2 -right-2 bg-[#7cb686] text-[#0f1a12] border-white/10 z-50">
+                        <Badge className="absolute -top-2 -right-2 bg-primary text-primary-foreground border-border z-50">
                           {selectedIds.size}
                         </Badge>
                       )}
@@ -1354,10 +1358,10 @@ export default function FilesPage() {
         open={!!taggingObj}
         onOpenChange={(open) => !open && setTaggingObj(null)}
       >
-        <DialogContent className="bg-[#0f1a12] border-white/10 text-[#e8e4d9]">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
             <DialogTitle>Manage Tags</DialogTitle>
-            <DialogDescription className="text-[#e8e4d9]/50">
+            <DialogDescription className="text-muted-foreground/50">
               Add or remove tags for this item.
             </DialogDescription>
           </DialogHeader>
@@ -1367,7 +1371,7 @@ export default function FilesPage() {
               value={newTag}
               onChange={(e) => setNewTag(e.target.value)}
               placeholder="Add a tag..."
-              className="bg-white/5 border-white/10 focus:border-[#7cb686]"
+              className="bg-secondary/50 border-border focus:border-primary"
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
@@ -1377,31 +1381,31 @@ export default function FilesPage() {
             />
             <Button
               onClick={handleAddTag}
-              className="bg-[#7cb686] hover:bg-[#6ba876] text-[#0f1a12]"
+              className="bg-primary hover:bg-primary/90 text-primary-foreground"
             >
               Add
             </Button>
           </div>
 
-          <div className="flex flex-wrap gap-2 min-h-[50px] bg-white/5 rounded-lg p-3">
+          <div className="flex flex-wrap gap-2 min-h-[50px] bg-secondary/20 rounded-lg p-3">
             {taggingObj?.tags && taggingObj.tags.length > 0 ? (
               taggingObj.tags.map((tag) => (
                 <Badge
                   key={tag}
                   variant="secondary"
-                  className="bg-[#1a2e1d] text-[#7cb686] hover:bg-[#1a2e1d] flex gap-1 items-center pl-2 pr-1 py-1"
+                  className="bg-secondary text-primary hover:bg-secondary flex gap-1 items-center pl-2 pr-1 py-1"
                 >
                   {tag}
                   <button
                     onClick={() => handleRemoveTag(tag)}
-                    className="hover:text-red-400 p-0.5 rounded-full hover:bg-white/5"
+                    className="hover:text-destructive p-0.5 rounded-full hover:bg-background/20"
                   >
                     <Trash2 className="w-3 h-3" />
                   </button>
                 </Badge>
               ))
             ) : (
-              <span className="text-[#e8e4d9]/30 text-sm italic">
+              <span className="text-muted-foreground/30 text-sm italic">
                 No tags yet
               </span>
             )}
@@ -1411,10 +1415,10 @@ export default function FilesPage() {
 
       {/* Create Folder Dialog */}
       <Dialog open={isCreateFolderOpen} onOpenChange={setIsCreateFolderOpen}>
-        <DialogContent className="bg-[#1a2e1d] border-white/10 text-[#e8e4d9]">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
             <DialogTitle>Create New Folder</DialogTitle>
-            <DialogDescription className="text-[#e8e4d9]/50">
+            <DialogDescription className="text-muted-foreground/50">
               Enter a name for the new folder.
             </DialogDescription>
           </DialogHeader>
@@ -1423,7 +1427,7 @@ export default function FilesPage() {
               value={newFolderName}
               onChange={(e) => setNewFolderName(e.target.value)}
               placeholder="Folder name"
-              className="bg-black/20 border-white/10 text-[#e8e4d9] placeholder:text-[#e8e4d9]/20"
+              className="bg-secondary/50 border-border text-foreground placeholder:text-muted-foreground/20"
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleCreateFolder();
               }}
@@ -1433,14 +1437,14 @@ export default function FilesPage() {
             <Button
               variant="ghost"
               onClick={() => setIsCreateFolderOpen(false)}
-              className="text-[#e8e4d9]/60 hover:text-[#e8e4d9] hover:bg-white/5"
+              className="text-muted-foreground/60 hover:text-foreground hover:bg-secondary/10"
             >
               Cancel
             </Button>
             <Button
               onClick={handleCreateFolder}
               disabled={creatingFolder || !newFolderName.trim()}
-              className="bg-[#7cb686] text-[#0f1a12] hover:bg-[#6ba876]"
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               {creatingFolder && (
                 <Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -1456,12 +1460,12 @@ export default function FilesPage() {
         open={deleteIds.length > 0}
         onOpenChange={(open) => !open && setDeleteIds([])}
       >
-        <DialogContent className="bg-[#1a2e1d] border-white/10 text-[#e8e4d9]">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
             <DialogTitle>
               Delete {deleteIds.length > 1 ? "Objects" : "Object"}
             </DialogTitle>
-            <DialogDescription className="text-[#e8e4d9]/50">
+            <DialogDescription className="text-muted-foreground/50">
               This will permanently delete{" "}
               {deleteIds.length > 1
                 ? `these ${deleteIds.length} objects`
@@ -1473,14 +1477,14 @@ export default function FilesPage() {
             <Button
               variant="ghost"
               onClick={() => setDeleteIds([])}
-              className="text-[#e8e4d9]/60 hover:text-[#e8e4d9] hover:bg-white/5"
+              className="text-muted-foreground/60 hover:text-foreground hover:bg-secondary/10"
             >
               Cancel
             </Button>
             <Button
               onClick={handleDelete}
               disabled={deleting}
-              className="bg-red-500 hover:bg-red-600 text-white"
+              className="bg-destructive hover:bg-destructive/90 text-destructive-foreground"
             >
               {deleting ? (
                 <Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -1496,7 +1500,7 @@ export default function FilesPage() {
       {/* Selection Box */}
       {selectionBox && (
         <div
-          className="fixed border border-[#7cb686] bg-[#7cb686]/10 z-50 pointer-events-none"
+          className="fixed border border-primary bg-primary/10 z-50 pointer-events-none"
           style={{
             left: Math.min(selectionBox.startX, selectionBox.currentX),
             top: Math.min(selectionBox.startY, selectionBox.currentY),

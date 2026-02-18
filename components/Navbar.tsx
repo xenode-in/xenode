@@ -140,8 +140,10 @@ export function Navbar() {
 
       {/* Mobile Menu Overlay */}
       {isMenuOpen && (
-        <div className="absolute top-full left-0 right-0 border-b shadow-lg md:hidden p-6 animate-in slide-in-from-top-2">
-          <NavLinks className="flex flex-col gap-4" />
+        <div className="absolute top-full left-0 right-0 border-b shadow-lg md:hidden p-6 animate-in slide-in-from-top-2 bg-background">
+          <div className="flex flex-col gap-4">
+            <NavLinks className="flex flex-col gap-4" />
+          </div>
         </div>
       )}
     </nav>

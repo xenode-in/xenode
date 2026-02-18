@@ -22,7 +22,7 @@ export default async function Home() {
 
   return (
     <div
-      className="relative min-h-screen flex flex-col text-[#e8e4d9] font-sans"
+      className="relative min-h-screen flex flex-col text-[#e8e4d9] font-sans force-dark"
       style={{
         background: "linear-gradient(268deg, #295d32 4.2%, #273f2c 98.63%)",
       }}

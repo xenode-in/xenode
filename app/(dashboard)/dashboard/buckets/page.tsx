@@ -13,7 +13,7 @@ export default function BucketsPage() {
 
   return (
     <div className="flex items-center justify-center min-h-[50vh]">
-      <Loader2 className="w-6 h-6 animate-spin text-[#7cb686]" />
+      <Loader2 className="w-6 h-6 animate-spin text-primary" />
     </div>
   );
 }
