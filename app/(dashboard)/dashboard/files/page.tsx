@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,6 +39,7 @@ import {
   Scissors,
   ClipboardPaste,
   Search,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useUpload } from "@/contexts/UploadContext";
@@ -158,10 +159,72 @@ export default function FilesPage() {
 
   // Navigation State
   const [currentPrefix, setCurrentPrefix] = useState("");
-  const [viewObjects, setViewObjects] = useState<{
-    folders: ObjectData[];
-    files: ObjectData[];
-  }>({ folders: [], files: [] });
+  const viewObjects = useMemo(() => {
+    const folderMap = new Map<string, ObjectData>();
+    const files: ObjectData[] = [];
+
+    objects.forEach((obj) => {
+      // Must start with current prefix
+      if (!obj.key.startsWith(currentPrefix)) return;
+      // Don't show the directory object itself (if it matches exactly)
+      if (obj.key === currentPrefix) return;
+
+      const relativeKey = obj.key.slice(currentPrefix.length);
+      const parts = relativeKey.split("/");
+
+      if (parts.length > 1 || (parts.length === 1 && obj.key.endsWith("/"))) {
+        // It's a folder (or inside one)
+        const folderName = parts[0];
+
+        // Check if we already have this folder
+        if (!folderMap.has(folderName)) {
+          // Try to find the actual folder object (endsWith "/")
+          const folderKey = `${currentPrefix}${folderName}/`;
+          const folderObj = objects.find((o) => o.key === folderKey);
+
+          if (folderObj) {
+            folderMap.set(folderName, folderObj);
+          } else {
+            // Virtual folder
+            folderMap.set(folderName, {
+              id: `virtual-${folderName}`,
+              key: folderKey,
+              size: 0,
+              contentType: "application/x-directory",
+              createdAt: new Date().toISOString(), // Mock
+              tags: [],
+            });
+          }
+        }
+      } else {
+        // It's a file
+        files.push(obj);
+      }
+    });
+
+    const sortFolders = (a: ObjectData, b: ObjectData) => {
+      if (a.position !== undefined || b.position !== undefined) {
+        const posA = a.position ?? Number.MAX_SAFE_INTEGER;
+        const posB = b.position ?? Number.MAX_SAFE_INTEGER;
+        if (posA !== posB) return posA - posB;
+      }
+      return a.key.localeCompare(b.key);
+    };
+
+    const sortFiles = (a: ObjectData, b: ObjectData) => {
+      if (a.position !== undefined || b.position !== undefined) {
+        const posA = a.position ?? Number.MAX_SAFE_INTEGER;
+        const posB = b.position ?? Number.MAX_SAFE_INTEGER;
+        if (posA !== posB) return posA - posB;
+      }
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    };
+
+    return {
+      folders: Array.from(folderMap.values()).sort(sortFolders),
+      files: files.sort(sortFiles),
+    };
+  }, [objects, currentPrefix]);
 
   // Actions State
   const [deleteIds, setDeleteIds] = useState<string[]>([]);
@@ -380,11 +443,6 @@ export default function FilesPage() {
     const isFile = viewObjects.files.some((f) => f.id === active.id);
 
     const list = isFolder ? viewObjects.folders : viewObjects.files;
-    const setList = isFolder
-      ? (items: ObjectData[]) =>
-          setViewObjects((prev) => ({ ...prev, folders: items }))
-      : (items: ObjectData[]) =>
-          setViewObjects((prev) => ({ ...prev, files: items }));
 
     if (
       (isFolder && !viewObjects.folders.some((f) => f.id === over.id)) ||
@@ -453,7 +511,24 @@ export default function FilesPage() {
 
     newItems.splice(newOverIndex + modifier, 0, ...movingItems);
 
-    setList(newItems);
+    // Update global objects state with new positions
+    setObjects((prev) => {
+      const next = [...prev];
+      const positionMap = new Map<string, number>();
+
+      newItems.forEach((item, index) => {
+        positionMap.set(item.id, index);
+      });
+
+      for (let i = 0; i < next.length; i++) {
+        const obj = next[i];
+        if (positionMap.has(obj.id)) {
+          next[i] = { ...obj, position: positionMap.get(obj.id) };
+        }
+      }
+
+      return next;
+    });
 
     // Persist
     try {
@@ -635,72 +710,6 @@ export default function FilesPage() {
   });
 
   // Process objects for current view
-  useEffect(() => {
-    const folderMap = new Map<string, ObjectData>();
-    const files: ObjectData[] = [];
-
-    objects.forEach((obj) => {
-      // Must start with current prefix
-      if (!obj.key.startsWith(currentPrefix)) return;
-      // Don't show the directory object itself (if it matches exactly)
-      if (obj.key === currentPrefix) return;
-
-      const relativeKey = obj.key.slice(currentPrefix.length);
-      const parts = relativeKey.split("/");
-
-      if (parts.length > 1 || (parts.length === 1 && obj.key.endsWith("/"))) {
-        // It's a folder (or inside one)
-        const folderName = parts[0];
-
-        // Check if we already have this folder
-        if (!folderMap.has(folderName)) {
-          // Try to find the actual folder object (endsWith "/")
-          const folderKey = `${currentPrefix}${folderName}/`;
-          const folderObj = objects.find((o) => o.key === folderKey);
-
-          if (folderObj) {
-            folderMap.set(folderName, folderObj);
-          } else {
-            // Virtual folder
-            folderMap.set(folderName, {
-              id: `virtual-${folderName}`,
-              key: folderKey,
-              size: 0,
-              contentType: "application/x-directory",
-              createdAt: new Date().toISOString(), // Mock
-              tags: [],
-            });
-          }
-        }
-      } else {
-        // It's a file
-        files.push(obj);
-      }
-    });
-
-    const sortFolders = (a: ObjectData, b: ObjectData) => {
-      if (a.position !== undefined || b.position !== undefined) {
-        const posA = a.position ?? Number.MAX_SAFE_INTEGER;
-        const posB = b.position ?? Number.MAX_SAFE_INTEGER;
-        if (posA !== posB) return posA - posB;
-      }
-      return a.key.localeCompare(b.key);
-    };
-
-    const sortFiles = (a: ObjectData, b: ObjectData) => {
-      if (a.position !== undefined || b.position !== undefined) {
-        const posA = a.position ?? Number.MAX_SAFE_INTEGER;
-        const posB = b.position ?? Number.MAX_SAFE_INTEGER;
-        if (posA !== posB) return posA - posB;
-      }
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    };
-
-    setViewObjects({
-      folders: Array.from(folderMap.values()).sort(sortFolders),
-      files: files.sort(sortFiles),
-    });
-  }, [objects, currentPrefix]);
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -924,7 +933,7 @@ export default function FilesPage() {
           <div className="flex items-center gap-2 ml-3 lg:ml-7 mt-3 text-sm overflow-x-auto scrollbar-hide">
             <button
               onClick={() => setCurrentPrefix(rootPrefix)}
-              className={`flex items-center hover:text-[#7cb686] transition-colors flex-shrink-0 ${
+              className={`flex items-center hover:text-[#7cb686] transition-colors shrink-0 ${
                 currentPrefix === rootPrefix
                   ? "text-[#e8e4d9]"
                   : "text-[#e8e4d9]/60"
@@ -933,7 +942,7 @@ export default function FilesPage() {
               <Home className="w-4 h-4" />
             </button>
             {breadcrumbs.map((part, i) => (
-              <div key={i} className="flex items-center gap-2 flex-shrink-0">
+              <div key={i} className="flex items-center gap-2 shrink-0">
                 <ChevronRight className="w-4 h-4 text-[#e8e4d9]/30" />
                 <button
                   onClick={() => navigateToBreadcrumb(i)}
@@ -979,12 +988,29 @@ export default function FilesPage() {
             </Button>
           </div>
 
+          {/* Selection Indicator */}
+          {selectedIds.size > 0 && (
+            <div className="flex items-center gap-2 mr-2 animate-in fade-in slide-in-from-right-4 duration-200 bg-[#7cb686]/10 px-2 py-1 rounded-lg border border-[#7cb686]/20">
+              <span className="text-sm font-medium text-[#7cb686] ml-1">
+                {selectedIds.size} selected
+              </span>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setSelectedIds(new Set())}
+                className="h-6 w-6 text-[#7cb686]/60 hover:text-[#7cb686] hover:bg-[#7cb686]/20 rounded-md"
+              >
+                <X className="w-3 h-3" />
+              </Button>
+            </div>
+          )}
+
           {/* Paste Button */}
           {clipboard && (
             <Button
               onClick={handlePaste}
               disabled={processingPaste}
-              className="bg-[#7cb686] text-[#0f1a12] hover:bg-[#6ba876] flex-shrink-0"
+              className="bg-[#7cb686] text-[#0f1a12] hover:bg-[#6ba876] shrink-0"
               size="sm"
             >
               {processingPaste ? (
@@ -1001,7 +1027,7 @@ export default function FilesPage() {
           {/* New Folder Button */}
           <Button
             onClick={() => setIsCreateFolderOpen(true)}
-            className="bg-white/5 text-white flex-shrink-0"
+            className="bg-white/5 text-white shrink-0"
             size="sm"
           >
             <FolderPlus className="w-4 h-4 sm:mr-2" />
@@ -1018,7 +1044,7 @@ export default function FilesPage() {
           />
           <Button
             onClick={() => fileInputRef.current?.click()}
-            className="bg-[#7cb686] text-[#0f1a12] hover:bg-[#6ba876] font-medium flex-shrink-0"
+            className="bg-[#7cb686] text-[#0f1a12] hover:bg-[#6ba876] font-medium shrink-0"
             size="sm"
           >
             <Upload className="w-4 h-4 sm:mr-2" />
