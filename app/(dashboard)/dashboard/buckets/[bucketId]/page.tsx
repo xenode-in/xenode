@@ -311,7 +311,7 @@ export default function BucketDetailPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Loader2 className="w-6 h-6 animate-spin text-[#7cb686]" />
+        <Loader2 className="w-6 h-6 animate-spin text-primary" />
       </div>
     );
   }
@@ -319,11 +319,13 @@ export default function BucketDetailPage() {
   if (!bucket) {
     return (
       <div className="text-center py-20">
-        <p className="text-[#e8e4d9]/50 mb-4">{error || "Bucket not found"}</p>
+        <p className="text-muted-foreground/50 mb-4">
+          {error || "Bucket not found"}
+        </p>
         <Button
           onClick={() => router.push("/dashboard/buckets")}
           variant="ghost"
-          className="text-[#7cb686] hover:bg-[#7cb686]/10"
+          className="text-primary hover:bg-primary/10"
         >
           <ArrowLeft className="w-4 h-4 mr-2" />
           Back to Buckets
@@ -340,15 +342,15 @@ export default function BucketDetailPage() {
 
       {/* Drag Overlay */}
       {isDragActive && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0f1a12]/90 backdrop-blur-sm pointer-events-none">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/90 backdrop-blur-sm pointer-events-none">
           <div className="flex flex-col items-center gap-4 text-center">
-            <div className="p-6 rounded-full bg-[#7cb686]/20 text-[#7cb686] animate-bounce">
+            <div className="p-6 rounded-full bg-primary/20 text-primary animate-bounce">
               <Upload className="w-12 h-12" />
             </div>
-            <h2 className="text-3xl font-bold text-[#e8e4d9]">
+            <h2 className="text-3xl font-bold text-foreground">
               Drop files here
             </h2>
-            <p className="text-[#e8e4d9]/60">
+            <p className="text-muted-foreground">
               to upload to{" "}
               {currentPrefix ? currentPrefix : bucket?.name || "bucket"}
             </p>
@@ -362,13 +364,13 @@ export default function BucketDetailPage() {
           <div className="flex items-center gap-3 mb-2">
             <Link
               href="/dashboard/buckets"
-              className="text-[#e8e4d9]/40 hover:text-[#e8e4d9] transition-colors"
+              className="text-muted-foreground hover:text-foreground transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
             </Link>
             <div className="flex items-center gap-2">
-              <FolderOpen className="w-5 h-5 text-[#7cb686]" />
-              <h1 className="text-2xl font-semibold text-[#e8e4d9]">
+              <FolderOpen className="w-5 h-5 text-primary" />
+              <h1 className="text-2xl font-semibold text-foreground">
                 {bucket && bucket.name}
               </h1>
             </div>
@@ -378,16 +380,16 @@ export default function BucketDetailPage() {
           <div className="flex items-center gap-2 ml-7 mt-3 text-sm">
             <button
               onClick={() => setCurrentPrefix("")}
-              className={`flex items-center hover:text-[#7cb686] transition-colors ${currentPrefix === "" ? "text-[#e8e4d9]" : "text-[#e8e4d9]/60"}`}
+              className={`flex items-center hover:text-primary transition-colors ${currentPrefix === "" ? "text-foreground" : "text-muted-foreground"}`}
             >
               <Home className="w-4 h-4" />
             </button>
             {breadcrumbs.map((part, i) => (
               <div key={i} className="flex items-center gap-2">
-                <ChevronRight className="w-4 h-4 text-[#e8e4d9]/30" />
+                <ChevronRight className="w-4 h-4 text-muted-foreground/30" />
                 <button
                   onClick={() => navigateToBreadcrumb(i)}
-                  className={`hover:text-[#7cb686] transition-colors ${i === breadcrumbs.length - 1 ? "text-[#e8e4d9] font-medium" : "text-[#e8e4d9]/60"}`}
+                  className={`hover:text-primary transition-colors ${i === breadcrumbs.length - 1 ? "text-foreground font-medium" : "text-muted-foreground"}`}
                 >
                   {part}
                 </button>
@@ -397,14 +399,14 @@ export default function BucketDetailPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          <div className="flex items-center bg-white/5 rounded-lg p-1 mr-2 border border-white/5">
+          <div className="flex items-center bg-secondary/50 rounded-lg p-1 mr-2 border border-border">
             <Button
               variant="ghost"
               size="sm"
               className={`h-7 w-7 p-0 ${
                 viewMode === "list"
-                  ? "bg-white/10 text-[#e8e4d9]"
-                  : "text-[#e8e4d9]/40 hover:text-[#e8e4d9]"
+                  ? "bg-secondary text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
               onClick={() => setViewMode("list")}
             >
@@ -415,8 +417,8 @@ export default function BucketDetailPage() {
               size="sm"
               className={`h-7 w-7 p-0 ${
                 viewMode === "grid"
-                  ? "bg-white/10 text-[#e8e4d9]"
-                  : "text-[#e8e4d9]/40 hover:text-[#e8e4d9]"
+                  ? "bg-secondary text-foreground"
+                  : "text-muted-foreground hover:text-foreground"
               }`}
               onClick={() => setViewMode("grid")}
             >
@@ -426,7 +428,7 @@ export default function BucketDetailPage() {
 
           <Button
             onClick={() => setIsCreateFolderOpen(true)}
-            className="bg-white/5 text-white"
+            className="bg-secondary text-secondary-foreground hover:bg-secondary/80"
           >
             <FolderPlus className="w-4 h-4 mr-2" />
             New Folder
@@ -441,7 +443,7 @@ export default function BucketDetailPage() {
           />
           <Button
             onClick={() => fileInputRef.current?.click()}
-            className="bg-[#7cb686] text-[#0f1a12] hover:bg-[#6ba876] font-medium"
+            className="bg-primary text-primary-foreground hover:bg-primary/90 font-medium"
           >
             <Upload className="w-4 h-4 mr-2" />
             Upload Files
@@ -456,11 +458,11 @@ export default function BucketDetailPage() {
       )}
 
       {/* Table */}
-      <div className="bg-[#1a2e1d]/50 border border-white/5 rounded-xl overflow-hidden">
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
         {viewObjects.folders.length === 0 && viewObjects.files.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 px-4">
-            <FileText className="w-12 h-12 text-[#e8e4d9]/10 mb-4" />
-            <p className="text-[#e8e4d9]/40 text-sm mb-4">
+            <FileText className="w-12 h-12 text-muted-foreground/20 mb-4" />
+            <p className="text-muted-foreground text-sm mb-4">
               {currentPrefix
                 ? "This folder is empty."
                 : "This bucket is empty."}
@@ -468,7 +470,7 @@ export default function BucketDetailPage() {
             <Button
               onClick={() => fileInputRef.current?.click()}
               variant="link"
-              className="text-[#7cb686]"
+              className="text-primary"
             >
               Upload files here
             </Button>
@@ -476,16 +478,16 @@ export default function BucketDetailPage() {
         ) : viewMode === "list" ? (
           <Table>
             <TableHeader>
-              <TableRow className="border-white/5 hover:bg-transparent">
-                <TableHead className="text-[#e8e4d9]/50 w-[50%]">
+              <TableRow className="border-border hover:bg-transparent">
+                <TableHead className="text-muted-foreground w-[50%]">
                   Name
                 </TableHead>
-                <TableHead className="text-[#e8e4d9]/50">Size</TableHead>
-                <TableHead className="text-[#e8e4d9]/50">Type</TableHead>
-                <TableHead className="text-[#e8e4d9]/50">
+                <TableHead className="text-muted-foreground">Size</TableHead>
+                <TableHead className="text-muted-foreground">Type</TableHead>
+                <TableHead className="text-muted-foreground">
                   Last Modified
                 </TableHead>
-                <TableHead className="text-[#e8e4d9]/50 text-right">
+                <TableHead className="text-muted-foreground text-right">
                   Actions
                 </TableHead>
               </TableRow>
@@ -494,11 +496,11 @@ export default function BucketDetailPage() {
               {/* Back Button for Subfolders */}
               {currentPrefix && (
                 <TableRow
-                  className="border-white/5 hover:bg-white/5 cursor-pointer"
+                  className="border-border hover:bg-secondary/50 cursor-pointer"
                   onClick={navigateUp}
                 >
                   <TableCell colSpan={5}>
-                    <div className="flex items-center gap-2 text-[#e8e4d9]/70">
+                    <div className="flex items-center gap-2 text-muted-foreground">
                       <ArrowLeft className="w-4 h-4" />
                       <span>..</span>
                     </div>
@@ -510,18 +512,20 @@ export default function BucketDetailPage() {
               {viewObjects.folders.map((folderName) => (
                 <TableRow
                   key={`folder-${folderName}`}
-                  className="border-white/5 hover:bg-white/5 cursor-pointer group"
+                  className="border-border hover:bg-secondary/50 cursor-pointer group"
                   onClick={() => navigateToFolder(folderName)}
                 >
                   <TableCell>
-                    <div className="flex items-center gap-3 text-[#e8e4d9] font-medium">
-                      <Folder className="w-5 h-5 text-[#7cb686] fill-[#7cb686]/20" />
+                    <div className="flex items-center gap-3 text-foreground font-medium">
+                      <Folder className="w-5 h-5 text-primary fill-primary/20" />
                       {folderName}
                     </div>
                   </TableCell>
-                  <TableCell className="text-[#e8e4d9]/40">-</TableCell>
-                  <TableCell className="text-[#e8e4d9]/40">Folder</TableCell>
-                  <TableCell className="text-[#e8e4d9]/40">-</TableCell>
+                  <TableCell className="text-muted-foreground">-</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    Folder
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">-</TableCell>
                   <TableCell className="text-right">
                     {/* Add folder actions if needed */}
                   </TableCell>
@@ -532,30 +536,30 @@ export default function BucketDetailPage() {
               {viewObjects.files.map((obj) => (
                 <TableRow
                   key={obj.id}
-                  className="border-white/5 hover:bg-white/5 cursor-pointer"
+                  className="border-border hover:bg-secondary/50 cursor-pointer"
                   onClick={() => setPreviewFile(obj)}
                   onDoubleClick={() => setPreviewFile(obj)}
                 >
                   <TableCell>
-                    <div className="flex items-center gap-3 text-[#e8e4d9]">
-                      <FileText className="w-4 h-4 text-[#e8e4d9]/30" />
+                    <div className="flex items-center gap-3 text-foreground">
+                      <FileText className="w-4 h-4 text-muted-foreground" />
                       <span className="truncate max-w-[300px]">
                         {obj.key.replace(currentPrefix, "")}
                       </span>
                     </div>
                   </TableCell>
-                  <TableCell className="text-[#e8e4d9]/60">
+                  <TableCell className="text-muted-foreground">
                     {formatBytes(obj.size)}
                   </TableCell>
                   <TableCell>
                     <Badge
                       variant="secondary"
-                      className="bg-white/5 text-[#e8e4d9]/50 border-0 text-xs"
+                      className="bg-secondary text-muted-foreground border-0 text-xs"
                     >
                       {obj.contentType.split("/").pop()}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-[#e8e4d9]/40 text-sm">
+                  <TableCell className="text-muted-foreground text-sm">
                     {formatDate(obj.createdAt)}
                   </TableCell>
                   <TableCell className="text-right">
@@ -567,7 +571,7 @@ export default function BucketDetailPage() {
                           e.stopPropagation();
                           setPreviewFile(obj);
                         }}
-                        className="text-[#e8e4d9]/40 hover:text-[#7cb686] hover:bg-[#7cb686]/10"
+                        className="text-muted-foreground hover:text-primary hover:bg-primary/10"
                         title="Preview"
                       >
                         <FileText className="w-4 h-4" />
@@ -580,7 +584,7 @@ export default function BucketDetailPage() {
                           handleDownload(obj);
                         }}
                         disabled={downloadingId === obj.id}
-                        className="text-[#e8e4d9]/40 hover:text-[#7cb686] hover:bg-[#7cb686]/10"
+                        className="text-muted-foreground hover:text-primary hover:bg-primary/10"
                         title="Download"
                       >
                         {downloadingId === obj.id ? (
@@ -596,7 +600,7 @@ export default function BucketDetailPage() {
                           e.stopPropagation();
                           setDeleteId(obj.id);
                         }}
-                        className="text-[#e8e4d9]/40 hover:text-red-400 hover:bg-red-400/10"
+                        className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                         title="Delete"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -613,10 +617,10 @@ export default function BucketDetailPage() {
             {currentPrefix && (
               <div
                 onClick={navigateUp}
-                className="aspect-square bg-white/5 rounded-xl border border-white/5 flex flex-col items-center justify-center cursor-pointer hover:bg-white/10 transition-all hover:scale-[1.02]"
+                className="aspect-square bg-secondary/50 rounded-xl border border-secondary flex flex-col items-center justify-center cursor-pointer hover:bg-secondary transition-all hover:scale-[1.02]"
               >
-                <ArrowLeft className="w-8 h-8 text-[#e8e4d9]/50 mb-2" />
-                <span className="text-[#e8e4d9]/70 font-medium text-sm">
+                <ArrowLeft className="w-8 h-8 text-muted-foreground mb-2" />
+                <span className="text-foreground/70 font-medium text-sm">
                   Back
                 </span>
               </div>
@@ -627,13 +631,15 @@ export default function BucketDetailPage() {
               <div
                 key={`folder-${folderName}`}
                 onClick={() => navigateToFolder(folderName)}
-                className="aspect-square bg-[#1a2e1d] rounded-xl border border-white/5 flex flex-col items-center justify-center cursor-pointer hover:bg-[#1a2e1d]/80 transition-all hover:scale-[1.02] p-4 group"
+                className="aspect-square bg-card rounded-xl border border-border flex flex-col items-center justify-center cursor-pointer hover:bg-secondary/50 transition-all hover:scale-[1.02] p-4 group"
               >
-                <Folder className="w-12 h-12 text-[#7cb686] mb-3 fill-[#7cb686]/20 transition-transform group-hover:scale-110" />
-                <span className="text-[#e8e4d9] font-medium text-sm text-center truncate w-full px-2">
+                <Folder className="w-12 h-12 text-primary mb-3 fill-primary/20 transition-transform group-hover:scale-110" />
+                <span className="text-foreground font-medium text-sm text-center truncate w-full px-2">
                   {folderName}
                 </span>
-                <span className="text-[#e8e4d9]/40 text-xs mt-1">Folder</span>
+                <span className="text-muted-foreground text-xs mt-1">
+                  Folder
+                </span>
               </div>
             ))}
 
@@ -643,29 +649,29 @@ export default function BucketDetailPage() {
                 key={obj.id}
                 onDoubleClick={() => setPreviewFile(obj)}
                 onClick={() => setPreviewFile(obj)}
-                className="group relative aspect-square bg-[#1a2e1d] rounded-xl border border-white/5 flex flex-col items-center justify-center cursor-pointer hover:bg-[#1a2e1d]/80 transition-all hover:scale-[1.02] overflow-hidden"
+                className="group relative aspect-square bg-card rounded-xl border border-border flex flex-col items-center justify-center cursor-pointer hover:bg-secondary/50 transition-all hover:scale-[1.02] overflow-hidden"
               >
                 {/* Icon/Thumbnail */}
                 <div className="flex-1 flex items-center justify-center w-full p-4 pb-0">
                   {obj.contentType.startsWith("image/") ? (
                     <div className="relative w-full h-full flex items-center justify-center">
-                      <FileText className="w-10 h-10 text-[#7cb686]" />
+                      <FileText className="w-10 h-10 text-primary" />
                     </div>
                   ) : obj.contentType.startsWith("video/") ? (
                     <div className="relative w-full h-full flex items-center justify-center">
-                      <FileText className="w-10 h-10 text-[#7cb686]" />
+                      <FileText className="w-10 h-10 text-primary" />
                     </div>
                   ) : (
-                    <FileText className="w-10 h-10 text-[#e8e4d9]/20 group-hover:text-[#7cb686] transition-colors" />
+                    <FileText className="w-10 h-10 text-muted-foreground/30 group-hover:text-primary transition-colors" />
                   )}
                 </div>
 
                 {/* Footer Info */}
                 <div className="w-full bg-black/20 p-3 flex flex-col gap-0.5 mt-2">
-                  <span className="text-[#e8e4d9] text-xs font-medium truncate w-full text-center px-1">
+                  <span className="text-foreground text-xs font-medium truncate w-full text-center px-1">
                     {obj.key.replace(currentPrefix, "")}
                   </span>
-                  <span className="text-[#e8e4d9]/40 text-[10px] text-center">
+                  <span className="text-muted-foreground text-[10px] text-center">
                     {formatBytes(obj.size)}
                   </span>
                 </div>
@@ -675,7 +681,7 @@ export default function BucketDetailPage() {
                   <Button
                     size="icon"
                     variant="ghost"
-                    className="h-7 w-7 rounded-md bg-black/50 hover:bg-[#7cb686] hover:text-[#0f1a12] text-[#e8e4d9] backdrop-blur-sm"
+                    className="h-7 w-7 rounded-md bg-black/50 hover:bg-primary hover:text-primary-foreground text-foreground backdrop-blur-sm"
                     onClick={(e) => {
                       e.stopPropagation();
                       setPreviewFile(obj);
@@ -687,7 +693,7 @@ export default function BucketDetailPage() {
                   <Button
                     size="icon"
                     variant="ghost"
-                    className="h-7 w-7 rounded-md bg-black/50 hover:bg-[#7cb686] hover:text-[#0f1a12] text-[#e8e4d9] backdrop-blur-sm"
+                    className="h-7 w-7 rounded-md bg-black/50 hover:bg-primary hover:text-primary-foreground text-foreground backdrop-blur-sm"
                     onClick={(e) => {
                       e.stopPropagation();
                       handleDownload(obj);
@@ -704,7 +710,7 @@ export default function BucketDetailPage() {
                   <Button
                     size="icon"
                     variant="ghost"
-                    className="h-7 w-7 rounded-md bg-black/50 hover:bg-red-500 hover:text-white text-[#e8e4d9] backdrop-blur-sm"
+                    className="h-7 w-7 rounded-md bg-black/50 hover:bg-destructive hover:text-destructive-foreground text-foreground backdrop-blur-sm"
                     onClick={(e) => {
                       e.stopPropagation();
                       setDeleteId(obj.id);
@@ -728,10 +734,10 @@ export default function BucketDetailPage() {
 
       {/* Create Folder Dialog */}
       <Dialog open={isCreateFolderOpen} onOpenChange={setIsCreateFolderOpen}>
-        <DialogContent className="bg-[#1a2e1d] border-white/10 text-[#e8e4d9]">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
             <DialogTitle>Create New Folder</DialogTitle>
-            <DialogDescription className="text-[#e8e4d9]/50">
+            <DialogDescription className="text-muted-foreground">
               Enter a name for the new folder.
             </DialogDescription>
           </DialogHeader>
@@ -740,7 +746,7 @@ export default function BucketDetailPage() {
               value={newFolderName}
               onChange={(e) => setNewFolderName(e.target.value)}
               placeholder="Folder name"
-              className="bg-black/20 border-white/10 text-[#e8e4d9] placeholder:text-[#e8e4d9]/20"
+              className="bg-secondary/50 border-border text-foreground placeholder:text-muted-foreground"
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleCreateFolder();
               }}
@@ -750,14 +756,14 @@ export default function BucketDetailPage() {
             <Button
               variant="ghost"
               onClick={() => setIsCreateFolderOpen(false)}
-              className="text-[#e8e4d9]/60 hover:text-[#e8e4d9] hover:bg-white/5"
+              className="text-muted-foreground hover:text-foreground hover:bg-secondary"
             >
               Cancel
             </Button>
             <Button
               onClick={handleCreateFolder}
               disabled={creatingFolder || !newFolderName.trim()}
-              className="bg-[#7cb686] text-[#0f1a12] hover:bg-[#6ba876]"
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               {creatingFolder && (
                 <Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -773,10 +779,10 @@ export default function BucketDetailPage() {
         open={!!deleteId}
         onOpenChange={(open) => !open && setDeleteId(null)}
       >
-        <DialogContent className="bg-[#1a2e1d] border-white/10 text-[#e8e4d9]">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
             <DialogTitle>Delete Object</DialogTitle>
-            <DialogDescription className="text-[#e8e4d9]/50">
+            <DialogDescription className="text-muted-foreground">
               This will permanently delete this object. This action cannot be
               undone.
             </DialogDescription>
@@ -785,7 +791,7 @@ export default function BucketDetailPage() {
             <Button
               variant="ghost"
               onClick={() => setDeleteId(null)}
-              className="text-[#e8e4d9]/60 hover:text-[#e8e4d9] hover:bg-white/5"
+              className="text-muted-foreground hover:text-foreground hover:bg-secondary"
             >
               Cancel
             </Button>

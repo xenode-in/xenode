@@ -88,9 +88,9 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
 
     const DefaultActions = () => (
       <>
-        <ContextMenuSeparator className="bg-white/10" />
+        <ContextMenuSeparator className="bg-border" />
         <ContextMenuItem
-          className="hover:bg-white/10 cursor-pointer"
+          className="hover:bg-accent cursor-pointer"
           onClick={(e) => {
             e.stopPropagation();
             onCut?.(item);
@@ -101,7 +101,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
         </ContextMenuItem>
         {!item.id.startsWith("virtual-") && (
           <ContextMenuItem
-            className="hover:bg-white/10 cursor-pointer"
+            className="hover:bg-accent cursor-pointer"
             onClick={(e) => {
               e.stopPropagation();
               onTag?.(item);
@@ -111,9 +111,9 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
             Tags
           </ContextMenuItem>
         )}
-        <ContextMenuSeparator className="bg-white/10" />
+        <ContextMenuSeparator className="bg-border" />
         <ContextMenuItem
-          className="text-red-400 hover:bg-red-400/10 cursor-pointer focus:bg-red-400/10 focus:text-red-400"
+          className="text-destructive hover:bg-destructive/10 cursor-pointer focus:bg-destructive/10 focus:text-destructive"
           onClick={(e) => {
             e.stopPropagation();
             onDelete?.(item);
@@ -131,12 +131,12 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
         style={style}
         {...dragHandleProps}
         data-id={item.id}
-        className={`file-item-selectable border-white/5 cursor-pointer group select-none relative transition-colors ${
+        className={`file-item-selectable border-border cursor-pointer group select-none relative transition-colors ${
           isOverlay
-            ? "bg-[#1a2e1d] opacity-90 shadow-xl flex items-center w-full"
+            ? "bg-card opacity-90 shadow-xl flex items-center w-full"
             : isSelected
-              ? "bg-[#7cb686]/20 hover:bg-[#7cb686]/30"
-              : "hover:bg-white/5"
+              ? "bg-primary/20 hover:bg-primary/30"
+              : "hover:bg-accent"
         }`}
         onClick={(e) => {
           if (onSelect) {
@@ -158,11 +158,11 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
         }}
       >
         <TableCell className="w-[50%]">
-          <div className="flex items-center gap-3 text-[#e8e4d9] font-medium">
+          <div className="flex items-center gap-3 text-foreground font-medium">
             {isFolder ? (
-              <Folder className="w-5 h-5 text-[#7cb686] fill-[#7cb686]/20" />
+              <Folder className="w-5 h-5 text-primary fill-primary/20" />
             ) : (
-              <FileText className="w-4 h-4 text-[#e8e4d9]/30" />
+              <FileText className="w-4 h-4 text-muted-foreground/30" />
             )}
             <span className="truncate max-w-[300px]">{name}</span>
             {item.tags && item.tags.length > 0 && (
@@ -171,7 +171,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
                   <Badge
                     key={tag}
                     variant="outline"
-                    className="text-[10px] h-4 px-1 border-[#7cb686]/30 text-[#7cb686]"
+                    className="text-[10px] h-4 px-1 border-primary/30 text-primary"
                   >
                     {tag}
                   </Badge>
@@ -180,22 +180,22 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
             )}
           </div>
         </TableCell>
-        <TableCell className="text-[#e8e4d9]/40 w-[15%]">
+        <TableCell className="text-muted-foreground/40 w-[15%]">
           {isFolder ? "-" : formatBytes(item.size)}
         </TableCell>
-        <TableCell className="text-[#e8e4d9]/40 w-[15%]">
+        <TableCell className="text-muted-foreground/40 w-[15%]">
           {isFolder ? (
             "Folder"
           ) : (
             <Badge
               variant="secondary"
-              className="bg-white/5 text-[#e8e4d9]/50 border-0 text-xs"
+              className="bg-secondary text-muted-foreground/50 border-0 text-xs"
             >
               {item.contentType.split("/").pop()}
             </Badge>
           )}
         </TableCell>
-        <TableCell className="text-[#e8e4d9]/40 text-sm w-[20%]">
+        <TableCell className="text-muted-foreground/40 text-sm w-[20%]">
           {formatDate(item.createdAt)}
         </TableCell>
         <TableCell className="text-right w-[100px]">
@@ -209,7 +209,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
                   onPreview?.(item);
                 }}
               >
-                <FileText className="w-4 h-4 text-[#e8e4d9]/40 hover:text-[#7cb686]" />
+                <FileText className="w-4 h-4 text-muted-foreground/40 hover:text-primary" />
               </Button>
             )}
             {!item.id.startsWith("virtual-") && (
@@ -221,7 +221,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
                   onTag?.(item);
                 }}
               >
-                <Tag className="w-4 h-4 text-[#e8e4d9]/40 hover:text-[#7cb686]" />
+                <Tag className="w-4 h-4 text-muted-foreground/40 hover:text-primary" />
               </Button>
             )}
           </div>
@@ -232,12 +232,12 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     if (isOverlay) {
       // Render simplified row for overlay (since TableRow needs Table)
       return (
-        <div className="flex items-center bg-[#1a2e1d] border border-white/10 p-2 rounded-lg shadow-xl w-[600px]">
-          <div className="flex items-center gap-3 text-[#e8e4d9] font-medium flex-1">
+        <div className="flex items-center bg-card border border-border p-2 rounded-lg shadow-xl w-[600px]">
+          <div className="flex items-center gap-3 text-foreground font-medium flex-1">
             {isFolder ? (
-              <Folder className="w-5 h-5 text-[#7cb686] fill-[#7cb686]/20" />
+              <Folder className="w-5 h-5 text-primary fill-primary/20" />
             ) : (
-              <FileText className="w-4 h-4 text-[#e8e4d9]/30" />
+              <FileText className="w-4 h-4 text-muted-foreground/30" />
             )}
             <span>{name}</span>
           </div>
@@ -248,10 +248,10 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     return (
       <ContextMenu>
         <ContextMenuTrigger asChild>{content}</ContextMenuTrigger>
-        <ContextMenuContent className="w-64 bg-[#1a2e1d] border-white/10 text-[#e8e4d9]">
+        <ContextMenuContent className="w-64 bg-card border-border text-foreground">
           {isFolder ? (
             <ContextMenuItem
-              className="hover:bg-white/10 cursor-pointer"
+              className="hover:bg-accent cursor-pointer"
               onClick={() => onNavigate?.(name)}
             >
               <Folder className="w-4 h-4 mr-2" /> Open
@@ -259,13 +259,13 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
           ) : (
             <>
               <ContextMenuItem
-                className="hover:bg-white/10 cursor-pointer"
+                className="hover:bg-accent cursor-pointer"
                 onClick={() => onPreview?.(item)}
               >
                 <FileText className="w-4 h-4 mr-2" /> Preview
               </ContextMenuItem>
               <ContextMenuItem
-                className="hover:bg-white/10 cursor-pointer"
+                className="hover:bg-accent cursor-pointer"
                 onClick={() => onDownload?.(item)}
               >
                 <DownloadCloud className="w-4 h-4 mr-2" /> Download
@@ -380,20 +380,22 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
         data-id={item.id}
         className={`file-item-selectable aspect-square rounded-xl border flex flex-col items-center justify-center cursor-pointer transition-all hover:scale-[1.02] p-4 group relative select-none ${
           isOverlay
-            ? "opacity-90 shadow-xl scale-105 bg-[#1a2e1d] border-white/5"
+            ? "opacity-90 shadow-xl scale-105 bg-card border-border"
             : isSelected
-              ? "bg-[#7cb686]/20 border-[#7cb686]/50 hover:bg-[#7cb686]/30"
-              : "bg-[#1a2e1d] border-white/5 hover:bg-[#1a2e1d]/80"
+              ? "bg-primary/20 border-primary/50 hover:bg-primary/30"
+              : "bg-card border-border hover:bg-card/80"
         }`}
       >
         {/* Content */}
         {isFolder ? (
           <>
-            <Folder className="w-12 h-12 text-[#7cb686] mb-3 fill-[#7cb686]/20 transition-transform group-hover:scale-110" />
-            <span className="text-[#e8e4d9] font-medium text-sm text-center truncate w-full px-2">
+            <Folder className="w-12 h-12 text-primary mb-3 fill-primary/20 transition-transform group-hover:scale-110" />
+            <span className="text-foreground font-medium text-sm text-center truncate w-full px-2">
               {name}
             </span>
-            <span className="text-[#e8e4d9]/40 text-xs mt-1">Folder</span>
+            <span className="text-muted-foreground/40 text-xs mt-1">
+              Folder
+            </span>
           </>
         ) : (
           <>
@@ -401,17 +403,17 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
               {item.contentType.startsWith("image/") ||
               item.contentType.startsWith("video/") ? (
                 <div className="relative w-full h-full flex items-center justify-center">
-                  <FileText className="w-10 h-10 text-[#7cb686]" />
+                  <FileText className="w-10 h-10 text-primary" />
                 </div>
               ) : (
-                <FileText className="w-10 h-10 text-[#e8e4d9]/20 group-hover:text-[#7cb686] transition-colors" />
+                <FileText className="w-10 h-10 text-muted-foreground/20 group-hover:text-primary transition-colors" />
               )}
             </div>
             <div className="w-full flex flex-col items-center gap-0.5 mt-2">
-              <span className="text-[#e8e4d9] font-medium text-sm text-center truncate w-full px-2">
+              <span className="text-foreground font-medium text-sm text-center truncate w-full px-2">
                 {name}
               </span>
-              <span className="text-[#e8e4d9]/40 text-xs mt-1">
+              <span className="text-muted-foreground/40 text-xs mt-1">
                 {formatBytes(item.size)}
               </span>
             </div>
@@ -420,13 +422,11 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
 
         {/* Tags Indicator */}
         {item.tags && item.tags.length > 0 && (
-          <div
-            className={`flex gap-1 mt-2 flex-wrap justify-center ${isFolder ? "" : "absolute top-2 left-2"}`}
-          >
+          <div className="flex gap-1 mt-2 flex-wrap justify-center absolute top-2 left-2">
             {item.tags.slice(0, 3).map((tag) => (
               <div
                 key={tag}
-                className="w-1.5 h-1.5 rounded-full bg-[#7cb686]"
+                className="w-1.5 h-1.5 rounded-full bg-primary"
                 title={tag}
               />
             ))}
@@ -438,7 +438,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
           <Button
             size="icon"
             variant="ghost"
-            className="h-7 w-7 rounded-md bg-black/50 hover:bg-[#7cb686] hover:text-[#0f1a12] text-[#e8e4d9] backdrop-blur-sm"
+            className="h-7 w-7 rounded-md bg-black/50 hover:bg-primary hover:text-primary-foreground text-foreground backdrop-blur-sm"
             onClick={(e) => {
               e.stopPropagation();
               onCut?.(item);
@@ -451,7 +451,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
             <Button
               size="icon"
               variant="ghost"
-              className="h-7 w-7 rounded-md bg-black/50 hover:bg-[#7cb686] hover:text-[#0f1a12] text-[#e8e4d9] backdrop-blur-sm"
+              className="h-7 w-7 rounded-md bg-black/50 hover:bg-primary hover:text-primary-foreground text-foreground backdrop-blur-sm"
               onClick={(e) => {
                 e.stopPropagation();
                 onTag?.(item);
@@ -464,7 +464,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
           <Button
             size="icon"
             variant="ghost"
-            className="h-7 w-7 rounded-md bg-black/50 hover:bg-red-400 hover:text-white text-[#e8e4d9] backdrop-blur-sm"
+            className="h-7 w-7 rounded-md bg-black/50 hover:bg-destructive hover:text-destructive-foreground text-foreground backdrop-blur-sm"
             onClick={(e) => {
               e.stopPropagation();
               onDelete?.(item);
@@ -481,10 +481,10 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
     return (
       <ContextMenu>
         <ContextMenuTrigger asChild>{content}</ContextMenuTrigger>
-        <ContextMenuContent className="w-64 bg-[#1a2e1d] border-white/10 text-[#e8e4d9]">
+        <ContextMenuContent className="w-64 bg-card border-border text-foreground">
           {isFolder ? (
             <ContextMenuItem
-              className="hover:bg-white/10 cursor-pointer"
+              className="hover:bg-accent cursor-pointer"
               onClick={() => onNavigate?.(name)}
             >
               <Folder className="w-4 h-4 mr-2" /> Open
@@ -492,13 +492,13 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
           ) : (
             <>
               <ContextMenuItem
-                className="hover:bg-white/10 cursor-pointer"
+                className="hover:bg-accent cursor-pointer"
                 onClick={() => onPreview?.(item)}
               >
                 <FileText className="w-4 h-4 mr-2" /> Preview
               </ContextMenuItem>
               <ContextMenuItem
-                className="hover:bg-white/10 cursor-pointer"
+                className="hover:bg-accent cursor-pointer"
                 onClick={() => onDownload?.(item)}
               >
                 <DownloadCloud className="w-4 h-4 mr-2" /> Download

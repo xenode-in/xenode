@@ -68,8 +68,8 @@ export function FilePreviewDialog({
     if (loading) {
       return (
         <div className="flex flex-col items-center justify-center p-20 min-h-[300px]">
-          <Loader2 className="w-8 h-8 animate-spin text-[#7cb686] mb-4" />
-          <p className="text-[#e8e4d9]/60">Loading preview...</p>
+          <Loader2 className="w-8 h-8 animate-spin text-primary mb-4" />
+          <p className="text-muted-foreground/60">Loading preview...</p>
         </div>
       );
     }
@@ -77,12 +77,12 @@ export function FilePreviewDialog({
     if (error) {
       return (
         <div className="flex flex-col items-center justify-center p-20 min-h-[300px] text-center">
-          <AlertCircle className="w-12 h-12 text-red-400 mb-4" />
-          <p className="text-red-400 mb-6">{error}</p>
+          <AlertCircle className="w-12 h-12 text-destructive mb-4" />
+          <p className="text-destructive mb-6">{error}</p>
           <Button
             onClick={onClose}
             variant="outline"
-            className="text-[#e8e4d9]"
+            className="text-foreground"
           >
             Close Preview
           </Button>
@@ -169,13 +169,13 @@ export function FilePreviewDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-5xl w-full bg-[#1a2e1d] border-white/10 text-[#e8e4d9] p-0 overflow-hidden gap-0">
-        <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-[#1a2e1d]/50">
+      <DialogContent className="max-w-5xl w-full bg-card border-border text-foreground p-0 overflow-hidden gap-0">
+        <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-card/50">
           <div>
-            <DialogTitle className="text-lg font-medium text-[#e8e4d9] truncate max-w-md">
+            <DialogTitle className="text-lg font-medium text-foreground truncate max-w-md">
               {file.key.split("/").pop()}
             </DialogTitle>
-            <DialogDescription className="text-[#e8e4d9]/40 text-xs mt-1">
+            <DialogDescription className="text-muted-foreground/40 text-xs mt-1">
               {(file.size / 1024 / 1024).toFixed(2)} MB • {file.contentType}
             </DialogDescription>
           </div>
@@ -185,7 +185,7 @@ export function FilePreviewDialog({
                 variant="outline"
                 size="sm"
                 onClick={() => window.open(url, "_blank")}
-                className="text-[#7cb686] border-[#7cb686]/20 hover:bg-[#7cb686]/10 h-8"
+                className="text-primary border-primary/20 hover:bg-primary/10 h-8"
               >
                 Download
               </Button>
@@ -194,14 +194,13 @@ export function FilePreviewDialog({
               variant="ghost"
               size="icon"
               onClick={onClose}
-              className="text-[#e8e4d9]/60 hover:text-[#e8e4d9] h-8 w-8"
+              className="text-muted-foreground/60 hover:text-foreground h-8 w-8"
             >
-              {/* Close handled by DialogPrimitive but explicit valid too */}
               <span className="sr-only">Close</span>
             </Button>
           </div>
         </div>
-        <div className="p-6 bg-[#0f1a12]/50 flex items-center justify-center">
+        <div className="p-6 bg-muted/50 flex items-center justify-center">
           {renderContent()}
         </div>
       </DialogContent>

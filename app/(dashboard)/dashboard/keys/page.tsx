@@ -137,8 +137,8 @@ export default function ApiKeysPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-[#e8e4d9]">API Keys</h1>
-          <p className="text-sm text-[#e8e4d9]/50 mt-1">
+          <h1 className="text-2xl font-semibold text-foreground">API Keys</h1>
+          <p className="text-sm text-muted-foreground mt-1">
             Manage API keys for programmatic access
           </p>
         </div>
@@ -151,12 +151,12 @@ export default function ApiKeysPage() {
           }}
         >
           <DialogTrigger asChild>
-            <Button className="bg-[#7cb686] text-[#0f1a12] hover:bg-[#6ba876] font-medium">
+            <Button className="bg-primary text-primary-foreground hover:bg-primary/90 font-medium">
               <Plus className="w-4 h-4 mr-2" />
               Create Key
             </Button>
           </DialogTrigger>
-          <DialogContent className="bg-[#1a2e1d] border-white/10 text-[#e8e4d9]">
+          <DialogContent className="bg-card border-border text-foreground">
             {newFullKey ? (
               <>
                 <DialogHeader>
@@ -166,18 +166,18 @@ export default function ApiKeysPage() {
                   </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 py-4">
-                  <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-lg p-3">
-                    <code className="flex-1 text-sm text-[#7cb686] break-all">
+                  <div className="flex items-center gap-2 bg-secondary/50 border border-border rounded-lg p-3">
+                    <code className="flex-1 text-sm text-primary break-all">
                       {newFullKey}
                     </code>
                     <Button
                       variant="ghost"
                       size="icon"
                       onClick={handleCopy}
-                      className="shrink-0 text-[#e8e4d9]/60 hover:text-[#e8e4d9]"
+                      className="shrink-0 text-muted-foreground hover:text-foreground"
                     >
                       {copied ? (
-                        <Check className="w-4 h-4 text-[#7cb686]" />
+                        <Check className="w-4 h-4 text-primary" />
                       ) : (
                         <Copy className="w-4 h-4" />
                       )}
@@ -196,7 +196,7 @@ export default function ApiKeysPage() {
                       setCreateOpen(false);
                       setNewFullKey("");
                     }}
-                    className="bg-[#7cb686] text-[#0f1a12] hover:bg-[#6ba876]"
+                    className="bg-primary text-primary-foreground hover:bg-primary/90"
                   >
                     Done
                   </Button>
@@ -249,7 +249,7 @@ export default function ApiKeysPage() {
                     <Button
                       type="submit"
                       disabled={creating}
-                      className="bg-[#7cb686] text-[#0f1a12] hover:bg-[#6ba876]"
+                      className="bg-primary text-primary-foreground hover:bg-primary/90"
                     >
                       {creating && (
                         <Loader2 className="w-4 h-4 animate-spin mr-2" />
@@ -265,20 +265,20 @@ export default function ApiKeysPage() {
       </div>
 
       {/* Keys Table */}
-      <div className="bg-[#1a2e1d]/50 border border-white/5 rounded-xl overflow-hidden">
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center py-20">
-            <Loader2 className="w-6 h-6 animate-spin text-[#7cb686]" />
+            <Loader2 className="w-6 h-6 animate-spin text-primary" />
           </div>
         ) : keys.length > 0 ? (
           <Table>
             <TableHeader>
-              <TableRow className="border-white/5 hover:bg-transparent">
-                <TableHead className="text-[#e8e4d9]/50">Name</TableHead>
-                <TableHead className="text-[#e8e4d9]/50">Key</TableHead>
-                <TableHead className="text-[#e8e4d9]/50">Created</TableHead>
-                <TableHead className="text-[#e8e4d9]/50">Expires</TableHead>
-                <TableHead className="text-[#e8e4d9]/50 text-right">
+              <TableRow className="border-border hover:bg-transparent">
+                <TableHead className="text-muted-foreground">Name</TableHead>
+                <TableHead className="text-muted-foreground">Key</TableHead>
+                <TableHead className="text-muted-foreground">Created</TableHead>
+                <TableHead className="text-muted-foreground">Expires</TableHead>
+                <TableHead className="text-muted-foreground text-right">
                   Actions
                 </TableHead>
               </TableRow>
@@ -287,29 +287,31 @@ export default function ApiKeysPage() {
               {keys.map((key) => (
                 <TableRow
                   key={key._id}
-                  className="border-white/5 hover:bg-white/5"
+                  className="border-border hover:bg-secondary/50"
                 >
-                  <TableCell className="text-[#e8e4d9] font-medium">
+                  <TableCell className="text-foreground font-medium">
                     {key.name}
                   </TableCell>
                   <TableCell>
-                    <code className="text-xs text-[#e8e4d9]/40 bg-white/5 px-2 py-1 rounded">
+                    <code className="text-xs text-muted-foreground bg-secondary px-2 py-1 rounded">
                       {key.keyPrefix}
                     </code>
                   </TableCell>
-                  <TableCell className="text-[#e8e4d9]/40 text-sm">
+                  <TableCell className="text-muted-foreground text-sm">
                     {formatDate(key.createdAt)}
                   </TableCell>
                   <TableCell>
                     {key.expiresAt ? (
                       <Badge
                         variant="secondary"
-                        className="bg-white/5 text-[#e8e4d9]/50 border-0 text-xs"
+                        className="bg-secondary text-muted-foreground border-0 text-xs"
                       >
                         {formatDate(key.expiresAt)}
                       </Badge>
                     ) : (
-                      <span className="text-xs text-[#e8e4d9]/30">Never</span>
+                      <span className="text-xs text-muted-foreground/50">
+                        Never
+                      </span>
                     )}
                   </TableCell>
                   <TableCell className="text-right">
@@ -317,7 +319,7 @@ export default function ApiKeysPage() {
                       variant="ghost"
                       size="icon"
                       onClick={() => setDeleteId(key._id)}
-                      className="text-[#e8e4d9]/40 hover:text-red-400 hover:bg-red-400/10"
+                      className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                     >
                       <Trash2 className="w-4 h-4" />
                     </Button>
@@ -328,13 +330,13 @@ export default function ApiKeysPage() {
           </Table>
         ) : (
           <div className="flex flex-col items-center justify-center py-20 px-4">
-            <Key className="w-12 h-12 text-[#e8e4d9]/10 mb-4" />
-            <p className="text-[#e8e4d9]/40 text-sm mb-4">
+            <Key className="w-12 h-12 text-muted-foreground/20 mb-4" />
+            <p className="text-muted-foreground/50 text-sm mb-4">
               No API keys yet. Create one for programmatic access.
             </p>
             <Button
               onClick={() => setCreateOpen(true)}
-              className="bg-[#7cb686] text-[#0f1a12] hover:bg-[#6ba876]"
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
             >
               <Plus className="w-4 h-4 mr-2" />
               Create Your First Key
@@ -348,10 +350,10 @@ export default function ApiKeysPage() {
         open={!!deleteId}
         onOpenChange={(open) => !open && setDeleteId(null)}
       >
-        <DialogContent className="bg-[#1a2e1d] border-white/10 text-[#e8e4d9]">
+        <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
             <DialogTitle>Revoke API Key</DialogTitle>
-            <DialogDescription className="text-[#e8e4d9]/50">
+            <DialogDescription className="text-muted-foreground">
               This will permanently revoke this API key. Any applications using
               this key will lose access.
             </DialogDescription>
@@ -360,7 +362,7 @@ export default function ApiKeysPage() {
             <Button
               variant="ghost"
               onClick={() => setDeleteId(null)}
-              className="text-[#e8e4d9]/60 hover:text-[#e8e4d9] hover:bg-white/5"
+              className="text-muted-foreground hover:text-foreground hover:bg-secondary"
             >
               Cancel
             </Button>
