@@ -42,7 +42,7 @@ import { useDropzone } from "react-dropzone";
 import { FilePreviewDialog } from "@/components/dashboard/FilePreviewDialog";
 
 interface ObjectData {
-  _id: string;
+  id: string;
   key: string;
   size: number;
   contentType: string;
@@ -131,7 +131,12 @@ export default function BucketDetailPage() {
       }
 
       setBucket(bucketData.bucket);
-      setObjects(objectsData.objects || []);
+      setObjects(
+        (objectsData.objects || []).map((o: any) => ({
+          ...o,
+          id: o._id || o.id,
+        })),
+      );
     } catch {
       setError("Failed to load bucket data");
     } finally {
@@ -268,9 +273,9 @@ export default function BucketDetailPage() {
   };
 
   const handleDownload = async (obj: ObjectData) => {
-    setDownloadingId(obj._id);
+    setDownloadingId(obj.id);
     try {
-      const res = await fetch(`/api/objects/${obj._id}`);
+      const res = await fetch(`/api/objects/${obj.id}`);
       const data = await res.json();
 
       if (!res.ok) {
@@ -526,7 +531,7 @@ export default function BucketDetailPage() {
               {/* Files */}
               {viewObjects.files.map((obj) => (
                 <TableRow
-                  key={obj._id}
+                  key={obj.id}
                   className="border-white/5 hover:bg-white/5 cursor-pointer"
                   onClick={() => setPreviewFile(obj)}
                   onDoubleClick={() => setPreviewFile(obj)}
@@ -574,11 +579,11 @@ export default function BucketDetailPage() {
                           e.stopPropagation();
                           handleDownload(obj);
                         }}
-                        disabled={downloadingId === obj._id}
+                        disabled={downloadingId === obj.id}
                         className="text-[#e8e4d9]/40 hover:text-[#7cb686] hover:bg-[#7cb686]/10"
                         title="Download"
                       >
-                        {downloadingId === obj._id ? (
+                        {downloadingId === obj.id ? (
                           <Loader2 className="w-4 h-4 animate-spin" />
                         ) : (
                           <DownloadCloud className="w-4 h-4" />
@@ -589,7 +594,7 @@ export default function BucketDetailPage() {
                         size="icon"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setDeleteId(obj._id);
+                          setDeleteId(obj.id);
                         }}
                         className="text-[#e8e4d9]/40 hover:text-red-400 hover:bg-red-400/10"
                         title="Delete"
@@ -635,7 +640,7 @@ export default function BucketDetailPage() {
             {/* Files */}
             {viewObjects.files.map((obj) => (
               <div
-                key={obj._id}
+                key={obj.id}
                 onDoubleClick={() => setPreviewFile(obj)}
                 onClick={() => setPreviewFile(obj)}
                 className="group relative aspect-square bg-[#1a2e1d] rounded-xl border border-white/5 flex flex-col items-center justify-center cursor-pointer hover:bg-[#1a2e1d]/80 transition-all hover:scale-[1.02] overflow-hidden"
@@ -687,10 +692,10 @@ export default function BucketDetailPage() {
                       e.stopPropagation();
                       handleDownload(obj);
                     }}
-                    disabled={downloadingId === obj._id}
+                    disabled={downloadingId === obj.id}
                     title="Download"
                   >
-                    {downloadingId === obj._id ? (
+                    {downloadingId === obj.id ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
                       <DownloadCloud className="w-3.5 h-3.5" />
@@ -702,7 +707,7 @@ export default function BucketDetailPage() {
                     className="h-7 w-7 rounded-md bg-black/50 hover:bg-red-500 hover:text-white text-[#e8e4d9] backdrop-blur-sm"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setDeleteId(obj._id);
+                      setDeleteId(obj.id);
                     }}
                     title="Delete"
                   >
