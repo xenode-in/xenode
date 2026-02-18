@@ -19,10 +19,10 @@ import {
   Scissors,
 } from "lucide-react";
 import { formatBytes, formatDate } from "@/lib/utils";
-import { forwardRef } from "react";
+import { forwardRef, useRef } from "react";
 
 interface ObjectData {
-  _id: string;
+  id: string; // use id, not _id
   key: string;
   size: number;
   contentType: string;
@@ -45,6 +45,9 @@ interface ItemProps {
   style?: React.CSSProperties;
   dragHandleProps?: any;
   isOverlay?: boolean;
+  isSelected?: boolean;
+  onSelect?: (item: ObjectData, e: React.MouseEvent) => void;
+  registerItemRef?: (id: string, el: HTMLElement | null) => void;
 }
 
 // Presentational Component for List View
@@ -62,6 +65,8 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
       style,
       dragHandleProps,
       isOverlay,
+      isSelected,
+      onSelect,
     },
     ref,
   ) => {
@@ -70,8 +75,8 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
 
     // Virtual folder fallback name
     let name = item.key;
-    if (item._id.startsWith("virtual-")) {
-      name = item._id.replace("virtual-", "");
+    if (item.id.startsWith("virtual-")) {
+      name = item.id.replace("virtual-", "");
     } else {
       name =
         item.key
@@ -94,7 +99,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
           <Scissors className="w-4 h-4 mr-2" />
           Cut
         </ContextMenuItem>
-        {!item._id.startsWith("virtual-") && (
+        {!item.id.startsWith("virtual-") && (
           <ContextMenuItem
             className="hover:bg-white/10 cursor-pointer"
             onClick={(e) => {
@@ -125,8 +130,26 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
         ref={ref}
         style={style}
         {...dragHandleProps}
-        className={`border-white/5 hover:bg-white/5 cursor-pointer group select-none relative ${isOverlay ? "bg-[#1a2e1d] opacity-90 shadow-xl flex items-center w-full" : ""}`}
+        data-id={item.id}
+        className={`file-item-selectable border-white/5 cursor-pointer group select-none relative transition-colors ${
+          isOverlay
+            ? "bg-[#1a2e1d] opacity-90 shadow-xl flex items-center w-full"
+            : isSelected
+              ? "bg-[#7cb686]/20 hover:bg-[#7cb686]/30"
+              : "hover:bg-white/5"
+        }`}
         onClick={(e) => {
+          if (onSelect) {
+            onSelect(item, e);
+            return;
+          }
+          if (isFolder && onNavigate) {
+            onNavigate(name);
+          } else if (!isFolder && onPreview) {
+            onPreview(item);
+          }
+        }}
+        onDoubleClick={(e) => {
           if (isFolder && onNavigate) {
             onNavigate(name);
           } else if (!isFolder && onPreview) {
@@ -189,7 +212,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
                 <FileText className="w-4 h-4 text-[#e8e4d9]/40 hover:text-[#7cb686]" />
               </Button>
             )}
-            {!item._id.startsWith("virtual-") && (
+            {!item.id.startsWith("virtual-") && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -272,6 +295,8 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
       style,
       dragHandleProps,
       isOverlay,
+      isSelected,
+      onSelect,
     },
     ref,
   ) => {
@@ -279,8 +304,8 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
       item.contentType === "application/x-directory" || item.key.endsWith("/");
 
     let name = item.key;
-    if (item._id.startsWith("virtual-")) {
-      name = item._id.replace("virtual-", "");
+    if (item.id.startsWith("virtual-")) {
+      name = item.id.replace("virtual-", "");
     } else {
       name =
         item.key
@@ -303,7 +328,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
           <Scissors className="w-4 h-4 mr-2" />
           Cut
         </ContextMenuItem>
-        {!item._id.startsWith("virtual-") && (
+        {!item.id.startsWith("virtual-") && (
           <ContextMenuItem
             className="hover:bg-white/10 cursor-pointer"
             onClick={(e) => {
@@ -335,13 +360,31 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
         style={style}
         {...dragHandleProps}
         onClick={(e) => {
+          if (onSelect) {
+            onSelect(item, e);
+            return;
+          }
           if (isFolder && onNavigate) {
             onNavigate(name);
           } else if (!isFolder && onPreview) {
             onPreview(item);
           }
         }}
-        className={`aspect-square bg-[#1a2e1d] rounded-xl border border-white/5 flex flex-col items-center justify-center cursor-pointer hover:bg-[#1a2e1d]/80 transition-all hover:scale-[1.02] p-4 group relative select-none ${isOverlay ? "opacity-90 shadow-xl scale-105" : ""}`}
+        onDoubleClick={(e) => {
+          if (isFolder && onNavigate) {
+            onNavigate(name);
+          } else if (!isFolder && onPreview) {
+            onPreview(item);
+          }
+        }}
+        data-id={item.id}
+        className={`file-item-selectable aspect-square rounded-xl border flex flex-col items-center justify-center cursor-pointer transition-all hover:scale-[1.02] p-4 group relative select-none ${
+          isOverlay
+            ? "opacity-90 shadow-xl scale-105 bg-[#1a2e1d] border-white/5"
+            : isSelected
+              ? "bg-[#7cb686]/20 border-[#7cb686]/50 hover:bg-[#7cb686]/30"
+              : "bg-[#1a2e1d] border-white/5 hover:bg-[#1a2e1d]/80"
+        }`}
       >
         {/* Content */}
         {isFolder ? (
@@ -404,7 +447,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
             <Scissors className="w-3.5 h-3.5" />
           </Button>
 
-          {!item._id.startsWith("virtual-") && (
+          {!item.id.startsWith("virtual-") && (
             <Button
               size="icon"
               variant="ghost"
@@ -471,6 +514,8 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
 FileCard.displayName = "FileCard";
 
 export function FileItem(props: ItemProps) {
+  const { registerItemRef } = props;
+
   const {
     attributes,
     listeners,
@@ -479,7 +524,7 @@ export function FileItem(props: ItemProps) {
     transition,
     isDragging,
   } = useSortable({
-    id: props.item._id,
+    id: props.item.id,
     data: props.item,
   });
 
@@ -492,11 +537,16 @@ export function FileItem(props: ItemProps) {
 
   const handleProps = { ...attributes, ...listeners };
 
+  const refCallback = (el: HTMLElement | null) => {
+    setNodeRef(el);
+    registerItemRef?.(props.item.id, el);
+  };
+
   if (props.viewMode === "list") {
     // Pass handleProps to Row
     return (
       <FileRow
-        ref={setNodeRef}
+        ref={refCallback}
         style={style}
         dragHandleProps={handleProps}
         {...props}
@@ -506,7 +556,7 @@ export function FileItem(props: ItemProps) {
 
   return (
     <FileCard
-      ref={setNodeRef}
+      ref={refCallback}
       style={style}
       dragHandleProps={handleProps}
       {...props}

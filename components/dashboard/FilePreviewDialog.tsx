@@ -15,7 +15,7 @@ import { Loader2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 interface ObjectData {
-  _id: string;
+  id: string;
   key: string;
   size: number;
   contentType: string;
@@ -42,7 +42,7 @@ export function FilePreviewDialog({
       setLoading(true);
       setError("");
       // Fetch fresh url
-      fetch(`/api/objects/${file._id}`)
+      fetch(`/api/objects/${file.id}`)
         .then((res) => {
           if (!res.ok) throw new Error("Failed to get URL");
           return res.json();

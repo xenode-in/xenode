@@ -3,7 +3,8 @@ import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
-import { uploadObject } from "@/lib/b2/objects";
+import { uploadObject, deleteObject } from "@/lib/b2/objects";
+import { decrementStorage, updateBucketStats } from "@/lib/metering/usage";
 
 export const dynamic = "force-dynamic";
 
@@ -104,6 +105,91 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json(
       { error: "Failed to create folder" },
+      { status: 500 },
+    );
+  }
+}
+/**
+ * DELETE /api/objects/folder - Recursively delete a folder and its contents
+ */
+export async function DELETE(request: NextRequest) {
+  try {
+    const session = await requireAuth();
+    const userId = session.user.id;
+    const body = await request.json();
+    const { bucketId, prefix } = body;
+
+    if (!bucketId || !prefix) {
+      return NextResponse.json(
+        { error: "Bucket ID and prefix are required" },
+        { status: 400 },
+      );
+    }
+
+    await dbConnect();
+
+    // Verify bucket ownership
+    const bucket = await Bucket.findOne({
+      _id: bucketId,
+      $or: [{ userId }, { userId: "system" }],
+    });
+
+    if (!bucket) {
+      return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
+    }
+
+    // Enforce prefix for system bucket
+    if (bucket.userId === "system") {
+      if (!prefix.startsWith(`users/${userId}/`)) {
+        return NextResponse.json(
+          { error: "Access denied to this folder" },
+          { status: 403 },
+        );
+      }
+    }
+
+    // Find all objects with this prefix
+    // Escape regex characters
+    const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const objects = await StorageObject.find({
+      bucketId,
+      key: { $regex: `^${escapedPrefix}` },
+    });
+
+    const b2BucketName = bucket.b2BucketId;
+    let deletedCount = 0;
+
+    // Delete each object
+    for (const obj of objects) {
+      // Delete from B2
+      try {
+        await deleteObject(b2BucketName, obj.key);
+      } catch (e) {
+        console.error(`Failed to delete B2 object ${obj.key}:`, e);
+      }
+
+      // Delete from MongoDB
+      await StorageObject.findByIdAndDelete(obj._id);
+
+      // Update usage
+      if (obj.size > 0) {
+        await decrementStorage(userId, obj.size);
+        await updateBucketStats(bucket._id.toString(), -1, -obj.size);
+      } else {
+        // Just decrement count for 0-byte objects (folders)
+        await updateBucketStats(bucket._id.toString(), -1, 0);
+      }
+      deletedCount++;
+    }
+
+    return NextResponse.json({ success: true, deletedCount });
+  } catch (error: unknown) {
+    console.error("Delete folder error:", error);
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    return NextResponse.json(
+      { error: "Failed to delete folder" },
       { status: 500 },
     );
   }
