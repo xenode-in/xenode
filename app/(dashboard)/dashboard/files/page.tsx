@@ -333,6 +333,10 @@ export default function FilesPage() {
     }
   };
 
+  // Cache for item rects to prevent layout thrashing during drag
+  const dragStartRects = useRef<Map<string, DOMRect>>(new Map());
+  const rafId = useRef<number | null>(null);
+
   const handleMouseDown = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
 
@@ -349,6 +353,14 @@ export default function FilesPage() {
 
     // Clear selection when starting a new box (unless Ctrl is held)
     if (!e.ctrlKey) setSelectedIds(new Set());
+
+    // Cache all item rects once at start of drag
+    dragStartRects.current.clear();
+    for (const [id, el] of itemRefs.current.entries()) {
+      if (document.body.contains(el)) {
+        dragStartRects.current.set(id, el.getBoundingClientRect());
+      }
+    }
   };
 
   function rectsIntersect(
@@ -367,30 +379,64 @@ export default function FilesPage() {
     (e: React.MouseEvent) => {
       if (!isSelecting || !selectionBox) return;
 
-      const newBox = {
-        ...selectionBox,
-        currentX: e.clientX,
-        currentY: e.clientY,
-      };
-      setSelectionBox(newBox);
+      const clientX = e.clientX;
+      const clientY = e.clientY;
 
-      const boxRect = {
-        left: Math.min(newBox.startX, newBox.currentX),
-        right: Math.max(newBox.startX, newBox.currentX),
-        top: Math.min(newBox.startY, newBox.currentY),
-        bottom: Math.max(newBox.startY, newBox.currentY),
-      };
-
-      const nextSelected = new Set<string>();
-
-      for (const [id, el] of itemRefs.current.entries()) {
-        const rect = el.getBoundingClientRect();
-        if (rectsIntersect(rect, boxRect)) {
-          nextSelected.add(id);
-        }
+      // Throttle updates with requestAnimationFrame
+      if (rafId.current) {
+        cancelAnimationFrame(rafId.current);
       }
 
-      setSelectedIds(nextSelected);
+      rafId.current = requestAnimationFrame(() => {
+        setSelectionBox((prev) => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            currentX: clientX,
+            currentY: clientY,
+          };
+        });
+
+        // Use the event coordinates directly for the calculation logic
+        // to avoid waiting for state update cycle
+        const newBox = {
+          startX: selectionBox.startX,
+          startY: selectionBox.startY,
+          currentX: clientX,
+          currentY: clientY,
+        };
+
+        const boxRect = {
+          left: Math.min(newBox.startX, newBox.currentX),
+          right: Math.max(newBox.startX, newBox.currentX),
+          top: Math.min(newBox.startY, newBox.currentY),
+          bottom: Math.max(newBox.startY, newBox.currentY),
+        };
+
+        const nextSelected = new Set<string>();
+
+        // Use cached rects instead of querying DOM
+        for (const [id, rect] of dragStartRects.current.entries()) {
+          if (rectsIntersect(rect, boxRect)) {
+            nextSelected.add(id);
+          }
+        }
+
+        setSelectedIds((prev) => {
+          // Only update if selection actually changed
+          if (prev.size === nextSelected.size) {
+            let eq = true;
+            for (const id of nextSelected) {
+              if (!prev.has(id)) {
+                eq = false;
+                break;
+              }
+            }
+            if (eq) return prev;
+          }
+          return nextSelected;
+        });
+      });
     },
     [isSelecting, selectionBox],
   );
@@ -399,6 +445,11 @@ export default function FilesPage() {
     if (isSelecting) {
       setIsSelecting(false);
       setSelectionBox(null);
+      if (rafId.current) {
+        cancelAnimationFrame(rafId.current);
+        rafId.current = null;
+      }
+      dragStartRects.current.clear();
     }
   };
 
