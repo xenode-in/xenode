@@ -17,6 +17,7 @@ import {
   Trash2,
   Tag,
   Scissors,
+  Lock,
 } from "lucide-react";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { forwardRef, useRef, useCallback } from "react";
@@ -30,6 +31,7 @@ interface ObjectData {
   tags?: string[];
   position?: number;
   thumbnail?: string;
+  isEncrypted?: boolean;
 }
 
 interface ItemProps {
@@ -172,6 +174,12 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
               <FileText className="w-4 h-4 text-muted-foreground/30" />
             )}
             <span className="truncate max-w-[300px]">{name}</span>
+            {item.isEncrypted && (
+              <Lock
+                className="h-3 w-3 shrink-0 text-primary/60"
+                aria-label="Encrypted"
+              />
+            )}
             {item.tags && item.tags.length > 0 && (
               <div className="flex gap-1">
                 {item.tags.map((tag) => (
@@ -431,6 +439,13 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
               </span>
             </div>
           </>
+        )}
+
+        {/* Encrypted badge */}
+        {item.isEncrypted && !isFolder && (
+          <div className="absolute top-2 left-2">
+            <Lock className="h-3 w-3 text-primary/70" aria-label="Encrypted" />
+          </div>
         )}
 
         {/* Tags Indicator */}
