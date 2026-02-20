@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import {
   Dialog,
   DialogContent,
@@ -9,12 +9,14 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Loader2, AlertCircle, X } from "lucide-react";
+import { Loader2, AlertCircle, X, Lock } from "lucide-react";
 
 import { Plyr } from "plyr-react";
 import "plyr-react/plyr.css";
 
 import DocViewer, { DocViewerRenderers } from "@cyntler/react-doc-viewer";
+import { useCrypto } from "@/contexts/CryptoContext";
+import { decryptFile } from "@/lib/crypto/fileEncryption";
 
 interface ObjectData {
   id: string;
@@ -64,6 +66,25 @@ export function FilePreviewDialog({
   const [url, setUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [isEncrypted, setIsEncrypted] = useState(false);
+
+  // Track object URLs we created so we can revoke them on close
+  const objectUrlRef = useRef<string | null>(null);
+
+  const { privateKey } = useCrypto();
+
+  // Revoke any object URL when the dialog closes or file changes
+  useEffect(() => {
+    if (!isOpen) {
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+      setUrl(null);
+      setError("");
+      setIsEncrypted(false);
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,15 +97,60 @@ export function FilePreviewDialog({
       setUrl(null);
 
       try {
+        // 1. Fetch metadata + signed URL from our API
         const res = await fetch(`/api/objects/${file.id}`);
         if (!res.ok) throw new Error("Failed to get URL");
         const data = await res.json();
         if (!data?.url) throw new Error("No URL returned");
-        if (!cancelled) setUrl(data.url);
+
+        const encrypted: boolean = data.isEncrypted ?? false;
+
+        if (!encrypted) {
+          // Legacy plaintext file — use the signed URL directly
+          if (!cancelled) {
+            setUrl(data.url);
+            setIsEncrypted(false);
+          }
+          return;
+        }
+
+        // 2. Encrypted file — need private key to decrypt
+        setIsEncrypted(true);
+
+        if (!privateKey) {
+          throw new Error(
+            "Your files are encrypted. Please unlock your vault to preview this file.",
+          );
+        }
+
+        // 3. Fetch raw ciphertext
+        const ciphertextRes = await fetch(data.url);
+        if (!ciphertextRes.ok) throw new Error("Failed to download file");
+        const ciphertextBuf = await ciphertextRes.arrayBuffer();
+
+        // 4. Decrypt
+        const decryptedBlob = await decryptFile(
+          ciphertextBuf,
+          data.encryptedDEK,
+          data.iv,
+          privateKey,
+          data.contentType ?? file.contentType,
+        );
+
+        // 5. Create object URL from decrypted blob
+        const objectUrl = URL.createObjectURL(decryptedBlob);
+        objectUrlRef.current = objectUrl;
+
+        if (!cancelled) setUrl(objectUrl);
       } catch (e) {
         console.error(e);
-        if (!cancelled)
-          setError("Failed to load preview. Please try downloading instead.");
+        if (!cancelled) {
+          setError(
+            e instanceof Error
+              ? e.message
+              : "Failed to load preview. Please try downloading instead.",
+          );
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -94,7 +160,7 @@ export function FilePreviewDialog({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, file]);
+  }, [isOpen, file, privateKey]);
 
   const docs = useMemo(() => {
     if (!url || !file) return [];
@@ -106,6 +172,16 @@ export function FilePreviewDialog({
   const name = fileNameFromKey(file.key);
   const type = file.contentType;
 
+  // Download handler: for encrypted files, trigger programmatic download
+  // from the decrypted Blob URL instead of opening the ciphertext URL.
+  const handleDownload = () => {
+    if (!url) return;
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+  };
+
   const renderContent = () => {
     if (loading) {
       return (
@@ -113,7 +189,7 @@ export function FilePreviewDialog({
           <div className="flex flex-col items-center">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
             <p className="mt-3 text-sm text-muted-foreground">
-              Loading preview...
+              {isEncrypted ? "Decrypting file..." : "Loading preview..."}
             </p>
           </div>
         </div>
@@ -127,14 +203,6 @@ export function FilePreviewDialog({
             <AlertCircle className="h-10 w-10 text-destructive" />
             <p className="mt-3 text-sm text-destructive">{error}</p>
             <div className="mt-5 flex gap-2">
-              {url && (
-                <Button
-                  variant="outline"
-                  onClick={() => window.open(url, "_blank")}
-                >
-                  Download
-                </Button>
-              )}
               <DialogClose asChild>
                 <Button variant="secondary">Close</Button>
               </DialogClose>
@@ -215,21 +283,24 @@ export function FilePreviewDialog({
           {/* Top bar */}
           <div className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b bg-card/95 px-4 py-3 backdrop-blur sm:px-5">
             <div className="min-w-0">
-              <DialogTitle className="truncate text-sm font-medium sm:text-base">
+              <DialogTitle className="truncate text-sm font-medium sm:text-base flex items-center gap-1.5">
+                {isEncrypted && (
+                  <Lock
+                    className="h-3.5 w-3.5 shrink-0 text-primary"
+                    aria-label="Encrypted"
+                  />
+                )}
                 {name}
               </DialogTitle>
               <DialogDescription className="truncate text-xs text-muted-foreground">
                 {formatMB(file.size)} MB • {file.contentType}
+                {isEncrypted && " • End-to-end encrypted"}
               </DialogDescription>
             </div>
 
             <div className="flex shrink-0 items-center gap-2">
               {url && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => window.open(url, "_blank")}
-                >
+                <Button variant="outline" size="sm" onClick={handleDownload}>
                   Download
                 </Button>
               )}

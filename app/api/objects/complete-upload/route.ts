@@ -14,8 +14,17 @@ export async function POST(request: NextRequest) {
     const session = await requireAuth();
     const userId = session.user.id;
 
-    const { objectKey, bucketId, size, contentType, thumbnail } =
-      await request.json();
+    const {
+      objectKey,
+      bucketId,
+      size,
+      contentType,
+      thumbnail,
+      encryptedDEK,
+      iv,
+      isEncrypted,
+      encryptedName,
+    } = await request.json();
 
     if (!objectKey || !bucketId || !size) {
       return NextResponse.json(
@@ -66,6 +75,12 @@ export async function POST(request: NextRequest) {
       existingObject.contentType = contentType;
       existingObject.b2FileId = b2FileId; // Update File ID
       if (thumbnail) existingObject.thumbnail = thumbnail;
+      if (isEncrypted) {
+        existingObject.isEncrypted = true;
+        if (encryptedDEK) existingObject.encryptedDEK = encryptedDEK;
+        if (iv) existingObject.iv = iv;
+        if (encryptedName) existingObject.encryptedName = encryptedName;
+      }
       await existingObject.save();
 
       if (sizeDiff !== 0) {
@@ -83,8 +98,12 @@ export async function POST(request: NextRequest) {
       key: objectKey,
       size,
       contentType,
-      b2FileId, // Save the retrieved ID
+      b2FileId,
       thumbnail,
+      isEncrypted: isEncrypted ?? false,
+      encryptedDEK: encryptedDEK ?? undefined,
+      iv: iv ?? undefined,
+      encryptedName: encryptedName ?? undefined,
     });
 
     // Update usage

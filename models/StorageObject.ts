@@ -13,6 +13,11 @@ export interface IStorageObject extends Document {
   createdAt: Date;
   updatedAt: Date;
   thumbnail?: string;
+  /** E2EE fields — undefined on legacy plaintext files */
+  isEncrypted: boolean;
+  encryptedDEK?: string; // Base64 RSA-OAEP wrapped AES-256 DEK
+  iv?: string; // Base64 12-byte GCM IV
+  encryptedName?: string; // Base64 AES-GCM encrypted original filename
 }
 
 const StorageObjectSchema = new Schema<IStorageObject>(
@@ -55,6 +60,23 @@ const StorageObjectSchema = new Schema<IStorageObject>(
       default: 0,
     },
     thumbnail: {
+      type: String,
+      required: false,
+    },
+    isEncrypted: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    encryptedDEK: {
+      type: String,
+      required: false,
+    },
+    iv: {
+      type: String,
+      required: false,
+    },
+    encryptedName: {
       type: String,
       required: false,
     },

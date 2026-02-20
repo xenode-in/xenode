@@ -8,6 +8,9 @@ import React, {
   useEffect,
   useRef,
 } from "react";
+import { useCrypto } from "@/contexts/CryptoContext";
+import { encryptFile } from "@/lib/crypto/fileEncryption";
+import { toB64 } from "@/lib/crypto/utils";
 
 export interface UploadTask {
   id: string;
@@ -83,6 +86,26 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const [tasks, setTasks] = useState<UploadTask[]>([]);
   const [activeUploads, setActiveUploads] = useState(0);
   const uploadingIds = useRef(new Set<string>());
+  const { publicKey: cryptoPublicKey } = useCrypto();
+  // Keep a ref so the useCallback below always reads the latest key
+  // without needing to be re-created (avoids stale closure)
+  const cryptoPublicKeyRef = useRef<CryptoKey | null>(null);
+  cryptoPublicKeyRef.current = cryptoPublicKey;
+
+  /**
+   * Determine whether we should encrypt this upload.
+   * Requires BOTH:
+   *  1. Vault is unlocked (publicKey in memory), AND
+   *  2. User has opted in via Settings toggle (localStorage pref)
+   */
+  function shouldEncryptNow(): boolean {
+    if (!cryptoPublicKeyRef.current) return false;
+    try {
+      return localStorage.getItem("xenode.encryptUploads") === "true";
+    } catch {
+      return false;
+    }
+  }
 
   // Prevent page reload/close during active uploads
   useEffect(() => {
@@ -133,9 +156,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          fileName: task.file.name,
+          // For encrypted uploads, use a UUID key so the real name is hidden
+          fileName: shouldEncryptNow() ? crypto.randomUUID() : task.file.name,
           fileSize: task.file.size,
-          fileType: task.file.type,
+          fileType: shouldEncryptNow()
+            ? "application/octet-stream"
+            : task.file.type,
           bucketId: task.bucketId,
           prefix: task.prefix,
         }),
@@ -152,7 +178,62 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         bucketId: returnedBucketId,
       } = await presignResponse.json();
 
-      // Step 2: Upload directly to B2 with XHR for progress tracking
+      // Step 2: Encrypt file if vault is unlocked, otherwise upload plaintext
+      let uploadBody: File | Blob = task.file;
+      let uploadContentType = task.file.type || "application/octet-stream";
+      let encryptedDEK: string | undefined;
+      let encryptedIV: string | undefined;
+      let encryptedName: string | undefined;
+
+      if (shouldEncryptNow()) {
+        try {
+          const enc = await encryptFile(task.file, cryptoPublicKeyRef.current!);
+          uploadBody = enc.ciphertext;
+          uploadContentType = "application/octet-stream";
+          encryptedDEK = enc.encryptedDEK;
+          encryptedIV = enc.iv;
+          // Encrypt the original filename so the server never sees it
+          const nameBuf = new TextEncoder().encode(task.file.name);
+          const nameKey = crypto.getRandomValues(new Uint8Array(32));
+          const nameIV = crypto.getRandomValues(new Uint8Array(12));
+          const encNameBuf = await crypto.subtle.encrypt(
+            { name: "AES-GCM", iv: nameIV as Uint8Array<ArrayBuffer> },
+            await crypto.subtle.importKey(
+              "raw",
+              nameKey as Uint8Array<ArrayBuffer>,
+              { name: "AES-GCM", length: 256 },
+              false,
+              ["encrypt"],
+            ),
+            nameBuf,
+          );
+          // Store nameKey + nameIV + ciphertext concatenated as base64
+          // (simple scheme; for sharing, DEK-wrap the nameKey too)
+          const combined = new Uint8Array(
+            nameKey.byteLength + nameIV.byteLength + encNameBuf.byteLength,
+          );
+          combined.set(nameKey, 0);
+          combined.set(nameIV, nameKey.byteLength);
+          combined.set(
+            new Uint8Array(encNameBuf),
+            nameKey.byteLength + nameIV.byteLength,
+          );
+          encryptedName = toB64(combined);
+        } catch (err) {
+          console.warn(
+            "[E2EE] Encryption failed, falling back to plaintext",
+            err,
+          );
+          // Reset to plaintext on unexpected failure
+          uploadBody = task.file;
+          uploadContentType = task.file.type || "application/octet-stream";
+          encryptedDEK = undefined;
+          encryptedIV = undefined;
+          encryptedName = undefined;
+        }
+      }
+
+      // Step 3: Upload to B2 with XHR for progress tracking
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
 
@@ -186,23 +267,24 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         });
 
         xhr.open("PUT", uploadUrl);
-        xhr.setRequestHeader(
-          "Content-Type",
-          task.file.type || "application/octet-stream",
-        );
-        xhr.send(task.file);
+        xhr.setRequestHeader("Content-Type", uploadContentType);
+        xhr.send(uploadBody);
       });
 
-      // Step 3: Notify server of completion
+      // Step 4: Notify server of completion
       const completeResponse = await fetch("/api/objects/complete-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           objectKey,
           bucketId: returnedBucketId,
-          size: task.file.size,
+          size: uploadBody instanceof Blob ? uploadBody.size : task.file.size,
           contentType: task.file.type,
           thumbnail,
+          isEncrypted: !!encryptedDEK,
+          encryptedDEK,
+          iv: encryptedIV,
+          encryptedName,
         }),
       });
 

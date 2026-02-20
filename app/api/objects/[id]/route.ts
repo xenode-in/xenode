@@ -43,7 +43,14 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     const b2BucketName = bucket.b2BucketId;
     const url = await getDownloadUrl(b2BucketName, object.key);
 
-    return NextResponse.json({ url });
+    return NextResponse.json({
+      url,
+      isEncrypted: object.isEncrypted ?? false,
+      encryptedDEK: object.encryptedDEK ?? null,
+      iv: object.iv ?? null,
+      encryptedName: object.encryptedName ?? null,
+      contentType: object.contentType,
+    });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
