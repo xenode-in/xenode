@@ -8,49 +8,59 @@ import React, {
   useEffect,
 } from "react";
 import { setupUserKeyVault, unlockVault } from "@/lib/crypto/keySetup";
+import {
+  cacheKeys,
+  loadCachedKeys,
+  clearCachedKeys,
+} from "@/lib/crypto/keyCache";
 
 interface CryptoContextType {
-  /** true once the vault has been unlocked this session */
+  isInitializing: boolean;
   isUnlocked: boolean;
-  /** true if the server has no vault for this user yet (first time) */
   needsSetup: boolean;
-  /** In-memory RSA private key — null until unlocked */
   privateKey: CryptoKey | null;
-  /** In-memory RSA public key — null until unlocked */
   publicKey: CryptoKey | null;
-  /**
-   * Unlock the vault with the user's encryption password.
-   * Throws "WRONG_PASSWORD" if the password is incorrect.
-   */
   unlock: (password: string) => Promise<void>;
-  /**
-   * Set up a brand-new vault (first-time users).
-   * Generates a keypair, encrypts the private key, saves to server.
-   */
   setup: (password: string) => Promise<void>;
-  /** Lock the in-memory keys (e.g. on logout) */
   lock: () => void;
+  isModalOpen: boolean;
+  setModalOpen: (open: boolean) => void;
 }
 
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
 
 export function CryptoProvider({ children }: { children: React.ReactNode }) {
+  const [isInitializing, setIsInitializing] = useState(true);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
   const [privateKey, setPrivateKey] = useState<CryptoKey | null>(null);
   const [publicKey, setPublicKey] = useState<CryptoKey | null>(null);
+  const [isModalOpen, setModalOpen] = useState(false);
 
-  /** On mount, check if the user has a vault (to show setup vs. unlock prompt) */
   useEffect(() => {
-    fetch("/api/keys/vault")
-      .then((res) => {
+    async function init() {
+      // 1. Try to restore keys from IndexedDB (survives page refresh)
+      const cached = await loadCachedKeys();
+      if (cached) {
+        setPrivateKey(cached.privateKey);
+        setPublicKey(cached.publicKey);
+        setIsUnlocked(true);
+        setIsInitializing(false);
+        return;
+      }
+
+      // 2. No cached keys — check if the user has a vault set up
+      try {
+        const res = await fetch("/api/keys/vault");
         if (res.status === 404) setNeedsSetup(true);
-        // 200 = vault exists, user needs to unlock
-        // 401 = not logged in — ignore, auth guard handles this
-      })
-      .catch(() => {
-        // network error — assume vault check will be retried on next mount
-      });
+        // 200 = vault exists, user needs to enter password
+      } catch {
+        // network error — ignore
+      } finally {
+        setIsInitializing(false);
+      }
+    }
+    init();
   }, []);
 
   const unlock = useCallback(async (password: string) => {
@@ -59,6 +69,8 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
     setPublicKey(keys.publicKey);
     setIsUnlocked(true);
     setNeedsSetup(false);
+    // Cache for next page load
+    await cacheKeys(keys.privateKey, keys.publicKey);
   }, []);
 
   const setup = useCallback(async (password: string) => {
@@ -67,17 +79,20 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
     setPublicKey(keys.publicKey);
     setIsUnlocked(true);
     setNeedsSetup(false);
+    await cacheKeys(keys.privateKey, keys.publicKey);
   }, []);
 
   const lock = useCallback(() => {
     setPrivateKey(null);
     setPublicKey(null);
     setIsUnlocked(false);
+    clearCachedKeys();
   }, []);
 
   return (
     <CryptoContext.Provider
       value={{
+        isInitializing,
         isUnlocked,
         needsSetup,
         privateKey,
@@ -85,6 +100,8 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
         unlock,
         setup,
         lock,
+        isModalOpen,
+        setModalOpen,
       }}
     >
       {children}

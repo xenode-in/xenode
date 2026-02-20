@@ -24,6 +24,7 @@ interface ObjectData {
   size: number;
   contentType: string;
   createdAt: string;
+  isEncrypted?: boolean;
 }
 
 interface FilePreviewDialogProps {
@@ -71,7 +72,17 @@ export function FilePreviewDialog({
   // Track object URLs we created so we can revoke them on close
   const objectUrlRef = useRef<string | null>(null);
 
-  const { privateKey } = useCrypto();
+  const { privateKey, setModalOpen } = useCrypto();
+
+  const isLockedOut = file?.isEncrypted && !privateKey;
+
+  // If locked out, prevent dialog from opening, trigger modal, and close preview
+  useEffect(() => {
+    if (isOpen && isLockedOut) {
+      setModalOpen(true);
+      onClose();
+    }
+  }, [isOpen, isLockedOut, setModalOpen, onClose]);
 
   // Revoke any object URL when the dialog closes or file changes
   useEffect(() => {
@@ -90,7 +101,8 @@ export function FilePreviewDialog({
     let cancelled = false;
 
     async function run() {
-      if (!isOpen || !file) return;
+      // Don't run the fetch if we are locked out (prevents unnecessary network requests)
+      if (!isOpen || !file || isLockedOut) return;
 
       setLoading(true);
       setError("");
@@ -118,6 +130,7 @@ export function FilePreviewDialog({
         setIsEncrypted(true);
 
         if (!privateKey) {
+          setModalOpen(true);
           throw new Error(
             "Your files are encrypted. Please unlock your vault to preview this file.",
           );
@@ -294,7 +307,7 @@ export function FilePreviewDialog({
               </DialogTitle>
               <DialogDescription className="truncate text-xs text-muted-foreground">
                 {formatMB(file.size)} MB • {file.contentType}
-                {isEncrypted && " • End-to-end encrypted"}
+                {isEncrypted && " • e2e encrypted"}
               </DialogDescription>
             </div>
 
