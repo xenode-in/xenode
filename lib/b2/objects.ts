@@ -8,6 +8,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getS3Client } from "./client";
+import { getSignedFileUrl } from "./cdn";
 
 export interface B2ObjectInfo {
   key: string;
@@ -112,13 +113,20 @@ export async function getObjectMetadata(
 }
 
 /**
- * Generate a pre-signed URL for downloading an object
+ * Generate a URL for downloading an object.
+ * If AZURE_CDN_URL is set, returns a signed proxy URL routed through Azure CDN
+ * (private-bucket safe — token validated server-side before B2 access).
+ * Otherwise falls back to a short-lived pre-signed B2 URL.
  */
 export async function getDownloadUrl(
   bucketName: string,
   key: string,
   expiresIn: number = 3600,
 ): Promise<string> {
+  if (process.env.AZURE_CDN_URL) {
+    return getSignedFileUrl(bucketName, key, expiresIn);
+  }
+
   const command = new GetObjectCommand({
     Bucket: bucketName,
     Key: key,
