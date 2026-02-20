@@ -123,8 +123,8 @@ export function FilePreviewDialog({
           );
         }
 
-        // 3. Fetch raw ciphertext
-        const ciphertextRes = await fetch(data.url);
+        // 3. Fetch raw ciphertext via same-origin proxy to avoid CDN CORS block
+        const ciphertextRes = await fetch(`/api/objects/${file.id}/content`);
         if (!ciphertextRes.ok) throw new Error("Failed to download file");
         const ciphertextBuf = await ciphertextRes.arrayBuffer();
 
