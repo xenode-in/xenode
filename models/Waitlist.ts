@@ -11,7 +11,6 @@ const WaitlistSchema = new Schema<IWaitlist>(
     email: {
       type: String,
       required: [true, "Email is required"],
-      unique: true,
       lowercase: true,
       trim: true,
       match: [/^\S+@\S+\.\S+$/, "Please enter a valid email"],
@@ -25,6 +24,14 @@ const WaitlistSchema = new Schema<IWaitlist>(
     timestamps: true,
   },
 );
+
+/**
+ * Indexes
+ *
+ * - email: unique – prevents duplicate signups and serves the
+ *          findOne({ email }) lookup on submission
+ */
+WaitlistSchema.index({ email: 1 }, { unique: true });
 
 // Prevent model recompilation in development
 const Waitlist: Model<IWaitlist> =
