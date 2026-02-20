@@ -56,5 +56,5 @@ export function getSignedFileUrl(
     process.env.NEXT_PUBLIC_APP_URL ||
     "http://localhost:3000";
 
-  return `${base.replace(/\/$/, "")}/${bucketName}/${key}?exp=${exp}&sig=${sig}`;
+  return `${base.replace(/\/$/, "")}/api/files/${bucketName}/${key}?exp=${exp}&sig=${sig}`;
 }
