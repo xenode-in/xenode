@@ -31,22 +31,6 @@ const themes = [
     },
   },
   {
-    id: "imperial",
-    name: "Imperial Blue",
-    colors: {
-      bg: "bg-[#000818]",
-      primary: "bg-[#1664ff]",
-    },
-  },
-  {
-    id: "deep-navy",
-    name: "Deep Navy",
-    colors: {
-      bg: "bg-[#000613]",
-      primary: "bg-[#075aff]",
-    },
-  },
-  {
     id: "xenode-green",
     name: "Xenode Green",
     colors: {
