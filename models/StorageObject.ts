@@ -12,6 +12,7 @@ export interface IStorageObject extends Document {
   position: number;
   createdAt: Date;
   updatedAt: Date;
+  thumbnail?: string;
 }
 
 const StorageObjectSchema = new Schema<IStorageObject>(
@@ -53,14 +54,32 @@ const StorageObjectSchema = new Schema<IStorageObject>(
       type: Number,
       default: 0,
     },
+    thumbnail: {
+      type: String,
+      required: false,
+    },
   },
   {
     timestamps: true,
   },
 );
 
-// Compound index for bucket + key uniqueness
+/**
+ * Indexes
+ *
+ * - bucketId:              single – base bucket filter (kept)
+ * - userId:                single – base ownership filter (kept)
+ * - {bucketId, key}:       compound unique – prevents duplicate keys per bucket
+ * - {bucketId, createdAt}: compound – covers primary listing: find({bucketId}).sort({createdAt:-1})
+ * - {userId, _id}:         compound – covers ownership checks: findOne({_id, userId})
+ *                          and aggregate $match{userId} pipelines
+ * - {key, bucketId}:       compound – enables regex-prefix scans on key
+ *                          (move, system-bucket folder filtering)
+ */
 StorageObjectSchema.index({ bucketId: 1, key: 1 }, { unique: true });
+StorageObjectSchema.index({ bucketId: 1, createdAt: -1 });
+StorageObjectSchema.index({ userId: 1, _id: 1 });
+StorageObjectSchema.index({ key: 1, bucketId: 1 });
 
 const StorageObject: Model<IStorageObject> =
   mongoose.models.StorageObject ||

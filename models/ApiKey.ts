@@ -49,6 +49,16 @@ const ApiKeySchema = new Schema<IApiKey>(
 );
 
 /**
+ * Indexes
+ *
+ * - keyHash:         unique – authentication token lookups (findOne({ keyHash }))
+ * - userId:          single – ownership filter base (kept for lean queries)
+ * - {userId, createdAt}: compound – covers list queries: find({userId}).sort({createdAt:-1})
+ *                        and countDocuments({userId}) with no in-memory sort
+ */
+ApiKeySchema.index({ userId: 1, createdAt: -1 });
+
+/**
  * Generate a new API key and return both the full key (shown once) and the hash
  */
 export function generateApiKey(): {

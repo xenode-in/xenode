@@ -52,8 +52,16 @@ const BucketSchema = new Schema<IBucket>(
   },
 );
 
-// Compound index for user + bucket name uniqueness
+/**
+ * Indexes
+ *
+ * - userId:              single – base ownership filter
+ * - b2BucketId:          unique – foreign-key lookups
+ * - {userId, name}:      compound unique – prevents duplicate bucket names per user
+ * - {userId, createdAt}: compound – covers list queries: find({userId}).sort({createdAt:-1})
+ */
 BucketSchema.index({ userId: 1, name: 1 }, { unique: true });
+BucketSchema.index({ userId: 1, createdAt: -1 });
 
 const Bucket: Model<IBucket> =
   mongoose.models.Bucket || mongoose.model<IBucket>("Bucket", BucketSchema);

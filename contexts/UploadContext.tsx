@@ -30,6 +30,55 @@ const UploadContext = createContext<UploadContextType | undefined>(undefined);
 
 const MAX_CONCURRENT_UPLOADS = 5;
 
+// Helper to resize image and get base64
+const generateThumbnail = (file: File): Promise<string | undefined> => {
+  return new Promise((resolve) => {
+    if (!file.type.startsWith("image/")) {
+      resolve(undefined);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX_SIZE = 320; // Increased from 100 for better quality (Google Drive style)
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_SIZE) {
+            height *= MAX_SIZE / width;
+            width = MAX_SIZE;
+          }
+        } else {
+          if (height > MAX_SIZE) {
+            width *= MAX_SIZE / height;
+            height = MAX_SIZE;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL("image/jpeg", 0.8));
+        } else {
+          resolve(undefined);
+        }
+      };
+      img.onerror = () => resolve(undefined);
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = () => resolve(undefined);
+    reader.readAsDataURL(file);
+  });
+};
+
 export function UploadProvider({ children }: { children: React.ReactNode }) {
   const [tasks, setTasks] = useState<UploadTask[]>([]);
   const [activeUploads, setActiveUploads] = useState(0);
@@ -71,6 +120,14 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     );
 
     try {
+      // Step 0: Generate thumbnail if image
+      let thumbnail: string | undefined;
+      try {
+        thumbnail = await generateThumbnail(task.file);
+      } catch (err) {
+        console.warn("Failed to generate thumbnail", err);
+      }
+
       // Step 1: Get presigned URL from server
       const presignResponse = await fetch("/api/objects/presign-upload", {
         method: "POST",
@@ -145,6 +202,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           bucketId: returnedBucketId,
           size: task.file.size,
           contentType: task.file.type,
+          thumbnail,
         }),
       });
 

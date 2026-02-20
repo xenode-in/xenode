@@ -14,7 +14,8 @@ export async function POST(request: NextRequest) {
     const session = await requireAuth();
     const userId = session.user.id;
 
-    const { objectKey, bucketId, size, contentType } = await request.json();
+    const { objectKey, bucketId, size, contentType, thumbnail } =
+      await request.json();
 
     if (!objectKey || !bucketId || !size) {
       return NextResponse.json(
@@ -64,6 +65,7 @@ export async function POST(request: NextRequest) {
       existingObject.size = size;
       existingObject.contentType = contentType;
       existingObject.b2FileId = b2FileId; // Update File ID
+      if (thumbnail) existingObject.thumbnail = thumbnail;
       await existingObject.save();
 
       if (sizeDiff !== 0) {
@@ -82,6 +84,7 @@ export async function POST(request: NextRequest) {
       size,
       contentType,
       b2FileId, // Save the retrieved ID
+      thumbnail,
     });
 
     // Update usage

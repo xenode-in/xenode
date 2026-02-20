@@ -82,6 +82,7 @@ interface ObjectData {
   createdAt: string;
   tags?: string[];
   position?: number;
+  thumbnail?: string;
 }
 
 interface BucketData {
@@ -741,6 +742,85 @@ export default function FilesPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Ignore if input/textarea is focused
+      if (
+        document.activeElement instanceof HTMLInputElement ||
+        document.activeElement instanceof HTMLTextAreaElement
+      ) {
+        return;
+      }
+
+      // Delete
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (
+          selectedIds.size > 0 &&
+          !isCreateFolderOpen &&
+          deleteIds.length === 0
+        ) {
+          e.preventDefault();
+          setDeleteIds(Array.from(selectedIds));
+        }
+      }
+
+      // Ctrl+A / Cmd+A (Select All)
+      if ((e.ctrlKey || e.metaKey) && e.key === "a") {
+        e.preventDefault();
+        const allIds = new Set([
+          ...viewObjects.folders.map((f) => f.id),
+          ...viewObjects.files.map((f) => f.id),
+        ]);
+        setSelectedIds(allIds);
+      }
+
+      // Escape (Clear Selection)
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSelectedIds(new Set());
+        setPreviewFile(null);
+        setTaggingObj(null);
+        setIsCreateFolderOpen(false);
+        setDeleteIds([]);
+      }
+
+      // Ctrl+X / Cmd+X (Cut)
+      if ((e.ctrlKey || e.metaKey) && e.key === "x") {
+        e.preventDefault();
+        if (selectedIds.size > 0) {
+          const items = [...viewObjects.folders, ...viewObjects.files].filter(
+            (i) => selectedIds.has(i.id),
+          );
+          setClipboard({ action: "move", items });
+          // Optional: Add some visual feedback or toast
+        }
+      }
+
+      // Ctrl+C / Cmd+C (Copy - placeholder if we implement copy later, currently move only)
+      // For now, let's just leave it or strictly implement what file explorer does?
+      // User only asked specifically for ctrl+x.
+
+      // Ctrl+V / Cmd+V (Paste)
+      if ((e.ctrlKey || e.metaKey) && e.key === "v") {
+        e.preventDefault();
+        if (clipboard) {
+          handlePaste();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    selectedIds,
+    viewObjects,
+    isCreateFolderOpen,
+    deleteIds,
+    clipboard,
+    handlePaste,
+  ]);
 
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {

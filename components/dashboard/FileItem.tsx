@@ -29,6 +29,7 @@ interface ObjectData {
   createdAt: string;
   tags?: string[];
   position?: number;
+  thumbnail?: string;
 }
 
 interface ItemProps {
@@ -161,6 +162,12 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
           <div className="flex items-center gap-3 text-foreground font-medium">
             {isFolder ? (
               <Folder className="w-5 h-5 text-primary fill-primary/20" />
+            ) : item.thumbnail ? (
+              <img
+                src={item.thumbnail}
+                alt={name}
+                className="w-8 h-8 rounded object-cover border border-border"
+              />
             ) : (
               <FileText className="w-4 h-4 text-muted-foreground/30" />
             )}
@@ -399,9 +406,15 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
           </>
         ) : (
           <>
-            <div className="flex-1 flex items-center justify-center w-full p-4 pb-0">
-              {item.contentType.startsWith("image/") ||
-              item.contentType.startsWith("video/") ? (
+            <div className="flex-1 flex items-center justify-center w-full p-4 pb-0 overflow-hidden">
+              {item.thumbnail ? (
+                <img
+                  src={item.thumbnail}
+                  alt={name}
+                  className="w-full h-full object-contain rounded"
+                />
+              ) : item.contentType.startsWith("image/") ||
+                item.contentType.startsWith("video/") ? (
                 <div className="relative w-full h-full flex items-center justify-center">
                   <FileText className="w-10 h-10 text-primary" />
                 </div>
