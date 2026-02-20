@@ -1,27 +1,32 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { UnlockVaultModal } from "@/components/dashboard/UnlockVaultModal";
 
-/**
- * Client boundary that renders the UnlockVaultModal when the vault is not
- * yet unlocked. Children (the dashboard pages) render normally even before
- * unlock — they just won't be able to decrypt files until the modal is completed.
- */
 export function CryptoDashboardWrapper({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { isUnlocked, needsSetup } = useCrypto();
+  const { isInitializing, isUnlocked, isModalOpen, setModalOpen } = useCrypto();
+  const [dismissed, setDismissed] = useState(false);
 
-  const showModal = !isUnlocked;
+  // Show modal if explicitly requested, OR if not-unlocked and not-dismissed yet
+  // Wait until initialization check is complete to prevent a split-second flash
+  const showModal =
+    !isInitializing && (isModalOpen || (!isUnlocked && !dismissed));
 
   return (
     <>
       {children}
-      <UnlockVaultModal open={showModal} />
+      <UnlockVaultModal
+        open={showModal}
+        onClose={() => {
+          setModalOpen(false);
+          setDismissed(true);
+        }}
+      />
     </>
   );
 }

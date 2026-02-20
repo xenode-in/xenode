@@ -22,11 +22,11 @@ import {
 import { useCrypto } from "@/contexts/CryptoContext";
 
 interface UnlockVaultModalProps {
-  /** Modal cannot be dismissed — user must unlock or set up to use encrypted features */
   open: boolean;
+  onClose: () => void;
 }
 
-export function UnlockVaultModal({ open }: UnlockVaultModalProps) {
+export function UnlockVaultModal({ open, onClose }: UnlockVaultModalProps) {
   const { needsSetup, unlock, setup } = useCrypto();
 
   const [password, setPassword] = useState("");
@@ -57,6 +57,7 @@ export function UnlockVaultModal({ open }: UnlockVaultModalProps) {
       } else {
         await unlock(password);
       }
+      onClose();
     } catch (err: unknown) {
       if (err instanceof Error) {
         if (err.message === "WRONG_PASSWORD") {
@@ -71,13 +72,13 @@ export function UnlockVaultModal({ open }: UnlockVaultModalProps) {
   }
 
   return (
-    <Dialog open={open}>
-      <DialogContent
-        className="sm:max-w-md"
-        // Prevent closing by clicking outside or pressing Escape
-        onInteractOutside={(e) => e.preventDefault()}
-        onEscapeKeyDown={(e) => e.preventDefault()}
-      >
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) onClose();
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
             {isSetup ? (
