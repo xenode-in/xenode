@@ -1,18 +1,20 @@
 "use client";
 
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
   DialogTitle,
   DialogDescription,
+  DialogClose,
 } from "@/components/ui/dialog";
-import React, { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Loader2, AlertCircle, X } from "lucide-react";
+
 import { Plyr } from "plyr-react";
 import "plyr-react/plyr.css";
+
 import DocViewer, { DocViewerRenderers } from "@cyntler/react-doc-viewer";
-import { Loader2, AlertCircle } from "lucide-react";
-import { Button } from "@/components/ui/button";
 
 interface ObjectData {
   id: string;
@@ -35,22 +37,24 @@ const MediaPlayer = ({ url, type }: { url: string; type: string }) => {
       <Plyr
         source={{
           type: isAudio ? "audio" : "video",
-          sources: [
-            {
-              src: url,
-              type: type,
-            },
-          ],
+          sources: [{ src: url, type }],
         }}
-        options={{
-          autoplay: true,
-        }}
+        options={{ autoplay: true }}
       />
     </div>
   );
 };
-// Memoize to prevent re-renders if props haven't changed
+
 const MemoizedMediaPlayer = React.memo(MediaPlayer);
+
+function fileNameFromKey(key: string) {
+  const part = key.split("/").pop();
+  return part || key;
+}
+
+function formatMB(bytes: number) {
+  return (bytes / 1024 / 1024).toFixed(2);
+}
 
 export function FilePreviewDialog({
   file,
@@ -62,71 +66,95 @@ export function FilePreviewDialog({
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (isOpen && file) {
+    let cancelled = false;
+
+    async function run() {
+      if (!isOpen || !file) return;
+
       setLoading(true);
       setError("");
-      // Fetch fresh url
-      fetch(`/api/objects/${file.id}`)
-        .then((res) => {
-          if (!res.ok) throw new Error("Failed to get URL");
-          return res.json();
-        })
-        .then((data) => {
-          if (data.url) setUrl(data.url);
-          else throw new Error("No URL returned");
-        })
-        .catch((err) => {
-          console.error(err);
-          setError("Failed to load preview. Please try downloading instead.");
-        })
-        .finally(() => setLoading(false));
-    } else {
       setUrl(null);
-      setError("");
+
+      try {
+        const res = await fetch(`/api/objects/${file.id}`);
+        if (!res.ok) throw new Error("Failed to get URL");
+        const data = await res.json();
+        if (!data?.url) throw new Error("No URL returned");
+        if (!cancelled) setUrl(data.url);
+      } catch (e) {
+        console.error(e);
+        if (!cancelled)
+          setError("Failed to load preview. Please try downloading instead.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
+
+    run();
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen, file]);
 
+  const docs = useMemo(() => {
+    if (!url || !file) return [];
+    return [{ uri: url, fileType: file.contentType }];
+  }, [url, file]);
+
   if (!file) return null;
+
+  const name = fileNameFromKey(file.key);
+  const type = file.contentType;
 
   const renderContent = () => {
     if (loading) {
       return (
-        <div className="flex flex-col items-center justify-center p-20 min-h-[300px]">
-          <Loader2 className="w-8 h-8 animate-spin text-primary mb-4" />
-          <p className="text-muted-foreground/60">Loading preview...</p>
+        <div className="grid h-full min-h-[40vh] place-items-center">
+          <div className="flex flex-col items-center">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="mt-3 text-sm text-muted-foreground">
+              Loading preview...
+            </p>
+          </div>
         </div>
       );
     }
 
     if (error) {
       return (
-        <div className="flex flex-col items-center justify-center p-20 min-h-[300px] text-center">
-          <AlertCircle className="w-12 h-12 text-destructive mb-4" />
-          <p className="text-destructive mb-6">{error}</p>
-          <Button
-            onClick={onClose}
-            variant="outline"
-            className="text-foreground"
-          >
-            Close Preview
-          </Button>
+        <div className="grid h-full min-h-[40vh] place-items-center px-6 text-center">
+          <div className="flex flex-col items-center">
+            <AlertCircle className="h-10 w-10 text-destructive" />
+            <p className="mt-3 text-sm text-destructive">{error}</p>
+            <div className="mt-5 flex gap-2">
+              {url && (
+                <Button
+                  variant="outline"
+                  onClick={() => window.open(url, "_blank")}
+                >
+                  Download
+                </Button>
+              )}
+              <DialogClose asChild>
+                <Button variant="secondary">Close</Button>
+              </DialogClose>
+            </div>
+          </div>
         </div>
       );
     }
 
     if (!url) return null;
 
-    const type = file.contentType;
-
     // Image
     if (type.startsWith("image/")) {
       return (
-        <div className="flex items-center justify-center bg-black/40 rounded-lg overflow-hidden min-h-[300px] max-h-[70vh]">
+        <div className="grid h-full place-items-center bg-black/40 p-2 sm:p-4">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={url}
-            alt={file.key}
-            className="max-w-full max-h-full object-contain"
+            alt={name}
+            className="max-h-[calc(100dvh-8.5rem)] w-auto max-w-full object-contain"
           />
         </div>
       );
@@ -135,34 +163,26 @@ export function FilePreviewDialog({
     // Video or Audio
     if (type.startsWith("video/") || type.startsWith("audio/")) {
       return (
-        <div
-          className={`rounded-lg overflow-hidden bg-black w-full flex items-center justify-center ${
-            type.startsWith("video/") ? "aspect-video" : "min-h-[150px]"
-          }`}
-        >
-          <MemoizedMediaPlayer url={url} type={type} />
+        <div className="h-full w-full bg-black flex items-center justify-center flex-col">
+          <div className={type.startsWith("video/") ? "aspect-video" : "py-4"}>
+            <MemoizedMediaPlayer url={url} type={type} />
+          </div>
         </div>
       );
     }
 
-    // PDF -> Explicit iframe usually better than DocViewer for simple PDF
+    // PDF
     if (type === "application/pdf") {
       return (
-        <div className="w-full h-[70vh] bg-white rounded-lg overflow-hidden">
-          <iframe
-            src={url}
-            className="w-full h-full border-0"
-            title={file.key}
-          />
+        <div className="h-full w-full bg-white">
+          <iframe src={url} className="h-full w-full border-0" title={name} />
         </div>
       );
     }
 
-    // Docs (DocViewer)
-    const docs = [{ uri: url, fileType: type }];
-
+    // Other docs (DocViewer)
     return (
-      <div className="w-full h-[70vh] bg-white rounded-lg overflow-hidden doc-viewer-container">
+      <div className="h-full w-full bg-white">
         <DocViewer
           documents={docs}
           pluginRenderers={DocViewerRenderers}
@@ -182,31 +202,50 @@ export function FilePreviewDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-5xl w-full bg-card border-border text-foreground p-0 overflow-hidden gap-0">
-        <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-card/50">
-          <div>
-            <DialogTitle className="text-lg font-medium text-foreground truncate max-w-md">
-              {file.key.split("/").pop()}
-            </DialogTitle>
-            <DialogDescription className="text-muted-foreground/40 text-xs mt-1">
-              {(file.size / 1024 / 1024).toFixed(2)} MB • {file.contentType}
-            </DialogDescription>
+      <DialogContent
+        className="
+        p-0 overflow-hidden bg-card border-border
+        w-screen max-w-full h-[100dvh] max-h-[100dvh] rounded-none
+        sm:rounded-xl
+        sm:w-[calc(100vw-2rem)] sm:max-w-5xl sm:h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-2rem)]
+        lg:max-w-6xl
+      "
+      >
+        <div className="flex h-full w-full flex-col overflow-x-hidden">
+          {/* Top bar */}
+          <div className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b bg-card/95 px-4 py-3 backdrop-blur sm:px-5">
+            <div className="min-w-0">
+              <DialogTitle className="truncate text-sm font-medium sm:text-base">
+                {name}
+              </DialogTitle>
+              <DialogDescription className="truncate text-xs text-muted-foreground">
+                {formatMB(file.size)} MB • {file.contentType}
+              </DialogDescription>
+            </div>
+
+            <div className="flex shrink-0 items-center gap-2">
+              {url && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => window.open(url, "_blank")}
+                >
+                  Download
+                </Button>
+              )}
+
+              <DialogClose asChild>
+                <Button variant="ghost" size="icon" aria-label="Close">
+                  <X className="h-5 w-5" />
+                </Button>
+              </DialogClose>
+            </div>
           </div>
-          <div className="flex gap-2">
-            {url && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => window.open(url, "_blank")}
-                className="text-primary border-primary/20 hover:bg-primary/10 h-8"
-              >
-                Download
-              </Button>
-            )}
+
+          {/* Preview area */}
+          <div className="flex-1 overflow-hidden">
+            <div className="h-full w-full">{renderContent()}</div>
           </div>
-        </div>
-        <div className="p-6 bg-muted/50 flex items-center justify-center">
-          {renderContent()}
         </div>
       </DialogContent>
     </Dialog>
