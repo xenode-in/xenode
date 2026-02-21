@@ -16,13 +16,17 @@ interface RouteParams {
  *
  * Proxy-fetches the raw file bytes from B2/CDN and streams them back to the
  * browser with permissive CORS headers.  Used exclusively for encrypted files
- * so that `fetch()` in FilePreviewDialog doesn't get blocked by CORS (the CDN
- * does not send Access-Control-Allow-Origin).
+ * so that `fetch()` in FilePreviewDialog / DownloadContext doesn't get blocked
+ * by CORS (the CDN does not send Access-Control-Allow-Origin).
+ *
+ * Supports HTTP Range requests for resumable downloads: the Range header is
+ * forwarded verbatim to the upstream (B2 / Azure CDN) so clients can request
+ * a byte range and resume a previously-interrupted transfer.
  *
  * Auth is checked server-side, so the signed CDN URL is never exposed to a
  * different origin and the ciphertext is only forwarded to the owning user.
  */
-export async function GET(_request: NextRequest, { params }: RouteParams) {
+export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const session = await requireAuth();
     const userId = session.user.id;
@@ -51,9 +55,30 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 
     // Get a fresh signed URL and fetch the ciphertext server-side
     const signedUrl = await getDownloadUrl(bucket.b2BucketId, object.key);
-    const upstream = await fetch(signedUrl);
+    console.log("[Content API] Fetching from CDN/B2:", signedUrl);
 
-    if (!upstream.ok) {
+    // Forward the Range header if present so we can resume interrupted downloads
+    const upstreamHeaders: Record<string, string> = {};
+    const rangeHeader = request.headers.get("Range");
+    if (rangeHeader) {
+      upstreamHeaders["Range"] = rangeHeader;
+      console.log("[Content API] Forwarding Range:", rangeHeader);
+    }
+
+    const upstream = await fetch(signedUrl, {
+      headers: upstreamHeaders,
+    });
+    console.log(
+      "[Content API] Upstream Status:",
+      upstream.status,
+      upstream.statusText,
+    );
+
+    if (!upstream.ok && upstream.status !== 206) {
+      console.error(
+        "[Content API] Upstream fetch failed:",
+        await upstream.text(),
+      );
       return NextResponse.json(
         { error: "Failed to fetch file from storage" },
         { status: 502 },
@@ -66,16 +91,23 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       "Content-Type",
       upstream.headers.get("Content-Type") ?? "application/octet-stream",
     );
+
     const contentLength = upstream.headers.get("Content-Length");
     if (contentLength) headers.set("Content-Length", contentLength);
+
+    // Forward range-related headers for resume support
+    const contentRange = upstream.headers.get("Content-Range");
+    if (contentRange) headers.set("Content-Range", contentRange);
+    headers.set("Accept-Ranges", "bytes");
+
     // Allow the browser (same origin) to read the response body
     headers.set("Access-Control-Allow-Origin", "*");
     headers.set("Cache-Control", "private, no-store");
 
-    return new NextResponse(upstream.body, {
-      status: 200,
-      headers,
-    });
+    // 206 for partial content, 200 for full content
+    const status = upstream.status === 206 ? 206 : 200;
+
+    return new NextResponse(upstream.body, { status, headers });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

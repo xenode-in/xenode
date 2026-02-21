@@ -43,6 +43,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useUpload } from "@/contexts/UploadContext";
+import { useCrypto } from "@/contexts/CryptoContext";
+import { useDownload } from "@/contexts/DownloadContext";
 import { useDropzone } from "react-dropzone";
 import dynamic from "next/dynamic";
 import {
@@ -83,6 +85,7 @@ interface ObjectData {
   tags?: string[];
   position?: number;
   thumbnail?: string;
+  isEncrypted?: boolean;
 }
 
 interface BucketData {
@@ -713,8 +716,10 @@ export default function FilesPage() {
     localStorage.setItem("filesViewMode", mode);
   };
 
-  // Global upload context
+  // Global context imports
   const { addTasks, tasks } = useUpload();
+  const { privateKey, setModalOpen } = useCrypto();
+  const { startDownload } = useDownload();
 
   // Track completed uploads to trigger refresh
   const prevCompletedCountRef = useRef(0);
@@ -821,6 +826,19 @@ export default function FilesPage() {
     clipboard,
     handlePaste,
   ]);
+
+  // Resume download event — fired by the Resume button in DownloadProgress
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { id } = (e as CustomEvent<{ id: string }>).detail;
+      const obj = objects.find((o) => o.id === id);
+      if (obj) {
+        handleDownload(obj);
+      }
+    };
+    window.addEventListener("xenode:resumeDownload", handler);
+    return () => window.removeEventListener("xenode:resumeDownload", handler);
+  }, [objects, privateKey]);
 
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
@@ -942,21 +960,13 @@ export default function FilesPage() {
   };
 
   const handleDownload = async (obj: ObjectData) => {
-    setDownloadingId(obj.id);
     try {
-      const res = await fetch(`/api/objects/${obj.id}`);
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to get download URL");
+      await startDownload(obj, !!obj.isEncrypted, privateKey);
+    } catch (err: any) {
+      if (err.message.includes("Vault locked")) {
+        setModalOpen(true);
       }
-
-      if (data.url) {
-        window.open(data.url, "_blank");
-      }
-    } catch (err) {
-      setError("Download failed");
-    } finally {
-      setDownloadingId(null);
+      setError(err?.message || "Download failed");
     }
   };
 

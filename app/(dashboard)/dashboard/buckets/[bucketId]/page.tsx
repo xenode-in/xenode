@@ -40,6 +40,8 @@ import Link from "next/link";
 import { useUpload } from "@/contexts/UploadContext";
 import { useDropzone } from "react-dropzone";
 import { FilePreviewDialog } from "@/components/dashboard/FilePreviewDialog";
+import { useCrypto } from "@/contexts/CryptoContext";
+import { decryptFile } from "@/lib/crypto/fileEncryption";
 
 interface ObjectData {
   id: string;
@@ -47,6 +49,7 @@ interface ObjectData {
   size: number;
   contentType: string;
   createdAt: string;
+  isEncrypted?: boolean;
 }
 
 interface BucketData {
@@ -114,6 +117,7 @@ export default function BucketDetailPage() {
 
   // Global upload context
   const { addTasks } = useUpload();
+  const { privateKey, setModalOpen } = useCrypto();
 
   const fetchData = useCallback(async () => {
     try {
@@ -282,11 +286,40 @@ export default function BucketDetailPage() {
         throw new Error(data.error || "Failed to get download URL");
       }
 
-      if (data.url) {
-        window.open(data.url, "_blank");
+      if (!data.isEncrypted) {
+        if (data.url) {
+          window.open(data.url, "_blank");
+        }
+        return;
       }
-    } catch (err) {
-      setError("Download failed");
+
+      // Encrypted file handling
+      if (!privateKey) {
+        setModalOpen(true);
+        throw new Error("Vault locked. Please unlock first.");
+      }
+
+      const ciphertextRes = await fetch(`/api/objects/${obj.id}/content`);
+      if (!ciphertextRes.ok) throw new Error("Failed to download file content");
+      const ciphertextBuf = await ciphertextRes.arrayBuffer();
+
+      const decryptedBlob = await decryptFile(
+        ciphertextBuf,
+        data.encryptedDEK,
+        data.iv,
+        privateKey,
+        data.contentType ?? obj.contentType,
+      );
+
+      const objectUrl = URL.createObjectURL(decryptedBlob);
+      const a = document.createElement("a");
+      a.href = objectUrl;
+      const name = obj.key.split("/").pop() || "download";
+      a.download = name;
+      a.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err: any) {
+      setError(err?.message || "Download failed");
     } finally {
       setDownloadingId(null);
     }
