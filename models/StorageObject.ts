@@ -89,19 +89,24 @@ const StorageObjectSchema = new Schema<IStorageObject>(
 /**
  * Indexes
  *
- * - bucketId:              single – base bucket filter (kept)
- * - userId:                single – base ownership filter (kept)
- * - {bucketId, key}:       compound unique – prevents duplicate keys per bucket
- * - {bucketId, createdAt}: compound – covers primary listing: find({bucketId}).sort({createdAt:-1})
- * - {userId, _id}:         compound – covers ownership checks: findOne({_id, userId})
- *                          and aggregate $match{userId} pipelines
- * - {key, bucketId}:       compound – enables regex-prefix scans on key
- *                          (move, system-bucket folder filtering)
+ * - bucketId:                single  – base bucket filter (kept)
+ * - userId:                  single  – base ownership filter (kept)
+ * - {bucketId, key}:         compound unique – prevents duplicate keys per bucket
+ * - {bucketId, createdAt}:   compound – covers primary listing: find({bucketId}).sort({createdAt:-1})
+ * - {userId, _id}:           compound – covers ownership checks: findOne({_id, userId})
+ *                            and aggregate $match{userId} pipelines
+ * - {key, bucketId}:         compound – enables range-prefix scans on key
+ *                            (move, system-bucket folder filtering)
+ * - {bucketId, position}:    compound – covers reorder queries that sort/filter by
+ *                            position within a bucket; avoids in-memory sort
+ * - {tags}:                  single   – enables efficient tag-based filtering
  */
 StorageObjectSchema.index({ bucketId: 1, key: 1 }, { unique: true });
 StorageObjectSchema.index({ bucketId: 1, createdAt: -1 });
 StorageObjectSchema.index({ userId: 1, _id: 1 });
 StorageObjectSchema.index({ key: 1, bucketId: 1 });
+StorageObjectSchema.index({ bucketId: 1, position: 1 });
+StorageObjectSchema.index({ tags: 1 });
 
 const StorageObject: Model<IStorageObject> =
   mongoose.models.StorageObject ||
