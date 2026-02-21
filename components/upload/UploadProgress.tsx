@@ -45,21 +45,21 @@ export function UploadProgress() {
       : 0;
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 w-96 max-w-[calc(100vw-2rem)]">
-      <div className="bg-[#1a2e1d] border border-white/10 rounded-lg shadow-2xl overflow-hidden">
+    <div className="w-96 max-w-[calc(100vw-2rem)] shrink-0">
+      <div className="bg-card border border-border rounded-lg shadow-2xl overflow-hidden">
         {/* Header */}
         <div
           className="flex items-center justify-between px-4 py-3 border-b border-white/5 cursor-pointer hover:bg-white/5 transition-colors"
           onClick={() => setIsExpanded(!isExpanded)}
         >
           <div className="flex items-center gap-3">
-            <Loader2 className="w-4 h-4 text-[#7cb686] animate-spin" />
+            <Loader2 className="w-4 h-4 text-primary animate-spin" />
             <div>
-              <p className="text-sm font-medium text-[#e8e4d9]">
+              <p className="text-sm font-medium text-card-foreground">
                 Uploading {activeTasks.length} file
                 {activeTasks.length !== 1 ? "s" : ""}
               </p>
-              <p className="text-xs text-[#e8e4d9]/50">
+              <p className="text-xs text-muted-foreground">
                 {completedTasks.length} completed • {failedTasks.length} failed
               </p>
             </div>
@@ -73,7 +73,7 @@ export function UploadProgress() {
                   e.stopPropagation();
                   clearCompleted();
                 }}
-                className="text-xs text-[#e8e4d9]/60 hover:text-[#e8e4d9] h-7 px-2"
+                className="text-xs text-muted-foreground hover:text-card-foreground h-7 px-2"
               >
                 Clear
               </Button>
@@ -81,7 +81,7 @@ export function UploadProgress() {
             <Button
               variant="ghost"
               size="icon"
-              className="h-7 w-7 text-[#e8e4d9]/60 hover:text-[#e8e4d9]"
+              className="h-7 w-7 text-muted-foreground hover:text-card-foreground"
             >
               {isExpanded ? (
                 <ChevronDown className="w-4 h-4" />
@@ -96,10 +96,10 @@ export function UploadProgress() {
         {isExpanded && activeTasks.length > 0 && (
           <div className="px-4 py-3 border-b border-white/5 bg-white/5">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-[#e8e4d9]/60">
+              <span className="text-xs text-muted-foreground">
                 Overall Progress
               </span>
-              <span className="text-xs font-medium text-[#e8e4d9]">
+              <span className="text-xs font-medium text-card-foreground">
                 {totalProgress}%
               </span>
             </div>
@@ -119,10 +119,10 @@ export function UploadProgress() {
                   {/* Status Icon */}
                   <div className="mt-0.5">
                     {task.status === "uploading" && (
-                      <Loader2 className="w-4 h-4 text-[#7cb686] animate-spin" />
+                      <Loader2 className="w-4 h-4 text-primary animate-spin" />
                     )}
                     {task.status === "pending" && (
-                      <div className="w-4 h-4 rounded-full border-2 border-[#e8e4d9]/20" />
+                      <div className="w-4 h-4 rounded-full border-2 border-primary/20" />
                     )}
                     {task.status === "completed" && (
                       <CheckCircle2 className="w-4 h-4 text-green-500" />
@@ -134,11 +134,11 @@ export function UploadProgress() {
 
                   {/* File Info */}
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-[#e8e4d9] truncate">
+                    <p className="text-sm text-card-foreground truncate">
                       {task.file.name}
                     </p>
                     <div className="flex items-center gap-2 mt-1">
-                      <p className="text-xs text-[#e8e4d9]/40">
+                      <p className="text-xs text-muted-foreground">
                         {(task.file.size / 1024 / 1024).toFixed(2)} MB
                       </p>
                       {task.status === "failed" && task.error && (
@@ -162,7 +162,7 @@ export function UploadProgress() {
                       variant="ghost"
                       size="icon"
                       onClick={() => removeTask(task.id)}
-                      className="h-6 w-6 text-[#e8e4d9]/40 hover:text-[#e8e4d9]"
+                      className="h-6 w-6 text-muted-foreground hover:text-card-foreground"
                     >
                       <X className="w-3 h-3" />
                     </Button>
