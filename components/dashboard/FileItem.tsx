@@ -20,7 +20,9 @@ import {
   Lock,
 } from "lucide-react";
 import { formatBytes, formatDate } from "@/lib/utils";
-import { forwardRef, useRef, useCallback } from "react";
+import { forwardRef, useRef, useCallback, useState, useEffect } from "react";
+import { useCrypto } from "@/contexts/CryptoContext";
+import { decryptFileName } from "@/lib/crypto/fileEncryption";
 
 interface ObjectData {
   id: string; // use id, not _id
@@ -32,6 +34,7 @@ interface ObjectData {
   position?: number;
   thumbnail?: string;
   isEncrypted?: boolean;
+  encryptedName?: string;
 }
 
 interface ItemProps {
@@ -76,18 +79,31 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     const isFolder =
       item.contentType === "application/x-directory" || item.key.endsWith("/");
 
+    const { isUnlocked } = useCrypto();
+    const [decryptedName, setDecryptedName] = useState<string | null>(null);
+
+    useEffect(() => {
+      if (item.isEncrypted && item.encryptedName && isUnlocked) {
+        decryptFileName(item.encryptedName).then(setDecryptedName);
+      } else {
+        setDecryptedName(null);
+      }
+    }, [item.isEncrypted, item.encryptedName, isUnlocked]);
+
     // Virtual folder fallback name
-    let name = item.key;
+    let baseName = item.key;
     if (item.id.startsWith("virtual-")) {
-      name = item.id.replace("virtual-", "");
+      baseName = item.id.replace("virtual-", "");
     } else {
-      name =
+      baseName =
         item.key
           .slice(currentPrefix.length)
           .replace(/\/$/, "")
           .split("/")
           .pop() || item.key;
     }
+
+    const name = decryptedName || baseName;
 
     const DefaultActions = () => (
       <>
@@ -318,17 +334,30 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
     const isFolder =
       item.contentType === "application/x-directory" || item.key.endsWith("/");
 
-    let name = item.key;
+    const { isUnlocked } = useCrypto();
+    const [decryptedName, setDecryptedName] = useState<string | null>(null);
+
+    useEffect(() => {
+      if (item.isEncrypted && item.encryptedName && isUnlocked) {
+        decryptFileName(item.encryptedName).then(setDecryptedName);
+      } else {
+        setDecryptedName(null);
+      }
+    }, [item.isEncrypted, item.encryptedName, isUnlocked]);
+
+    let baseName = item.key;
     if (item.id.startsWith("virtual-")) {
-      name = item.id.replace("virtual-", "");
+      baseName = item.id.replace("virtual-", "");
     } else {
-      name =
+      baseName =
         item.key
           .slice(currentPrefix.length)
           .replace(/\/$/, "")
           .split("/")
           .pop() || item.key;
     }
+
+    const name = decryptedName || baseName;
 
     const DefaultActions = () => (
       <>
