@@ -93,3 +93,39 @@ export async function decryptFile(
 
   return new Blob([plaintext], { type: contentType });
 }
+
+/**
+ * Decrypts a filename that was encrypted during upload.
+ * The b64 string contains: [nameKey(32 bytes)] + [nameIV(12 bytes)] + [ciphertext]
+ */
+export async function decryptFileName(
+  encryptedNameB64: string,
+): Promise<string> {
+  try {
+    const combined = fromB64(encryptedNameB64);
+    if (combined.byteLength < 44) return "Unknown File";
+
+    const nameKeyBytes = combined.slice(0, 32);
+    const nameIV = combined.slice(32, 44);
+    const ciphertext = combined.slice(44);
+
+    const key = await crypto.subtle.importKey(
+      "raw",
+      nameKeyBytes,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["decrypt"],
+    );
+
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: nameIV },
+      key,
+      ciphertext,
+    );
+
+    return new TextDecoder().decode(plaintext);
+  } catch (err) {
+    console.warn("[E2EE] Failed to decrypt file name", err);
+    return "Encrypted File";
+  }
+}
