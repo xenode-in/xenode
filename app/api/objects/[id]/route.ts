@@ -26,15 +26,20 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 
     await dbConnect();
 
-    const object = await StorageObject.findOne({ _id: id, userId });
+    // .lean() returns a plain JS object — faster than a Mongoose Document
+    // since we only need to read the data (no save/update needed here).
+    const object = await StorageObject.findOne({ _id: id, userId }).lean();
     if (!object) {
       return NextResponse.json({ error: "Object not found" }, { status: 404 });
     }
 
+    // Only select the field we actually use from the bucket document
     const bucket = await Bucket.findOne({
       _id: object.bucketId,
       $or: [{ userId }, { userId: "system" }],
-    });
+    })
+      .select("b2BucketId")
+      .lean();
 
     if (!bucket) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
@@ -72,16 +77,19 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
 
     await dbConnect();
 
-    const object = await StorageObject.findOne({ _id: id, userId });
+    // .lean() — we only need to read fields, no mutations on the object itself
+    const object = await StorageObject.findOne({ _id: id, userId }).lean();
     if (!object) {
       return NextResponse.json({ error: "Object not found" }, { status: 404 });
     }
 
-    // Get bucket for B2 bucket name
+    // Only select the fields needed for the B2 delete call and stats update
     const bucket = await Bucket.findOne({
       _id: object.bucketId,
       $or: [{ userId }, { userId: "system" }],
-    });
+    })
+      .select("_id b2BucketId")
+      .lean();
 
     if (!bucket) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
@@ -135,7 +143,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     await dbConnect();
 
-    // Find object and verify ownership
+    // Note: cannot use .lean() here — we need the Mongoose Document to call .save()
     const object = await StorageObject.findOne({ _id: id, userId });
 
     if (!object) {
