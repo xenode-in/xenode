@@ -11,7 +11,20 @@ import {
   AlertCircle,
   CheckCircle2,
   Loader2,
+  Eye,
+  X,
 } from "lucide-react";
+import { DocViewerRenderers } from "@cyntler/react-doc-viewer";
+import dynamic from "next/dynamic";
+import "plyr-react/plyr.css";
+
+// Dynamically import DocViewer and Plyr with SSR disabled to prevent "document is not defined" error
+const DocViewer = dynamic(() => import("@cyntler/react-doc-viewer"), {
+  ssr: false,
+});
+const Plyr = dynamic(() => import("plyr-react").then((mod) => mod.Plyr), {
+  ssr: false,
+});
 
 interface ShareMeta {
   fileName: string;
@@ -59,6 +72,8 @@ export default function SharedFilePage() {
   const [downloading, setDownloading] = useState(false);
   const [done, setDone] = useState(false);
   const [shareKey, setShareKey] = useState("");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   // Share key is ONLY in the URL fragment — never sent to server
   useEffect(() => {
@@ -75,7 +90,7 @@ export default function SharedFilePage() {
       .catch(() => setError("Failed to load share info"));
   }, [token]);
 
-  async function handleDownload() {
+  async function handleDownload(forPreview: boolean = false) {
     if (!meta) return;
     setDownloading(true);
     setError(null);
@@ -104,22 +119,44 @@ export default function SharedFilePage() {
         const skBytes = b64urlToBytes(shareKey);
         const shareKeyObj = await crypto.subtle.importKey(
           "raw",
-          skBytes,
+          skBytes.buffer.slice(
+            skBytes.byteOffset,
+            skBytes.byteOffset + skBytes.byteLength,
+          ) as ArrayBuffer,
           { name: "AES-GCM" },
           false,
           ["unwrapKey"],
         );
+        const shareEncryptedDekBytes = b64ToBytes(meta.shareEncryptedDEK);
+        const shareKeyIvBytes = b64ToBytes(meta.shareKeyIv);
         const dek = await crypto.subtle.unwrapKey(
           "raw",
-          b64ToBytes(meta.shareEncryptedDEK),
+          shareEncryptedDekBytes.buffer.slice(
+            shareEncryptedDekBytes.byteOffset,
+            shareEncryptedDekBytes.byteOffset +
+              shareEncryptedDekBytes.byteLength,
+          ) as ArrayBuffer,
           shareKeyObj,
-          { name: "AES-GCM", iv: b64ToBytes(meta.shareKeyIv) },
+          {
+            name: "AES-GCM",
+            iv: shareKeyIvBytes.buffer.slice(
+              shareKeyIvBytes.byteOffset,
+              shareKeyIvBytes.byteOffset + shareKeyIvBytes.byteLength,
+            ) as ArrayBuffer,
+          },
           { name: "AES-GCM" },
           false,
           ["decrypt"],
         );
+        const ivBytes = b64ToBytes(data.iv);
         const decrypted = await crypto.subtle.decrypt(
-          { name: "AES-GCM", iv: b64ToBytes(data.iv) },
+          {
+            name: "AES-GCM",
+            iv: ivBytes.buffer.slice(
+              ivBytes.byteOffset,
+              ivBytes.byteOffset + ivBytes.byteLength,
+            ) as ArrayBuffer,
+          },
           dek,
           raw,
         );
@@ -129,6 +166,13 @@ export default function SharedFilePage() {
       }
 
       const url = URL.createObjectURL(blob);
+
+      if (forPreview) {
+        setPreviewUrl(url);
+        setDownloading(false);
+        return;
+      }
+
       const a = document.createElement("a");
       a.href = url;
       a.download =
@@ -141,9 +185,75 @@ export default function SharedFilePage() {
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Download failed");
     } finally {
-      setDownloading(false);
+      if (!forPreview) setDownloading(false);
     }
   }
+
+  // Handle preview rendering
+  const renderPreview = () => {
+    if (!previewUrl || !meta) return null;
+    const type = meta.contentType;
+
+    if (type.startsWith("image/")) {
+      return (
+        <div className="grid h-full place-items-center bg-black/40 p-2 sm:p-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={previewUrl}
+            alt={meta.fileName}
+            className="max-h-[calc(100dvh-8.5rem)] w-auto max-w-full object-contain"
+          />
+        </div>
+      );
+    }
+
+    if (type.startsWith("video/") || type.startsWith("audio/")) {
+      const isAudio = type.startsWith("audio/");
+      return (
+        <div className="h-full w-full bg-black flex items-center justify-center flex-col">
+          <div className={isAudio ? "w-full p-4" : "aspect-video w-full"}>
+            <Plyr
+              source={{
+                type: isAudio ? "audio" : "video",
+                sources: [{ src: previewUrl, type }],
+              }}
+              options={{ autoplay: true }}
+            />
+          </div>
+        </div>
+      );
+    }
+
+    if (type === "application/pdf") {
+      return (
+        <div className="h-full w-full bg-white">
+          <iframe
+            src={previewUrl}
+            className="h-full w-full border-0"
+            title={meta.fileName}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div className="h-full w-full bg-white">
+        <DocViewer
+          documents={[{ uri: previewUrl, fileType: type }]}
+          pluginRenderers={DocViewerRenderers}
+          config={{
+            header: {
+              disableHeader: true,
+              disableFileName: true,
+              retainURLParams: true,
+            },
+            pdfVerticalScrollByDefault: true,
+          }}
+          style={{ height: "100%" }}
+        />
+      </div>
+    );
+  };
 
   if (error && !meta)
     return (
@@ -219,7 +329,7 @@ export default function SharedFilePage() {
                 placeholder="Enter password to access this file"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleDownload()}
+                onKeyDown={(e) => e.key === "Enter" && handleDownload(false)}
                 className="bg-secondary/50 border-border"
               />
             </div>
@@ -238,22 +348,53 @@ export default function SharedFilePage() {
               successfully!
             </div>
           ) : (
-            <Button
-              className="w-full bg-primary text-primary-foreground hover:bg-primary/90"
-              onClick={handleDownload}
-              disabled={downloading || (meta.isPasswordProtected && !password)}
-            >
-              {downloading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  {meta.isEncrypted ? "Decrypting…" : "Downloading…"}
-                </>
-              ) : (
-                <>
-                  <Download className="mr-2 h-4 w-4" /> Download
-                </>
-              )}
-            </Button>
+            <div className="flex gap-2 w-full">
+              {meta.contentType.startsWith("image/") ||
+              meta.contentType.startsWith("video/") ||
+              meta.contentType.startsWith("audio/") ||
+              meta.contentType === "application/pdf" ? (
+                <Button
+                  variant="secondary"
+                  className="flex-1 bg-secondary text-secondary-foreground hover:bg-secondary/80"
+                  onClick={() => {
+                    setIsPreviewOpen(true);
+                    if (!previewUrl) handleDownload(true);
+                  }}
+                  disabled={
+                    downloading || (meta.isPasswordProtected && !password)
+                  }
+                >
+                  {downloading && isPreviewOpen ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Eye className="mr-2 h-4 w-4" />
+                  )}
+                  Preview
+                </Button>
+              ) : null}
+
+              <Button
+                className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
+                onClick={() => {
+                  setIsPreviewOpen(false);
+                  handleDownload(false);
+                }}
+                disabled={
+                  downloading || (meta.isPasswordProtected && !password)
+                }
+              >
+                {downloading && !isPreviewOpen ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    {meta.isEncrypted ? "Decrypting…" : "Downloading…"}
+                  </>
+                ) : (
+                  <>
+                    <Download className="mr-2 h-4 w-4" /> Download
+                  </>
+                )}
+              </Button>
+            </div>
           )}
 
           <p className="text-center text-xs text-muted-foreground">
@@ -262,11 +403,46 @@ export default function SharedFilePage() {
               href="/"
               className="underline hover:text-primary transition-colors"
             >
-              XNode Drive
+              Xenode Drive
             </a>
           </p>
         </CardContent>
       </Card>
+
+      {/* Full Screen Preview Modal */}
+      {isPreviewOpen && previewUrl && meta && (
+        <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex flex-col">
+          <div className="flex items-center justify-between p-4 border-b border-border bg-card/50">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
+                {meta.isEncrypted ? (
+                  <Lock className="h-5 w-5 text-primary" />
+                ) : (
+                  <File className="h-5 w-5 text-primary" />
+                )}
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">
+                  {displayName}
+                </h3>
+                <p className="text-xs text-muted-foreground truncate max-w-[200px] sm:max-w-md">
+                  {formatBytes(meta.size)} • {meta.contentType}
+                </p>
+              </div>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsPreviewOpen(false)}
+            >
+              <X className="h-6 w-6" />
+            </Button>
+          </div>
+          <div className="flex-1 overflow-hidden relative">
+            {renderPreview()}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

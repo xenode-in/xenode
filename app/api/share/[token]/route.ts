@@ -6,15 +6,16 @@ import ShareLink from "@/models/ShareLink";
 export const dynamic = "force-dynamic";
 
 interface Params {
-  params: { token: string };
+  params: Promise<{ token: string }>;
 }
 
 /** GET /api/share/[token] — Public metadata (no auth required) */
 export async function GET(_: NextRequest, { params }: Params) {
+  const resolvedParams = await params;
   await dbConnect();
 
   const link = await ShareLink.findOne({
-    token: params.token,
+    token: resolvedParams.token,
     isRevoked: false,
   })
     .populate(
@@ -63,11 +64,12 @@ export async function GET(_: NextRequest, { params }: Params) {
 /** DELETE /api/share/[token] — Revoke a share link (owner only) */
 export async function DELETE(_: NextRequest, { params }: Params) {
   try {
+    const resolvedParams = await params;
     const session = await requireAuth();
     await dbConnect();
 
     const link = await ShareLink.findOneAndUpdate(
-      { token: params.token, createdBy: session.user.id },
+      { token: resolvedParams.token, createdBy: session.user.id },
       { isRevoked: true },
       { new: true },
     );

@@ -9,18 +9,19 @@ import bcrypt from "bcryptjs";
 export const dynamic = "force-dynamic";
 
 interface Params {
-  params: { token: string };
+  params: Promise<{ token: string }>;
 }
 
 /** POST /api/share/[token]/download — Validate & return signed download URL */
 export async function POST(req: NextRequest, { params }: Params) {
+  const resolvedParams = await params;
   const body = await req.json().catch(() => ({}));
   const { password } = body;
 
   await dbConnect();
 
   const link = await ShareLink.findOne({
-    token: params.token,
+    token: resolvedParams.token,
     isRevoked: false,
   });
   if (!link)

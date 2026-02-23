@@ -102,7 +102,10 @@ export function ShareDialog({
         // Import the DEK so we can wrap it
         const dekKey = await crypto.subtle.importKey(
           "raw",
-          dekBytes,
+          dekBytes.buffer.slice(
+            dekBytes.byteOffset,
+            dekBytes.byteOffset + dekBytes.byteLength,
+          ) as ArrayBuffer,
           { name: "AES-GCM" },
           true,
           ["encrypt", "decrypt"],
