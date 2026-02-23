@@ -14,6 +14,8 @@ import {
   LogOut,
   ChevronRight,
   Menu,
+  Share2,
+  Users,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -46,6 +48,8 @@ interface DashboardShellProps {
 const sidebarItems = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { label: "My Files", href: "/dashboard/files", icon: FolderOpen },
+  { label: "Shared", href: "/dashboard/shared", icon: Share2 },
+  { label: "Shared with me", href: "/dashboard/shared-with-me", icon: Users },
   { label: "Usage", href: "/dashboard/usage", icon: BarChart3 },
   { label: "API Keys", href: "/dashboard/keys", icon: Key },
   { label: "Billing", href: "/dashboard/billing", icon: CreditCard },

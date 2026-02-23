@@ -40,8 +40,10 @@ import {
   ClipboardPaste,
   Search,
   X,
+  Share2,
 } from "lucide-react";
 import Link from "next/link";
+import { ShareDialog, ShareableFile } from "@/components/share-dialog";
 import { useUpload } from "@/contexts/UploadContext";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { useDownload } from "@/contexts/DownloadContext";
@@ -721,6 +723,29 @@ export default function FilesPage() {
   const { privateKey, setModalOpen } = useCrypto();
   const { startDownload } = useDownload();
 
+  const [shareFile, setShareFile] = useState<ShareableFile | null>(null);
+
+  async function getDEKBytes(fileId: string): Promise<Uint8Array> {
+    if (!privateKey) {
+      setModalOpen(true);
+      throw new Error("Vault locked");
+    }
+    const res = await fetch(`/api/objects/${fileId}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to get file metadata");
+    if (!data.encryptedDEK)
+      throw new Error("No encrypted key found for this file");
+    const wrappedDEK = Uint8Array.from(atob(data.encryptedDEK), (c) =>
+      c.charCodeAt(0),
+    );
+    const dekBytes = await crypto.subtle.decrypt(
+      { name: "RSA-OAEP" },
+      privateKey,
+      wrappedDEK,
+    );
+    return new Uint8Array(dekBytes);
+  }
+
   // Track completed uploads to trigger refresh
   const prevCompletedCountRef = useRef(0);
 
@@ -1274,6 +1299,7 @@ export default function FilesPage() {
                       onNavigate={navigateToFolder}
                       onTag={() => setTaggingObj(folder)}
                       onCut={handleCut}
+                      onShare={setShareFile}
                       onDelete={(item) => {
                         if (selectedIds.has(item.id)) {
                           setDeleteIds(Array.from(selectedIds));
@@ -1304,6 +1330,7 @@ export default function FilesPage() {
                       onPreview={setPreviewFile}
                       onDownload={handleDownload}
                       onCut={handleCut}
+                      onShare={setShareFile}
                       onDelete={(item) => {
                         if (selectedIds.has(item.id)) {
                           setDeleteIds(Array.from(selectedIds));
@@ -1348,6 +1375,7 @@ export default function FilesPage() {
                     onNavigate={navigateToFolder}
                     onTag={() => setTaggingObj(folder)}
                     onCut={handleCut}
+                    onShare={setShareFile}
                     onDelete={(item) => {
                       if (selectedIds.has(item.id)) {
                         setDeleteIds(Array.from(selectedIds));
@@ -1375,6 +1403,7 @@ export default function FilesPage() {
                     onPreview={setPreviewFile}
                     onDownload={handleDownload}
                     onCut={handleCut}
+                    onShare={setShareFile}
                     onDelete={(item) => {
                       if (selectedIds.has(item.id)) {
                         setDeleteIds(Array.from(selectedIds));
@@ -1599,6 +1628,13 @@ export default function FilesPage() {
           }}
         />
       )}
+
+      <ShareDialog
+        open={!!shareFile}
+        onOpenChange={(o) => !o && setShareFile(null)}
+        file={shareFile}
+        getDEKBytes={getDEKBytes}
+      />
     </div>
   );
 }
