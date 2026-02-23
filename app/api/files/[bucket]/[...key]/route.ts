@@ -63,6 +63,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     // The short-lived token in the URL means stale cache entries are harmless
     // (they'll 403 on re-validation once the token expires).
     headers.set("Cache-Control", "public, max-age=3600, s-maxage=3600");
+    headers.set("Access-Control-Allow-Origin", "*");
+    headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+    headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
     return new NextResponse(stream, { status: 200, headers });
   } catch (error: unknown) {
@@ -71,4 +74,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     console.error(`[CDN Proxy] Failed to stream ${bucket}/${key}:`, message);
     return new NextResponse("Failed to fetch file", { status: 502 });
   }
+}
+
+export async function OPTIONS() {
+  const headers = new Headers();
+  headers.set("Access-Control-Allow-Origin", "*");
+  headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
+  headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  return new NextResponse(null, { status: 204, headers });
 }
