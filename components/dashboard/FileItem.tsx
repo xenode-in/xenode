@@ -246,6 +246,18 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
                 <FileText className="w-4 h-4 text-muted-foreground/40 hover:text-primary" />
               </Button>
             )}
+            {!isFolder && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onShare?.(item);
+                }}
+              >
+                <Link2 className="w-4 h-4 text-muted-foreground/40 hover:text-primary" />
+              </Button>
+            )}
             {!item.id.startsWith("virtual-") && (
               <Button
                 variant="ghost"
@@ -304,6 +316,15 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
               >
                 <DownloadCloud className="w-4 h-4 mr-2" /> Download
               </ContextMenuItem>
+              <ContextMenuItem
+                className="hover:bg-accent cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onShare?.(item);
+                }}
+              >
+                <Link2 className="w-4 h-4 mr-2" /> Share
+              </ContextMenuItem>
             </>
           )}
           <DefaultActions />
@@ -331,6 +352,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
       isOverlay,
       isSelected,
       onSelect,
+      onShare,
     },
     ref,
   ) => {
@@ -521,6 +543,20 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
             </Button>
           )}
 
+          {!isFolder && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7 rounded-md bg-black/50 hover:bg-primary hover:text-primary-foreground text-foreground backdrop-blur-sm"
+              onClick={(e) => {
+                e.stopPropagation();
+                onShare?.(item);
+              }}
+            >
+              <Link2 className="w-3.5 h-3.5" />
+            </Button>
+          )}
+
           <Button
             size="icon"
             variant="ghost"
@@ -562,6 +598,15 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
                 onClick={() => onDownload?.(item)}
               >
                 <DownloadCloud className="w-4 h-4 mr-2" /> Download
+              </ContextMenuItem>
+              <ContextMenuItem
+                className="hover:bg-accent cursor-pointer"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onShare?.(item);
+                }}
+              >
+                <Link2 className="w-4 h-4 mr-2" /> Share
               </ContextMenuItem>
             </>
           )}
