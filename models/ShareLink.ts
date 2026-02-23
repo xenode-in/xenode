@@ -17,6 +17,7 @@ export interface IShareLink extends Document {
   shareEncryptedDEK?: string;
   shareKeyIv?: string;
   accessType: "view" | "download";
+  sharedWith: string[]; // Array of emails or user IDs the file is explicitly shared with
   createdAt: Date;
   updatedAt: Date;
 }
@@ -54,6 +55,11 @@ const ShareLinkSchema = new Schema<IShareLink>(
       type: String,
       enum: ["view", "download"],
       default: "download",
+    },
+    sharedWith: {
+      type: [String],
+      default: [],
+      index: true,
     },
   },
   { timestamps: true },

@@ -9,6 +9,7 @@ import {
   RotateCcw,
   Loader2,
   AlertCircle,
+  Users,
 } from "lucide-react";
 import {
   Dialog,
@@ -76,6 +77,7 @@ export function ShareDialog({
   const [maxDl, setMaxDl] = useState("");
   const [usePass, setUsePass] = useState(false);
   const [pass, setPass] = useState("");
+  const [sharedWithInput, setSharedWithInput] = useState("");
 
   async function create() {
     if (!file) return;
@@ -126,6 +128,11 @@ export function ShareDialog({
         fragment = bytesToB64url(shareKeyRaw);
       }
 
+      const sharedWithList = sharedWithInput
+        .split(",")
+        .map((email) => email.trim())
+        .filter(Boolean);
+
       const body: Record<string, unknown> = {
         objectId: file.id,
         accessType: "download",
@@ -133,6 +140,7 @@ export function ShareDialog({
         ...(maxDl && { maxDownloads: parseInt(maxDl) }),
         ...(usePass && pass && { password: pass }),
         ...(shareEncryptedDEK && { shareEncryptedDEK, shareKeyIv }),
+        ...(sharedWithList.length > 0 && { sharedWith: sharedWithList }),
       };
 
       const res = await fetch("/api/share", {
@@ -168,6 +176,7 @@ export function ShareDialog({
     setMaxDl("");
     setUsePass(false);
     setPass("");
+    setSharedWithInput("");
   }
 
   const displayName = file?.key.split("/").pop() ?? file?.key ?? "";
@@ -258,6 +267,25 @@ export function ShareDialog({
           </div>
         ) : (
           <div className="space-y-4">
+            {/* Shared With */}
+            <div className="space-y-1.5">
+              <Label className="flex items-center gap-1.5 text-sm font-medium">
+                <Users className="h-3.5 w-3.5 text-muted-foreground" /> Share
+                with users (optional)
+              </Label>
+              <Input
+                type="text"
+                placeholder="Enter email addresses separated by commas"
+                value={sharedWithInput}
+                onChange={(e) => setSharedWithInput(e.target.value)}
+                className="h-9 bg-secondary/50 border-border"
+              />
+              <p className="text-[10px] text-muted-foreground">
+                Specifying emails allows these users to see the file in their
+                &quot;Shared with me&quot; dashboard.
+              </p>
+            </div>
+
             {/* Expiry */}
             <div className="space-y-1.5">
               <Label className="flex items-center gap-1.5 text-sm font-medium">

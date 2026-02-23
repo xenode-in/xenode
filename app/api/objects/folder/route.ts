@@ -5,6 +5,7 @@ import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import { uploadObject, deleteObject } from "@/lib/b2/objects";
 import { decrementStorage, updateBucketStats } from "@/lib/metering/usage";
+import ShareLink from "@/models/ShareLink";
 
 export const dynamic = "force-dynamic";
 
@@ -158,6 +159,7 @@ export async function DELETE(request: NextRequest) {
 
     const b2BucketName = bucket.b2BucketId;
     let deletedCount = 0;
+    const deletedObjectIds: string[] = [];
 
     // Delete each object
     for (const obj of objects) {
@@ -170,6 +172,7 @@ export async function DELETE(request: NextRequest) {
 
       // Delete from MongoDB
       await StorageObject.findByIdAndDelete(obj._id);
+      deletedObjectIds.push(obj._id.toString());
 
       // Update usage
       if (obj.size > 0) {
@@ -180,6 +183,11 @@ export async function DELETE(request: NextRequest) {
         await updateBucketStats(bucket._id.toString(), -1, 0);
       }
       deletedCount++;
+    }
+
+    // Cascade delete all share links for deleted objects
+    if (deletedObjectIds.length > 0) {
+      await ShareLink.deleteMany({ objectId: { $in: deletedObjectIds } });
     }
 
     return NextResponse.json({ success: true, deletedCount });

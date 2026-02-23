@@ -10,6 +10,7 @@ import {
   getDownloadUrl,
 } from "@/lib/b2/objects";
 import { decrementStorage, updateBucketStats } from "@/lib/metering/usage";
+import ShareLink from "@/models/ShareLink";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -106,6 +107,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
 
     // Delete from MongoDB
     await StorageObject.findByIdAndDelete(object._id);
+    await ShareLink.deleteMany({ objectId: object._id });
 
     // Update usage
     await decrementStorage(userId, object.size);

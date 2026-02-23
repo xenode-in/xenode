@@ -21,6 +21,7 @@ export async function POST(req: NextRequest) {
       accessType = "download",
       shareEncryptedDEK,
       shareKeyIv,
+      sharedWith = [],
     } = await req.json();
 
     if (!objectId)
@@ -47,6 +48,7 @@ export async function POST(req: NextRequest) {
       createdBy: userId,
       accessType,
       isPasswordProtected: !!password,
+      sharedWith: Array.isArray(sharedWith) ? sharedWith : [],
     };
 
     if (password) shareData.passwordHash = await bcrypt.hash(password, 12);

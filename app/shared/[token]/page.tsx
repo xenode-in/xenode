@@ -108,6 +108,14 @@ export default function SharedFilePage() {
 
       let blob: Blob;
 
+      // Guard: encrypted file but no decryption key in URL fragment
+      if (data.isEncrypted && (!shareKey || !meta.shareEncryptedDEK)) {
+        throw new Error(
+          "This file is end-to-end encrypted but no decryption key was found in the link. " +
+            "The link may be incomplete — make sure you're using the full link including the #key=… at the end.",
+        );
+      }
+
       if (
         data.isEncrypted &&
         shareKey &&
@@ -335,6 +343,22 @@ export default function SharedFilePage() {
             </div>
           )}
 
+          {/* Encrypted file with no key in URL */}
+          {meta.isEncrypted && !shareKey && (
+            <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 p-3 text-sm text-amber-500">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium">Decryption key missing</p>
+                <p className="text-xs mt-0.5 text-amber-400/80">
+                  This is an encrypted file. The link is incomplete — ask the
+                  sender to reshare the full link including the{" "}
+                  <code className="bg-amber-500/20 px-1 rounded">#key=…</code>{" "}
+                  at the end.
+                </p>
+              </div>
+            </div>
+          )}
+
           {error && (
             <div className="flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive">
               <AlertCircle className="h-4 w-4 shrink-0" />
@@ -361,7 +385,9 @@ export default function SharedFilePage() {
                     if (!previewUrl) handleDownload(true);
                   }}
                   disabled={
-                    downloading || (meta.isPasswordProtected && !password)
+                    downloading ||
+                    (meta.isPasswordProtected && !password) ||
+                    (meta.isEncrypted && !shareKey)
                   }
                 >
                   {downloading && isPreviewOpen ? (
@@ -380,7 +406,9 @@ export default function SharedFilePage() {
                   handleDownload(false);
                 }}
                 disabled={
-                  downloading || (meta.isPasswordProtected && !password)
+                  downloading ||
+                  (meta.isPasswordProtected && !password) ||
+                  (meta.isEncrypted && !shareKey)
                 }
               >
                 {downloading && !isPreviewOpen ? (
