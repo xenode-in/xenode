@@ -18,6 +18,7 @@ import {
   Tag,
   Scissors,
   Lock,
+  Link2,
 } from "lucide-react";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { forwardRef, useRef, useCallback, useState, useEffect } from "react";
@@ -54,6 +55,7 @@ interface ItemProps {
   isSelected?: boolean;
   onSelect?: (item: ObjectData, e: React.MouseEvent) => void;
   registerItemRef?: (id: string, el: HTMLElement | null) => void;
+  onShare?: (item: ObjectData) => void;
 }
 
 // Presentational Component for List View
@@ -73,6 +75,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
       isOverlay,
       isSelected,
       onSelect,
+      onShare,
     },
     ref,
   ) => {
