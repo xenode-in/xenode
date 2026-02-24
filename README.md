@@ -1,4 +1,4 @@
-# Xenode (xnode)
+# Xenode
 
 Xenode is a modern, privacy-first, **End-to-End Encrypted (E2EE)** decentralized cloud storage platform. Built with Next.js, it offers highly secure file storage, bucket management, and secure sharing capabilities. The core philosophy of Xenode is **Zero-Knowledge**: user data remains entirely private, and the server administrators cannot access the plaintext content of stored files or passwords.
 
