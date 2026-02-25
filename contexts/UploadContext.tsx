@@ -9,7 +9,7 @@ import React, {
   useRef,
 } from "react";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { encryptFile } from "@/lib/crypto/fileEncryption";
+import { encryptFile, encryptFileChunked } from "@/lib/crypto/fileEncryption";
 import { toB64 } from "@/lib/crypto/utils";
 
 export interface UploadTask {
@@ -184,15 +184,43 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       let encryptedDEK: string | undefined;
       let encryptedIV: string | undefined;
       let encryptedName: string | undefined;
+      // Chunked encryption fields (video/audio only)
+      let chunkSize: number | undefined;
+      let chunkCount: number | undefined;
+      let chunkIvs: string | undefined; // JSON string
 
       if (shouldEncryptNow()) {
         try {
-          const enc = await encryptFile(task.file, cryptoPublicKeyRef.current!);
-          uploadBody = enc.ciphertext;
-          uploadContentType = "application/octet-stream";
-          encryptedDEK = enc.encryptedDEK;
-          encryptedIV = enc.iv;
-          // Encrypt the original filename so the server never sees it
+          const isStreamable =
+            task.file.type.startsWith("video/") ||
+            task.file.type.startsWith("audio/");
+
+          if (isStreamable) {
+            // Chunked AES-GCM — enables true browser streaming at preview time
+            const enc = await encryptFileChunked(
+              task.file,
+              cryptoPublicKeyRef.current!,
+            );
+            uploadBody = enc.ciphertext;
+            uploadContentType = "application/octet-stream";
+            encryptedDEK = enc.encryptedDEK;
+            chunkSize = enc.chunkSize;
+            chunkCount = enc.chunkCount;
+            chunkIvs = JSON.stringify(enc.chunkIvs);
+            // No single iv for chunked files
+          } else {
+            // Single-blob AES-GCM for non-streamable files
+            const enc = await encryptFile(
+              task.file,
+              cryptoPublicKeyRef.current!,
+            );
+            uploadBody = enc.ciphertext;
+            uploadContentType = "application/octet-stream";
+            encryptedDEK = enc.encryptedDEK;
+            encryptedIV = enc.iv;
+          }
+
+          // Encrypt the original filename (shared by both paths)
           const nameBuf = new TextEncoder().encode(task.file.name);
           const nameKey = crypto.getRandomValues(new Uint8Array(32));
           const nameIV = crypto.getRandomValues(new Uint8Array(12));
@@ -207,8 +235,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             ),
             nameBuf,
           );
-          // Store nameKey + nameIV + ciphertext concatenated as base64
-          // (simple scheme; for sharing, DEK-wrap the nameKey too)
           const combined = new Uint8Array(
             nameKey.byteLength + nameIV.byteLength + encNameBuf.byteLength,
           );
@@ -224,12 +250,14 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             "[E2EE] Encryption failed, falling back to plaintext",
             err,
           );
-          // Reset to plaintext on unexpected failure
           uploadBody = task.file;
           uploadContentType = task.file.type || "application/octet-stream";
           encryptedDEK = undefined;
           encryptedIV = undefined;
           encryptedName = undefined;
+          chunkSize = undefined;
+          chunkCount = undefined;
+          chunkIvs = undefined;
         }
       }
 
@@ -285,6 +313,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           encryptedDEK,
           iv: encryptedIV,
           encryptedName,
+          chunkSize,
+          chunkCount,
+          chunkIvs,
         }),
       });
 

@@ -16,8 +16,12 @@ export interface IStorageObject extends Document {
   /** E2EE fields — undefined on legacy plaintext files */
   isEncrypted: boolean;
   encryptedDEK?: string; // Base64 RSA-OAEP wrapped AES-256 DEK
-  iv?: string; // Base64 12-byte GCM IV
+  iv?: string; // Base64 12-byte GCM IV (legacy single-blob only)
   encryptedName?: string; // Base64 AES-GCM encrypted original filename
+  /** Chunked encryption fields — present only on chunked uploads (video/audio) */
+  chunkSize?: number; // Plaintext bytes per chunk (e.g. 1 048 576)
+  chunkCount?: number; // Total number of chunks
+  chunkIvs?: string; // JSON array of Base64 12-byte IVs, one per chunk
 }
 
 const StorageObjectSchema = new Schema<IStorageObject>(
@@ -78,6 +82,18 @@ const StorageObjectSchema = new Schema<IStorageObject>(
     },
     encryptedName: {
       type: String,
+      required: false,
+    },
+    chunkSize: {
+      type: Number,
+      required: false,
+    },
+    chunkCount: {
+      type: Number,
+      required: false,
+    },
+    chunkIvs: {
+      type: String, // JSON-encoded string, e.g. '["iv0b64","iv1b64",...]'
       required: false,
     },
   },
