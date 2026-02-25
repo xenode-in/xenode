@@ -12,7 +12,20 @@ interface Params {
   params: Promise<{ token: string }>;
 }
 
-/** POST /api/share/[token]/download — Validate & return signed download URL */
+/**
+ * POST /api/share/[token]/stream
+ *
+ * Validates the share link and returns a short-lived signed URL suitable for
+ * previewing (streaming) the file directly in the browser.
+ *
+ * Unlike /download, this route does NOT increment the downloadCount so that
+ * previewing a file doesn't consume the user's download allowance.
+ *
+ * For non-encrypted files the client can hand this URL directly to a <video>
+ * element so the browser handles byte-range requests and native streaming.
+ * For encrypted files the client still needs to fetch → decrypt → blob-URL,
+ * but at least the signed URL is obtained cheaply here.
+ */
 export async function POST(req: NextRequest, { params }: Params) {
   const resolvedParams = await params;
   const body = await req.json().catch(() => ({}));
@@ -24,6 +37,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     token: resolvedParams.token,
     isRevoked: false,
   });
+
   if (!link)
     return NextResponse.json(
       { error: "Link not found or revoked" },
@@ -61,14 +75,11 @@ export async function POST(req: NextRequest, { params }: Params) {
   if (!bucket)
     return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
 
-  // Increment download count (non-blocking)
-  ShareLink.findByIdAndUpdate(link._id, { $inc: { downloadCount: 1 } }).exec();
-
-  // Generate a short-lived signed URL (1 hour) using your existing cdn utility
+  // 1-hour signed URL — enough for a preview session
   const signedUrl = await getSignedFileUrl(bucket.name, object.key, 3600);
 
   return NextResponse.json({
-    downloadUrl: signedUrl,
+    streamUrl: signedUrl,
     isEncrypted: object.isEncrypted,
     iv: object.iv,
     contentType: object.contentType,
@@ -76,6 +87,6 @@ export async function POST(req: NextRequest, { params }: Params) {
     // Chunked encryption metadata (undefined for legacy single-blob files)
     chunkSize: object.chunkSize,
     chunkCount: object.chunkCount,
-    chunkIvs: object.chunkIvs,
+    chunkIvs: object.chunkIvs, // JSON string, parse on client
   });
 }

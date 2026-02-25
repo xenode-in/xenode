@@ -24,6 +24,9 @@ export async function POST(request: NextRequest) {
       iv,
       isEncrypted,
       encryptedName,
+      chunkSize,
+      chunkCount,
+      chunkIvs,
     } = await request.json();
 
     if (!objectKey || !bucketId || !size) {
@@ -80,6 +83,9 @@ export async function POST(request: NextRequest) {
         if (encryptedDEK) existingObject.encryptedDEK = encryptedDEK;
         if (iv) existingObject.iv = iv;
         if (encryptedName) existingObject.encryptedName = encryptedName;
+        if (chunkSize) existingObject.chunkSize = chunkSize;
+        if (chunkCount) existingObject.chunkCount = chunkCount;
+        if (chunkIvs) existingObject.chunkIvs = chunkIvs;
       }
       await existingObject.save();
 
@@ -104,6 +110,9 @@ export async function POST(request: NextRequest) {
       encryptedDEK: encryptedDEK ?? undefined,
       iv: iv ?? undefined,
       encryptedName: encryptedName ?? undefined,
+      chunkSize: chunkSize ?? undefined,
+      chunkCount: chunkCount ?? undefined,
+      chunkIvs: chunkIvs ?? undefined,
     });
 
     // Update usage
