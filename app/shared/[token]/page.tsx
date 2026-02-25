@@ -21,6 +21,7 @@ import {
   useChunkedVideoPreview,
   ChunkedStreamOptions,
 } from "@/hooks/useChunkedVideoPreview";
+import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
 
 // Dynamically import DocViewer and Plyr with SSR disabled
 const DocViewer = dynamic(() => import("@cyntler/react-doc-viewer"), {
@@ -115,21 +116,54 @@ async function deriveDek(
 async function fetchWithProgress(
   url: string,
   onProgress: (pct: number) => void,
+  cacheKey?: string,
+  fileSizeBytes?: number,
 ): Promise<ArrayBuffer> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Failed to fetch file");
+  let stream: ReadableStream<Uint8Array>;
+  let total = fileSizeBytes || 0;
+  let fromCache = false;
 
-  const total = +(res.headers.get("Content-Length") ?? 0);
-  const reader = res.body!.getReader();
+  if (cacheKey) {
+    const cached = await getCachedResponse(cacheKey);
+    if (cached) {
+      stream = cached.body!;
+      total = +(cached.headers.get("x-content-length") ?? 0) || total;
+      fromCache = true;
+      console.log(`[PreviewCache] Cache hit for generic preview: ${cacheKey}`);
+    }
+  }
+
+  if (!stream!) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Failed to fetch file");
+
+    total = +(res.headers.get("content-length") ?? 0) || total;
+
+    if (cacheKey) {
+      const [forCache, forRead] = res.body!.tee();
+      storeCachedStream(cacheKey, forCache, total).catch(() => {});
+      stream = forRead;
+    } else {
+      stream = res.body!;
+    }
+  }
+
+  const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let received = 0;
+
+  if (fromCache) {
+    onProgress(100); // instant jump
+  }
 
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     chunks.push(value);
     received += value.byteLength;
-    if (total > 0) onProgress(Math.round((received / total) * 100));
+    if (total > 0 && !fromCache) {
+      onProgress(Math.round((received / total) * 100));
+    }
   }
 
   const combined = new Uint8Array(received);
@@ -152,7 +186,7 @@ function ChunkedVideoPlayer({
   opts: ChunkedStreamOptions;
   contentType: string;
 }) {
-  const { blobUrl, progress, isDecrypting, error } =
+  const { blobUrl, progress, isDecrypting, fromCache, error } =
     useChunkedVideoPreview(opts);
   const isAudio = contentType.startsWith("audio/");
 
@@ -187,7 +221,7 @@ function ChunkedVideoPlayer({
 
   // Regular blob URL — Plyr can fetch this just fine (unlike MediaSource blob URLs)
   return (
-    <div className="h-full w-full bg-black flex items-center justify-center">
+    <div className="h-full w-full bg-black flex items-center justify-center flex-col gap-2">
       <div className={isAudio ? "w-full p-4" : "aspect-video w-full"}>
         <Plyr
           source={{
@@ -197,6 +231,11 @@ function ChunkedVideoPlayer({
           options={{ autoplay: true }}
         />
       </div>
+      {fromCache && (
+        <p className="text-xs text-green-400/80 flex items-center gap-1">
+          <span>⚡</span> Loaded from cache
+        </p>
+      )}
     </div>
   );
 }
@@ -321,14 +360,22 @@ export default function SharedFilePage() {
           chunkCount: data.chunkCount,
           chunkIvs: chunkIvsArr,
           contentType: data.contentType,
+          cacheKey: token, // share token — Cache Storage key
+          fileSizeBytes: meta.size, // used to enforce the 500 MB cache limit
         });
         setIsFetchingForPreview(false);
         return;
       }
 
       // ── PATH C: Legacy single-blob encrypted file OR non-media ────────────
-      // Fetch full ciphertext with progress tracking
-      const raw = await fetchWithProgress(data.streamUrl, setFetchProgress);
+      // Fetch full ciphertext (or plaintext if not E2EE) with progress tracking
+      // Uses the same Cache Storage mechanism behind the scenes
+      const raw = await fetchWithProgress(
+        data.streamUrl,
+        setFetchProgress,
+        token,
+        meta.size,
+      );
 
       let blob: Blob;
       if (data.isEncrypted && dek && data.iv) {
