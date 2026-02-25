@@ -1,7 +1,8 @@
 import { requireAuth } from "@/lib/auth/session";
-import { Shield, User, Mail, Calendar, Palette } from "lucide-react";
+import { Shield, User, Mail, Calendar, Palette, HardDrive } from "lucide-react";
 import { ThemeSelector } from "@/components/settings/theme-selector";
 import { EncryptionSettingsSection } from "@/components/settings/EncryptionSettingsSection";
+import { PreviewCacheSection } from "@/components/settings/PreviewCacheSection";
 
 export default async function SettingsPage() {
   const session = await requireAuth();
@@ -114,6 +115,17 @@ export default async function SettingsPage() {
               Coming Soon
             </span>
           </div>
+        </div>
+      </div>
+
+      {/* Storage */}
+      <div className="bg-card border border-border rounded-xl p-6">
+        <h3 className="text-sm font-medium text-foreground mb-4 flex items-center gap-2">
+          <HardDrive className="w-4 h-4 text-primary" />
+          Storage
+        </h3>
+        <div className="space-y-1">
+          <PreviewCacheSection />
         </div>
       </div>
 
