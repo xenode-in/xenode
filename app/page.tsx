@@ -6,37 +6,40 @@ import { StageTimeline } from "@/components/landing/StageTimeline";
 import { SocialProofBar } from "@/components/landing/SocialProofBar";
 import { FAQSection } from "@/components/landing/FAQSection";
 import { LandingFooter } from "@/components/landing/LandingFooter";
+import { SmoothScrollWrapper } from "@/components/SmoothScrollWrapper";
 
 export default function Home() {
   return (
-    <div
-      className="relative min-h-screen flex flex-col text-[#e8e4d9] font-sans"
-      style={{
-        background: "linear-gradient(268deg, #295d32 4.2%, #273f2c 98.63%)",
-      }}
-    >
-      {/* Grid Lines Overlay */}
-      <div className="fixed inset-0 pointer-events-none z-60 flex justify-center px-6 md:px-8">
-        <div className="w-full max-w-[1200px] border-x border-white/10 h-full" />
-      </div>
-
-      {/* Grain overlay */}
+    <SmoothScrollWrapper>
       <div
-        className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat"
-        style={{ backgroundImage: "url('/grain.png')" }}
-      />
+        className="relative min-h-[150vh] flex flex-col text-[#e8e4d9] font-sans"
+        style={{
+          background: "linear-gradient(268deg, #295d32 4.2%, #273f2c 98.63%)",
+        }}
+      >
+        {/* Grid Lines Overlay */}
+        <div className="fixed inset-0 pointer-events-none z-60 flex justify-center px-6 md:px-8">
+          <div className="w-full max-w-[1200px] border-x border-white/10 h-full" />
+        </div>
 
-      {/* Navigation */}
-      <Navbar />
+        {/* Grain overlay */}
+        <div
+          className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat opacity-75"
+          style={{ backgroundImage: "url('/grain.png')" }}
+        />
 
-      {/* Landing Sections */}
-      <HeroSection />
-      <UseCasesSection />
-      <InActionSection />
-      <StageTimeline />
-      <SocialProofBar />
-      <FAQSection />
-      <LandingFooter />
-    </div>
+        {/* Navigation */}
+        <Navbar />
+
+        {/* Landing Sections */}
+        <HeroSection />
+        <UseCasesSection />
+        <InActionSection />
+        <StageTimeline />
+        <SocialProofBar />
+        <FAQSection />
+        <LandingFooter />
+      </div>
+    </SmoothScrollWrapper>
   );
 }
