@@ -31,7 +31,9 @@ function formatBytes(bytes: number): string {
 }
 
 export function AdminStorageChart() {
-  const [data, setData] = useState<{ name: string; storageGB: number; objects: number }[]>([]);
+  const [data, setData] = useState<
+    { name: string; storageGB: number; objects: number }[]
+  >([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -41,12 +43,14 @@ export function AdminStorageChart() {
         const users: UserRow[] = d.users ?? [];
         const chartData = users
           .filter((u) => u.storage.totalStorageBytes > 0)
-          .sort((a, b) => b.storage.totalStorageBytes - a.storage.totalStorageBytes)
+          .sort(
+            (a, b) => b.storage.totalStorageBytes - a.storage.totalStorageBytes,
+          )
           .slice(0, 10)
           .map((u) => ({
             name: u.name?.split(" ")[0] || u.email?.split("@")[0] || "Unknown",
             storageGB: parseFloat(
-              (u.storage.totalStorageBytes / 1024 / 1024 / 1024).toFixed(3)
+              (u.storage.totalStorageBytes / 1024 / 1024 / 1024).toFixed(3),
             ),
             objects: u.storage.totalObjects,
           }));
@@ -58,8 +62,12 @@ export function AdminStorageChart() {
 
   return (
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-      <h2 className="text-base font-medium text-white mb-1">Top Users by Storage</h2>
-      <p className="text-xs text-zinc-500 mb-6">Top 10 users with the most storage used</p>
+      <h2 className="text-base font-medium text-white mb-1">
+        Top Users by Storage
+      </h2>
+      <p className="text-xs text-zinc-500 mb-6">
+        Top 10 users with the most storage used
+      </p>
 
       {loading ? (
         <div className="h-64 flex items-center justify-center">
@@ -71,7 +79,10 @@ export function AdminStorageChart() {
         </div>
       ) : (
         <ResponsiveContainer width="100%" height={260}>
-          <BarChart data={data} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
+          <BarChart
+            data={data}
+            margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
             <XAxis
               dataKey="name"
@@ -93,7 +104,10 @@ export function AdminStorageChart() {
                 fontSize: "12px",
                 color: "#fff",
               }}
-              formatter={(value: number) => [`${value} GB`, "Storage"]}
+              formatter={(value: number | undefined) => [
+                `${value} GB`,
+                "Storage",
+              ]}
             />
             <Bar dataKey="storageGB" fill="#6366f1" radius={[4, 4, 0, 0]} />
           </BarChart>
