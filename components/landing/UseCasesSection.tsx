@@ -29,15 +29,14 @@ const cases = [
 
 export function UseCasesSection() {
   return (
-    <section className="relative z-10 px-6 py-24 border-b border-white/10">
-      <div className="max-w-5xl mx-auto">
+    <section className="relative z-10 border-b border-white/10 flex justify-center px-6 md:px-8">
+      <div className="w-full max-w-[1200px] py-24 px-6">
         {/* Header */}
         <p className="text-xs uppercase tracking-widest opacity-50 mb-3">
           XENODE SOLUTIONS
         </p>
         <h2 className="text-3xl md:text-5xl font-medium leading-tight tracking-tight mb-16">
-          Two ways to use{" "}
-          <span className="font-brand italic">Xenode</span>
+          Two ways to use <span className="font-brand italic">Xenode</span>
         </h2>
 
         {/* Cards */}
@@ -63,7 +62,10 @@ export function UseCasesSection() {
 
                 <ul className="flex flex-col gap-2 mt-auto">
                   {c.bullets.map((b) => (
-                    <li key={b} className="flex items-start gap-2 text-sm opacity-70">
+                    <li
+                      key={b}
+                      className="flex items-start gap-2 text-sm opacity-70"
+                    >
                       <span className="mt-1 w-1.5 h-1.5 rounded-full bg-[#7cb686] flex-shrink-0" />
                       {b}
                     </li>

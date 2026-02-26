@@ -26,8 +26,8 @@ const trustBadges = [
 
 export function SocialProofBar() {
   return (
-    <section className="relative z-10 px-6 py-16 border-y border-white/10 bg-white/[0.02]">
-      <div className="max-w-5xl mx-auto flex flex-col gap-10">
+    <section className="relative z-10 border-y border-white/10 bg-white/[0.02] flex justify-center px-6 md:px-8">
+      <div className="w-full max-w-[1200px] py-16 px-6 flex flex-col gap-10">
         {/* Trust badges */}
         <div className="flex flex-wrap items-center justify-center gap-3">
           {trustBadges.map((badge) => (
