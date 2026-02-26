@@ -11,7 +11,7 @@ import { DownloadProgress } from "@/components/dashboard/DownloadProgress";
 
 export const metadata: Metadata = {
   title: "Dashboard",
-  description: "Manage your Xenode Storage buckets and files",
+  description: "Manage your Xenode files",
 };
 
 export default async function DashboardLayout({
@@ -23,6 +23,12 @@ export default async function DashboardLayout({
 
   if (!session) {
     redirect("/login");
+  }
+
+  // Redirect to onboarding if not completed
+  // Use loose check in case the field is undefined for older users
+  if (session.user.onboarded === false) {
+    redirect("/onboarding");
   }
 
   return (

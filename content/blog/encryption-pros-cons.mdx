@@ -1,0 +1,55 @@
+---
+title: "End-to-End Encryption: Pros and Cons"
+description: "Understand the trade-offs of enabling end-to-End encryption for your Xenode uploads."
+date: "2026-02-26"
+author: "Xenode Security Team"
+tags: ["security", "encryption", "feature"]
+---
+
+## What is End-to-End Encryption?
+
+When you enable **End-to-End Encryption (E2EE)** in Xenode, your files are encrypted locally in your browser _before_ they are sent to our servers. This means that we (Xenode team), your internet service provider, or any malicious third-party intercepting the network traffic cannot read your files.
+
+Only you hold the decryption keys necessary to view or download the original file.
+
+## The Advantages
+
+### 1. Absolute Privacy
+
+Because the encryption happens on your device, the raw data never touches our servers. Even in the highly unlikely event of a data breach, your encrypted files are completely useless to an attacker without your specific decryption key.
+
+### 2. Trustless Security
+
+You don't need to trust us with your sensitive data. Whether it's financial records, personal identification documents, or proprietary company secrets, E2EE ensures mathematically proven privacy.
+
+### 3. Compliance Made Easier
+
+For applications that need to store sensitive personal information (PII) or health data, utilizing E2EE helps meet stringent data compliance and regulatory requirements since the storage provider is completely blind to the content.
+
+---
+
+## The Disadvantages
+
+While E2EE offers unparalleled security, it fundamentally changes how data is handled and comes with unavoidable trade-offs.
+
+### 1. No Native Media Streaming
+
+Because the server only sees scrambled bytes, it cannot process the file. **You cannot stream encrypted videos or audio files directly from the cloud.**
+
+To view a video or listen to audio, the file must be fully downloaded and decrypted on your local device first. If you plan to host media for streaming, you should **not** encrypt those specific files.
+
+### 2. No Server-Side Previews or Processing
+
+Features like generating image thumbnails, converting video formats, or searching text within documents rely on the server being able to read the file. E2EE breaks these features. If you need Xenode to generate image previews or process files, they must be uploaded unencrypted.
+
+### 3. Key Loss Means Data Loss
+
+With true E2EE, we cannot reset your encryption keys or recover your data if you lose access to them. If the key is lost, the data is permanently inaccessible.
+
+### 4. Performance Overhead
+
+Encrypting and decrypting data takes computational power. While modern browsers are fast, uploading or downloading massive encrypted files may be slightly slower than unencrypted files, and it will use more CPU/battery on your device.
+
+## Recommendation
+
+We recommend a hybrid approach. Enable End-to-End Encryption for sensitive documents, personal backups, and proprietary data. Leave it disabled for media assets you intend to stream, share publicly, or process on the server.

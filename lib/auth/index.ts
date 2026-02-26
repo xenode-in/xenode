@@ -50,6 +50,20 @@ function createAuth() {
     trustedOrigins: [
       process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
     ],
+    user: {
+      additionalFields: {
+        onboarded: {
+          type: "boolean",
+          required: false,
+          defaultValue: false,
+        },
+        encryptByDefault: {
+          type: "boolean",
+          required: false,
+          defaultValue: false,
+        },
+      },
+    },
   });
 }
 
