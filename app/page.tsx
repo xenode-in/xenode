@@ -15,6 +15,11 @@ export default function Home() {
         background: "linear-gradient(268deg, #295d32 4.2%, #273f2c 98.63%)",
       }}
     >
+      {/* Grid Lines Overlay */}
+      <div className="fixed inset-0 pointer-events-none z-60 flex justify-center px-6 md:px-8">
+        <div className="w-full max-w-[1200px] border-x border-white/10 h-full" />
+      </div>
+
       {/* Grain overlay */}
       <div
         className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat"
