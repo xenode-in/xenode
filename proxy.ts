@@ -28,12 +28,12 @@ const ADMIN_HOSTNAMES = [
   "admin.localhost:3000",
 ];
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const hostname = req.headers.get("host") || "";
   const { pathname } = req.nextUrl;
 
   const isAdminHost = ADMIN_HOSTNAMES.some(
-    (h) => hostname === h || hostname.startsWith(h)
+    (h) => hostname === h || hostname.startsWith(h),
   );
 
   // ── Admin subdomain ──────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, Fragment } from "react";
 import { Search, ChevronLeft, ChevronRight, ExternalLink } from "lucide-react";
 
 interface UserStorage {
@@ -80,7 +80,7 @@ export function AdminUsersTable() {
         setLoading(false);
       }
     },
-    [debouncedSearch]
+    [debouncedSearch],
   );
 
   useEffect(() => {
@@ -108,16 +108,28 @@ export function AdminUsersTable() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-zinc-800">
-              <th className="text-left px-4 py-3 text-xs font-medium text-zinc-500 uppercase tracking-wide">User</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-zinc-500 uppercase tracking-wide">Storage Used</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-zinc-500 uppercase tracking-wide">Objects</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-zinc-500 uppercase tracking-wide">Buckets</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-zinc-500 uppercase tracking-wide">Usage %</th>
-              <th className="text-left px-4 py-3 text-xs font-medium text-zinc-500 uppercase tracking-wide">Joined</th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-zinc-500 uppercase tracking-wide">
+                User
+              </th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-zinc-500 uppercase tracking-wide">
+                Storage Used
+              </th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-zinc-500 uppercase tracking-wide">
+                Objects
+              </th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-zinc-500 uppercase tracking-wide">
+                Buckets
+              </th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-zinc-500 uppercase tracking-wide">
+                Usage %
+              </th>
+              <th className="text-left px-4 py-3 text-xs font-medium text-zinc-500 uppercase tracking-wide">
+                Joined
+              </th>
               <th className="px-4 py-3" />
             </tr>
           </thead>
-          <tbody>
+          <tbody key={users.length}>
             {loading ? (
               [...Array(5)].map((_, i) => (
                 <tr key={i} className="border-b border-zinc-800/50">
@@ -130,25 +142,36 @@ export function AdminUsersTable() {
               ))
             ) : error ? (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-red-400">{error}</td>
+                <td colSpan={7} className="px-4 py-8 text-center text-red-400">
+                  {error}
+                </td>
               </tr>
             ) : users.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">No users found</td>
+                <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">
+                  No users found
+                </td>
               </tr>
             ) : (
               users.map((user) => {
-                const usagePct = user.storage.storageLimitBytes > 0
-                  ? Math.min(100, (user.storage.totalStorageBytes / user.storage.storageLimitBytes) * 100)
-                  : 0;
+                const usagePct =
+                  user.storage.storageLimitBytes > 0
+                    ? Math.min(
+                        100,
+                        (user.storage.totalStorageBytes /
+                          user.storage.storageLimitBytes) *
+                          100,
+                      )
+                    : 0;
                 const isExpanded = expandedUser === user.id;
 
                 return (
-                  <>
+                  <Fragment key={user.id}>
                     <tr
-                      key={user.id}
                       className="border-b border-zinc-800/50 hover:bg-zinc-800/30 transition-colors cursor-pointer"
-                      onClick={() => setExpandedUser(isExpanded ? null : user.id)}
+                      onClick={() =>
+                        setExpandedUser(isExpanded ? null : user.id)
+                      }
                     >
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
@@ -156,61 +179,102 @@ export function AdminUsersTable() {
                             {user.name?.charAt(0)?.toUpperCase() || "?"}
                           </div>
                           <div>
-                            <p className="font-medium text-white">{user.name || "—"}</p>
-                            <p className="text-zinc-500 text-xs">{user.email}</p>
+                            <p className="font-medium text-white">
+                              {user.name || "—"}
+                            </p>
+                            <p className="text-zinc-500 text-xs">
+                              {user.email}
+                            </p>
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-zinc-300">{formatBytes(user.storage.totalStorageBytes)}</td>
-                      <td className="px-4 py-3 text-zinc-300">{user.storage.totalObjects.toLocaleString()}</td>
-                      <td className="px-4 py-3 text-zinc-300">{user.storage.totalBuckets}</td>
+                      <td className="px-4 py-3 text-zinc-300">
+                        {formatBytes(user.storage.totalStorageBytes)}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-300">
+                        {user.storage.totalObjects.toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3 text-zinc-300">
+                        {user.storage.totalBuckets}
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <div className="w-24 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
                             <div
                               className={`h-full rounded-full ${
-                                usagePct > 80 ? "bg-red-500" : usagePct > 50 ? "bg-amber-500" : "bg-emerald-500"
+                                usagePct > 80
+                                  ? "bg-red-500"
+                                  : usagePct > 50
+                                    ? "bg-amber-500"
+                                    : "bg-emerald-500"
                               }`}
                               style={{ width: `${usagePct}%` }}
                             />
                           </div>
-                          <span className="text-xs text-zinc-500">{usagePct.toFixed(1)}%</span>
+                          <span className="text-xs text-zinc-500">
+                            {usagePct.toFixed(1)}%
+                          </span>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-zinc-500 text-xs">
-                        {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : "—"}
+                        {user.createdAt
+                          ? new Date(user.createdAt).toLocaleDateString()
+                          : "—"}
                       </td>
                       <td className="px-4 py-3">
                         <ExternalLink className="w-3.5 h-3.5 text-zinc-600" />
                       </td>
                     </tr>
                     {isExpanded && (
-                      <tr key={`${user.id}-expanded`} className="bg-zinc-800/20 border-b border-zinc-800/50">
+                      <tr
+                        key={`${user.id}-expanded`}
+                        className="bg-zinc-800/20 border-b border-zinc-800/50"
+                      >
                         <td colSpan={7} className="px-4 py-4">
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                             <div>
-                              <p className="text-zinc-500 text-xs mb-0.5">Storage Limit</p>
-                              <p className="text-white">{formatBytes(user.storage.storageLimitBytes)}</p>
+                              <p className="text-zinc-500 text-xs mb-0.5">
+                                Storage Limit
+                              </p>
+                              <p className="text-white">
+                                {formatBytes(user.storage.storageLimitBytes)}
+                              </p>
                             </div>
                             <div>
-                              <p className="text-zinc-500 text-xs mb-0.5">Egress Used</p>
-                              <p className="text-white">{formatBytes(user.storage.totalEgressBytes)}</p>
+                              <p className="text-zinc-500 text-xs mb-0.5">
+                                Egress Used
+                              </p>
+                              <p className="text-white">
+                                {formatBytes(user.storage.totalEgressBytes)}
+                              </p>
                             </div>
                             <div>
-                              <p className="text-zinc-500 text-xs mb-0.5">Email Verified</p>
-                              <p className={user.emailVerified ? "text-emerald-400" : "text-amber-400"}>
+                              <p className="text-zinc-500 text-xs mb-0.5">
+                                Email Verified
+                              </p>
+                              <p
+                                className={
+                                  user.emailVerified
+                                    ? "text-emerald-400"
+                                    : "text-amber-400"
+                                }
+                              >
                                 {user.emailVerified ? "Yes" : "No"}
                               </p>
                             </div>
                             <div>
-                              <p className="text-zinc-500 text-xs mb-0.5">User ID</p>
-                              <p className="text-zinc-400 font-mono text-xs">{user.id}</p>
+                              <p className="text-zinc-500 text-xs mb-0.5">
+                                User ID
+                              </p>
+                              <p className="text-zinc-400 font-mono text-xs">
+                                {user.id}
+                              </p>
                             </div>
                           </div>
                         </td>
                       </tr>
                     )}
-                  </>
+                  </Fragment>
                 );
               })
             )}
@@ -222,7 +286,8 @@ export function AdminUsersTable() {
       {pagination.totalPages > 1 && (
         <div className="px-4 py-3 border-t border-zinc-800 flex items-center justify-between">
           <p className="text-xs text-zinc-500">
-            {pagination.total} users &middot; page {pagination.page} of {pagination.totalPages}
+            {pagination.total} users &middot; page {pagination.page} of{" "}
+            {pagination.totalPages}
           </p>
           <div className="flex items-center gap-2">
             <button

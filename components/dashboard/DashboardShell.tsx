@@ -62,7 +62,7 @@ function SidebarNav({ pathname }: { pathname: string }) {
       {sidebarItems.map((item) => {
         const isActive =
           pathname === item.href ||
-          (item.href !== "/dashboard" && pathname.startsWith(item.href));
+          (item.href !== "/dashboard" && pathname.startsWith(`${item.href}/`));
         const Icon = item.icon;
 
         return (
@@ -121,7 +121,7 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
   return (
     <div className="min-h-screen flex bg-background">
       {/* Desktop Sidebar */}
-      <aside className="hidden lg:flex flex-col w-[260px] border-r border-sidebar-border bg-sidebar">
+      <aside className="hidden lg:flex flex-col w-[260px] border-r border-sidebar-border bg-sidebar sticky top-0 left-0 h-screen">
         {/* Logo */}
         <div className="px-6 py-5 border-b border-sidebar-border">
           <Link href="/dashboard" className="flex items-center gap-2">
@@ -164,7 +164,7 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Topbar */}
         <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-xl">
-          <div className="flex items-center justify-between px-4 lg:px-8 h-14">
+          <div className="flex items-center justify-between px-4 lg:px-8 h-17">
             {/* Mobile menu */}
             {mounted ? (
               <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
