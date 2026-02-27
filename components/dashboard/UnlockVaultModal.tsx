@@ -3,27 +3,18 @@
 /**
  * UnlockVaultModal
  *
- * Shown when vault exists on server but IDB cache is empty
- * (new device, cleared storage, or after lock).
- *
- * The user enters their 12 recovery words (space-separated).
- * We pass the joined string as the passphrase to unlockVault().
- *
- * Simple. One input. No choices.
+ * Shown when vault exists but IDB cache is empty (new device / after lock).
+ * User enters their MASTER PASSWORD only — recovery words not needed for normal unlock.
  */
 
 import React, { useState } from "react";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Lock, KeyRound, Loader2 } from "lucide-react";
+import { Lock, KeyRound, Loader2, Eye, EyeOff } from "lucide-react";
 import { useCrypto } from "@/contexts/CryptoContext";
 
 interface UnlockVaultModalProps {
@@ -33,34 +24,24 @@ interface UnlockVaultModalProps {
 
 export function UnlockVaultModal({ open, onClose }: UnlockVaultModalProps) {
   const { unlock } = useCrypto();
-  const [words, setWords] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
-  // Normalise input: trim, lowercase, collapse whitespace
-  function normalise(input: string) {
-    return input.trim().toLowerCase().replace(/\s+/g, " ");
-  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-
-    const passphrase = normalise(words);
-    const wordCount = passphrase.split(" ").filter(Boolean).length;
-    if (wordCount !== 12) {
-      setError(`Enter all 12 recovery words. You've entered ${wordCount}.`);
-      return;
-    }
+    if (!password.trim()) return;
 
     setLoading(true);
     try {
-      await unlock(passphrase);
-      setWords("");
+      await unlock(password);
+      setPassword("");
       onClose();
     } catch (err) {
       if (err instanceof Error && err.message === "WRONG_PASSWORD") {
-        setError("Those words don't match your recovery kit. Check your saved copy and try again.");
+        setError("Incorrect password. Please try again.");
       } else {
         setError("Something went wrong. Please try again.");
       }
@@ -76,43 +57,48 @@ export function UnlockVaultModal({ open, onClose }: UnlockVaultModalProps) {
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
             <Lock className="h-6 w-6 text-primary" />
           </div>
-          <DialogTitle className="text-center text-lg">Unlock your files</DialogTitle>
+          <DialogTitle className="text-center text-lg">Unlock your vault</DialogTitle>
           <DialogDescription className="text-center text-sm text-muted-foreground">
-            Enter your 12 recovery words to decrypt your files on this device.
+            Enter your master password to decrypt your files on this device.
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="mt-2 space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="recovery-words">Recovery words</Label>
-            <Textarea
-              id="recovery-words"
-              value={words}
-              onChange={(e) => setWords(e.target.value)}
-              placeholder="word1 word2 word3 ... word12"
-              className="min-h-[80px] resize-none font-mono text-sm lowercase"
-              autoFocus
-              autoComplete="off"
-              autoCapitalize="none"
-              spellCheck={false}
-            />
-            <p className="text-xs text-muted-foreground">
-              Paste or type all 12 words separated by spaces.
-            </p>
+            <Label htmlFor="unlock-pw">Master password</Label>
+            <div className="relative">
+              <Input
+                id="unlock-pw"
+                type={showPw ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter your master password"
+                autoFocus
+                autoComplete="current-password"
+                className="pr-10"
+              />
+              <button type="button" onClick={() => setShowPw(v => !v)}
+                className="absolute inset-y-0 right-3 flex items-center text-muted-foreground hover:text-foreground"
+                tabIndex={-1}>
+                {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
 
-          <Button type="submit" className="w-full" disabled={loading || !words.trim()}>
-            {loading ? (
-              <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Unlocking...</>
-            ) : (
-              <><KeyRound className="mr-2 h-4 w-4" /> Unlock files</>
-            )}
+          <Button type="submit" className="w-full" disabled={loading || !password.trim()}>
+            {loading
+              ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Unlocking...</>
+              : <><KeyRound className="mr-2 h-4 w-4" /> Unlock vault</>
+            }
           </Button>
 
           <p className="text-center text-xs text-muted-foreground">
-            Your recovery words never leave this device.
+            Forgot your password?{" "}
+            <a href="/dashboard/settings" className="text-primary hover:underline">
+              Recover with your recovery kit →
+            </a>
           </p>
         </form>
       </DialogContent>
