@@ -34,6 +34,7 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { useState, useEffect } from "react";
+import { useCrypto } from "@/contexts/CryptoContext";
 
 interface DashboardShellProps {
   children: React.ReactNode;
@@ -98,13 +99,15 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
   const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const { lock } = useCrypto();
 
-  // Prevent hydration mismatch for Radix UI primitives
   useEffect(() => {
     setMounted(true);
   }, []);
 
   const handleSignOut = async () => {
+    // Clear the user's cached keys from IndexedDB BEFORE ending the session
+    await lock();
     await signOut();
     router.push("/login");
   };

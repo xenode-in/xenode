@@ -13,6 +13,7 @@ import {
   loadCachedKeys,
   clearCachedKeys,
 } from "@/lib/crypto/keyCache";
+import { useSession } from "@/lib/auth/client";
 
 interface CryptoContextType {
   isInitializing: boolean;
@@ -22,7 +23,7 @@ interface CryptoContextType {
   publicKey: CryptoKey | null;
   unlock: (password: string) => Promise<void>;
   setup: (password: string) => Promise<void>;
-  lock: () => void;
+  lock: () => Promise<void>;
   isModalOpen: boolean;
   setModalOpen: (open: boolean) => void;
 }
@@ -30,6 +31,9 @@ interface CryptoContextType {
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
 
 export function CryptoProvider({ children }: { children: React.ReactNode }) {
+  const { data: session } = useSession();
+  const userId = session?.user?.id ?? null;
+
   const [isInitializing, setIsInitializing] = useState(true);
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [needsSetup, setNeedsSetup] = useState(false);
@@ -38,9 +42,21 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
   const [isModalOpen, setModalOpen] = useState(false);
 
   useEffect(() => {
+    // Reset crypto state whenever the logged-in user changes (incl. logout)
+    setPrivateKey(null);
+    setPublicKey(null);
+    setIsUnlocked(false);
+    setNeedsSetup(false);
+
+    if (!userId) {
+      setIsInitializing(false);
+      return;
+    }
+
     async function init() {
-      // 1. Try to restore keys from IndexedDB (survives page refresh)
-      const cached = await loadCachedKeys();
+      setIsInitializing(true);
+      // 1. Try to restore keys from IndexedDB scoped to this user
+      const cached = await loadCachedKeys(userId!);
       if (cached) {
         setPrivateKey(cached.privateKey);
         setPublicKey(cached.publicKey);
@@ -60,34 +76,45 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
         setIsInitializing(false);
       }
     }
+
     init();
-  }, []);
+  }, [userId]);
 
-  const unlock = useCallback(async (password: string) => {
-    const keys = await unlockVault(password);
-    setPrivateKey(keys.privateKey);
-    setPublicKey(keys.publicKey);
-    setIsUnlocked(true);
-    setNeedsSetup(false);
-    // Cache for next page load
-    await cacheKeys(keys.privateKey, keys.publicKey);
-  }, []);
+  const unlock = useCallback(
+    async (password: string) => {
+      if (!userId) throw new Error("Not authenticated");
+      const keys = await unlockVault(password);
+      setPrivateKey(keys.privateKey);
+      setPublicKey(keys.publicKey);
+      setIsUnlocked(true);
+      setNeedsSetup(false);
+      await cacheKeys(userId, keys.privateKey, keys.publicKey);
+    },
+    [userId],
+  );
 
-  const setup = useCallback(async (password: string) => {
-    const keys = await setupUserKeyVault(password);
-    setPrivateKey(keys.privateKey);
-    setPublicKey(keys.publicKey);
-    setIsUnlocked(true);
-    setNeedsSetup(false);
-    await cacheKeys(keys.privateKey, keys.publicKey);
-  }, []);
+  const setup = useCallback(
+    async (password: string) => {
+      if (!userId) throw new Error("Not authenticated");
+      const keys = await setupUserKeyVault(password);
+      setPrivateKey(keys.privateKey);
+      setPublicKey(keys.publicKey);
+      setIsUnlocked(true);
+      setNeedsSetup(false);
+      await cacheKeys(userId, keys.privateKey, keys.publicKey);
+    },
+    [userId],
+  );
 
-  const lock = useCallback(() => {
+  // lock() is now async so DashboardShell can await it before calling signOut
+  const lock = useCallback(async () => {
     setPrivateKey(null);
     setPublicKey(null);
     setIsUnlocked(false);
-    clearCachedKeys();
-  }, []);
+    if (userId) {
+      await clearCachedKeys(userId);
+    }
+  }, [userId]);
 
   return (
     <CryptoContext.Provider
