@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Dialog,
   DialogContent,
@@ -19,7 +19,6 @@ import {
   EyeOff,
   ShieldCheck,
   Fingerprint,
-  ShieldAlert,
 } from "lucide-react";
 import { useCrypto } from "@/contexts/CryptoContext";
 
@@ -36,47 +35,77 @@ export function UnlockVaultModal({ open, onClose }: UnlockVaultModalProps) {
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  // If PRF unlock fails on this device, show passphrase fallback
   const [prfFailed, setPrfFailed] = useState(false);
+  const [prfAttempted, setPrfAttempted] = useState(false);
 
   const isSetup = needsSetup;
-  const isPRFVault = vaultType === "prf" && !isSetup && !prfFailed;
 
-  // ── PRF unlock ──────────────────────────────────────────────────────────
+  /**
+   * For 'both' vaults: silently try PRF when modal opens.
+   * If PRF succeeds → vault unlocks, modal closes automatically.
+   * If PRF fails → show passphrase input as fallback.
+   */
+  useEffect(() => {
+    if (!open || prfAttempted || isSetup) return;
+    if (vaultType !== "both") return;
+
+    setPrfAttempted(true);
+
+    async function tryPRFSilently() {
+      try {
+        const result = await unlockWithPRF();
+        if (result.supported) {
+          // PRF worked — modal will close via isUnlocked in wrapper
+          onClose();
+        } else {
+          // PRF not supported on this device → show passphrase
+          setPrfFailed(true);
+        }
+      } catch {
+        // Any error → fall back to passphrase silently
+        setPrfFailed(true);
+      }
+    }
+
+    tryPRFSilently();
+  }, [open, vaultType, prfAttempted, isSetup, unlockWithPRF, onClose]);
+
+  // Reset state when modal closes
+  useEffect(() => {
+    if (!open) {
+      setPrfAttempted(false);
+      setPrfFailed(false);
+      setPassword("");
+      setConfirm("");
+      setError("");
+    }
+  }, [open]);
+
+  // ── Manual PRF unlock button (for vaultType 'prf' legacy) ─────────────
   async function handlePRFUnlock() {
     setError("");
     setLoading(true);
     try {
       const result = await unlockWithPRF();
       if (!result.supported) {
-        // PRF not supported on this device (Windows Hello, Firefox)
-        // Fall back to passphrase
         setPrfFailed(true);
-        setError(
-          "Passkey unlock isn't supported on this browser. Enter your passphrase instead.",
-        );
+        setError("Passkey unlock isn't supported on this browser. Enter your passphrase instead.");
         return;
       }
       onClose();
     } catch (err: unknown) {
-      if (err instanceof Error) {
-        if (err.message === "Passkey authentication cancelled") {
-          setError("Passkey authentication cancelled.");
-        } else if (err.message === "PRF_DECRYPT_FAILED") {
-          // Passkey authenticated but wrong key — shouldn't happen unless vault corrupted
-          setError("Vault decryption failed. Try your passphrase instead.");
-          setPrfFailed(true);
-        } else {
-          setError("Passkey unlock failed. Try your passphrase instead.");
-          setPrfFailed(true);
-        }
+      if (err instanceof Error && err.message === "Passkey authentication cancelled") {
+        setError("Cancelled. Try again or use your passphrase.");
+      } else {
+        setPrfFailed(true);
+        setError("Passkey unlock failed. Try your passphrase instead.");
       }
     } finally {
       setLoading(false);
     }
   }
 
-  // ── Passphrase submit ────────────────────────────────────────────────────
+  // ── Passphrase submit ─────────────────────────────────────────────────
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
@@ -101,7 +130,7 @@ export function UnlockVaultModal({ open, onClose }: UnlockVaultModalProps) {
     } catch (err: unknown) {
       if (err instanceof Error) {
         if (err.message === "WRONG_PASSWORD") {
-          setError("Incorrect password. Please try again.");
+          setError("Incorrect passphrase. Please try again.");
         } else {
           setError(err.message || "An error occurred. Please try again.");
         }
@@ -111,86 +140,79 @@ export function UnlockVaultModal({ open, onClose }: UnlockVaultModalProps) {
     }
   }
 
+  // ── Determine what to show ────────────────────────────────────────────
+  // 'both' + PRF not yet attempted = loading spinner (PRF trying silently)
+  // 'both' + PRF failed = passphrase input
+  // 'both' + PRF succeeded = modal closes (handled above)
+  // 'prf' (legacy) = passkey button
+  // 'passphrase' = passphrase input
+  // needsSetup = setup form
+  const showPRFLoading = vaultType === "both" && !prfAttempted && !isSetup;
+  const showPRFButton = (vaultType === "prf" && !prfFailed) && !isSetup;
+  const showPassphrase = isSetup || vaultType === "passphrase" || (vaultType === "both" && prfFailed) || (vaultType === "prf" && prfFailed);
+
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        if (!o) onClose();
-      }}
-    >
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
             {isSetup ? (
               <ShieldCheck className="h-6 w-6 text-primary" />
-            ) : isPRFVault ? (
+            ) : showPRFLoading || showPRFButton ? (
               <Fingerprint className="h-6 w-6 text-primary" />
-            ) : prfFailed ? (
-              <ShieldAlert className="h-6 w-6 text-amber-500" />
             ) : (
               <Lock className="h-6 w-6 text-primary" />
             )}
           </div>
 
           <DialogTitle className="text-center text-lg">
-            {isSetup
-              ? "Set up file encryption"
-              : isPRFVault
-              ? "Unlock your files"
-              : "Unlock your files"}
+            {isSetup ? "Set up file encryption" : "Unlock your files"}
           </DialogTitle>
 
           <DialogDescription className="text-center text-sm text-muted-foreground">
             {isSetup
-              ? "Create an encryption password to protect your files end-to-end."
-              : isPRFVault
-              ? "Use your passkey to decrypt your files. Your biometric never leaves this device."
-              : prfFailed
-              ? "Enter your encryption passphrase as a fallback."
-              : "Enter your encryption password to decrypt your files."}
+              ? "Create an encryption passphrase to protect your files end-to-end."
+              : showPRFLoading
+              ? "Checking your passkey..."
+              : showPRFButton
+              ? "Use your passkey to decrypt your files."
+              : "Enter your encryption passphrase to decrypt your files."}
           </DialogDescription>
         </DialogHeader>
 
-        {/* ── PRF path: biometric button ── */}
-        {isPRFVault && (
+        {/* PRF loading state — silent attempt for 'both' vaults */}
+        {showPRFLoading && (
+          <div className="flex flex-col items-center gap-3 py-4">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="text-sm text-muted-foreground">Checking your passkey...</p>
+          </div>
+        )}
+
+        {/* Legacy PRF-only vault — manual passkey button */}
+        {showPRFButton && (
           <div className="mt-2 space-y-4">
-            {error && (
-              <p className="text-sm text-destructive text-center">{error}</p>
-            )}
-            <Button
-              type="button"
-              className="w-full"
-              onClick={handlePRFUnlock}
-              disabled={loading}
-            >
+            {error && <p className="text-sm text-destructive text-center">{error}</p>}
+            <Button type="button" className="w-full" onClick={handlePRFUnlock} disabled={loading}>
               {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Unlocking...
-                </>
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Unlocking...</>
               ) : (
-                <>
-                  <Fingerprint className="mr-2 h-4 w-4" />
-                  Unlock with Passkey
-                </>
+                <><Fingerprint className="mr-2 h-4 w-4" /> Unlock with Passkey</>
               )}
             </Button>
-            <button
-              type="button"
+            <button type="button"
               className="w-full text-xs text-muted-foreground hover:text-foreground transition-colors text-center"
-              onClick={() => setPrfFailed(true)}
-            >
+              onClick={() => setPrfFailed(true)}>
               Use passphrase instead →
             </button>
           </div>
         )}
 
-        {/* ── Passphrase path: password form ── */}
-        {!isPRFVault && (
+        {/* Passphrase form — setup, passphrase vault, or PRF fallback */}
+        {showPassphrase && (
           <form onSubmit={handleSubmit} className="mt-2 space-y-4">
             <div className="space-y-2">
               <Label htmlFor="vault-password">
-                {isSetup ? "Encryption password" : "Passphrase"}
+                {isSetup ? "Encryption passphrase" : "Passphrase"}
               </Label>
               <div className="relative">
                 <Input
@@ -204,31 +226,22 @@ export function UnlockVaultModal({ open, onClose }: UnlockVaultModalProps) {
                   autoComplete={isSetup ? "new-password" : "current-password"}
                   required
                 />
-                <button
-                  type="button"
-                  onClick={() => setShowPw((v) => !v)}
+                <button type="button" onClick={() => setShowPw((v) => !v)}
                   className="absolute inset-y-0 right-3 flex items-center text-muted-foreground hover:text-foreground"
-                  tabIndex={-1}
-                  aria-label="Toggle password visibility"
-                >
-                  {showPw ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
+                  tabIndex={-1}>
+                  {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
               </div>
             </div>
 
             {isSetup && (
               <div className="space-y-2">
-                <Label htmlFor="vault-confirm">Confirm password</Label>
-                <Input
-                  id="vault-confirm"
+                <Label htmlFor="vault-confirm">Confirm passphrase</Label>
+                <Input id="vault-confirm"
                   type={showPw ? "text" : "password"}
                   value={confirm}
                   onChange={(e) => setConfirm(e.target.value)}
-                  placeholder="Confirm your password"
+                  placeholder="Confirm your passphrase"
                   autoComplete="new-password"
                   required
                 />
@@ -239,37 +252,23 @@ export function UnlockVaultModal({ open, onClose }: UnlockVaultModalProps) {
 
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   {isSetup ? "Setting up..." : "Unlocking..."}
                 </>
               ) : (
-                <>
-                  <KeyRound className="mr-2 h-4 w-4" />
+                <><KeyRound className="mr-2 h-4 w-4" />
                   {isSetup ? "Set up encryption" : "Unlock files"}
                 </>
               )}
             </Button>
 
-            {/* If PRF vault but fell back — offer to try passkey again */}
+            {/* If fell back from PRF — offer to retry passkey */}
             {prfFailed && !isSetup && (
-              <button
-                type="button"
+              <button type="button"
                 className="w-full text-xs text-muted-foreground hover:text-foreground transition-colors text-center"
-                onClick={() => {
-                  setPrfFailed(false);
-                  setError("");
-                }}
-              >
+                onClick={() => { setPrfFailed(false); setPrfAttempted(false); setError(""); }}>
                 ← Try passkey instead
               </button>
-            )}
-
-            {!isSetup && !prfFailed && (
-              <p className="text-center text-xs text-muted-foreground">
-                Files uploaded before encryption was enabled are still
-                accessible without a password.
-              </p>
             )}
           </form>
         )}

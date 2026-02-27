@@ -7,14 +7,13 @@ export const dynamic = "force-dynamic";
 
 /**
  * GET /api/keys/vault
- * Returns the authenticated user's encrypted key vault.
- * Returns 404 if no vault has been set up yet.
+ * Returns the full vault for the authenticated user.
+ * 404 if no vault set up yet.
  */
 export async function GET() {
   try {
     const session = await requireAuth();
     const userId = session.user.id;
-
     await dbConnect();
 
     const vault = await UserKeyVault.findOne({ userId });
@@ -24,63 +23,73 @@ export async function GET() {
 
     return NextResponse.json({
       publicKey: vault.publicKey,
-      encryptedPrivateKey: vault.encryptedPrivateKey,
+      vaultType: vault.vaultType ?? "passphrase",
+
+      // Passphrase path
+      encryptedPrivKeyPassphrase: vault.encryptedPrivKeyPassphrase ?? vault.encryptedPrivateKey ?? null,
+      passphraseIv: vault.passphraseIv ?? vault.iv ?? null,
       pbkdf2Salt: vault.pbkdf2Salt,
-      iv: vault.iv,
-      // PRF fields (present only for PRF vaults)
+
+      // PRF path
+      encryptedPrivKeyPRF: vault.encryptedPrivKeyPRF ?? null,
+      prfIv: vault.prfIv ?? null,
       prfSalt: vault.prfSalt ?? null,
       credentialId: vault.credentialId ?? null,
-      vaultType: vault.vaultType ?? "passphrase",
     });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const message =
-      error instanceof Error ? error.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Internal server error" },
+      { status: 500 },
+    );
   }
 }
 
 /**
  * POST /api/keys/vault
- * Create or replace the authenticated user's encrypted key vault.
- * Body: { publicKey, encryptedPrivateKey, pbkdf2Salt, iv, prfSalt?, credentialId?, vaultType }
+ * Create (or replace) the vault. Passphrase fields always required.
+ * PRF fields optional — included when user also set up passkey in onboarding.
  */
 export async function POST(request: NextRequest) {
   try {
     const session = await requireAuth();
     const userId = session.user.id;
 
+    const body = await request.json();
     const {
       publicKey,
-      encryptedPrivateKey,
+      encryptedPrivKeyPassphrase,
+      passphraseIv,
       pbkdf2Salt,
-      iv,
+      // PRF optional
+      encryptedPrivKeyPRF,
+      prfIv,
       prfSalt,
       credentialId,
       vaultType,
-    } = await request.json();
+    } = body;
 
-    if (!publicKey || !encryptedPrivateKey || !pbkdf2Salt || !iv) {
+    if (!publicKey || !encryptedPrivKeyPassphrase || !passphraseIv || !pbkdf2Salt) {
       return NextResponse.json(
-        { error: "publicKey, encryptedPrivateKey, pbkdf2Salt, and iv are required" },
+        { error: "publicKey, encryptedPrivKeyPassphrase, passphraseIv, pbkdf2Salt are required" },
         { status: 400 },
       );
     }
 
     await dbConnect();
 
-    // Upsert — one vault per user
     await UserKeyVault.findOneAndUpdate(
       { userId },
       {
         userId,
         publicKey,
-        encryptedPrivateKey,
+        encryptedPrivKeyPassphrase,
+        passphraseIv,
         pbkdf2Salt,
-        iv,
-        // PRF fields — optional, only set for PRF vaults
+        ...(encryptedPrivKeyPRF && { encryptedPrivKeyPRF }),
+        ...(prfIv && { prfIv }),
         ...(prfSalt && { prfSalt }),
         ...(credentialId && { credentialId }),
         vaultType: vaultType ?? "passphrase",
@@ -88,13 +97,14 @@ export async function POST(request: NextRequest) {
       { upsert: true, new: true },
     );
 
-    return NextResponse.json({ success: true }, { status: 200 });
+    return NextResponse.json({ success: true });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const message =
-      error instanceof Error ? error.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Internal server error" },
+      { status: 500 },
+    );
   }
 }

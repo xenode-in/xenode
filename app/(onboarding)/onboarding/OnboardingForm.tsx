@@ -8,40 +8,24 @@ import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { authClient } from "@/lib/auth/client";
 import {
-  Moon,
-  Sun,
-  Monitor,
-  Shield,
-  ArrowRight,
-  ExternalLink,
-  ChevronLeft,
-  CheckCircle2,
-  Eye,
-  EyeOff,
-  Fingerprint,
-  Lock,
+  Moon, Sun, Monitor, Shield, ArrowRight, ExternalLink,
+  ChevronLeft, CheckCircle2, Eye, EyeOff, Fingerprint, Lock,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { WelcomeBalloons } from "@/components/onboarding/WelcomeBalloons";
 import { ChoosePlan } from "@/components/onboarding/ChoosePlan";
 import { PersonalSettings } from "@/components/onboarding/PersonalSettings";
 import { WellDone } from "@/components/onboarding/WellDone";
-
 import { Button } from "@/components/ui/button";
 import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
+  Form, FormControl, FormDescription, FormField, FormItem, FormLabel,
 } from "@/components/ui/form";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
-import { setupVaultWithPRF, setupUserKeyVault } from "@/lib/crypto/keySetup";
+import { setupUserKeyVault, addPRFLayerToVault } from "@/lib/crypto/keySetup";
 import { cacheKeys } from "@/lib/crypto/keyCache";
 
 const onboardingSchema = z.object({
@@ -58,21 +42,18 @@ export function OnboardingForm() {
   const [isPending, startTransition] = useTransition();
   const [mounted, setMounted] = useState(false);
   const [step, setStep] = useState(1);
-  const totalSteps = 5; // 1:Welcome 2:Plan 3:Preferences 4:SecureFiles 5:WellDone
+  const totalSteps = 5;
 
   // Step 4 state
-  const [vaultLoading, setVaultLoading] = useState(false);
-  const [vaultDone, setVaultDone] = useState(false);
-  const [vaultMethod, setVaultMethod] = useState<"prf" | "passphrase" | null>(null);
-  // Passphrase fallback state
   const [passphrase, setPassphrase] = useState("");
   const [passphraseConfirm, setPassphraseConfirm] = useState("");
   const [showPassphrase, setShowPassphrase] = useState(false);
-  const [showFallback, setShowFallback] = useState(false);
+  const [vaultCreated, setVaultCreated] = useState(false);
+  const [vaultLoading, setVaultLoading] = useState(false);
+  const [passkeyAdded, setPasskeyAdded] = useState(false);
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  useEffect(() => { setMounted(true); }, []);
 
   const form = useForm({
     resolver: zodResolver(onboardingSchema),
@@ -83,83 +64,22 @@ export function OnboardingForm() {
     },
   });
 
-  const nextStep = () => {
-    if (step < totalSteps) setStep(step + 1);
-  };
+  const nextStep = () => { if (step < totalSteps) setStep(step + 1); };
+  const prevStep = () => { if (step > 1) setStep(step - 1); };
 
-  const prevStep = () => {
-    if (step > 1) setStep(step - 1);
-  };
-
-  /**
-   * PRIMARY: Register passkey WITH PRF → vault created automatically.
-   * If PRF not supported by browser → show passphrase fallback.
-   */
-  const handleSecureWithPasskey = async () => {
-    setVaultLoading(true);
-    try {
-      const session = await authClient.getSession();
-      const userId = session?.data?.user?.id;
-      const userName =
-        session?.data?.user?.email ||
-        session?.data?.user?.name ||
-        "user";
-      if (!userId) throw new Error("Not authenticated");
-
-      const result = await setupVaultWithPRF(userId, userName);
-
-      if (!result.supported) {
-        // PRF not supported (Windows Hello, Firefox) — show passphrase fallback
-        setShowFallback(true);
-        toast.info(
-          "Your browser doesn't support passwordless encryption yet. Please set a passphrase instead.",
-        );
-        return;
-      }
-
-      // PRF worked — cache keys and mark done
-      await cacheKeys(userId, result.privateKey, result.publicKey);
-      setVaultDone(true);
-      setVaultMethod("prf");
-      toast.success(
-        "Vault secured! Your files are E2EE protected — no passphrase needed.",
-      );
-    } catch (e) {
-      if (e instanceof Error && e.message === "Passkey registration cancelled") {
-        toast.info("Passkey registration cancelled.");
-      } else {
-        toast.error("Something went wrong. Try the passphrase option instead.");
-        setShowFallback(true);
-      }
-    } finally {
-      setVaultLoading(false);
-    }
-  };
-
-  /**
-   * FALLBACK: Passphrase → PBKDF2 → Master Key → vault.
-   * Used when PRF is not supported.
-   */
-  const handleSetupWithPassphrase = async () => {
-    if (passphrase.length < 8) {
-      toast.error("Passphrase must be at least 8 characters.");
-      return;
-    }
-    if (passphrase !== passphraseConfirm) {
-      toast.error("Passphrases do not match.");
-      return;
-    }
+  /** Step 1: Create passphrase vault (required) */
+  const handleCreateVault = async () => {
+    if (passphrase.length < 8) { toast.error("Passphrase must be at least 8 characters."); return; }
+    if (passphrase !== passphraseConfirm) { toast.error("Passphrases do not match."); return; }
     setVaultLoading(true);
     try {
       const session = await authClient.getSession();
       const userId = session?.data?.user?.id;
       if (!userId) throw new Error("Not authenticated");
-
       const keys = await setupUserKeyVault(passphrase);
       await cacheKeys(userId, keys.privateKey, keys.publicKey);
-      setVaultDone(true);
-      setVaultMethod("passphrase");
-      toast.success("Vault created. Your files are E2EE protected.");
+      setVaultCreated(true);
+      toast.success("Vault created! Your files are E2EE protected.");
     } catch {
       toast.error("Failed to create vault. Please try again.");
     } finally {
@@ -167,11 +87,39 @@ export function OnboardingForm() {
     }
   };
 
-  async function onSubmit(data: OnboardingValues) {
-    if (step < totalSteps) {
-      nextStep();
-      return;
+  /** Step 2 (optional): Add PRF passkey layer on top */
+  const handleAddPasskey = async () => {
+    setPasskeyLoading(true);
+    try {
+      const session = await authClient.getSession();
+      const userId = session?.data?.user?.id;
+      const userName = session?.data?.user?.email || session?.data?.user?.name || "user";
+      if (!userId) throw new Error("Not authenticated");
+
+      const result = await addPRFLayerToVault(passphrase, userId, userName);
+
+      if (!result.supported) {
+        toast.info("Your browser doesn't support passwordless encryption yet. You can add this later in Settings.");
+        return;
+      }
+
+      setPasskeyAdded(true);
+      toast.success("Passkey added! You can now unlock your vault with biometrics.");
+    } catch (e) {
+      if (e instanceof Error && e.message === "Passkey registration cancelled") {
+        toast.info("Passkey registration cancelled.");
+      } else if (e instanceof Error && e.message === "WRONG_PASSWORD") {
+        toast.error("Passphrase mismatch. Please restart setup.");
+      } else {
+        toast.error("Failed to add passkey. You can add it later in Settings.");
+      }
+    } finally {
+      setPasskeyLoading(false);
     }
+  };
+
+  async function onSubmit(data: OnboardingValues) {
+    if (step < totalSteps) { nextStep(); return; }
     startTransition(async () => {
       try {
         setTheme(data.theme);
@@ -180,9 +128,7 @@ export function OnboardingForm() {
           onboarded: true,
           encryptByDefault: data.encryptByDefault,
         });
-        if (result.error) {
-          throw new Error(result.error.message || "Failed to save preferences");
-        }
+        if (result.error) throw new Error(result.error.message || "Failed to save preferences");
         toast.success("All set!");
         router.push("/dashboard");
         router.refresh();
@@ -206,23 +152,17 @@ export function OnboardingForm() {
   return (
     <Card className="border-none shadow-none md:border-solid md:shadow-md bg-transparent md:bg-card">
       <CardContent className="pt-6">
-        {/* Header: back + step dots */}
         <div className="flex justify-between items-center mb-6">
           {step > 1 && step < totalSteps ? (
             <Button variant="ghost" size="sm" onClick={prevStep} className="-ml-2">
               <ChevronLeft className="mr-2 h-4 w-4" /> Back
             </Button>
-          ) : (
-            <div />
-          )}
+          ) : <div />}
           <div className="flex gap-1">
             {Array.from({ length: totalSteps }).map((_, i) => (
-              <div
-                key={i}
-                className={`h-2 w-8 rounded-full transition-colors ${
-                  step >= i + 1 ? "bg-primary" : "bg-muted"
-                }`}
-              />
+              <div key={i} className={`h-2 w-8 rounded-full transition-colors ${
+                step >= i + 1 ? "bg-primary" : "bg-muted"
+              }`} />
             ))}
           </div>
         </div>
@@ -232,7 +172,7 @@ export function OnboardingForm() {
             <div className="overflow-hidden min-h-[400px]">
               <AnimatePresence mode="wait">
 
-                {/* ── Step 1: Welcome ── */}
+                {/* Step 1: Welcome */}
                 {step === 1 && (
                   <motion.div key="step1" variants={slideVariants} initial="hidden" animate="visible" exit="exit"
                     className="flex flex-col items-center text-center space-y-6">
@@ -240,14 +180,13 @@ export function OnboardingForm() {
                     <div className="space-y-2">
                       <h2 className="text-3xl font-bold tracking-tight">Welcome into Xenode!</h2>
                       <p className="text-muted-foreground px-4 text-balance">
-                        We&apos;re thrilled to have you. Let&apos;s get your account personalized
-                        in just a few clicks.
+                        We&apos;re thrilled to have you. Let&apos;s get your account personalized in just a few clicks.
                       </p>
                     </div>
                   </motion.div>
                 )}
 
-                {/* ── Step 2: Choose Plan ── */}
+                {/* Step 2: Choose Plan */}
                 {step === 2 && (
                   <motion.div key="step2" variants={slideVariants} initial="hidden" animate="visible" exit="exit"
                     className="space-y-6">
@@ -260,40 +199,27 @@ export function OnboardingForm() {
                       <FormItem>
                         <FormControl>
                           <RadioGroup onValueChange={field.onChange} defaultValue={field.value} className="grid md:grid-cols-2 gap-4">
-                            <FormItem>
-                              <FormLabel className="[&:has([data-state=checked])>div]:border-primary [&:has([data-state=checked])>div]:bg-primary/5 cursor-pointer">
-                                <FormControl><RadioGroupItem value="free" className="sr-only" /></FormControl>
-                                <div className="rounded-xl border-2 p-4 transition-all hover:bg-muted">
-                                  <div className="flex justify-between items-center mb-2">
-                                    <span className="font-semibold text-lg">Starter</span>
-                                    {field.value === "free" && <CheckCircle2 className="h-5 w-5 text-primary" />}
+                            {(["free", "pro"] as const).map((val) => (
+                              <FormItem key={val}>
+                                <FormLabel className="[&:has([data-state=checked])>div]:border-primary [&:has([data-state=checked])>div]:bg-primary/5 cursor-pointer">
+                                  <FormControl><RadioGroupItem value={val} className="sr-only" /></FormControl>
+                                  <div className="rounded-xl border-2 p-4 transition-all hover:bg-muted">
+                                    <div className="flex justify-between items-center mb-2">
+                                      <span className="font-semibold text-lg">{val === "free" ? "Starter" : "Pro Builder"}</span>
+                                      {field.value === val && <CheckCircle2 className="h-5 w-5 text-primary" />}
+                                    </div>
+                                    <div className="text-2xl font-bold mb-1">
+                                      {val === "free" ? <>₹0<span className="text-sm font-normal text-muted-foreground">/mo</span></> : <>₹1.5<span className="text-sm font-normal text-muted-foreground">/GB</span></>}
+                                    </div>
+                                    <p className="text-sm text-muted-foreground">{val === "free" ? "Perfect for trying things out." : "For scaling applications."}</p>
+                                    <ul className="mt-4 space-y-2 text-sm">
+                                      <li className="flex items-center gap-2"><div className="h-1.5 w-1.5 rounded-full bg-primary" />{val === "free" ? "5 GB Storage" : "Unlimited Storage"}</li>
+                                      <li className="flex items-center gap-2"><div className="h-1.5 w-1.5 rounded-full bg-primary" />{val === "free" ? "Community Support" : "Priority Support"}</li>
+                                    </ul>
                                   </div>
-                                  <div className="text-2xl font-bold mb-1">₹0<span className="text-sm font-normal text-muted-foreground">/mo</span></div>
-                                  <p className="text-sm text-muted-foreground">Perfect for trying things out.</p>
-                                  <ul className="mt-4 space-y-2 text-sm">
-                                    <li className="flex items-center gap-2"><div className="h-1.5 w-1.5 rounded-full bg-primary" /> 5 GB Storage</li>
-                                    <li className="flex items-center gap-2"><div className="h-1.5 w-1.5 rounded-full bg-primary" /> Community Support</li>
-                                  </ul>
-                                </div>
-                              </FormLabel>
-                            </FormItem>
-                            <FormItem>
-                              <FormLabel className="[&:has([data-state=checked])>div]:border-primary [&:has([data-state=checked])>div]:bg-primary/5 cursor-pointer">
-                                <FormControl><RadioGroupItem value="pro" className="sr-only" /></FormControl>
-                                <div className="rounded-xl border-2 p-4 transition-all hover:bg-muted">
-                                  <div className="flex justify-between items-center mb-2">
-                                    <span className="font-semibold text-lg">Pro Builder</span>
-                                    {field.value === "pro" && <CheckCircle2 className="h-5 w-5 text-primary" />}
-                                  </div>
-                                  <div className="text-2xl font-bold mb-1">₹1.5<span className="text-sm font-normal text-muted-foreground">/GB</span></div>
-                                  <p className="text-sm text-muted-foreground">For scaling applications.</p>
-                                  <ul className="mt-4 space-y-2 text-sm">
-                                    <li className="flex items-center gap-2"><div className="h-1.5 w-1.5 rounded-full bg-primary" /> Unlimited Storage</li>
-                                    <li className="flex items-center gap-2"><div className="h-1.5 w-1.5 rounded-full bg-primary" /> Priority Support</li>
-                                  </ul>
-                                </div>
-                              </FormLabel>
-                            </FormItem>
+                                </FormLabel>
+                              </FormItem>
+                            ))}
                           </RadioGroup>
                         </FormControl>
                       </FormItem>
@@ -301,7 +227,7 @@ export function OnboardingForm() {
                   </motion.div>
                 )}
 
-                {/* ── Step 3: Preferences ── */}
+                {/* Step 3: Preferences */}
                 {step === 3 && (
                   <motion.div key="step3" variants={slideVariants} initial="hidden" animate="visible" exit="exit"
                     className="space-y-6">
@@ -315,28 +241,22 @@ export function OnboardingForm() {
                         <FormItem className="space-y-3">
                           <FormLabel className="font-semibold">Appearance</FormLabel>
                           <FormControl>
-                            <RadioGroup onValueChange={(val: string) => { field.onChange(val); setTheme(val); }}
+                            <RadioGroup onValueChange={(val) => { field.onChange(val); setTheme(val); }}
                               defaultValue={field.value} className="grid grid-cols-3 gap-4">
                               {(["light", "dark", "system"] as const).map((val) => (
                                 <FormItem key={val}>
                                   <FormLabel className="[&:has([data-state=checked])>div]:border-primary cursor-pointer transition-all">
                                     <FormControl><RadioGroupItem value={val} className="sr-only" /></FormControl>
-                                    <div className="items-center rounded-xl border-2 border-muted bg-popover p-1 hover:bg-accent hover:text-accent-foreground">
-                                      <div className={`space-y-2 rounded-sm p-2 ${
-                                        val === "dark" ? "bg-slate-950" : val === "light" ? "bg-[#ecedef]" : "bg-[#ecedef] dark:bg-slate-950"
-                                      }`}>
-                                        <div className={`space-y-2 rounded-md p-2 shadow-sm ${
-                                          val === "dark" ? "bg-slate-800" : val === "light" ? "bg-white" : "bg-white dark:bg-slate-800"
-                                        }`}>
-                                          <div className={`h-2 w-full rounded-lg ${ val === "dark" ? "bg-slate-400" : "bg-[#ecedef] dark:bg-slate-400" }`} />
-                                          <div className={`h-2 w-3/4 rounded-lg ${ val === "dark" ? "bg-slate-400" : "bg-[#ecedef] dark:bg-slate-400" }`} />
+                                    <div className="items-center rounded-xl border-2 border-muted bg-popover p-1 hover:bg-accent">
+                                      <div className={`space-y-2 rounded-sm p-2 ${ val === "dark" ? "bg-slate-950" : val === "light" ? "bg-[#ecedef]" : "bg-[#ecedef] dark:bg-slate-950" }`}>
+                                        <div className={`space-y-2 rounded-md p-2 shadow-sm ${ val === "dark" ? "bg-slate-800" : val === "light" ? "bg-white" : "bg-white dark:bg-slate-800" }`}>
+                                          <div className={`h-2 w-full rounded-lg ${ val === "dark" ? "bg-slate-400" : "bg-[#ecedef]" }`} />
+                                          <div className={`h-2 w-3/4 rounded-lg ${ val === "dark" ? "bg-slate-400" : "bg-[#ecedef]" }`} />
                                         </div>
-                                        <div className={`flex items-center space-x-2 rounded-md p-2 shadow-sm ${
-                                          val === "dark" ? "bg-slate-800" : val === "light" ? "bg-white" : "bg-white dark:bg-slate-800"
-                                        }`}>
+                                        <div className={`flex items-center space-x-2 rounded-md p-2 shadow-sm ${ val === "dark" ? "bg-slate-800" : val === "light" ? "bg-white" : "bg-white dark:bg-slate-800" }`}>
                                           {val === "light" && <Sun className="h-4 w-4 text-muted-foreground" />}
                                           {val === "dark" && <Moon className="h-4 w-4 text-slate-400" />}
-                                          {val === "system" && <Monitor className="h-4 w-4 text-muted-foreground dark:text-slate-400" />}
+                                          {val === "system" && <Monitor className="h-4 w-4 text-muted-foreground" />}
                                         </div>
                                       </div>
                                     </div>
@@ -372,66 +292,40 @@ export function OnboardingForm() {
                   </motion.div>
                 )}
 
-                {/* ── Step 4: Secure your files ── */}
+                {/* Step 4: Secure your files */}
                 {step === 4 && (
                   <motion.div key="step4" variants={slideVariants} initial="hidden" animate="visible" exit="exit"
                     className="space-y-6">
                     <div className="text-center space-y-2">
                       <div className="h-16 w-16 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center">
-                        {vaultDone
+                        {vaultCreated && passkeyAdded
                           ? <CheckCircle2 className="h-8 w-8 text-green-500" />
                           : <Lock className="h-8 w-8 text-primary" />}
                       </div>
                       <h2 className="text-2xl font-bold">Secure your files</h2>
-                      <p className="text-muted-foreground max-w-sm mx-auto">
-                        {vaultDone
-                          ? vaultMethod === "prf"
-                            ? "Your vault is secured with your passkey. No passphrase needed — ever."
-                            : "Your vault is secured with your passphrase."
-                          : "Set up end-to-end encryption for your files. Your biometric is your vault key."}
+                      <p className="text-muted-foreground max-w-sm mx-auto text-sm">
+                        Set an encryption passphrase to protect your files.
+                        Optionally add a passkey for biometric unlock.
                       </p>
                     </div>
 
-                    {!vaultDone && (
-                      <div className="space-y-4 max-w-md mx-auto">
-                        {!showFallback ? (
-                          // Primary: PRF passkey button
-                          <div className="rounded-xl border-2 p-5 space-y-4">
-                            <div className="flex items-center gap-3">
-                              <div className="h-10 w-10 rounded-xl bg-primary/10 flex items-center justify-center">
-                                <Fingerprint className="h-5 w-5 text-primary" />
-                              </div>
-                              <div>
-                                <p className="font-semibold">Secure with Passkey</p>
-                                <p className="text-xs text-muted-foreground">Face ID / fingerprint / PIN — no passphrase</p>
-                              </div>
-                            </div>
-                            <Button
-                              type="button"
-                              className="w-full"
-                              onClick={handleSecureWithPasskey}
-                              disabled={vaultLoading}
-                            >
-                              {vaultLoading ? "Setting up..." : "Secure with Passkey"}
-                              {!vaultLoading && <Fingerprint className="ml-2 h-4 w-4" />}
-                            </Button>
-                            <button
-                              type="button"
-                              className="w-full text-xs text-muted-foreground hover:text-foreground transition-colors text-center"
-                              onClick={() => setShowFallback(true)}
-                            >
-                              Use a passphrase instead →
-                            </button>
-                          </div>
-                        ) : (
-                          // Fallback: passphrase input
-                          <div className="rounded-xl border-2 p-5 space-y-3">
-                            <div className="flex items-center gap-2">
-                              <Shield className="h-5 w-5 text-primary" />
-                              <span className="font-semibold">Encryption Passphrase</span>
-                            </div>
-                            <p className="text-sm text-muted-foreground">
-                              Never sent to our servers. Used to derive your Master Key client-side.
+                    <div className="space-y-4 max-w-md mx-auto">
+
+                      {/* ── Section 1: Passphrase (required) ── */}
+                      <div className={`rounded-xl border-2 p-4 space-y-3 ${
+                        vaultCreated ? "border-green-500/50 bg-green-500/5" : ""
+                      }`}>
+                        <div className="flex items-center gap-2">
+                          <Shield className="h-5 w-5 text-primary" />
+                          <span className="font-semibold">Encryption Passphrase</span>
+                          <span className="ml-auto text-xs text-muted-foreground">Required</span>
+                          {vaultCreated && <CheckCircle2 className="h-4 w-4 text-green-500" />}
+                        </div>
+
+                        {!vaultCreated ? (
+                          <>
+                            <p className="text-xs text-muted-foreground">
+                              Used to derive your Master Key. Never sent to our servers.
                             </p>
                             <div className="relative">
                               <Input
@@ -454,29 +348,61 @@ export function OnboardingForm() {
                               onChange={(e) => setPassphraseConfirm(e.target.value)}
                             />
                             <Button type="button" className="w-full"
-                              onClick={handleSetupWithPassphrase}
+                              onClick={handleCreateVault}
                               disabled={vaultLoading || passphrase.length < 8}>
                               {vaultLoading ? "Creating vault..." : "Create Vault"}
                             </Button>
-                            {!showFallback || (
-                              <button type="button"
-                                className="w-full text-xs text-muted-foreground hover:text-foreground transition-colors text-center"
-                                onClick={() => setShowFallback(false)}>
-                                ← Try passkey instead
-                              </button>
-                            )}
-                          </div>
+                          </>
+                        ) : (
+                          <p className="text-sm text-green-600 font-medium">
+                            ✓ Vault secured with passphrase
+                          </p>
                         )}
+                      </div>
 
+                      {/* ── Section 2: Passkey (optional, only shown after vault created) ── */}
+                      {vaultCreated && (
+                        <div className={`rounded-xl border-2 p-4 space-y-3 ${
+                          passkeyAdded ? "border-green-500/50 bg-green-500/5" : ""
+                        }`}>
+                          <div className="flex items-center gap-2">
+                            <Fingerprint className="h-5 w-5 text-primary" />
+                            <span className="font-semibold">Passkey</span>
+                            <span className="ml-auto text-xs text-muted-foreground">Optional</span>
+                            {passkeyAdded && <CheckCircle2 className="h-4 w-4 text-green-500" />}
+                          </div>
+
+                          {!passkeyAdded ? (
+                            <>
+                              <p className="text-xs text-muted-foreground">
+                                Add biometric unlock (Face ID / fingerprint / PIN).
+                                Syncs across devices via Google PM or iCloud.
+                                You can also add this later in Settings.
+                              </p>
+                              <Button type="button" variant="outline" className="w-full"
+                                onClick={handleAddPasskey}
+                                disabled={passkeyLoading}>
+                                {passkeyLoading ? "Adding passkey..." : <><Fingerprint className="mr-2 h-4 w-4" /> Add Passkey</>}
+                              </Button>
+                            </>
+                          ) : (
+                            <p className="text-sm text-green-600 font-medium">
+                              ✓ Passkey added — biometric unlock enabled
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {!vaultCreated && (
                         <p className="text-xs text-muted-foreground text-center">
                           You can skip this and set it up later in Settings.
                         </p>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </motion.div>
                 )}
 
-                {/* ── Step 5: Well Done ── */}
+                {/* Step 5: Well Done */}
                 {step === 5 && (
                   <motion.div key="step5" variants={slideVariants} initial="hidden" animate="visible" exit="exit"
                     className="flex flex-col items-center text-center space-y-6 py-6">
@@ -493,12 +419,11 @@ export function OnboardingForm() {
               </AnimatePresence>
             </div>
 
-            {/* Footer button */}
             <div className="pt-4 border-t w-full flex justify-end">
               {isSecureStep ? (
                 <Button type="button" size="lg" onClick={nextStep}
                   className="w-full sm:w-auto min-w-[120px]">
-                  {vaultDone ? "Continue" : "Skip for now"}
+                  {vaultCreated ? "Continue" : "Skip for now"}
                   <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               ) : step < totalSteps ? (
