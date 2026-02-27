@@ -26,6 +26,7 @@ interface UploadContextType {
   tasks: UploadTask[];
   addTasks: (files: File[], bucketId: string, prefix: string) => void;
   removeTask: (id: string) => void;
+  cancelTask: (id: string) => void;
   clearCompleted: () => void;
 }
 
@@ -86,6 +87,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const [tasks, setTasks] = useState<UploadTask[]>([]);
   const [activeUploads, setActiveUploads] = useState(0);
   const uploadingIds = useRef(new Set<string>());
+  const uploadXHRs = useRef<Map<string, XMLHttpRequest>>(new Map());
   const { publicKey: cryptoPublicKey } = useCrypto();
   // Keep a ref so the useCallback below always reads the latest key
   // without needing to be re-created (avoids stale closure)
@@ -264,6 +266,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       // Step 3: Upload to B2 with XHR for progress tracking
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
+        uploadXHRs.current.set(task.id, xhr);
 
         xhr.upload.addEventListener("progress", (e) => {
           if (e.lengthComputable) {
@@ -345,6 +348,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       );
     } finally {
       uploadingIds.current.delete(task.id);
+      uploadXHRs.current.delete(task.id);
       setActiveUploads((prev) => prev - 1);
     }
   }, []);
@@ -389,6 +393,18 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     setTasks((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
+  const cancelTask = useCallback((id: string) => {
+    const xhr = uploadXHRs.current.get(id);
+    if (xhr) {
+      xhr.abort();
+    }
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === id ? { ...t, status: "failed", error: "Upload cancelled" } : t,
+      ),
+    );
+  }, []);
+
   const clearCompleted = useCallback(() => {
     setTasks((prev) => prev.filter((t) => t.status !== "completed"));
   }, []);
@@ -402,7 +418,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <UploadContext.Provider
-      value={{ tasks, addTasks, removeTask, clearCompleted }}
+      value={{ tasks, addTasks, removeTask, cancelTask, clearCompleted }}
     >
       {children}
     </UploadContext.Provider>

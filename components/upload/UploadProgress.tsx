@@ -14,7 +14,7 @@ import {
 import { useState, useEffect } from "react";
 
 export function UploadProgress() {
-  const { tasks, removeTask, clearCompleted } = useUpload();
+  const { tasks, removeTask, cancelTask, clearCompleted } = useUpload();
   const [isExpanded, setIsExpanded] = useState(true);
 
   const activeTasks = tasks.filter(
@@ -23,19 +23,7 @@ export function UploadProgress() {
   const completedTasks = tasks.filter((t) => t.status === "completed");
   const failedTasks = tasks.filter((t) => t.status === "failed");
 
-  useEffect(() => {
-    // Auto-clear completed uploads after 3 seconds if all tasks are done and successful
-    if (
-      tasks.length > 0 &&
-      activeTasks.length === 0 &&
-      failedTasks.length === 0
-    ) {
-      const timer = setTimeout(() => {
-        clearCompleted();
-      }, 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [tasks.length, activeTasks.length, failedTasks.length, clearCompleted]);
+  // Removed auto-clear completed uploads effect to let users close it manually
 
   if (tasks.length === 0) return null;
 
@@ -53,7 +41,11 @@ export function UploadProgress() {
           onClick={() => setIsExpanded(!isExpanded)}
         >
           <div className="flex items-center gap-3">
-            <Loader2 className="w-4 h-4 text-primary animate-spin" />
+            {activeTasks.length > 0 ? (
+              <Loader2 className="w-4 h-4 text-primary animate-spin" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4 text-green-500" />
+            )}
             <div>
               <p className="text-sm font-medium text-card-foreground">
                 Uploading {activeTasks.length} file
@@ -155,7 +147,18 @@ export function UploadProgress() {
                     )}
                   </div>
 
-                  {/* Remove Button */}
+                  {/* Action Buttons */}
+                  {(task.status === "uploading" ||
+                    task.status === "pending") && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => cancelTask(task.id)}
+                      className="h-6 w-6 text-muted-foreground hover:text-card-foreground"
+                    >
+                      <X className="w-3 h-3" />
+                    </Button>
+                  )}
                   {(task.status === "completed" ||
                     task.status === "failed") && (
                     <Button
