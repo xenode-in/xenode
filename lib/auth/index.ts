@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
+import { passkey } from "better-auth/plugins/passkey";
 import { MongoClient } from "mongodb";
 
 function createAuth() {
@@ -12,13 +13,23 @@ function createAuth() {
   const client = new MongoClient(MONGODB_URI);
   const db = client.db();
 
+  // Derive rpID from NEXT_PUBLIC_APP_URL hostname, fall back to 'localhost' for dev
+  const appURL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const rpID = (() => {
+    try {
+      return new URL(appURL).hostname;
+    } catch {
+      return "localhost";
+    }
+  })();
+
   return betterAuth({
     database: mongodbAdapter(db, {
       usePlural: false,
       transaction: false,
     }),
     secret: process.env.BETTER_AUTH_SECRET,
-    baseURL: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+    baseURL: appURL,
     emailAndPassword: {
       enabled: true,
       minPasswordLength: 8,
@@ -39,6 +50,13 @@ function createAuth() {
         ),
       },
     },
+    plugins: [
+      passkey({
+        rpID,
+        rpName: "Xenode",
+        origin: appURL,
+      }),
+    ],
     session: {
       expiresIn: 60 * 60 * 24 * 7,
       updateAge: 60 * 60 * 24,
@@ -47,9 +65,7 @@ function createAuth() {
         maxAge: 5 * 60,
       },
     },
-    trustedOrigins: [
-      process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
-    ],
+    trustedOrigins: [appURL],
     user: {
       additionalFields: {
         onboarded: {
