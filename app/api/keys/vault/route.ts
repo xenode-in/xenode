@@ -26,8 +26,8 @@ export async function GET() {
       vaultType: vault.vaultType ?? "passphrase",
 
       // Passphrase path
-      encryptedPrivKeyPassphrase: vault.encryptedPrivKeyPassphrase ?? vault.encryptedPrivateKey ?? null,
-      passphraseIv: vault.passphraseIv ?? vault.iv ?? null,
+      encryptedPrivKeyPassphrase: vault.encryptedPrivKeyPassphrase ?? null,
+      passphraseIv: vault.passphraseIv ?? null,
       pbkdf2Salt: vault.pbkdf2Salt,
 
       // PRF path
@@ -49,8 +49,11 @@ export async function GET() {
 
 /**
  * POST /api/keys/vault
- * Create (or replace) the vault. Passphrase fields always required.
- * PRF fields optional — included when user also set up passkey in onboarding.
+ * Create (or replace) a vault.
+ *
+ * vaultType 'prf'        → requires: publicKey, pbkdf2Salt, encryptedPrivKeyPRF, prfIv, prfSalt, credentialId
+ * vaultType 'passphrase' → requires: publicKey, encryptedPrivKeyPassphrase, passphraseIv, pbkdf2Salt
+ * vaultType 'both'       → requires all of the above
  */
 export async function POST(request: NextRequest) {
   try {
@@ -60,10 +63,11 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const {
       publicKey,
+      pbkdf2Salt,
+      // Passphrase path
       encryptedPrivKeyPassphrase,
       passphraseIv,
-      pbkdf2Salt,
-      // PRF optional
+      // PRF path
       encryptedPrivKeyPRF,
       prfIv,
       prfSalt,
@@ -71,11 +75,31 @@ export async function POST(request: NextRequest) {
       vaultType,
     } = body;
 
-    if (!publicKey || !encryptedPrivKeyPassphrase || !passphraseIv || !pbkdf2Salt) {
+    if (!publicKey || !pbkdf2Salt) {
       return NextResponse.json(
-        { error: "publicKey, encryptedPrivKeyPassphrase, passphraseIv, pbkdf2Salt are required" },
+        { error: "publicKey and pbkdf2Salt are required" },
         { status: 400 },
       );
+    }
+
+    const type = vaultType ?? "passphrase";
+
+    // Validate required fields per vault type
+    if (type === "passphrase" || type === "both") {
+      if (!encryptedPrivKeyPassphrase || !passphraseIv) {
+        return NextResponse.json(
+          { error: "encryptedPrivKeyPassphrase and passphraseIv required for passphrase vault" },
+          { status: 400 },
+        );
+      }
+    }
+    if (type === "prf" || type === "both") {
+      if (!encryptedPrivKeyPRF || !prfIv || !prfSalt || !credentialId) {
+        return NextResponse.json(
+          { error: "encryptedPrivKeyPRF, prfIv, prfSalt, credentialId required for prf vault" },
+          { status: 400 },
+        );
+      }
     }
 
     await dbConnect();
@@ -85,14 +109,14 @@ export async function POST(request: NextRequest) {
       {
         userId,
         publicKey,
-        encryptedPrivKeyPassphrase,
-        passphraseIv,
         pbkdf2Salt,
+        vaultType: type,
+        ...(encryptedPrivKeyPassphrase && { encryptedPrivKeyPassphrase }),
+        ...(passphraseIv && { passphraseIv }),
         ...(encryptedPrivKeyPRF && { encryptedPrivKeyPRF }),
         ...(prfIv && { prfIv }),
         ...(prfSalt && { prfSalt }),
         ...(credentialId && { credentialId }),
-        vaultType: vaultType ?? "passphrase",
       },
       { upsert: true, new: true },
     );
