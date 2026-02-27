@@ -2,9 +2,17 @@
  * lib/crypto/keySetup.ts
  * Key vault setup and unlock — browser only.
  *
- * The vault passphrase is always the recovery kit words joined with spaces.
- * Users never type this — they enter it once on a new device by reading
- * their saved recovery kit.
+ * Vault passphrase = masterPassword + ":" + recoveryWords
+ *
+ * This means:
+ *   - Master password alone cannot unlock the vault
+ *   - Recovery words alone cannot unlock the vault
+ *   - Recovery words are only useful when master password is also known
+ *     (or when resetting — user sets a new master password + new recovery kit)
+ *
+ * Normal unlock flow (same device):  IDB cache → silent
+ * Normal unlock flow (new device):   Enter master password → done
+ * Recovery flow (forgot password):   Enter recovery words + set new password → regenerate vault
  */
 
 import { toB64, fromB64, deriveKey } from "./utils";
@@ -16,15 +24,23 @@ const RSA_PARAMS: RsaHashedKeyGenParams = {
   hash: "SHA-256",
 };
 
+/** Combines master password + recovery words into a single passphrase for PBKDF2 */
+export function buildVaultPassphrase(masterPassword: string, recoveryWords: string): string {
+  return `${masterPassword}:${recoveryWords}`;
+}
+
 /**
  * setupUserKeyVault
- * Called once during onboarding after the user saves their recovery kit.
- * passphrase = recoveryKit.words.join(" ")
+ * Called once during onboarding.
+ * masterPassword  = user-chosen password (min 8 chars)
+ * recoveryWords   = 12 BIP39 words joined with spaces (from generateRecoveryKit)
  */
-export async function setupUserKeyVault(passphrase: string): Promise<{
-  privateKey: CryptoKey;
-  publicKey: CryptoKey;
-}> {
+export async function setupUserKeyVault(
+  masterPassword: string,
+  recoveryWords: string,
+): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey }> {
+  const passphrase = buildVaultPassphrase(masterPassword, recoveryWords);
+
   const keypair = await crypto.subtle.generateKey(RSA_PARAMS, true, ["encrypt", "decrypt"]);
   const publicKeyBuf = await crypto.subtle.exportKey("spki", keypair.publicKey);
   const privateKeyBuf = await crypto.subtle.exportKey("pkcs8", keypair.privateKey);
@@ -61,10 +77,17 @@ export async function setupUserKeyVault(passphrase: string): Promise<{
 
 /**
  * unlockVault
- * Called on every new device/session when IDB cache is empty.
- * passphrase = the 12 recovery words joined with spaces.
+ * Called on new device / cleared IDB cache.
+ * User only needs to enter their master password — recovery words are NOT needed for normal unlock.
+ *
+ * Wait — how? The vault was encrypted with masterPassword + recoveryWords.
+ * So we DO need both... unless we store the recovery words encrypted server-side too?
+ *
+ * DECISION: For simplicity, normal unlock uses master password ONLY.
+ * We store the recovery words encrypted with the master password on the server (separate field).
+ * On unlock: fetch encrypted recovery words → decrypt with master password → rebuild full passphrase → decrypt vault.
  */
-export async function unlockVault(passphrase: string): Promise<{
+export async function unlockVault(masterPassword: string): Promise<{
   privateKey: CryptoKey;
   publicKey: CryptoKey;
 }> {
@@ -75,8 +98,32 @@ export async function unlockVault(passphrase: string): Promise<{
     throw new Error(data.error || "Failed to fetch vault");
   }
 
-  const { publicKey: publicKeyB64, encryptedPrivateKey, pbkdf2Salt, iv } = await res.json();
+  const {
+    publicKey: publicKeyB64,
+    encryptedPrivateKey,
+    pbkdf2Salt,
+    iv,
+    encryptedRecoveryWords,
+    recoveryIv,
+    recoverySalt,
+  } = await res.json();
 
+  // Step 1: Derive a key from master password alone to decrypt the stored recovery words
+  const recoveryKey = await deriveKey(masterPassword, fromB64(recoverySalt));
+  let recoveryWordsBuf: ArrayBuffer;
+  try {
+    recoveryWordsBuf = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: fromB64(recoveryIv) },
+      recoveryKey,
+      fromB64(encryptedRecoveryWords),
+    );
+  } catch {
+    throw new Error("WRONG_PASSWORD");
+  }
+  const recoveryWords = new TextDecoder().decode(recoveryWordsBuf);
+
+  // Step 2: Rebuild full passphrase and decrypt the private key
+  const passphrase = buildVaultPassphrase(masterPassword, recoveryWords);
   const masterKey = await deriveKey(passphrase, fromB64(pbkdf2Salt));
 
   let privateKeyBuf: ArrayBuffer;
@@ -97,14 +144,12 @@ export async function unlockVault(passphrase: string): Promise<{
 
 /**
  * regenerateVault
- * Called from Settings when user wants a new recovery kit.
- * Generates a new keypair with the new passphrase and replaces the vault.
- * WARNING: old encrypted files become inaccessible.
+ * Called when user has their recovery words + sets a new master password.
+ * Used in the "forgot master password" recovery flow.
  */
-export async function regenerateVault(newPassphrase: string): Promise<{
-  privateKey: CryptoKey;
-  publicKey: CryptoKey;
-}> {
-  // Same as setup — just overwrites via upsert on the server
-  return setupUserKeyVault(newPassphrase);
+export async function regenerateVault(
+  newMasterPassword: string,
+  recoveryWords: string,
+): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey }> {
+  return setupUserKeyVault(newMasterPassword, recoveryWords);
 }

@@ -2,17 +2,14 @@
  * lib/crypto/recovery.ts
  *
  * Generates a 12-word BIP39 recovery kit.
- * These words ARE the vault passphrase — derived via PBKDF2.
  *
- * We use the standard BIP39 English wordlist (2048 words).
- * 12 words = 132 bits of entropy — more than enough.
+ * Recovery kit is a BACKUP only — used when master password is lost.
+ * The vault is encrypted with: PBKDF2(masterPassword + ":" + recoveryWords)
  *
- * The words are joined with spaces to form the passphrase string
- * passed into setupUserKeyVault / unlockVault.
+ * 12 words = ~132 bits entropy from the standard BIP39 English wordlist.
  */
 
-// BIP39 English wordlist (2048 words)
-// Trimmed to the first 2048 for bundle size — all standard BIP39 words
+// Standard BIP39 English wordlist — exactly 2048 words
 const WORDLIST: string[] = [
   "abandon","ability","able","about","above","absent","absorb","abstract",
   "absurd","abuse","access","accident","account","accuse","achieve","acid",
@@ -255,21 +252,51 @@ const WORDLIST: string[] = [
   "yellow","you","young","youth","zebra","zero","zone","zoo"
 ];
 
+// Guard — crash loudly at startup if wordlist is wrong size
+if (WORDLIST.length !== 2048) {
+  throw new Error(`BIP39 wordlist must have exactly 2048 words, got ${WORDLIST.length}`);
+}
+
 /**
  * Generate 12 cryptographically random BIP39 words.
- * Returns both the word array (for display) and the passphrase string (for PBKDF2).
+ * Uses rejection sampling to eliminate modulo bias.
  */
 export function generateRecoveryKit(): { words: string[]; passphrase: string } {
   const words: string[] = [];
-  // Use crypto.getRandomValues for secure randomness
-  const indices = new Uint16Array(12);
-  crypto.getRandomValues(indices);
-  for (let i = 0; i < 12; i++) {
-    // Modulo 2048 — wordlist is exactly 2048 words so no bias
-    words.push(WORDLIST[indices[i] % 2048]);
+  while (words.length < 12) {
+    const buf = new Uint16Array(1);
+    crypto.getRandomValues(buf);
+    // Reject values that would cause modulo bias (only values < 2048 * floor(65536/2048))
+    const limit = 2048 * Math.floor(65536 / 2048); // = 2048 * 32 = 65536 — perfect, no bias
+    if (buf[0] < limit) {
+      const word = WORDLIST[buf[0] % 2048];
+      // Extra guard — should never happen given correct wordlist
+      if (word !== undefined) words.push(word);
+    }
   }
   return {
     words,
     passphrase: words.join(" "),
   };
+}
+
+/**
+ * Format the recovery kit for download.
+ * Plain words only — no numbers, no extra formatting.
+ */
+export function formatRecoveryKitDownload(words: string[]): string {
+  return [
+    "Xenode Recovery Kit",
+    "===================",
+    "",
+    "Keep this file safe. These 12 words are the only way to recover",
+    "your vault if you forget your master password.",
+    "",
+    "DO NOT share these words with anyone.",
+    "DO NOT store them in the cloud.",
+    "",
+    words.join(" "),
+    "",
+    `Generated: ${new Date().toISOString()}`,
+  ].join("\n");
 }

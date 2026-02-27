@@ -11,15 +11,13 @@ interface CryptoContextType {
   needsSetup: boolean;
   privateKey: CryptoKey | null;
   publicKey: CryptoKey | null;
-  // Called after user saves recovery kit — sets up vault + unlocks
-  setup: (passphrase: string) => Promise<void>;
-  // Called on new device — enter recovery words to unlock
-  unlock: (passphrase: string) => Promise<void>;
-  // Called from Settings — replace vault with new recovery kit
-  regenerate: (newPassphrase: string) => Promise<void>;
-  // Lock (clear IDB + memory)
+  /** Called after onboarding: setup vault with master password + recovery words */
+  setup: (masterPassword: string, recoveryWords: string) => Promise<void>;
+  /** Called on new device: enter master password to unlock */
+  unlock: (masterPassword: string) => Promise<void>;
+  /** Called from Settings: replace vault with new password + new recovery kit */
+  regenerate: (newMasterPassword: string, newRecoveryWords: string) => Promise<void>;
   lock: () => Promise<void>;
-  // Manual modal control (e.g. from lock button in sidebar)
   isModalOpen: boolean;
   setModalOpen: (open: boolean) => void;
 }
@@ -37,22 +35,17 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
   const [publicKey, setPublicKey] = useState<CryptoKey | null>(null);
   const [isModalOpen, setModalOpen] = useState(false);
 
-  // Reset + re-init on user change
   useEffect(() => {
     setPrivateKey(null);
     setPublicKey(null);
     setIsUnlocked(false);
     setNeedsSetup(false);
 
-    if (!userId) {
-      setIsInitializing(false);
-      return;
-    }
+    if (!userId) { setIsInitializing(false); return; }
 
     async function init() {
       setIsInitializing(true);
       try {
-        // 1. Check IDB cache — silent unlock if keys are stored
         const cached = await loadCachedKeys();
         if (cached) {
           setPrivateKey(cached.privateKey);
@@ -60,24 +53,16 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
           setIsUnlocked(true);
           return;
         }
-        // 2. Check if vault exists on server
         const res = await fetch("/api/keys/vault");
-        if (res.status === 404) {
-          setNeedsSetup(true);
-        }
-        // 200 = vault exists, needs unlock (recovery words)
-      } catch {
-        // network error — silently ignore
-      } finally {
-        setIsInitializing(false);
-      }
+        if (res.status === 404) setNeedsSetup(true);
+      } catch { /* network error */ }
+      finally { setIsInitializing(false); }
     }
-
     init();
   }, [userId]);
 
-  const setup = useCallback(async (passphrase: string) => {
-    const keys = await setupUserKeyVault(passphrase);
+  const setup = useCallback(async (masterPassword: string, recoveryWords: string) => {
+    const keys = await setupUserKeyVault(masterPassword, recoveryWords);
     setPrivateKey(keys.privateKey);
     setPublicKey(keys.publicKey);
     setIsUnlocked(true);
@@ -85,16 +70,16 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
     await cacheKeys(keys.privateKey, keys.publicKey);
   }, []);
 
-  const unlock = useCallback(async (passphrase: string) => {
-    const keys = await unlockVault(passphrase);
+  const unlock = useCallback(async (masterPassword: string) => {
+    const keys = await unlockVault(masterPassword);
     setPrivateKey(keys.privateKey);
     setPublicKey(keys.publicKey);
     setIsUnlocked(true);
     await cacheKeys(keys.privateKey, keys.publicKey);
   }, []);
 
-  const regenerate = useCallback(async (newPassphrase: string) => {
-    const keys = await regenerateVault(newPassphrase);
+  const regenerate = useCallback(async (newMasterPassword: string, newRecoveryWords: string) => {
+    const keys = await regenerateVault(newMasterPassword, newRecoveryWords);
     setPrivateKey(keys.privateKey);
     setPublicKey(keys.publicKey);
     setIsUnlocked(true);
@@ -111,17 +96,8 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <CryptoContext.Provider value={{
-      isInitializing,
-      isUnlocked,
-      needsSetup,
-      privateKey,
-      publicKey,
-      setup,
-      unlock,
-      regenerate,
-      lock,
-      isModalOpen,
-      setModalOpen,
+      isInitializing, isUnlocked, needsSetup, privateKey, publicKey,
+      setup, unlock, regenerate, lock, isModalOpen, setModalOpen,
     }}>
       {children}
     </CryptoContext.Provider>
