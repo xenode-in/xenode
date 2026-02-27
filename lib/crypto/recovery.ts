@@ -10,6 +10,7 @@
  */
 
 // Standard BIP39 English wordlist — exactly 2048 words
+// Source: https://github.com/trezor/python-mnemonic/blob/master/src/mnemonic/wordlist/english.txt
 const WORDLIST: string[] = [
   "abandon","ability","able","about","above","absent","absorb","abstract",
   "absurd","abuse","access","accident","account","accuse","achieve","acid",
@@ -249,31 +250,22 @@ const WORDLIST: string[] = [
   "winner","winter","wire","wisdom","wise","wish","witness","wolf",
   "woman","wonder","wood","wool","word","world","worry","worth",
   "wrap","wreck","wrestle","wrist","write","wrong","yard","year",
-  "yellow","you","young","youth","zebra","zero","zone","zoo"
+  "yellow","you","young","youth","zebra","zero","zone","zoo",
 ];
 
-// Guard — crash loudly at startup if wordlist is wrong size
+// Hard guard — prevents undefined words at runtime
 if (WORDLIST.length !== 2048) {
   throw new Error(`BIP39 wordlist must have exactly 2048 words, got ${WORDLIST.length}`);
 }
 
 /**
  * Generate 12 cryptographically random BIP39 words.
- * Uses rejection sampling to eliminate modulo bias.
+ * 65536 / 2048 = 32 exactly — zero modulo bias, no rejection needed.
  */
 export function generateRecoveryKit(): { words: string[]; passphrase: string } {
-  const words: string[] = [];
-  while (words.length < 12) {
-    const buf = new Uint16Array(1);
-    crypto.getRandomValues(buf);
-    // Reject values that would cause modulo bias (only values < 2048 * floor(65536/2048))
-    const limit = 2048 * Math.floor(65536 / 2048); // = 2048 * 32 = 65536 — perfect, no bias
-    if (buf[0] < limit) {
-      const word = WORDLIST[buf[0] % 2048];
-      // Extra guard — should never happen given correct wordlist
-      if (word !== undefined) words.push(word);
-    }
-  }
+  const indices = new Uint16Array(12);
+  crypto.getRandomValues(indices);
+  const words = Array.from(indices, (n) => WORDLIST[n % 2048]);
   return {
     words,
     passphrase: words.join(" "),
