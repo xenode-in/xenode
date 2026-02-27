@@ -3,6 +3,7 @@ import { Shield, User, Mail, Calendar, Palette, HardDrive } from "lucide-react";
 import { ThemeSelector } from "@/components/settings/theme-selector";
 import { EncryptionSettingsSection } from "@/components/settings/EncryptionSettingsSection";
 import { PreviewCacheSection } from "@/components/settings/PreviewCacheSection";
+import { AddPasskeySection, PasskeyActiveSection } from "@/components/settings/AddPasskeySection";
 
 export default async function SettingsPage() {
   const session = await requireAuth();
@@ -79,7 +80,12 @@ export default async function SettingsPage() {
           Security
         </h3>
         <div className="space-y-4">
+          {/* Passkey status or Add Passkey — mutually exclusive */}
+          <PasskeyActiveSection />
+          <AddPasskeySection />
+
           <EncryptionSettingsSection />
+
           <div className="flex items-center justify-between py-3 border-b border-border">
             <div>
               <p className="text-sm text-foreground">Password</p>
