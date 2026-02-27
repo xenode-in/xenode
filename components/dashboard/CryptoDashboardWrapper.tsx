@@ -9,13 +9,31 @@ export function CryptoDashboardWrapper({
 }: {
   children: React.ReactNode;
 }) {
-  const { isInitializing, isUnlocked, isModalOpen, setModalOpen } = useCrypto();
+  const {
+    isInitializing,
+    isUnlocked,
+    needsSetup,
+    vaultType,
+    isModalOpen,
+    setModalOpen,
+  } = useCrypto();
   const [dismissed, setDismissed] = useState(false);
 
-  // Show modal if explicitly requested, OR if not-unlocked and not-dismissed yet
-  // Wait until initialization check is complete to prevent a split-second flash
+  /**
+   * Only show the modal when:
+   * 1. Initialization (IDB cache check) is fully complete
+   * 2. Keys are NOT already loaded from cache (isUnlocked = false)
+   * 3. Either:
+   *    a. Modal was explicitly opened (isModalOpen)
+   *    b. Vault needs setup (first time, no vault on server)
+   *    c. Vault exists on server (vaultType is known) but not yet unlocked
+   *       AND user hasn't dismissed it this session
+   */
+  const vaultNeedsAction =
+    needsSetup || (vaultType !== null && !isUnlocked && !dismissed);
+
   const showModal =
-    !isInitializing && (isModalOpen || (!isUnlocked && !dismissed));
+    !isInitializing && !isUnlocked && (isModalOpen || vaultNeedsAction);
 
   return (
     <>
