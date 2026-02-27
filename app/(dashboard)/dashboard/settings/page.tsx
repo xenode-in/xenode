@@ -3,7 +3,11 @@ import { Shield, User, Mail, Calendar, Palette, HardDrive } from "lucide-react";
 import { ThemeSelector } from "@/components/settings/theme-selector";
 import { EncryptionSettingsSection } from "@/components/settings/EncryptionSettingsSection";
 import { PreviewCacheSection } from "@/components/settings/PreviewCacheSection";
-import { AddPasskeySection, PasskeyActiveSection } from "@/components/settings/AddPasskeySection";
+import {
+  AddPasskeySection,
+  AddPassphraseSection,
+  PasskeyActiveSection,
+} from "@/components/settings/AddPasskeySection";
 
 export default async function SettingsPage() {
   const session = await requireAuth();
@@ -80,9 +84,16 @@ export default async function SettingsPage() {
           Security
         </h3>
         <div className="space-y-4">
-          {/* Passkey status or Add Passkey — mutually exclusive */}
+          {/*
+            Vault security options — mutually exclusive based on vaultType:
+            - 'passphrase' → AddPasskeySection (add biometric unlock)
+            - 'prf'        → PasskeyActiveSection + AddPassphraseSection (add backup)
+            - 'both'       → PasskeyActiveSection only (both active)
+            - null/setup   → nothing shown here (banner in dashboard handles it)
+          */}
           <PasskeyActiveSection />
           <AddPasskeySection />
+          <AddPassphraseSection />
 
           <EncryptionSettingsSection />
 
@@ -99,9 +110,7 @@ export default async function SettingsPage() {
           </div>
           <div className="flex items-center justify-between py-3 border-b border-border">
             <div>
-              <p className="text-sm text-foreground">
-                Two-Factor Authentication
-              </p>
+              <p className="text-sm text-foreground">Two-Factor Authentication</p>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Add an extra layer of security
               </p>
@@ -137,9 +146,7 @@ export default async function SettingsPage() {
 
       {/* Danger Zone */}
       <div className="bg-card border border-destructive/20 rounded-xl p-6">
-        <h3 className="text-sm font-medium text-destructive mb-4">
-          Danger Zone
-        </h3>
+        <h3 className="text-sm font-medium text-destructive mb-4">Danger Zone</h3>
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-foreground">Delete Account</p>

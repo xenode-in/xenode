@@ -10,6 +10,7 @@ import React, {
 import {
   setupUserKeyVault,
   addPRFLayerToVault,
+  addPassphraseLayerToVault,
   unlockVault,
   unlockVaultWithPRF,
 } from "@/lib/crypto/keySetup";
@@ -23,15 +24,19 @@ interface CryptoContextType {
   vaultType: "passphrase" | "prf" | "both" | null;
   privateKey: CryptoKey | null;
   publicKey: CryptoKey | null;
-  // Setup (onboarding)
+  // Setup (onboarding fallback — passphrase vault from scratch)
   setup: (passphrase: string) => Promise<void>;
-  // Add PRF layer (onboarding optional step OR Settings)
+  // Add PRF layer on top of existing passphrase vault (Settings)
   addPRFLayer: (passphrase: string, userId: string, userName: string) => Promise<{ supported: boolean }>;
+  // Add passphrase layer on top of existing PRF vault (unlock fallback or Settings)
+  addPassphraseLayer: (newPassphrase: string) => Promise<void>;
   // Unlock
   unlock: (passphrase: string) => Promise<void>;
   unlockWithPRF: () => Promise<{ supported: boolean }>;
   // Lock
   lock: () => Promise<void>;
+  // Refresh vault type from server (after adding a layer)
+  refreshVaultType: () => Promise<void>;
   // Modal control
   isModalOpen: boolean;
   setModalOpen: (open: boolean) => void;
@@ -52,6 +57,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
   const [publicKey, setPublicKey] = useState<CryptoKey | null>(null);
   const [isModalOpen, setModalOpen] = useState(false);
 
+  // ── Init: check IDB cache then vault ──────────────────────────────────────
   useEffect(() => {
     setPrivateKey(null);
     setPublicKey(null);
@@ -67,7 +73,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
     async function init() {
       setIsInitializing(true);
       try {
-        // 1. Try IDB cache first
+        // 1. Try IDB cache — keys survive page refresh
         const cached = await loadCachedKeys(userId!);
         if (cached) {
           setPrivateKey(cached.privateKey);
@@ -77,7 +83,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        // 2. Check vault existence + type
+        // 2. Check vault existence + type from server
         const res = await fetch("/api/keys/vault");
         if (res.status === 404) {
           setNeedsSetup(true);
@@ -86,7 +92,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
           setVaultType(data.vaultType ?? "passphrase");
         }
       } catch {
-        // network error — leave as initializing=false, modal won't open
+        // network error — silently ignore
       } finally {
         setIsInitializing(false);
       }
@@ -95,47 +101,58 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
     init();
   }, [userId]);
 
-  // ── Setup (passphrase, always first) ─────────────────────────────────────
-  const setup = useCallback(
-    async (passphrase: string) => {
-      if (!userId) throw new Error("Not authenticated");
-      const keys = await setupUserKeyVault(passphrase);
-      setPrivateKey(keys.privateKey);
-      setPublicKey(keys.publicKey);
-      setIsUnlocked(true);
-      setNeedsSetup(false);
-      setVaultType("passphrase");
-      await cacheKeys(userId, keys.privateKey, keys.publicKey);
-    },
-    [userId],
-  );
-
-  // ── Add PRF layer on top of existing passphrase vault ───────────────────
-  const addPRFLayer = useCallback(
-    async (passphrase: string, uid: string, uName: string) => {
-      const result = await addPRFLayerToVault(passphrase, uid, uName);
-      if (result.supported) {
-        setVaultType("both");
+  // ── Refresh vault type (call after adding a new layer) ────────────────────
+  const refreshVaultType = useCallback(async () => {
+    try {
+      const res = await fetch("/api/keys/vault");
+      if (res.ok) {
+        const data = await res.json();
+        setVaultType(data.vaultType ?? "passphrase");
+        if (res.status === 404) setNeedsSetup(true);
       }
-      return result;
-    },
-    [],
-  );
+    } catch { /* ignore */ }
+  }, []);
 
-  // ── Unlock: passphrase ───────────────────────────────────────────────────
-  const unlock = useCallback(
-    async (passphrase: string) => {
-      if (!userId) throw new Error("Not authenticated");
-      const keys = await unlockVault(passphrase);
-      setPrivateKey(keys.privateKey);
-      setPublicKey(keys.publicKey);
-      setIsUnlocked(true);
-      await cacheKeys(userId, keys.privateKey, keys.publicKey);
-    },
-    [userId],
-  );
+  // ── Setup: passphrase vault from scratch ──────────────────────────────────
+  const setup = useCallback(async (passphrase: string) => {
+    if (!userId) throw new Error("Not authenticated");
+    const keys = await setupUserKeyVault(passphrase);
+    setPrivateKey(keys.privateKey);
+    setPublicKey(keys.publicKey);
+    setIsUnlocked(true);
+    setNeedsSetup(false);
+    setVaultType("passphrase");
+    await cacheKeys(userId, keys.privateKey, keys.publicKey);
+  }, [userId]);
 
-  // ── Unlock: PRF passkey ───────────────────────────────────────────────
+  // ── Add PRF layer (Settings: passphrase user adds passkey) ────────────────
+  const addPRFLayer = useCallback(async (
+    passphrase: string,
+    uid: string,
+    uName: string,
+  ) => {
+    const result = await addPRFLayerToVault(passphrase, uid, uName);
+    if (result.supported) setVaultType("both");
+    return result;
+  }, []);
+
+  // ── Add passphrase layer (PRF user adds passphrase backup) ────────────────
+  const addPassphraseLayer = useCallback(async (newPassphrase: string) => {
+    await addPassphraseLayerToVault(newPassphrase);
+    setVaultType("both");
+  }, []);
+
+  // ── Unlock: passphrase ────────────────────────────────────────────────────
+  const unlock = useCallback(async (passphrase: string) => {
+    if (!userId) throw new Error("Not authenticated");
+    const keys = await unlockVault(passphrase);
+    setPrivateKey(keys.privateKey);
+    setPublicKey(keys.publicKey);
+    setIsUnlocked(true);
+    await cacheKeys(userId, keys.privateKey, keys.publicKey);
+  }, [userId]);
+
+  // ── Unlock: PRF passkey ───────────────────────────────────────────────────
   const unlockWithPRF = useCallback(async () => {
     if (!userId) throw new Error("Not authenticated");
     try {
@@ -146,43 +163,40 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
       await cacheKeys(userId, keys.privateKey, keys.publicKey);
       return { supported: true };
     } catch (e) {
-      if (
-        e instanceof Error &&
-        (e.message === "PRF_NOT_SUPPORTED" || e.message === "NOT_PRF_VAULT")
-      ) {
+      if (e instanceof Error &&
+        (e.message === "PRF_NOT_SUPPORTED" || e.message === "NOT_PRF_VAULT")) {
         return { supported: false };
       }
       throw e;
     }
   }, [userId]);
 
-  // ── Lock ────────────────────────────────────────────────────────────────────
+  // ── Lock ──────────────────────────────────────────────────────────────────
   const lock = useCallback(async () => {
     setPrivateKey(null);
     setPublicKey(null);
     setIsUnlocked(false);
-    setVaultType(null);
     if (userId) await clearCachedKeys(userId);
   }, [userId]);
 
   return (
-    <CryptoContext.Provider
-      value={{
-        isInitializing,
-        isUnlocked,
-        needsSetup,
-        vaultType,
-        privateKey,
-        publicKey,
-        setup,
-        addPRFLayer,
-        unlock,
-        unlockWithPRF,
-        lock,
-        isModalOpen,
-        setModalOpen,
-      }}
-    >
+    <CryptoContext.Provider value={{
+      isInitializing,
+      isUnlocked,
+      needsSetup,
+      vaultType,
+      privateKey,
+      publicKey,
+      setup,
+      addPRFLayer,
+      addPassphraseLayer,
+      unlock,
+      unlockWithPRF,
+      lock,
+      refreshVaultType,
+      isModalOpen,
+      setModalOpen,
+    }}>
       {children}
     </CryptoContext.Provider>
   );

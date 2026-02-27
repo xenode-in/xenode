@@ -1,27 +1,25 @@
 /**
  * lib/crypto/keySetup.ts
  *
- * Vault setup/unlock for Xenode E2EE.
+ * Vault setup / unlock for Xenode E2EE.
  *
  * Vault types:
- *   'passphrase' — created with passphrase in onboarding fallback path
- *   'prf'        — created with passkey PRF in onboarding primary path
- *   'both'       — passphrase vault upgraded with PRF in Settings
+ *   'passphrase' — encrypted with PBKDF2 passphrase only
+ *   'prf'        — encrypted with WebAuthn PRF passkey only
+ *   'both'       — encrypted with BOTH (either unlocks it)
  *
  * Onboarding:
- *   Primary path  → setupVaultWithPRF(userId, userName)
- *                    → generates keypair + registers passkey + saves vault (vaultType: 'prf')
- *   Fallback path → setupUserKeyVault(passphrase)
- *                    → generates keypair + encrypts with PBKDF2 + saves vault (vaultType: 'passphrase')
+ *   Primary   → setupVaultWithPRF(userId, userName)   → vaultType: 'prf'
+ *   Fallback  → setupUserKeyVault(passphrase)         → vaultType: 'passphrase'
  *
- * Settings:
- *   Add passkey   → addPRFLayerToVault(passphrase, userId, userName)
- *                    → unlocks existing passphrase vault + adds PRF encryption (vaultType: 'both')
+ * Post-onboarding (Settings or unlock fallback):
+ *   PRF user adds passphrase  → addPassphraseLayerToVault(newPassphrase)
+ *   Passphrase user adds PRF  → addPRFLayerToVault(passphrase, userId, userName)
  *
  * Unlock:
- *   'prf'         → unlockVaultWithPRF()   (passkey biometric)
- *   'passphrase'  → unlockVault(passphrase)
- *   'both'        → try unlockVaultWithPRF() silently, fallback to unlockVault(passphrase)
+ *   'prf'        → unlockVaultWithPRF()       (passkey biometric)
+ *   'passphrase' → unlockVault(passphrase)
+ *   'both'       → try PRF silently → fallback to passphrase
  */
 
 import { toB64, fromB64, deriveKey } from "./utils";
@@ -34,9 +32,7 @@ const RSA_PARAMS: RsaHashedKeyGenParams = {
   hash: "SHA-256",
 };
 
-// ──────────────────────────────────────
-// Internal helpers
-// ──────────────────────────────────────
+// ─── Internal helpers ────────────────────────────────────────────────────────
 
 async function generateKeypair() {
   const keypair = await crypto.subtle.generateKey(RSA_PARAMS, true, ["encrypt", "decrypt"]);
@@ -67,58 +63,36 @@ async function importPublicKey(b64: string) {
   return crypto.subtle.importKey("spki", fromB64(b64), RSA_PARAMS, false, ["encrypt"]);
 }
 
-// ──────────────────────────────────────
-// ONBOARDING PRIMARY: PRF passkey vault (new user, no existing vault)
-// ──────────────────────────────────────
+// ─── ONBOARDING PRIMARY: new PRF vault ──────────────────────────────────────
 
 /**
- * PRIMARY onboarding path: register passkey with PRF, generate keypair,
- * encrypt private key with PRF master key, save vault (vaultType: 'prf').
- *
- * Does NOT require an existing vault. Creates one from scratch.
+ * Called from OnboardingForm primary path.
+ * Generates keypair, registers passkey with PRF, saves vault (vaultType: 'prf').
+ * Does NOT require an existing vault.
  */
 export async function setupVaultWithPRF(
   userId: string,
   userName: string,
-): Promise<{
-  supported: boolean;
-  privateKey?: CryptoKey;
-  publicKey?: CryptoKey;
-}> {
-  // 1. Generate RSA keypair
+): Promise<{ supported: boolean; privateKey?: CryptoKey; publicKey?: CryptoKey }> {
   const { privateKeyBuf, publicKeyBuf } = await generateKeypair();
-
-  // 2. Generate PRF salt (stored on server, used for future auth)
   const prfSalt = crypto.getRandomValues(new Uint8Array(32)) as Uint8Array<ArrayBuffer>;
   const userIdBytes = new TextEncoder().encode(userId);
 
-  // 3. Register passkey with PRF extension
-  const { credentialId, prfOutput, supported } = await registerWithPRF(
-    prfSalt,
-    userIdBytes,
-    userName,
-  );
+  const { credentialId, prfOutput, supported } = await registerWithPRF(prfSalt, userIdBytes, userName);
+  if (!supported) return { supported: false };
 
-  if (!supported) {
-    // PRF not supported on this browser/device — caller should show passphrase fallback
-    return { supported: false };
-  }
-
-  // 4. Derive AES master key from PRF output
   const masterKey = await deriveKeyFromPRF(prfOutput);
-
-  // 5. Encrypt private key with PRF master key
   const { encryptedB64, ivB64 } = await encryptPrivKey(privateKeyBuf, masterKey);
 
-  // 6. Save vault — PRF-only (vaultType: 'prf')
-  // Also store a dummy pbkdf2Salt so schema validation passes
+  // pbkdf2Salt stored as empty placeholder — required by schema but unused for prf-only
   const dummySalt = crypto.getRandomValues(new Uint8Array(16)) as Uint8Array<ArrayBuffer>;
+
   const res = await fetch("/api/keys/vault", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       publicKey: toB64(publicKeyBuf),
-      pbkdf2Salt: toB64(dummySalt),        // required by schema, not used for prf-only
+      pbkdf2Salt: toB64(dummySalt),
       encryptedPrivKeyPRF: encryptedB64,
       prfIv: ivB64,
       prfSalt: toB64(prfSalt),
@@ -126,25 +100,22 @@ export async function setupVaultWithPRF(
       vaultType: "prf",
     }),
   });
-
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || "Failed to save vault");
   }
 
-  // 7. Import keys for immediate use
   const privateKey = await importPrivateKey(privateKeyBuf);
   const publicKey = await importPublicKey(toB64(publicKeyBuf));
   return { supported: true, privateKey, publicKey };
 }
 
-// ──────────────────────────────────────
-// ONBOARDING FALLBACK: Passphrase vault (new user, no existing vault)
-// ──────────────────────────────────────
+// ─── ONBOARDING FALLBACK: new passphrase vault ──────────────────────────────
 
 /**
- * FALLBACK onboarding path: create vault encrypted with PBKDF2 passphrase.
- * Used when PRF not supported, or user clicks 'Use passphrase instead'.
+ * Called from OnboardingForm fallback path.
+ * Generates keypair, encrypts with passphrase, saves vault (vaultType: 'passphrase').
+ * Does NOT require an existing vault.
  */
 export async function setupUserKeyVault(passphrase: string): Promise<{
   privateKey: CryptoKey;
@@ -152,7 +123,6 @@ export async function setupUserKeyVault(passphrase: string): Promise<{
 }> {
   const salt = crypto.getRandomValues(new Uint8Array(16)) as Uint8Array<ArrayBuffer>;
   const masterKey = await deriveKey(passphrase, salt);
-
   const { privateKeyBuf, publicKeyBuf } = await generateKeypair();
   const { encryptedB64, ivB64 } = await encryptPrivKey(privateKeyBuf, masterKey);
 
@@ -167,7 +137,6 @@ export async function setupUserKeyVault(passphrase: string): Promise<{
       vaultType: "passphrase",
     }),
   });
-
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
     throw new Error(data.error || "Failed to save vault");
@@ -178,51 +147,101 @@ export async function setupUserKeyVault(passphrase: string): Promise<{
   return { privateKey, publicKey };
 }
 
-// ──────────────────────────────────────
-// SETTINGS: Add PRF layer to existing passphrase vault
-// ──────────────────────────────────────
+// ─── ADD PASSPHRASE LAYER to existing PRF vault ─────────────────────────────
 
 /**
- * Called from Settings → Security when a passphrase-vault user adds a passkey.
- * Requires an existing passphrase vault.
- * 1. Fetches vault
- * 2. Unlocks with passphrase to get raw private key
- * 3. Registers passkey with PRF
- * 4. Re-encrypts same private key with PRF master key
- * 5. PATCHes vault → vaultType becomes 'both'
+ * Called when a PRF-only user wants to add a passphrase backup.
+ * (From UnlockVaultModal fallback OR Settings)
+ *
+ * Flow:
+ *  1. Unlock existing vault via PRF (passkey biometric)
+ *  2. Re-encrypt same private key with new PBKDF2 passphrase
+ *  3. PATCH /api/keys/vault/passphrase → vaultType: 'both'
+ */
+export async function addPassphraseLayerToVault(newPassphrase: string): Promise<void> {
+  // 1. Fetch vault
+  const res = await fetch("/api/keys/vault");
+  if (!res.ok) throw new Error("No vault found.");
+  const vault = await res.json();
+
+  if (!vault.prfSalt || !vault.encryptedPrivKeyPRF || !vault.prfIv) {
+    throw new Error("NOT_PRF_VAULT");
+  }
+
+  // 2. Unlock with PRF to get raw private key
+  const { prfOutput, supported } = await authenticateWithPRF(fromB64(vault.prfSalt));
+  if (!supported) throw new Error("PRF_NOT_SUPPORTED");
+
+  const prfMasterKey = await deriveKeyFromPRF(prfOutput);
+  let privateKeyBuf: ArrayBuffer;
+  try {
+    privateKeyBuf = await decryptPrivKey(vault.encryptedPrivKeyPRF, vault.prfIv, prfMasterKey);
+  } catch {
+    throw new Error("PRF_DECRYPT_FAILED");
+  }
+
+  // 3. Re-encrypt same private key with new passphrase
+  const salt = crypto.getRandomValues(new Uint8Array(16)) as Uint8Array<ArrayBuffer>;
+  const passphraseMasterKey = await deriveKey(newPassphrase, salt);
+  const { encryptedB64, ivB64 } = await encryptPrivKey(privateKeyBuf, passphraseMasterKey);
+
+  // 4. PATCH vault — add passphrase layer → vaultType: 'both'
+  const patchRes = await fetch("/api/keys/vault/passphrase", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      encryptedPrivKeyPassphrase: encryptedB64,
+      passphraseIv: ivB64,
+      pbkdf2Salt: toB64(salt),
+    }),
+  });
+  if (!patchRes.ok) {
+    const data = await patchRes.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to add passphrase layer");
+  }
+}
+
+// ─── ADD PRF LAYER to existing passphrase vault ──────────────────────────────
+
+/**
+ * Called when a passphrase-only user wants to add a passkey.
+ * (From Settings only — user must be unlocked/authenticated already)
+ *
+ * Flow:
+ *  1. Unlock existing vault with passphrase to get raw private key
+ *  2. Register new passkey with PRF
+ *  3. Re-encrypt same private key with PRF master key
+ *  4. PATCH /api/keys/vault/prf → vaultType: 'both'
  */
 export async function addPRFLayerToVault(
   passphrase: string,
   userId: string,
   userName: string,
 ): Promise<{ supported: boolean }> {
-  // 1. Fetch existing vault
   const res = await fetch("/api/keys/vault");
-  if (!res.ok) throw new Error("No vault found. Set up encryption first.");
+  if (!res.ok) throw new Error("No vault found.");
   const vault = await res.json();
 
-  // 2. Unlock with passphrase
+  const encKey = vault.encryptedPrivKeyPassphrase ?? vault.encryptedPrivateKey;
+  const iv = vault.passphraseIv ?? vault.iv;
+  if (!encKey || !iv) throw new Error("Vault has no passphrase layer");
+
   const passphraseMasterKey = await deriveKey(passphrase, fromB64(vault.pbkdf2Salt));
   let privateKeyBuf: ArrayBuffer;
   try {
-    const encKey = vault.encryptedPrivKeyPassphrase ?? vault.encryptedPrivateKey;
-    const iv = vault.passphraseIv ?? vault.iv;
     privateKeyBuf = await decryptPrivKey(encKey, iv, passphraseMasterKey);
   } catch {
     throw new Error("WRONG_PASSWORD");
   }
 
-  // 3. Register passkey with PRF
   const prfSalt = crypto.getRandomValues(new Uint8Array(32)) as Uint8Array<ArrayBuffer>;
   const userIdBytes = new TextEncoder().encode(userId);
   const { credentialId, prfOutput, supported } = await registerWithPRF(prfSalt, userIdBytes, userName);
   if (!supported) return { supported: false };
 
-  // 4. Derive PRF master key + re-encrypt private key
   const prfMasterKey = await deriveKeyFromPRF(prfOutput);
   const { encryptedB64: encryptedPrivKeyPRF, ivB64: prfIv } = await encryptPrivKey(privateKeyBuf, prfMasterKey);
 
-  // 5. PATCH vault — add PRF layer → vaultType: 'both'
   const patchRes = await fetch("/api/keys/vault/prf", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -236,9 +255,7 @@ export async function addPRFLayerToVault(
   return { supported: true };
 }
 
-// ──────────────────────────────────────
-// UNLOCK: Passphrase
-// ──────────────────────────────────────
+// ─── UNLOCK: passphrase ──────────────────────────────────────────────────────
 
 export async function unlockVault(passphrase: string): Promise<{
   privateKey: CryptoKey;
@@ -266,9 +283,7 @@ export async function unlockVault(passphrase: string): Promise<{
   return { privateKey, publicKey };
 }
 
-// ──────────────────────────────────────
-// UNLOCK: PRF passkey
-// ──────────────────────────────────────
+// ─── UNLOCK: PRF passkey ─────────────────────────────────────────────────────
 
 export async function unlockVaultWithPRF(): Promise<{
   privateKey: CryptoKey;
