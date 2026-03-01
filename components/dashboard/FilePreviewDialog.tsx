@@ -16,7 +16,11 @@ import "plyr-react/plyr.css";
 
 import DocViewer, { DocViewerRenderers } from "@cyntler/react-doc-viewer";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptFile } from "@/lib/crypto/fileEncryption";
+import {
+  decryptFile,
+  decryptFileChunkedCombined,
+} from "@/lib/crypto/fileEncryption";
+import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
 
 interface ObjectData {
   id: string;
@@ -57,6 +61,69 @@ function fileNameFromKey(key: string) {
 
 function formatMB(bytes: number) {
   return (bytes / 1024 / 1024).toFixed(2);
+}
+
+/** Fetch a URL while invoking onProgress(0-100) as bytes arrive and caching the stream locally */
+async function fetchWithProgress(
+  url: string,
+  onProgress?: (pct: number) => void,
+  cacheKey?: string,
+  fileSizeBytes?: number,
+): Promise<ArrayBuffer> {
+  let stream: ReadableStream<Uint8Array>;
+  let total = fileSizeBytes || 0;
+  let fromCache = false;
+
+  if (cacheKey) {
+    const cached = await getCachedResponse(cacheKey);
+    if (cached) {
+      stream = cached.body!;
+      total = +(cached.headers.get("x-content-length") ?? 0) || total;
+      fromCache = true;
+      console.log(`[PreviewCache] Cache hit for generic preview: ${cacheKey}`);
+    }
+  }
+
+  if (!stream!) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Failed to fetch file");
+
+    total = +(res.headers.get("content-length") ?? 0) || total;
+
+    if (cacheKey) {
+      const [forCache, forRead] = res.body!.tee();
+      storeCachedStream(cacheKey, forCache, total).catch(() => {});
+      stream = forRead;
+    } else {
+      stream = res.body!;
+    }
+  }
+
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+
+  if (fromCache && onProgress) {
+    onProgress(100); // instant jump
+  }
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.byteLength;
+    if (total > 0 && !fromCache && onProgress) {
+      onProgress(Math.round((received / total) * 100));
+    }
+  }
+
+  const combined = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return combined.buffer;
 }
 
 export function FilePreviewDialog({
@@ -137,18 +204,49 @@ export function FilePreviewDialog({
         }
 
         // 3. Fetch raw ciphertext via same-origin proxy to avoid CDN CORS block
-        const ciphertextRes = await fetch(`/api/objects/${file.id}/content`);
-        if (!ciphertextRes.ok) throw new Error("Failed to download file");
-        const ciphertextBuf = await ciphertextRes.arrayBuffer();
-
-        // 4. Decrypt
-        const decryptedBlob = await decryptFile(
-          ciphertextBuf,
-          data.encryptedDEK,
-          data.iv,
-          privateKey,
-          data.contentType ?? file.contentType,
+        // Added Cache Storage check (fetchWithProgress) so previously decrypted files load instantly
+        const ciphertextBuf = await fetchWithProgress(
+          `/api/objects/${file.id}/content`,
+          (pct) => {
+            // Optional: You could expose progress to UI if you added a fetchProgress state
+          },
+          file.id, // Using the file.id as the cache key
+          file.size, // using file.size to enforce the 500MB bypass limit limit
         );
+
+        let decryptedBlob: Blob;
+
+        if (data.chunkIvs && data.chunkSize && data.chunkCount) {
+          // 4a. Decrypt Chunked payload
+          if (!data.encryptedDEK) {
+            throw new Error(
+              "Missing encrypted DEK for chunked file. File might be corrupted.",
+            );
+          }
+          decryptedBlob = await decryptFileChunkedCombined(
+            ciphertextBuf,
+            data.encryptedDEK,
+            data.chunkIvs,
+            data.chunkSize,
+            data.chunkCount,
+            privateKey,
+            data.contentType ?? file.contentType,
+          );
+        } else {
+          // 4b. Decrypt standard singular payload
+          if (!data.iv || !data.encryptedDEK) {
+            throw new Error(
+              "Missing encryption parameters (IV or DEK). File might be corrupted.",
+            );
+          }
+          decryptedBlob = await decryptFile(
+            ciphertextBuf,
+            data.encryptedDEK,
+            data.iv,
+            privateKey,
+            data.contentType ?? file.contentType,
+          );
+        }
 
         // 5. Create object URL from decrypted blob
         const objectUrl = URL.createObjectURL(decryptedBlob);
