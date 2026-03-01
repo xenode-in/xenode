@@ -31,18 +31,17 @@ const ApiLogSchema = new Schema<IApiLog>(
   { timestamps: true }
 );
 
-// Auto-delete log entries after 90 days — keeps the logs DB lean
+// Auto-delete logs after 90 days
 ApiLogSchema.index({ createdAt: 1 }, { expireAfterSeconds: 7776000 });
-// Fast per-user timeline queries (admin user detail page)
+// Compound indexes for common admin query patterns
 ApiLogSchema.index({ userId: 1, createdAt: -1 });
-// Fast endpoint + status filter queries (admin logs page)
 ApiLogSchema.index({ endpoint: 1, statusCode: 1, createdAt: -1 });
 
 let _model: Model<IApiLog> | null = null;
 
 /**
  * Returns the ApiLog model bound to the logs DB connection.
- * Uses a lazy singleton to avoid reconnecting on every request.
+ * Uses a module-level singleton — safe in Next.js (module cache persists per worker).
  */
 export async function getApiLogModel(): Promise<Model<IApiLog>> {
   if (_model) return _model;
