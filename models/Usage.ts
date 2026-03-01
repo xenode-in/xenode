@@ -9,15 +9,12 @@ export interface IUsage extends Document {
   totalBuckets: number;
   storageLimitBytes: number;
   egressLimitBytes: number;
-  /** User plan — controls feature access and limits */
+  // Analytics fields
   plan: "free" | "pro" | "enterprise";
   planActivatedAt: Date | null;
   planExpiresAt: Date | null;
-  /** Cumulative upload operation count (incremented on every object upload) */
   uploadCount: number;
-  /** Cumulative download operation count (incremented on every egress event) */
   downloadCount: number;
-  /** Timestamp of the last API activity for this user */
   lastActiveAt: Date | null;
   updatedAt: Date;
   createdAt: Date;
