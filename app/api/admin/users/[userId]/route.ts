@@ -10,19 +10,23 @@ import mongoose from "mongoose";
 
 type RouteContext = { params: Promise<{ userId: string }> };
 
-/** GET /api/admin/users/[userId] — full user detail for admin deep-dive */
+/** GET /api/admin/users/[userId] — full user detail with all metrics */
 export async function GET(_req: NextRequest, { params }: RouteContext) {
   const session = await getAdminSession();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session)
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { userId } = await params;
   await dbConnect();
 
   const db = mongoose.connection.db;
-  if (!db) return NextResponse.json({ error: "DB not connected" }, { status: 500 });
+  if (!db)
+    return NextResponse.json({ error: "DB not connected" }, { status: 500 });
 
   const [user, usage, shareStats, apiKeyCount] = await Promise.all([
-    db.collection("user").findOne({ $or: [{ id: userId }, { _id: userId }] }),
+    db
+      .collection("user")
+      .findOne({ $or: [{ id: userId }, { _id: userId }] }),
     Usage.findOne({ userId }).lean(),
     ShareLink.aggregate([
       { $match: { createdBy: userId } },
@@ -31,14 +35,17 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
           _id: null,
           total: { $sum: 1 },
           totalDownloads: { $sum: "$downloadCount" },
-          active: { $sum: { $cond: [{ $eq: ["$isRevoked", false] }, 1, 0] } },
+          active: {
+            $sum: { $cond: [{ $eq: ["$isRevoked", false] }, 1, 0] },
+          },
         },
       },
     ]),
     ApiKey.countDocuments({ userId }),
   ]);
 
-  if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });
+  if (!user)
+    return NextResponse.json({ error: "User not found" }, { status: 404 });
 
   const share = shareStats[0] ?? { total: 0, totalDownloads: 0, active: 0 };
 
@@ -50,7 +57,7 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
       image: user.image,
       createdAt: user.createdAt,
       emailVerified: user.emailVerified,
-      onboarded: user.onboarded,
+      onboarded: user.onboarded ?? false,
     },
     usage: {
       plan: usage?.plan ?? "free",
@@ -71,22 +78,23 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
   });
 }
 
-/**
- * PATCH /api/admin/users/[userId] — update plan, storage limit, or egress limit.
- * Allowed fields: plan, storageLimitBytes, egressLimitBytes, planExpiresAt
- */
+/** PATCH /api/admin/users/[userId] — update plan / storage limits */
 export async function PATCH(req: NextRequest, { params }: RouteContext) {
   const session = await getAdminSession();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session)
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { userId } = await params;
   const body = await req.json();
+
   const update: Record<string, unknown> = {};
 
   if (body.plan !== undefined) {
-    if (!["free", "pro", "enterprise"].includes(body.plan)) {
-      return NextResponse.json({ error: "Invalid plan value" }, { status: 400 });
-    }
+    if (!["free", "pro", "enterprise"].includes(body.plan))
+      return NextResponse.json(
+        { error: "Invalid plan value" },
+        { status: 400 }
+      );
     update.plan = body.plan;
     update.planActivatedAt = body.plan !== "free" ? new Date() : null;
   }
@@ -94,25 +102,37 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
   if (body.storageLimitBytes !== undefined) {
     const val = Number(body.storageLimitBytes);
     if (isNaN(val) || val < 0)
-      return NextResponse.json({ error: "Invalid storageLimitBytes" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid storageLimitBytes" },
+        { status: 400 }
+      );
     update.storageLimitBytes = val;
   }
 
   if (body.egressLimitBytes !== undefined) {
     const val = Number(body.egressLimitBytes);
     if (isNaN(val) || val < 0)
-      return NextResponse.json({ error: "Invalid egressLimitBytes" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid egressLimitBytes" },
+        { status: 400 }
+      );
     update.egressLimitBytes = val;
   }
 
   if (body.planExpiresAt !== undefined) {
-    update.planExpiresAt = body.planExpiresAt ? new Date(body.planExpiresAt) : null;
+    update.planExpiresAt = body.planExpiresAt
+      ? new Date(body.planExpiresAt)
+      : null;
   }
 
   if (Object.keys(update).length === 0)
-    return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
+    return NextResponse.json(
+      { error: "No valid fields to update" },
+      { status: 400 }
+    );
 
   await dbConnect();
+
   const updated = await Usage.findOneAndUpdate(
     { userId },
     { $set: update },
@@ -123,23 +143,25 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
 }
 
 /**
- * DELETE /api/admin/users/[userId] — permanently delete a user and all their data.
+ * DELETE /api/admin/users/[userId] — permanently remove user and all their data.
  * Super admin only.
  */
 export async function DELETE(_req: NextRequest, { params }: RouteContext) {
   const session = await getAdminSession();
-  if (!session || session.role !== "super_admin") {
+  if (!session || session.role !== "super_admin")
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-  }
 
   const { userId } = await params;
   await dbConnect();
 
   const db = mongoose.connection.db;
-  if (!db) return NextResponse.json({ error: "DB not connected" }, { status: 500 });
+  if (!db)
+    return NextResponse.json({ error: "DB not connected" }, { status: 500 });
 
   await Promise.all([
-    db.collection("user").deleteOne({ $or: [{ id: userId }, { _id: userId }] }),
+    db
+      .collection("user")
+      .deleteOne({ $or: [{ id: userId }, { _id: userId }] }),
     db.collection("session").deleteMany({ userId }),
     Bucket.deleteMany({ userId }),
     StorageObject.deleteMany({ userId }),

@@ -5,21 +5,17 @@ import Usage from "@/models/Usage";
 
 type RouteContext = { params: Promise<{ userId: string }> };
 
-/**
- * POST /api/admin/users/[userId]/plan
- * Assign or revoke a plan for a user.
- * Body: { plan: "free" | "pro" | "enterprise", expiresAt?: ISO string }
- */
+/** POST /api/admin/users/[userId]/plan — assign or revoke a plan */
 export async function POST(req: NextRequest, { params }: RouteContext) {
   const session = await getAdminSession();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session)
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { userId } = await params;
   const { plan, expiresAt } = await req.json();
 
-  if (!["free", "pro", "enterprise"].includes(plan)) {
+  if (!["free", "pro", "enterprise"].includes(plan))
     return NextResponse.json({ error: "Invalid plan" }, { status: 400 });
-  }
 
   await dbConnect();
 
