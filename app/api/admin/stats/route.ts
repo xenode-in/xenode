@@ -6,8 +6,6 @@ import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import mongoose from "mongoose";
 
-export const dynamic = "force-dynamic";
-
 export async function GET() {
   const session = await getAdminSession();
   if (!session) {
@@ -16,17 +14,21 @@ export async function GET() {
 
   await dbConnect();
 
-  const db = mongoose.connection.db;
-  if (!db) {
-    return NextResponse.json({ error: "DB not connected" }, { status: 500 });
-  }
-
   const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayStart = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate()
+  );
   const weekStart = new Date(todayStart);
   weekStart.setDate(weekStart.getDate() - 7);
   const monthStart = new Date(todayStart);
   monthStart.setMonth(monthStart.getMonth() - 1);
+
+  const db = mongoose.connection.db;
+  if (!db) {
+    return NextResponse.json({ error: "DB not connected" }, { status: 500 });
+  }
 
   const userCollection = db.collection("user");
 
@@ -72,7 +74,10 @@ export async function GET() {
   };
 
   const planBreakdown = Object.fromEntries(
-    (planStats as Array<{ _id: string; count: number }>).map((p) => [p._id, p.count])
+    planStats.map((p: { _id: string; count: number }) => [
+      p._id ?? "free",
+      p.count,
+    ])
   );
 
   return NextResponse.json({

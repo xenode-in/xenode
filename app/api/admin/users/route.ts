@@ -5,8 +5,6 @@ import Usage from "@/models/Usage";
 import ShareLink from "@/models/ShareLink";
 import mongoose from "mongoose";
 
-export const dynamic = "force-dynamic";
-
 export async function GET(req: NextRequest) {
   const session = await getAdminSession();
   if (!session) {
@@ -17,10 +15,13 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const page = Math.max(1, parseInt(searchParams.get("page") ?? "1"));
-  const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? "20")));
+  const limit = Math.min(
+    100,
+    Math.max(1, parseInt(searchParams.get("limit") ?? "20"))
+  );
   const skip = (page - 1) * limit;
   const search = searchParams.get("search") ?? "";
-  const planFilter = searchParams.get("plan") ?? "";
+  const plan = searchParams.get("plan") ?? "";
 
   const db = mongoose.connection.db;
   if (!db) {
@@ -39,15 +40,19 @@ export async function GET(req: NextRequest) {
     : {};
 
   const [users, total] = await Promise.all([
-    userCollection.find(matchQuery).sort({ createdAt: -1 }).skip(skip).limit(limit).toArray(),
+    userCollection
+      .find(matchQuery)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .toArray(),
     userCollection.countDocuments(matchQuery),
   ]);
 
   const userIds = users.map((u) => u.id ?? u._id?.toString());
 
-  // Optionally filter by plan at the usage level
   const usageFilter: Record<string, unknown> = { userId: { $in: userIds } };
-  if (planFilter) usageFilter.plan = planFilter;
+  if (plan) usageFilter.plan = plan;
 
   const [usageRecords, shareCounts] = await Promise.all([
     Usage.find(usageFilter).lean(),
@@ -64,7 +69,14 @@ export async function GET(req: NextRequest) {
   ]);
 
   const usageMap = new Map(usageRecords.map((u) => [u.userId, u]));
-  const shareMap = new Map(shareCounts.map((s: { _id: string; total: number; totalDownloads: number }) => [s._id, s]));
+  const shareMap = new Map(
+    shareCounts.map(
+      (s: { _id: string; total: number; totalDownloads: number }) => [
+        s._id,
+        s,
+      ]
+    )
+  );
 
   const enriched = users.map((u) => {
     const uid = u.id ?? u._id?.toString();
