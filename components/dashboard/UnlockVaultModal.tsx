@@ -1,5 +1,12 @@
 "use client";
 
+/**
+ * UnlockVaultModal
+ *
+ * Shown when vault exists but IDB cache is empty (new device / after lock).
+ * User enters their MASTER PASSWORD only — recovery words not needed for normal unlock.
+ */
+
 import React, { useState } from "react";
 import {
   Dialog,
@@ -27,48 +34,141 @@ interface UnlockVaultModalProps {
 }
 
 export function UnlockVaultModal({ open, onClose }: UnlockVaultModalProps) {
-  const { needsSetup, unlock, setup } = useCrypto();
-
+  const { unlock, recover } = useCrypto();
   const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const isSetup = needsSetup;
+  const [isRecoveryMode, setIsRecoveryMode] = useState(false);
+  const [recoveryWords, setRecoveryWords] = useState("");
+  const [newPassword, setNewPassword] = useState("");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    if (!password.trim()) return;
 
-    if (isSetup && password !== confirm) {
-      setError("Passwords do not match.");
-      return;
+    setLoading(true);
+    try {
+      await unlock(password);
+      setPassword("");
+      onClose();
+    } catch (err) {
+      if (err instanceof Error && err.message === "WRONG_PASSWORD") {
+        setError("Incorrect password. Please try again.");
+      } else {
+        setError("Something went wrong. Please try again.");
+      }
+    } finally {
+      setLoading(false);
     }
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
+  }
+
+  async function handleRecoverSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    if (!recoveryWords.trim() || !newPassword.trim()) return;
+    if (newPassword.length < 8) {
+      setError("New password must be at least 8 characters.");
       return;
     }
 
     setLoading(true);
     try {
-      if (isSetup) {
-        await setup(password);
-      } else {
-        await unlock(password);
-      }
+      await recover(recoveryWords.trim(), newPassword);
+      setRecoveryWords("");
+      setNewPassword("");
+      setIsRecoveryMode(false);
       onClose();
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        if (err.message === "WRONG_PASSWORD") {
-          setError("Incorrect password. Please try again.");
-        } else {
-          setError(err.message || "An error occurred. Please try again.");
-        }
+    } catch (err) {
+      if (err instanceof Error && err.message === "INVALID_RECOVERY_KIT") {
+        setError("Invalid recovery kit. Please check your words.");
+      } else {
+        setError(err instanceof Error ? err.message : "Something went wrong.");
       }
     } finally {
       setLoading(false);
     }
+  }
+
+  if (isRecoveryMode) {
+    return (
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          if (!o) onClose();
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+              <ShieldCheck className="h-6 w-6 text-primary" />
+            </div>
+            <DialogTitle className="text-center text-lg">
+              Recover your vault
+            </DialogTitle>
+            <DialogDescription className="text-center text-sm text-muted-foreground">
+              Enter your 12-word recovery kit and set a new master password to
+              regain access to your files.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleRecoverSubmit} className="mt-2 space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="recovery-words">Recovery kit (12 words)</Label>
+              <Input
+                id="recovery-words"
+                value={recoveryWords}
+                onChange={(e) => setRecoveryWords(e.target.value)}
+                placeholder="e.g. apple banana cherry..."
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="new-pw">New master password</Label>
+              <Input
+                id="new-pw"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="At least 8 characters"
+              />
+            </div>
+            {error && <p className="text-sm text-destructive">{error}</p>}
+            <div className="flex gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                disabled={loading}
+                onClick={() => {
+                  setIsRecoveryMode(false);
+                  setError("");
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={
+                  loading || !recoveryWords.trim() || !newPassword.trim()
+                }
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />{" "}
+                    Recovering...
+                  </>
+                ) : (
+                  "Recover Vault"
+                )}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+    );
   }
 
   return (
@@ -81,45 +181,35 @@ export function UnlockVaultModal({ open, onClose }: UnlockVaultModalProps) {
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-            {isSetup ? (
-              <ShieldCheck className="h-6 w-6 text-primary" />
-            ) : (
-              <Lock className="h-6 w-6 text-primary" />
-            )}
+            <Lock className="h-6 w-6 text-primary" />
           </div>
           <DialogTitle className="text-center text-lg">
-            {isSetup ? "Set up file encryption" : "Unlock your files"}
+            Unlock your vault
           </DialogTitle>
           <DialogDescription className="text-center text-sm text-muted-foreground">
-            {isSetup
-              ? "Create an encryption password to protect your files end-to-end. Keep it safe — it cannot be recovered."
-              : "Enter your encryption password to decrypt your files. Your password never leaves this device."}
+            Enter your master password to decrypt your files on this device.
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="mt-2 space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="vault-password">
-              {isSetup ? "Encryption password" : "Password"}
-            </Label>
+            <Label htmlFor="unlock-pw">Master password</Label>
             <div className="relative">
               <Input
-                id="vault-password"
+                id="unlock-pw"
                 type={showPw ? "text" : "password"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter your encryption password"
-                className="pr-10"
+                placeholder="Enter your master password"
                 autoFocus
-                autoComplete={isSetup ? "new-password" : "current-password"}
-                required
+                autoComplete="current-password"
+                className="pr-10"
               />
               <button
                 type="button"
                 onClick={() => setShowPw((v) => !v)}
                 className="absolute inset-y-0 right-3 flex items-center text-muted-foreground hover:text-foreground"
                 tabIndex={-1}
-                aria-label="Toggle password visibility"
               >
                 {showPw ? (
                   <EyeOff className="h-4 w-4" />
@@ -130,43 +220,37 @@ export function UnlockVaultModal({ open, onClose }: UnlockVaultModalProps) {
             </div>
           </div>
 
-          {isSetup && (
-            <div className="space-y-2">
-              <Label htmlFor="vault-confirm">Confirm password</Label>
-              <Input
-                id="vault-confirm"
-                type={showPw ? "text" : "password"}
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-                placeholder="Confirm your password"
-                autoComplete="new-password"
-                required
-              />
-            </div>
-          )}
-
           {error && <p className="text-sm text-destructive">{error}</p>}
 
-          <Button type="submit" className="w-full" disabled={loading}>
+          <Button
+            type="submit"
+            className="w-full"
+            disabled={loading || !password.trim()}
+          >
             {loading ? (
               <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                {isSetup ? "Setting up..." : "Unlocking..."}
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Unlocking...
               </>
             ) : (
               <>
-                <KeyRound className="mr-2 h-4 w-4" />
-                {isSetup ? "Set up encryption" : "Unlock files"}
+                <KeyRound className="mr-2 h-4 w-4" /> Unlock vault
               </>
             )}
           </Button>
 
-          {!isSetup && (
-            <p className="text-center text-xs text-muted-foreground">
-              Files uploaded before encryption was enabled are still accessible
-              without a password.
-            </p>
-          )}
+          <p className="text-center text-xs text-muted-foreground">
+            Forgot your password?{" "}
+            <button
+              type="button"
+              onClick={() => {
+                setIsRecoveryMode(true);
+                setError("");
+              }}
+              className="text-primary hover:underline"
+            >
+              Recover with your recovery kit →
+            </button>
+          </p>
         </form>
       </DialogContent>
     </Dialog>

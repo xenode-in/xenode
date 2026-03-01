@@ -2,46 +2,45 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 
 export interface IUserKeyVault extends Document {
   userId: string;
-  /** Base64-encoded SubjectPublicKeyInfo (RSA-OAEP 4096-bit public key) */
+  /** RSA-OAEP 4096-bit public key (SPKI, base64) */
   publicKey: string;
-  /** Base64-encoded AES-256-GCM encrypted PKCS#8 private key */
+  /** AES-GCM encrypted PKCS#8 private key (base64) */
   encryptedPrivateKey: string;
-  /** Base64-encoded 16-byte PBKDF2 salt */
+  /** PBKDF2 salt for the full vault passphrase (base64) */
   pbkdf2Salt: string;
-  /** Base64-encoded 12-byte GCM IV used to encrypt the private key */
+  /** GCM IV for private key encryption (base64) */
   iv: string;
+  /** Recovery words encrypted with master-password-only derived key (base64) */
+  encryptedRecoveryWords: string;
+  /** GCM IV for recovery words encryption (base64) */
+  recoveryIv: string;
+  /** PBKDF2 salt for master-password-only key derivation (base64) */
+  recoverySalt: string;
+  /** AES-GCM encrypted PKCS#8 private key using ONLY recovery words (base64) */
+  encryptedPrivateKeyRecovery?: string;
+  /** PBKDF2 salt for recovery-words-only key derivation (base64) */
+  recoveryWordSalt?: string;
+  /** GCM IV for recovery-words-only encryption (base64) */
+  recoveryWordIv?: string;
   createdAt: Date;
   updatedAt: Date;
 }
 
 const UserKeyVaultSchema = new Schema<IUserKeyVault>(
   {
-    userId: {
-      type: String,
-      required: [true, "User ID is required"],
-      unique: true,
-      index: true,
-    },
-    publicKey: {
-      type: String,
-      required: [true, "Public key is required"],
-    },
-    encryptedPrivateKey: {
-      type: String,
-      required: [true, "Encrypted private key is required"],
-    },
-    pbkdf2Salt: {
-      type: String,
-      required: [true, "PBKDF2 salt is required"],
-    },
-    iv: {
-      type: String,
-      required: [true, "IV is required"],
-    },
+    userId: { type: String, required: true, unique: true, index: true },
+    publicKey: { type: String, required: true },
+    encryptedPrivateKey: { type: String, required: true },
+    pbkdf2Salt: { type: String, required: true },
+    iv: { type: String, required: true },
+    encryptedRecoveryWords: { type: String, required: true },
+    recoveryIv: { type: String, required: true },
+    recoverySalt: { type: String, required: true },
+    encryptedPrivateKeyRecovery: { type: String, required: false },
+    recoveryWordSalt: { type: String, required: false },
+    recoveryWordIv: { type: String, required: false },
   },
-  {
-    timestamps: true,
-  },
+  { timestamps: true },
 );
 
 const UserKeyVault: Model<IUserKeyVault> =
