@@ -4,7 +4,9 @@ import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import { captureEvent } from "@/lib/posthog";
 
-/** Get or create usage record for a user */
+/**
+ * Get or create usage record for a user
+ */
 export async function getOrCreateUsage(userId: string) {
   await dbConnect();
   let usage = await Usage.findOne({ userId });
@@ -12,7 +14,9 @@ export async function getOrCreateUsage(userId: string) {
   return usage;
 }
 
-/** Recalculate usage from source of truth (objects and buckets) */
+/**
+ * Recalculate usage from source of truth (objects and buckets)
+ */
 export async function recalculateUsage(userId: string) {
   await dbConnect();
 
@@ -29,15 +33,20 @@ export async function recalculateUsage(userId: string) {
 
   return Usage.findOneAndUpdate(
     { userId },
-    { $set: { totalStorageBytes, totalObjects: objectCount, totalBuckets: bucketCount } },
+    {
+      $set: {
+        totalStorageBytes,
+        totalObjects: objectCount,
+        totalBuckets: bucketCount,
+      },
+    },
     { upsert: true, new: true }
   );
 }
 
 /**
  * Increment storage usage when an object is uploaded.
- * Also increments uploadCount and updates lastActiveAt.
- * Fires a PostHog event (non-blocking).
+ * Also tracks uploadCount and fires a PostHog event.
  */
 export async function incrementStorage(
   userId: string,
@@ -66,11 +75,11 @@ export async function incrementStorage(
 }
 
 /**
- * Decrement storage usage when an object is deleted.
- * Also updates lastActiveAt.
+ * Decrement storage usage when an object is deleted
  */
 export async function decrementStorage(userId: string, sizeBytes: number) {
   await dbConnect();
+
   return Usage.findOneAndUpdate(
     { userId },
     {
@@ -83,8 +92,7 @@ export async function decrementStorage(userId: string, sizeBytes: number) {
 
 /**
  * Increment egress usage when an object is downloaded.
- * Also increments downloadCount and updates lastActiveAt.
- * Fires a PostHog event (non-blocking).
+ * Also tracks downloadCount and fires a PostHog event.
  */
 export async function incrementEgress(
   userId: string,
@@ -110,22 +118,25 @@ export async function incrementEgress(
   return usage;
 }
 
-/** Increment bucket count when a bucket is created */
+/**
+ * Increment bucket count
+ */
 export async function incrementBucketCount(userId: string) {
   await dbConnect();
+
   return Usage.findOneAndUpdate(
     { userId },
-    {
-      $inc: { totalBuckets: 1 },
-      $set: { lastActiveAt: new Date() },
-    },
+    { $inc: { totalBuckets: 1 }, $set: { lastActiveAt: new Date() } },
     { upsert: true, new: true }
   );
 }
 
-/** Decrement bucket count when a bucket is deleted */
+/**
+ * Decrement bucket count
+ */
 export async function decrementBucketCount(userId: string) {
   await dbConnect();
+
   return Usage.findOneAndUpdate(
     { userId },
     { $inc: { totalBuckets: -1 } },
@@ -133,13 +144,16 @@ export async function decrementBucketCount(userId: string) {
   );
 }
 
-/** Update bucket-level object stats */
+/**
+ * Update bucket-level object stats
+ */
 export async function updateBucketStats(
   bucketId: string,
   objectCountDelta: number,
   sizeDelta: number
 ) {
   await dbConnect();
+
   return Bucket.findByIdAndUpdate(
     bucketId,
     { $inc: { objectCount: objectCountDelta, totalSizeBytes: sizeDelta } },
@@ -147,17 +161,24 @@ export async function updateBucketStats(
   );
 }
 
-/** Format bytes to human-readable string */
-export function formatBytes(bytes: number, decimals = 2): string {
+/**
+ * Format bytes to human-readable string
+ */
+export function formatBytes(bytes: number, decimals: number = 2): string {
   if (bytes === 0) return "0 Bytes";
+
   const k = 1024;
   const dm = decimals < 0 ? 0 : decimals;
   const sizes = ["Bytes", "KB", "MB", "GB", "TB", "PB"];
+
   const i = Math.floor(Math.log(bytes) / Math.log(k));
+
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 }
 
-/** Convert bytes to GB (2 decimal places) */
+/**
+ * Convert bytes to GB
+ */
 export function bytesToGB(bytes: number): number {
   return Number((bytes / (1024 * 1024 * 1024)).toFixed(2));
 }
