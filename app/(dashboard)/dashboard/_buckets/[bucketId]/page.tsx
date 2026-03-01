@@ -38,8 +38,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useUpload } from "@/contexts/UploadContext";
+import { usePreview } from "@/contexts/PreviewContext";
 import { useDropzone } from "react-dropzone";
-import { FilePreviewDialog } from "@/components/dashboard/FilePreviewDialog";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { decryptFile } from "@/lib/crypto/fileEncryption";
 
@@ -110,7 +110,7 @@ export default function BucketDetailPage() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   // Preview State
-  const [previewFile, setPreviewFile] = useState<ObjectData | null>(null);
+  const { openPreview } = usePreview();
 
   // View Mode State
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
@@ -570,8 +570,8 @@ export default function BucketDetailPage() {
                 <TableRow
                   key={obj.id}
                   className="border-border hover:bg-secondary/50 cursor-pointer"
-                  onClick={() => setPreviewFile(obj)}
-                  onDoubleClick={() => setPreviewFile(obj)}
+                  onClick={() => openPreview(obj)}
+                  onDoubleClick={() => openPreview(obj)}
                 >
                   <TableCell>
                     <div className="flex items-center gap-3 text-foreground">
@@ -602,7 +602,7 @@ export default function BucketDetailPage() {
                         size="icon"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setPreviewFile(obj);
+                          openPreview(obj);
                         }}
                         className="text-muted-foreground hover:text-primary hover:bg-primary/10"
                         title="Preview"
@@ -680,8 +680,8 @@ export default function BucketDetailPage() {
             {viewObjects.files.map((obj) => (
               <div
                 key={obj.id}
-                onDoubleClick={() => setPreviewFile(obj)}
-                onClick={() => setPreviewFile(obj)}
+                onDoubleClick={() => openPreview(obj)}
+                onClick={() => openPreview(obj)}
                 className="group relative aspect-square bg-card rounded-xl border border-border flex flex-col items-center justify-center cursor-pointer hover:bg-secondary/50 transition-all hover:scale-[1.02] overflow-hidden"
               >
                 {/* Icon/Thumbnail */}
@@ -717,7 +717,7 @@ export default function BucketDetailPage() {
                     className="h-7 w-7 rounded-md bg-black/50 hover:bg-primary hover:text-primary-foreground text-foreground backdrop-blur-sm"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setPreviewFile(obj);
+                      openPreview(obj);
                     }}
                     title="Preview"
                   >
@@ -758,12 +758,6 @@ export default function BucketDetailPage() {
           </div>
         )}
       </div>
-
-      <FilePreviewDialog
-        file={previewFile}
-        isOpen={!!previewFile}
-        onClose={() => setPreviewFile(null)}
-      />
 
       {/* Create Folder Dialog */}
       <Dialog open={isCreateFolderOpen} onOpenChange={setIsCreateFolderOpen}>
