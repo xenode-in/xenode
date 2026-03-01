@@ -2,8 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signOut } from "@/lib/auth/client";
-import { useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   FolderOpen,
@@ -33,6 +31,7 @@ import {
   SheetTitle,
   SheetDescription,
 } from "@/components/ui/sheet";
+import { SignOutDialog } from "@/components/dashboard/SignOutDialog";
 import { useState, useEffect } from "react";
 
 interface DashboardShellProps {
@@ -95,19 +94,13 @@ function SidebarNav({ pathname }: { pathname: string }) {
 
 export function DashboardShell({ children, user }: DashboardShellProps) {
   const pathname = usePathname();
-  const router = useRouter();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [signOutOpen, setSignOutOpen] = useState(false);
 
-  // Prevent hydration mismatch for Radix UI primitives
   useEffect(() => {
     setMounted(true);
   }, []);
-
-  const handleSignOut = async () => {
-    await signOut();
-    router.push("/login");
-  };
 
   const initials = user.name
     ? user.name
@@ -120,6 +113,9 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
 
   return (
     <div className="min-h-screen flex bg-background">
+      {/* Sign out dialog */}
+      <SignOutDialog open={signOutOpen} onOpenChange={setSignOutOpen} />
+
       {/* Desktop Sidebar */}
       <aside className="hidden lg:flex flex-col w-[260px] border-r border-sidebar-border bg-sidebar sticky top-0 left-0 h-screen">
         {/* Logo */}
@@ -253,7 +249,7 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
                     </DropdownMenuItem>
                     <DropdownMenuSeparator className="bg-border" />
                     <DropdownMenuItem
-                      onClick={handleSignOut}
+                      onClick={() => setSignOutOpen(true)}
                       className="cursor-pointer text-destructive hover:bg-destructive/10 focus:bg-destructive/10 focus:text-destructive"
                     >
                       <LogOut className="w-4 h-4 mr-2" />

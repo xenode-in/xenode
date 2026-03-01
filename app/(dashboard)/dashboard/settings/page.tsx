@@ -3,6 +3,7 @@ import { Shield, User, Mail, Calendar, Palette, HardDrive } from "lucide-react";
 import { ThemeSelector } from "@/components/settings/theme-selector";
 import { EncryptionSettingsSection } from "@/components/settings/EncryptionSettingsSection";
 import { PreviewCacheSection } from "@/components/settings/PreviewCacheSection";
+import { VaultRecoverySection } from "@/components/settings/VaultRecoverySection";
 
 export default async function SettingsPage() {
   const session = await requireAuth();
@@ -12,9 +13,7 @@ export default async function SettingsPage() {
     <div className="space-y-8">
       <div>
         <h1 className="text-2xl font-semibold text-foreground">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Manage your account settings
-        </p>
+        <p className="text-sm text-muted-foreground mt-1">Manage your account settings</p>
       </div>
 
       {/* Appearance */}
@@ -23,12 +22,7 @@ export default async function SettingsPage() {
           <Palette className="w-4 h-4 text-primary" />
           Appearance
         </h3>
-        <div className="space-y-4">
-          <div>
-            <p className="text-sm text-foreground mb-4">Theme</p>
-            <ThemeSelector />
-          </div>
-        </div>
+        <ThemeSelector />
       </div>
 
       {/* Profile */}
@@ -47,8 +41,7 @@ export default async function SettingsPage() {
           <div className="flex items-center justify-between py-3 border-b border-border">
             <div>
               <p className="text-sm text-muted-foreground flex items-center gap-1">
-                <Mail className="w-3 h-3" />
-                Email
+                <Mail className="w-3 h-3" /> Email
               </p>
               <p className="text-sm text-foreground mt-0.5">{user.email}</p>
             </div>
@@ -56,15 +49,11 @@ export default async function SettingsPage() {
           <div className="flex items-center justify-between py-3">
             <div>
               <p className="text-sm text-muted-foreground flex items-center gap-1">
-                <Calendar className="w-3 h-3" />
-                Member Since
+                <Calendar className="w-3 h-3" /> Member Since
               </p>
               <p className="text-sm text-foreground mt-0.5">
                 {user.createdAt
-                  ? new Date(user.createdAt).toLocaleDateString("en-US", {
-                      month: "long",
-                      year: "numeric",
-                    })
+                  ? new Date(user.createdAt).toLocaleDateString("en-US", { month: "long", year: "numeric" })
                   : "N/A"}
               </p>
             </div>
@@ -79,41 +68,28 @@ export default async function SettingsPage() {
           Security
         </h3>
         <div className="space-y-4">
+          <VaultRecoverySection />
           <EncryptionSettingsSection />
           <div className="flex items-center justify-between py-3 border-b border-border">
             <div>
               <p className="text-sm text-foreground">Password</p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Change your account password
-              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">Change your account password</p>
             </div>
-            <span className="text-xs text-muted-foreground bg-secondary px-3 py-1.5 rounded-lg">
-              Coming Soon
-            </span>
+            <span className="text-xs text-muted-foreground bg-secondary px-3 py-1.5 rounded-lg">Coming Soon</span>
           </div>
           <div className="flex items-center justify-between py-3 border-b border-border">
             <div>
-              <p className="text-sm text-foreground">
-                Two-Factor Authentication
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Add an extra layer of security
-              </p>
+              <p className="text-sm text-foreground">Two-Factor Authentication</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Add an extra layer of security</p>
             </div>
-            <span className="text-xs text-muted-foreground bg-secondary px-3 py-1.5 rounded-lg">
-              Coming Soon
-            </span>
+            <span className="text-xs text-muted-foreground bg-secondary px-3 py-1.5 rounded-lg">Coming Soon</span>
           </div>
           <div className="flex items-center justify-between py-3">
             <div>
               <p className="text-sm text-foreground">Connected Accounts</p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Manage linked OAuth providers
-              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">Manage linked OAuth providers</p>
             </div>
-            <span className="text-xs text-muted-foreground bg-secondary px-3 py-1.5 rounded-lg">
-              Coming Soon
-            </span>
+            <span className="text-xs text-muted-foreground bg-secondary px-3 py-1.5 rounded-lg">Coming Soon</span>
           </div>
         </div>
       </div>
@@ -124,26 +100,18 @@ export default async function SettingsPage() {
           <HardDrive className="w-4 h-4 text-primary" />
           Storage
         </h3>
-        <div className="space-y-1">
-          <PreviewCacheSection />
-        </div>
+        <PreviewCacheSection />
       </div>
 
       {/* Danger Zone */}
       <div className="bg-card border border-destructive/20 rounded-xl p-6">
-        <h3 className="text-sm font-medium text-destructive mb-4">
-          Danger Zone
-        </h3>
+        <h3 className="text-sm font-medium text-destructive mb-4">Danger Zone</h3>
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-foreground">Delete Account</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Permanently delete your account and all associated data
-            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">Permanently delete your account and all associated data</p>
           </div>
-          <span className="text-xs text-muted-foreground bg-secondary px-3 py-1.5 rounded-lg">
-            Coming Soon
-          </span>
+          <span className="text-xs text-muted-foreground bg-secondary px-3 py-1.5 rounded-lg">Coming Soon</span>
         </div>
       </div>
     </div>
