@@ -28,12 +28,18 @@ export async function GET() {
       encryptedRecoveryWords: vault.encryptedRecoveryWords,
       recoveryIv: vault.recoveryIv,
       recoverySalt: vault.recoverySalt,
+      encryptedPrivateKeyRecovery: vault.encryptedPrivateKeyRecovery,
+      recoveryWordSalt: vault.recoveryWordSalt,
+      recoveryWordIv: vault.recoveryWordIv,
     });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
+    );
   }
 }
 
@@ -55,9 +61,20 @@ export async function POST(request: NextRequest) {
       encryptedRecoveryWords,
       recoveryIv,
       recoverySalt,
+      encryptedPrivateKeyRecovery,
+      recoveryWordSalt,
+      recoveryWordIv,
     } = await request.json();
 
-    if (!publicKey || !encryptedPrivateKey || !pbkdf2Salt || !iv || !encryptedRecoveryWords || !recoveryIv || !recoverySalt) {
+    if (
+      !publicKey ||
+      !encryptedPrivateKey ||
+      !pbkdf2Salt ||
+      !iv ||
+      !encryptedRecoveryWords ||
+      !recoveryIv ||
+      !recoverySalt
+    ) {
       return NextResponse.json(
         { error: "Missing required vault fields" },
         { status: 400 },
@@ -68,7 +85,19 @@ export async function POST(request: NextRequest) {
 
     await UserKeyVault.findOneAndUpdate(
       { userId },
-      { userId, publicKey, encryptedPrivateKey, pbkdf2Salt, iv, encryptedRecoveryWords, recoveryIv, recoverySalt },
+      {
+        userId,
+        publicKey,
+        encryptedPrivateKey,
+        pbkdf2Salt,
+        iv,
+        encryptedRecoveryWords,
+        recoveryIv,
+        recoverySalt,
+        encryptedPrivateKeyRecovery,
+        recoveryWordSalt,
+        recoveryWordIv,
+      },
       { upsert: true, new: true },
     );
 
@@ -77,6 +106,9 @@ export async function POST(request: NextRequest) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
+    );
   }
 }

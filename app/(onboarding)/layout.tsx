@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getServerSession } from "@/lib/auth/session";
+import { CryptoProvider } from "@/contexts/CryptoContext";
 
 export default async function OnboardingLayout({
   children,
@@ -17,5 +18,9 @@ export default async function OnboardingLayout({
     redirect("/dashboard");
   }
 
-  return <div className="min-h-screen bg-background">{children}</div>;
+  return (
+    <CryptoProvider>
+      <div className="min-h-screen bg-background">{children}</div>
+    </CryptoProvider>
+  );
 }

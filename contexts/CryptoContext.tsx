@@ -1,8 +1,23 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
-import { setupUserKeyVault, unlockVault, regenerateVault } from "@/lib/crypto/keySetup";
-import { cacheKeys, loadCachedKeys, clearCachedKeys } from "@/lib/crypto/keyCache";
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useCallback,
+  useEffect,
+} from "react";
+import {
+  setupUserKeyVault,
+  unlockVault,
+  regenerateVault,
+  recoverAndResetVault,
+} from "@/lib/crypto/keySetup";
+import {
+  cacheKeys,
+  loadCachedKeys,
+  clearCachedKeys,
+} from "@/lib/crypto/keyCache";
 import { useSession } from "@/lib/auth/client";
 
 interface CryptoContextType {
@@ -16,7 +31,12 @@ interface CryptoContextType {
   /** Called on new device: enter master password to unlock */
   unlock: (masterPassword: string) => Promise<void>;
   /** Called from Settings: replace vault with new password + new recovery kit */
-  regenerate: (newMasterPassword: string, newRecoveryWords: string) => Promise<void>;
+  regenerate: (
+    newMasterPassword: string,
+    newRecoveryWords: string,
+  ) => Promise<void>;
+  /** Called from Unlock Vault: uses ONLY recovery kit to recover existing files and set a new master password */
+  recover: (recoveryWords: string, newMasterPassword: string) => Promise<void>;
   lock: () => Promise<void>;
   isModalOpen: boolean;
   setModalOpen: (open: boolean) => void;
@@ -25,7 +45,7 @@ interface CryptoContextType {
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
 
 export function CryptoProvider({ children }: { children: React.ReactNode }) {
-  const { data: session } = useSession();
+  const { data: session, isPending } = useSession();
   const userId = session?.user?.id ?? null;
 
   const [isInitializing, setIsInitializing] = useState(true);
@@ -36,12 +56,17 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
   const [isModalOpen, setModalOpen] = useState(false);
 
   useEffect(() => {
+    if (isPending) return;
+
     setPrivateKey(null);
     setPublicKey(null);
     setIsUnlocked(false);
     setNeedsSetup(false);
 
-    if (!userId) { setIsInitializing(false); return; }
+    if (!userId) {
+      setIsInitializing(false);
+      return;
+    }
 
     async function init() {
       setIsInitializing(true);
@@ -55,20 +80,26 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
         }
         const res = await fetch("/api/keys/vault");
         if (res.status === 404) setNeedsSetup(true);
-      } catch { /* network error */ }
-      finally { setIsInitializing(false); }
+      } catch {
+        /* network error */
+      } finally {
+        setIsInitializing(false);
+      }
     }
     init();
-  }, [userId]);
+  }, [userId, isPending]);
 
-  const setup = useCallback(async (masterPassword: string, recoveryWords: string) => {
-    const keys = await setupUserKeyVault(masterPassword, recoveryWords);
-    setPrivateKey(keys.privateKey);
-    setPublicKey(keys.publicKey);
-    setIsUnlocked(true);
-    setNeedsSetup(false);
-    await cacheKeys(keys.privateKey, keys.publicKey);
-  }, []);
+  const setup = useCallback(
+    async (masterPassword: string, recoveryWords: string) => {
+      const keys = await setupUserKeyVault(masterPassword, recoveryWords);
+      setPrivateKey(keys.privateKey);
+      setPublicKey(keys.publicKey);
+      setIsUnlocked(true);
+      setNeedsSetup(false);
+      await cacheKeys(keys.privateKey, keys.publicKey);
+    },
+    [],
+  );
 
   const unlock = useCallback(async (masterPassword: string) => {
     const keys = await unlockVault(masterPassword);
@@ -78,14 +109,29 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
     await cacheKeys(keys.privateKey, keys.publicKey);
   }, []);
 
-  const regenerate = useCallback(async (newMasterPassword: string, newRecoveryWords: string) => {
-    const keys = await regenerateVault(newMasterPassword, newRecoveryWords);
-    setPrivateKey(keys.privateKey);
-    setPublicKey(keys.publicKey);
-    setIsUnlocked(true);
-    setNeedsSetup(false);
-    await cacheKeys(keys.privateKey, keys.publicKey);
-  }, []);
+  const regenerate = useCallback(
+    async (newMasterPassword: string, newRecoveryWords: string) => {
+      const keys = await regenerateVault(newMasterPassword, newRecoveryWords);
+      setPrivateKey(keys.privateKey);
+      setPublicKey(keys.publicKey);
+      setIsUnlocked(true);
+      setNeedsSetup(false);
+      await cacheKeys(keys.privateKey, keys.publicKey);
+    },
+    [],
+  );
+
+  const recover = useCallback(
+    async (recoveryWords: string, newMasterPassword: string) => {
+      const keys = await recoverAndResetVault(recoveryWords, newMasterPassword);
+      setPrivateKey(keys.privateKey);
+      setPublicKey(keys.publicKey);
+      setIsUnlocked(true);
+      setNeedsSetup(false);
+      await cacheKeys(keys.privateKey, keys.publicKey);
+    },
+    [],
+  );
 
   const lock = useCallback(async () => {
     setPrivateKey(null);
@@ -95,10 +141,22 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <CryptoContext.Provider value={{
-      isInitializing, isUnlocked, needsSetup, privateKey, publicKey,
-      setup, unlock, regenerate, lock, isModalOpen, setModalOpen,
-    }}>
+    <CryptoContext.Provider
+      value={{
+        isInitializing,
+        isUnlocked,
+        needsSetup,
+        privateKey,
+        publicKey,
+        setup,
+        unlock,
+        regenerate,
+        recover,
+        lock,
+        isModalOpen,
+        setModalOpen,
+      }}
+    >
       {children}
     </CryptoContext.Provider>
   );

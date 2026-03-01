@@ -25,7 +25,10 @@ const RSA_PARAMS: RsaHashedKeyGenParams = {
 };
 
 /** Combines master password + recovery words into a single passphrase for PBKDF2 */
-export function buildVaultPassphrase(masterPassword: string, recoveryWords: string): string {
+export function buildVaultPassphrase(
+  masterPassword: string,
+  recoveryWords: string,
+): string {
   return `${masterPassword}:${recoveryWords}`;
 }
 
@@ -38,20 +41,74 @@ export function buildVaultPassphrase(masterPassword: string, recoveryWords: stri
 export async function setupUserKeyVault(
   masterPassword: string,
   recoveryWords: string,
+  existingKeys?: { privateKeyBuf: ArrayBuffer; publicKeyBuf: ArrayBuffer },
 ): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey }> {
   const passphrase = buildVaultPassphrase(masterPassword, recoveryWords);
 
-  const keypair = await crypto.subtle.generateKey(RSA_PARAMS, true, ["encrypt", "decrypt"]);
-  const publicKeyBuf = await crypto.subtle.exportKey("spki", keypair.publicKey);
-  const privateKeyBuf = await crypto.subtle.exportKey("pkcs8", keypair.privateKey);
+  let publicKeyBuf: ArrayBuffer;
+  let privateKeyBuf: ArrayBuffer;
+  let publicKey: CryptoKey;
 
-  const salt = crypto.getRandomValues(new Uint8Array(16)) as Uint8Array<ArrayBuffer>;
+  if (existingKeys) {
+    publicKeyBuf = existingKeys.publicKeyBuf;
+    privateKeyBuf = existingKeys.privateKeyBuf;
+    publicKey = await crypto.subtle.importKey(
+      "spki",
+      publicKeyBuf,
+      RSA_PARAMS,
+      false,
+      ["encrypt"],
+    );
+  } else {
+    const keypair = await crypto.subtle.generateKey(RSA_PARAMS, true, [
+      "encrypt",
+      "decrypt",
+    ]);
+    publicKey = keypair.publicKey;
+    publicKeyBuf = await crypto.subtle.exportKey("spki", keypair.publicKey);
+    privateKeyBuf = await crypto.subtle.exportKey("pkcs8", keypair.privateKey);
+  }
+
+  const salt = crypto.getRandomValues(
+    new Uint8Array(16),
+  ) as Uint8Array<ArrayBuffer>;
   const masterKey = await deriveKey(passphrase, salt);
 
-  const iv = crypto.getRandomValues(new Uint8Array(12)) as Uint8Array<ArrayBuffer>;
+  const iv = crypto.getRandomValues(
+    new Uint8Array(12),
+  ) as Uint8Array<ArrayBuffer>;
   const encryptedPrivKey = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     masterKey,
+    privateKeyBuf,
+  );
+
+  // Encrypt recovery words using a key derived ONLY from the master password
+  const recoverySalt = crypto.getRandomValues(
+    new Uint8Array(16),
+  ) as Uint8Array<ArrayBuffer>;
+  const recoveryKey = await deriveKey(masterPassword, recoverySalt);
+  const recoveryIv = crypto.getRandomValues(
+    new Uint8Array(12),
+  ) as Uint8Array<ArrayBuffer>;
+
+  const encryptedRecoveryWordsBuf = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: recoveryIv },
+    recoveryKey,
+    new TextEncoder().encode(recoveryWords),
+  );
+
+  // Encrypt the private key using a key derived ONLY from recovery words (for true recovery)
+  const recoveryWordSalt = crypto.getRandomValues(
+    new Uint8Array(16),
+  ) as Uint8Array<ArrayBuffer>;
+  const recoveryOnlyKey = await deriveKey(recoveryWords, recoveryWordSalt);
+  const recoveryWordIv = crypto.getRandomValues(
+    new Uint8Array(12),
+  ) as Uint8Array<ArrayBuffer>;
+  const encryptedPrivKeyRecoveryBuf = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: recoveryWordIv },
+    recoveryOnlyKey,
     privateKeyBuf,
   );
 
@@ -63,6 +120,12 @@ export async function setupUserKeyVault(
       encryptedPrivateKey: toB64(encryptedPrivKey),
       pbkdf2Salt: toB64(salt),
       iv: toB64(iv),
+      encryptedRecoveryWords: toB64(encryptedRecoveryWordsBuf),
+      recoveryIv: toB64(recoveryIv),
+      recoverySalt: toB64(recoverySalt),
+      encryptedPrivateKeyRecovery: toB64(encryptedPrivKeyRecoveryBuf),
+      recoveryWordSalt: toB64(recoveryWordSalt),
+      recoveryWordIv: toB64(recoveryWordIv),
     }),
   });
 
@@ -71,8 +134,14 @@ export async function setupUserKeyVault(
     throw new Error(data.error || "Failed to save vault");
   }
 
-  const privateKey = await crypto.subtle.importKey("pkcs8", privateKeyBuf, RSA_PARAMS, false, ["decrypt"]);
-  return { privateKey, publicKey: keypair.publicKey };
+  const privateKey = await crypto.subtle.importKey(
+    "pkcs8",
+    privateKeyBuf,
+    RSA_PARAMS,
+    false,
+    ["decrypt"],
+  );
+  return { privateKey, publicKey };
 }
 
 /**
@@ -137,8 +206,20 @@ export async function unlockVault(masterPassword: string): Promise<{
     throw new Error("WRONG_PASSWORD");
   }
 
-  const privateKey = await crypto.subtle.importKey("pkcs8", privateKeyBuf, RSA_PARAMS, false, ["decrypt"]);
-  const publicKey = await crypto.subtle.importKey("spki", fromB64(publicKeyB64), RSA_PARAMS, false, ["encrypt"]);
+  const privateKey = await crypto.subtle.importKey(
+    "pkcs8",
+    privateKeyBuf,
+    RSA_PARAMS,
+    false,
+    ["decrypt"],
+  );
+  const publicKey = await crypto.subtle.importKey(
+    "spki",
+    fromB64(publicKeyB64),
+    RSA_PARAMS,
+    false,
+    ["encrypt"],
+  );
   return { privateKey, publicKey };
 }
 
@@ -152,4 +233,56 @@ export async function regenerateVault(
   recoveryWords: string,
 ): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey }> {
   return setupUserKeyVault(newMasterPassword, recoveryWords);
+}
+
+/**
+ * recoverAndResetVault
+ * Decrypts the existing vault using ONLY the recovery words, then re-encrypts
+ * it with a new master password, keeping the original encrypted files accessible.
+ */
+export async function recoverAndResetVault(
+  recoveryWords: string,
+  newMasterPassword: string,
+): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey }> {
+  const res = await fetch("/api/keys/vault");
+  if (res.status === 404) throw new Error("NO_VAULT");
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to fetch vault");
+  }
+
+  const {
+    publicKey: publicKeyB64,
+    encryptedPrivateKeyRecovery,
+    recoveryWordSalt,
+    recoveryWordIv,
+  } = await res.json();
+
+  if (!encryptedPrivateKeyRecovery || !recoveryWordSalt || !recoveryWordIv) {
+    throw new Error(
+      "Vault is not configured for true recovery. Please refer to support or delete your account to start over.",
+    );
+  }
+
+  const recoveryOnlyKey = await deriveKey(
+    recoveryWords,
+    fromB64(recoveryWordSalt),
+  );
+  let privateKeyBuf: ArrayBuffer;
+  try {
+    privateKeyBuf = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: fromB64(recoveryWordIv) },
+      recoveryOnlyKey,
+      fromB64(encryptedPrivateKeyRecovery),
+    );
+  } catch {
+    throw new Error("INVALID_RECOVERY_KIT");
+  }
+
+  const publicKeyBuf = fromB64(publicKeyB64).buffer;
+
+  return setupUserKeyVault(newMasterPassword, recoveryWords, {
+    privateKeyBuf,
+    publicKeyBuf,
+  });
 }
