@@ -15,7 +15,7 @@ export interface LogPayload {
 /**
  * Fire-and-forget API request logger.
  * Writes to the separate xnode-logs MongoDB instance.
- * Never awaited — never blocks the API response.
+ * Must never block the API response or throw.
  */
 export function logRequest(payload: LogPayload): void {
   void (async () => {
@@ -23,7 +23,7 @@ export function logRequest(payload: LogPayload): void {
       const ApiLog = await getApiLogModel();
       await ApiLog.create(payload);
     } catch {
-      // Logging must never break production
+      // intentionally swallowed — logging must never break production
     }
   })();
 }

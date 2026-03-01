@@ -19,27 +19,17 @@ function PostHogPageView() {
   return null;
 }
 
-/**
- * Wrap your root layout with this provider.
- * Initialises PostHog once on the client, then tracks page views
- * on every Next.js route change via the inner PostHogPageView component.
- *
- * Required env vars:
- *   NEXT_PUBLIC_POSTHOG_KEY
- *   NEXT_PUBLIC_POSTHOG_HOST  (optional, defaults to https://app.posthog.com)
- */
 export function PostHogProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const key = process.env.NEXT_PUBLIC_POSTHOG_KEY;
     if (!key) return;
-
     posthog.init(key, {
       api_host:
-        process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://app.posthog.com",
-      capture_pageview: false, // handled manually below
+        process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://us.i.posthog.com",
+      capture_pageview: false, // handled manually via PostHogPageView
       capture_pageleave: true,
       persistence: "localStorage",
-      autocapture: false, // disable for GDPR compliance
+      autocapture: false, // explicit events only
     });
   }, []);
 

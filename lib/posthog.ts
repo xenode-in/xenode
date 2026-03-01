@@ -1,56 +1,56 @@
 import { PostHog } from "posthog-node";
 
+let _client: PostHog | null = null;
+
+function getClient(): PostHog | null {
+  const key = process.env.POSTHOG_KEY;
+  if (!key) return null;
+  if (_client) return _client;
+  _client = new PostHog(key, {
+    host: process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://us.i.posthog.com",
+    flushAt: 1,
+    flushInterval: 0,
+  });
+  return _client;
+}
+
 /**
  * Fire-and-forget PostHog server-side event capture.
- * Creates a short-lived client per call — correct for Next.js serverless
- * where long-lived singletons can cause events to be dropped on cold starts.
- * Never throws, never blocks the calling function.
+ * Never throws — analytics must never break production.
  */
 export function captureEvent(
   distinctId: string,
   event: string,
   properties?: Record<string, unknown>
 ): void {
-  const key = process.env.POSTHOG_KEY;
-  if (!key) return;
-
   void (async () => {
     try {
-      const client = new PostHog(key, {
-        host: process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://app.posthog.com",
-        flushAt: 1,
-        flushInterval: 0,
-      });
+      const client = getClient();
+      if (!client) return;
       client.capture({ distinctId, event, properties: properties ?? {} });
       await client.shutdown();
     } catch {
-      // Analytics must never break production
+      // intentionally swallowed
     }
   })();
 }
 
 /**
- * Identify / update a user's properties in PostHog.
- * Call this after login or when user data changes.
+ * Identify / update user properties in PostHog.
+ * Call once after auth to keep user traits in sync.
  */
 export function identifyUser(
   userId: string,
   properties: Record<string, unknown>
 ): void {
-  const key = process.env.POSTHOG_KEY;
-  if (!key) return;
-
   void (async () => {
     try {
-      const client = new PostHog(key, {
-        host: process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://app.posthog.com",
-        flushAt: 1,
-        flushInterval: 0,
-      });
+      const client = getClient();
+      if (!client) return;
       client.identify({ distinctId: userId, properties });
       await client.shutdown();
     } catch {
-      // Analytics must never break production
+      // intentionally swallowed
     }
   })();
 }

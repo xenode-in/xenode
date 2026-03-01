@@ -6,9 +6,9 @@ const LOGS_URI =
 let logsConnection: mongoose.Connection | null = null;
 
 /**
- * Returns a Mongoose connection to the dedicated logs database.
- * Separate from the production DB so analytics writes never
- * compete with user-facing operations.
+ * Returns a dedicated Mongoose connection for the xnode-logs database.
+ * Kept separate from the production DB so analytics writes never
+ * compete with user-facing queries.
  */
 export async function connectLogsDB(): Promise<mongoose.Connection> {
   if (logsConnection && logsConnection.readyState === 1) {
