@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
+import { logRequest } from "@/lib/logRequest";
 
 export const dynamic = "force-dynamic";
 import dbConnect from "@/lib/mongodb";
@@ -16,10 +17,15 @@ interface RouteParams {
 /**
  * GET /api/buckets/[id] - Get bucket details
  */
-export async function GET(_request: NextRequest, { params }: RouteParams) {
+export async function GET(request: NextRequest, { params }: RouteParams) {
+  const startTime = Date.now();
+  let userId: string | null = null;
+  let statusCode = 200;
+  let errorMessage: string | undefined;
+
   try {
     const session = await requireAuth();
-    const userId = session.user.id;
+    userId = session.user.id;
     const { id } = await params;
 
     await dbConnect();
@@ -31,34 +37,57 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     }).lean();
 
     if (!bucket) {
-      return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
+      statusCode = 404;
+      errorMessage = "Bucket not found";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
     return NextResponse.json({ bucket });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      statusCode = 401;
+      errorMessage = "Unauthorized";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
-    const message =
+    statusCode = 500;
+    errorMessage =
       error instanceof Error ? error.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: errorMessage }, { status: statusCode });
+  } finally {
+    logRequest({
+      userId,
+      method: request.method,
+      endpoint: request.nextUrl.pathname,
+      statusCode,
+      durationMs: Date.now() - startTime,
+      ip: request.headers.get("x-forwarded-for") || "unknown",
+      userAgent: request.headers.get("user-agent") || "unknown",
+      errorMessage,
+    });
   }
 }
 
 /**
  * DELETE /api/buckets/[id] - Delete a bucket and all its objects
  */
-export async function DELETE(_request: NextRequest, { params }: RouteParams) {
+export async function DELETE(request: NextRequest, { params }: RouteParams) {
+  const startTime = Date.now();
+  let userId: string | null = null;
+  let statusCode = 200;
+  let errorMessage: string | undefined;
+
   try {
     const session = await requireAuth();
-    const userId = session.user.id;
+    userId = session.user.id;
     const { id } = await params;
 
     await dbConnect();
 
     const bucket = await Bucket.findOne({ _id: id, userId });
     if (!bucket) {
-      return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
+      statusCode = 404;
+      errorMessage = "Bucket not found";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
     // Delete all objects in the bucket from B2 first
@@ -98,10 +127,24 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      statusCode = 401;
+      errorMessage = "Unauthorized";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
-    const message =
+    statusCode = 500;
+    errorMessage =
       error instanceof Error ? error.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: errorMessage }, { status: statusCode });
+  } finally {
+    logRequest({
+      userId,
+      method: request.method,
+      endpoint: request.nextUrl.pathname,
+      statusCode,
+      durationMs: Date.now() - startTime,
+      ip: request.headers.get("x-forwarded-for") || "unknown",
+      userAgent: request.headers.get("user-agent") || "unknown",
+      errorMessage,
+    });
   }
 }

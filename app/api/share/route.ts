@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
+import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import ShareLink from "@/models/ShareLink";
 import StorageObject from "@/models/StorageObject";
@@ -10,9 +11,14 @@ export const dynamic = "force-dynamic";
 
 /** POST /api/share — Create a share link */
 export async function POST(req: NextRequest) {
+  const startTime = Date.now();
+  let userId: string | null = null;
+  let statusCode = 200;
+  let errorMessage: string | undefined;
+
   try {
     const session = await requireAuth();
-    const userId = session.user.id;
+    userId = session.user.id;
 
     const {
       objectId,
@@ -25,23 +31,26 @@ export async function POST(req: NextRequest) {
       sharedWith = [],
     } = await req.json();
 
-    if (!objectId)
-      return NextResponse.json(
-        { error: "objectId is required" },
-        { status: 400 },
-      );
+    if (!objectId) {
+      statusCode = 400;
+      errorMessage = "objectId is required";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    }
 
     await dbConnect();
 
     const object = await StorageObject.findOne({ _id: objectId, userId });
-    if (!object)
-      return NextResponse.json({ error: "File not found" }, { status: 404 });
+    if (!object) {
+      statusCode = 404;
+      errorMessage = "File not found";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    }
 
-    if (object.isEncrypted && !shareEncryptedDEK)
-      return NextResponse.json(
-        { error: "shareEncryptedDEK required for encrypted files" },
-        { status: 400 },
-      );
+    if (object.isEncrypted && !shareEncryptedDEK) {
+      statusCode = 400;
+      errorMessage = "shareEncryptedDEK required for encrypted files";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    }
 
     const shareData: Record<string, unknown> = {
       objectId: object._id,
@@ -80,25 +89,43 @@ export async function POST(req: NextRequest) {
       isPasswordProtected: link.isPasswordProtected,
     });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized")
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Internal server error",
-      },
-      { status: 500 },
-    );
+    if (error instanceof Error && error.message === "Unauthorized") {
+      statusCode = 401;
+      errorMessage = "Unauthorized";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    }
+    statusCode = 500;
+    errorMessage =
+      error instanceof Error ? error.message : "Internal server error";
+    return NextResponse.json({ error: errorMessage }, { status: statusCode });
+  } finally {
+    logRequest({
+      userId,
+      method: req.method,
+      endpoint: req.nextUrl.pathname,
+      statusCode,
+      durationMs: Date.now() - startTime,
+      ip: req.headers.get("x-forwarded-for") || "unknown",
+      userAgent: req.headers.get("user-agent") || "unknown",
+      errorMessage,
+    });
   }
 }
 
 /** GET /api/share — List share links created by current user */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const startTime = Date.now();
+  let userId: string | null = null;
+  let statusCode = 200;
+  let errorMessage: string | undefined;
+
   try {
     const session = await requireAuth();
+    userId = session.user.id;
     await dbConnect();
 
     const links = await ShareLink.find({
-      createdBy: session.user.id,
+      createdBy: userId,
       isRevoked: false,
     })
       .populate("objectId", "key size contentType isEncrypted encryptedName")
@@ -107,11 +134,24 @@ export async function GET() {
 
     return NextResponse.json({ shareLinks: links });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized")
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
-    );
+    if (error instanceof Error && error.message === "Unauthorized") {
+      statusCode = 401;
+      errorMessage = "Unauthorized";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    }
+    statusCode = 500;
+    errorMessage = "Internal server error";
+    return NextResponse.json({ error: errorMessage }, { status: statusCode });
+  } finally {
+    logRequest({
+      userId,
+      method: req.method,
+      endpoint: req.nextUrl.pathname,
+      statusCode,
+      durationMs: Date.now() - startTime,
+      ip: req.headers.get("x-forwarded-for") || "unknown",
+      userAgent: req.headers.get("user-agent") || "unknown",
+      errorMessage,
+    });
   }
 }

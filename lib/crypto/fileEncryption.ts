@@ -66,6 +66,10 @@ export async function decryptFile(
   privateKey: CryptoKey,
   contentType: string,
 ): Promise<Blob> {
+  console.log("[decryptFile] Starting decryption...");
+  console.log("[decryptFile] Ciphertext byteLength:", ciphertext.byteLength);
+  console.log("[decryptFile] IV length:", iv.length);
+  console.log("[decryptFile] Encrypted DEK length:", encryptedDEK.length);
   // 1. Unwrap DEK with private key
   const wrappedDEKBytes = fromB64(encryptedDEK);
   const rawDEK = await crypto.subtle.decrypt(
@@ -83,15 +87,74 @@ export async function decryptFile(
     ["decrypt"],
   );
 
+  console.log("[decryptFile] DEK imported successfully.");
+
   // 3. Decrypt file
   const ivBytes = fromB64(iv) as Uint8Array<ArrayBuffer>;
-  const plaintext = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: ivBytes },
-    dek,
-    ciphertext,
+  console.log("[decryptFile] IV Bytes length:", ivBytes.byteLength);
+
+  try {
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: ivBytes },
+      dek,
+      ciphertext,
+    );
+    console.log("[decryptFile] Decryption successful!");
+    return new Blob([plaintext], { type: contentType });
+  } catch (err: unknown) {
+    console.error(
+      "[decryptFile] OperationError thrown during AES-GCM decrypt:",
+    );
+    console.error(err);
+    throw err;
+  }
+}
+
+/**
+ * Decrypts a file encrypted using `encryptFileChunked` by rebuilding the entire blob in memory.
+ * Suitable for previewing full files (like rendering images or PDFs on standard viewers)
+ * without needing full MediaSource streaming infrastructure if not available.
+ */
+export async function decryptFileChunkedCombined(
+  ciphertext: ArrayBuffer,
+  encryptedDEK: string,
+  chunkIvsStr: string,
+  chunkSize: number,
+  chunkCount: number,
+  privateKey: CryptoKey,
+  contentType: string,
+): Promise<Blob> {
+  const wrappedDEKBytes = fromB64(encryptedDEK);
+  const rawDEK = await crypto.subtle.decrypt(
+    { name: "RSA-OAEP" },
+    privateKey,
+    wrappedDEKBytes,
   );
 
-  return new Blob([plaintext], { type: contentType });
+  const dek = await crypto.subtle.importKey(
+    "raw",
+    rawDEK,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["decrypt"],
+  );
+
+  const chunkIvs: string[] = JSON.parse(chunkIvsStr);
+  const decryptedChunks: ArrayBuffer[] = [];
+
+  // Decrypt each chunk independently
+  for (let i = 0; i < chunkCount; i++) {
+    // Note: Ciphertext chunks expand by 16 bytes (AES-GCM Auth Tag)
+    const cipherChunkSize = chunkSize + 16;
+    const start = i * cipherChunkSize;
+    const end = Math.min(start + cipherChunkSize, ciphertext.byteLength);
+    const slice = ciphertext.slice(start, end);
+
+    const decrypted = await decryptChunk(slice, dek, chunkIvs[i]);
+    decryptedChunks.push(decrypted);
+  }
+
+  return new Blob(decryptedChunks, { type: contentType });
 }
 
 export interface EncryptedFileChunkedResult {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
+import { logRequest } from "@/lib/logRequest";
 
 export const dynamic = "force-dynamic";
 import { createBucketSchema } from "@/lib/validations";
@@ -37,17 +38,24 @@ function checkRateLimit(
  * POST /api/buckets - Create a new bucket
  */
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  let userId: string | null = null;
+  let statusCode = 200;
+  let errorMessage: string | undefined;
+
   try {
     const session = await requireAuth();
-    const userId = session.user.id;
+    userId = session.user.id;
 
     if (!checkRateLimit(userId, 5, 60000)) {
+      statusCode = 429;
+      errorMessage =
+        "Too many requests. Please wait before creating another bucket.";
       return NextResponse.json(
         {
-          error:
-            "Too many requests. Please wait before creating another bucket.",
+          error: errorMessage,
         },
-        { status: 429 },
+        { status: statusCode },
       );
     }
 
@@ -55,10 +63,9 @@ export async function POST(request: NextRequest) {
     const validation = createBucketSchema.safeParse(body);
 
     if (!validation.success) {
-      return NextResponse.json(
-        { error: validation.error.issues[0].message },
-        { status: 400 },
-      );
+      statusCode = 400;
+      errorMessage = validation.error.issues[0].message;
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
     const { name } = validation.data;
@@ -69,21 +76,21 @@ export async function POST(request: NextRequest) {
 
     const existing = await Bucket.findOne({ userId, name });
     if (existing) {
-      return NextResponse.json(
-        { error: "A bucket with this name already exists" },
-        { status: 409 },
-      );
+      statusCode = 409;
+      errorMessage = "A bucket with this name already exists";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
     let b2BucketId: string;
     try {
       b2BucketId = await createB2Bucket(b2BucketName);
     } catch (err: unknown) {
-      const message =
+      statusCode = 502;
+      errorMessage =
         err instanceof Error
           ? err.message
           : "Failed to create bucket in storage backend";
-      return NextResponse.json({ error: message }, { status: 502 });
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
     const bucket = await Bucket.create({
@@ -97,24 +104,44 @@ export async function POST(request: NextRequest) {
     // Fire analytics event (non-blocking)
     captureEvent(userId, "bucket_created", { bucketName: name });
 
-    return NextResponse.json({ bucket }, { status: 201 });
+    statusCode = 201;
+    return NextResponse.json({ bucket }, { status: statusCode });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      statusCode = 401;
+      errorMessage = "Unauthorized";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
-    const message =
+    statusCode = 500;
+    errorMessage =
       error instanceof Error ? error.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: errorMessage }, { status: statusCode });
+  } finally {
+    logRequest({
+      userId,
+      method: request.method,
+      endpoint: request.nextUrl.pathname,
+      statusCode,
+      durationMs: Date.now() - startTime,
+      ip: request.headers.get("x-forwarded-for") || "unknown",
+      userAgent: request.headers.get("user-agent") || "unknown",
+      errorMessage,
+    });
   }
 }
 
 /**
  * GET /api/buckets - List user's buckets
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const startTime = Date.now();
+  let userId: string | null = null;
+  let statusCode = 200;
+  let errorMessage: string | undefined;
+
   try {
     const session = await requireAuth();
-    const userId = session.user.id;
+    userId = session.user.id;
 
     await dbConnect();
 
@@ -125,10 +152,24 @@ export async function GET() {
     return NextResponse.json({ buckets });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      statusCode = 401;
+      errorMessage = "Unauthorized";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
-    const message =
+    statusCode = 500;
+    errorMessage =
       error instanceof Error ? error.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: errorMessage }, { status: statusCode });
+  } finally {
+    logRequest({
+      userId,
+      method: request.method,
+      endpoint: request.nextUrl.pathname,
+      statusCode,
+      durationMs: Date.now() - startTime,
+      ip: request.headers.get("x-forwarded-for") || "unknown",
+      userAgent: request.headers.get("user-agent") || "unknown",
+      errorMessage,
+    });
   }
 }
