@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
+import { logRequest } from "@/lib/logRequest";
 
 export const dynamic = "force-dynamic";
 import dbConnect from "@/lib/mongodb";
@@ -19,10 +20,15 @@ interface RouteParams {
 /**
  * GET /api/objects/[id] - Get download URL for an object
  */
-export async function GET(_request: NextRequest, { params }: RouteParams) {
+export async function GET(request: NextRequest, { params }: RouteParams) {
+  const startTime = Date.now();
+  let userId: string | null = null;
+  let statusCode = 200;
+  let errorMessage: string | undefined;
+
   try {
     const session = await requireAuth();
-    const userId = session.user.id;
+    userId = session.user.id;
     const { id } = await params;
 
     await dbConnect();
@@ -31,7 +37,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
     // since we only need to read the data (no save/update needed here).
     const object = await StorageObject.findOne({ _id: id, userId }).lean();
     if (!object) {
-      return NextResponse.json({ error: "Object not found" }, { status: 404 });
+      statusCode = 404;
+      errorMessage = "Object not found";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
     // Only select the field we actually use from the bucket document
@@ -43,7 +51,9 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       .lean();
 
     if (!bucket) {
-      return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
+      statusCode = 404;
+      errorMessage = "Bucket not found";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
     const b2BucketName = bucket.b2BucketId;
@@ -56,24 +66,46 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
       iv: object.iv ?? null,
       encryptedName: object.encryptedName ?? null,
       contentType: object.contentType,
+      chunkSize: object.chunkSize ?? null,
+      chunkCount: object.chunkCount ?? null,
+      chunkIvs: object.chunkIvs ?? null,
     });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      statusCode = 401;
+      errorMessage = "Unauthorized";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
-    const message =
+    statusCode = 500;
+    errorMessage =
       error instanceof Error ? error.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: errorMessage }, { status: statusCode });
+  } finally {
+    logRequest({
+      userId,
+      method: request.method,
+      endpoint: request.nextUrl.pathname,
+      statusCode,
+      durationMs: Date.now() - startTime,
+      ip: request.headers.get("x-forwarded-for") || "unknown",
+      userAgent: request.headers.get("user-agent") || "unknown",
+      errorMessage,
+    });
   }
 }
 
 /**
  * DELETE /api/objects/[id] - Delete an object
  */
-export async function DELETE(_request: NextRequest, { params }: RouteParams) {
+export async function DELETE(request: NextRequest, { params }: RouteParams) {
+  const startTime = Date.now();
+  let userId: string | null = null;
+  let statusCode = 200;
+  let errorMessage: string | undefined;
+
   try {
     const session = await requireAuth();
-    const userId = session.user.id;
+    userId = session.user.id;
     const { id } = await params;
 
     await dbConnect();
@@ -81,7 +113,9 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
     // .lean() — we only need to read fields, no mutations on the object itself
     const object = await StorageObject.findOne({ _id: id, userId }).lean();
     if (!object) {
-      return NextResponse.json({ error: "Object not found" }, { status: 404 });
+      statusCode = 404;
+      errorMessage = "Object not found";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
     // Only select the fields needed for the B2 delete call and stats update
@@ -93,7 +127,9 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
       .lean();
 
     if (!bucket) {
-      return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
+      statusCode = 404;
+      errorMessage = "Bucket not found";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
     const b2BucketName = bucket.b2BucketId;
@@ -116,11 +152,25 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      statusCode = 401;
+      errorMessage = "Unauthorized";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
-    const message =
+    statusCode = 500;
+    errorMessage =
       error instanceof Error ? error.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: errorMessage }, { status: statusCode });
+  } finally {
+    logRequest({
+      userId,
+      method: request.method,
+      endpoint: request.nextUrl.pathname,
+      statusCode,
+      durationMs: Date.now() - startTime,
+      ip: request.headers.get("x-forwarded-for") || "unknown",
+      userAgent: request.headers.get("user-agent") || "unknown",
+      errorMessage,
+    });
   }
 }
 
@@ -128,9 +178,14 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
  * PATCH /api/objects/[id] - Update object metadata (tags, position)
  */
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
+  const startTime = Date.now();
+  let userId: string | null = null;
+  let statusCode = 200;
+  let errorMessage: string | undefined;
+
   try {
     const session = await requireAuth();
-    const userId = session.user.id;
+    userId = session.user.id;
     const { id } = await params;
 
     // Parse body safely
@@ -138,7 +193,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     try {
       body = await request.json();
     } catch {
-      return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+      statusCode = 400;
+      errorMessage = "Invalid JSON";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
     const { tags, position } = body;
@@ -149,7 +206,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const object = await StorageObject.findOne({ _id: id, userId });
 
     if (!object) {
-      return NextResponse.json({ error: "Object not found" }, { status: 404 });
+      statusCode = 404;
+      errorMessage = "Object not found";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
     // Update fields if provided
@@ -159,10 +218,26 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     await object.save();
 
     return NextResponse.json({ object });
-  } catch (error: any) {
-    if (error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      statusCode = 401;
+      errorMessage = "Unauthorized";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    statusCode = 500;
+    errorMessage =
+      error instanceof Error ? error.message : "Internal server error";
+    return NextResponse.json({ error: errorMessage }, { status: statusCode });
+  } finally {
+    logRequest({
+      userId,
+      method: request.method,
+      endpoint: request.nextUrl.pathname,
+      statusCode,
+      durationMs: Date.now() - startTime,
+      ip: request.headers.get("x-forwarded-for") || "unknown",
+      userAgent: request.headers.get("user-agent") || "unknown",
+      errorMessage,
+    });
   }
 }

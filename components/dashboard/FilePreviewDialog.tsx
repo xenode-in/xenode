@@ -3,20 +3,34 @@
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import {
   Dialog,
-  DialogContent,
   DialogTitle,
   DialogDescription,
   DialogClose,
+  DialogOverlay,
+  DialogPortal,
 } from "@/components/ui/dialog";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Button } from "@/components/ui/button";
-import { Loader2, AlertCircle, X, Lock } from "lucide-react";
+import {
+  Loader2,
+  AlertCircle,
+  X,
+  Lock,
+  Minimize2,
+  Maximize2,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 
 import { Plyr } from "plyr-react";
 import "plyr-react/plyr.css";
 
 import DocViewer, { DocViewerRenderers } from "@cyntler/react-doc-viewer";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptFile } from "@/lib/crypto/fileEncryption";
+import {
+  decryptFile,
+  decryptFileChunkedCombined,
+} from "@/lib/crypto/fileEncryption";
+import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
 
 interface ObjectData {
   id: string;
@@ -59,6 +73,69 @@ function formatMB(bytes: number) {
   return (bytes / 1024 / 1024).toFixed(2);
 }
 
+/** Fetch a URL while invoking onProgress(0-100) as bytes arrive and caching the stream locally */
+async function fetchWithProgress(
+  url: string,
+  onProgress?: (pct: number) => void,
+  cacheKey?: string,
+  fileSizeBytes?: number,
+): Promise<ArrayBuffer> {
+  let stream: ReadableStream<Uint8Array>;
+  let total = fileSizeBytes || 0;
+  let fromCache = false;
+
+  if (cacheKey) {
+    const cached = await getCachedResponse(cacheKey);
+    if (cached) {
+      stream = cached.body!;
+      total = +(cached.headers.get("x-content-length") ?? 0) || total;
+      fromCache = true;
+      console.log(`[PreviewCache] Cache hit for generic preview: ${cacheKey}`);
+    }
+  }
+
+  if (!stream!) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Failed to fetch file");
+
+    total = +(res.headers.get("content-length") ?? 0) || total;
+
+    if (cacheKey) {
+      const [forCache, forRead] = res.body!.tee();
+      storeCachedStream(cacheKey, forCache, total).catch(() => {});
+      stream = forRead;
+    } else {
+      stream = res.body!;
+    }
+  }
+
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+
+  if (fromCache && onProgress) {
+    onProgress(100); // instant jump
+  }
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.byteLength;
+    if (total > 0 && !fromCache && onProgress) {
+      onProgress(Math.round((received / total) * 100));
+    }
+  }
+
+  const combined = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return combined.buffer;
+}
+
 export function FilePreviewDialog({
   file,
   isOpen,
@@ -68,6 +145,7 @@ export function FilePreviewDialog({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [isEncrypted, setIsEncrypted] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(false);
 
   // Track object URLs we created so we can revoke them on close
   const objectUrlRef = useRef<string | null>(null);
@@ -94,6 +172,7 @@ export function FilePreviewDialog({
       setUrl(null);
       setError("");
       setIsEncrypted(false);
+      setIsMinimized(false);
     }
   }, [isOpen]);
 
@@ -137,18 +216,49 @@ export function FilePreviewDialog({
         }
 
         // 3. Fetch raw ciphertext via same-origin proxy to avoid CDN CORS block
-        const ciphertextRes = await fetch(`/api/objects/${file.id}/content`);
-        if (!ciphertextRes.ok) throw new Error("Failed to download file");
-        const ciphertextBuf = await ciphertextRes.arrayBuffer();
-
-        // 4. Decrypt
-        const decryptedBlob = await decryptFile(
-          ciphertextBuf,
-          data.encryptedDEK,
-          data.iv,
-          privateKey,
-          data.contentType ?? file.contentType,
+        // Added Cache Storage check (fetchWithProgress) so previously decrypted files load instantly
+        const ciphertextBuf = await fetchWithProgress(
+          `/api/objects/${file.id}/content`,
+          (pct) => {
+            // Optional: You could expose progress to UI if you added a fetchProgress state
+          },
+          file.id, // Using the file.id as the cache key
+          file.size, // using file.size to enforce the 500MB bypass limit limit
         );
+
+        let decryptedBlob: Blob;
+
+        if (data.chunkIvs && data.chunkSize && data.chunkCount) {
+          // 4a. Decrypt Chunked payload
+          if (!data.encryptedDEK) {
+            throw new Error(
+              "Missing encrypted DEK for chunked file. File might be corrupted.",
+            );
+          }
+          decryptedBlob = await decryptFileChunkedCombined(
+            ciphertextBuf,
+            data.encryptedDEK,
+            data.chunkIvs,
+            data.chunkSize,
+            data.chunkCount,
+            privateKey,
+            data.contentType ?? file.contentType,
+          );
+        } else {
+          // 4b. Decrypt standard singular payload
+          if (!data.iv || !data.encryptedDEK) {
+            throw new Error(
+              "Missing encryption parameters (IV or DEK). File might be corrupted.",
+            );
+          }
+          decryptedBlob = await decryptFile(
+            ciphertextBuf,
+            data.encryptedDEK,
+            data.iv,
+            privateKey,
+            data.contentType ?? file.contentType,
+          );
+        }
 
         // 5. Create object URL from decrypted blob
         const objectUrl = URL.createObjectURL(decryptedBlob);
@@ -282,56 +392,105 @@ export function FilePreviewDialog({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent
-        className="
-        p-0 overflow-hidden bg-card border-border
-        w-screen max-w-full h-[100dvh] max-h-[100dvh] rounded-none
-        sm:rounded-xl
-        sm:w-[calc(100vw-2rem)] sm:max-w-5xl sm:h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-2rem)]
-        lg:max-w-6xl
-      "
-      >
-        <div className="flex h-full w-full flex-col overflow-x-hidden">
+    <Dialog open={isOpen} onOpenChange={onClose} modal={false}>
+      <DialogPortal>
+        <DialogOverlay className={isMinimized ? "hidden" : ""} />
+        <DialogPrimitive.Content
+          onInteractOutside={(e) => {
+            if (isMinimized) {
+              e.preventDefault();
+            }
+          }}
+          className={cn(
+            "bg-card outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 flex flex-col overflow-hidden border",
+            isMinimized
+              ? "fixed bottom-4 right-4 z-150 w-80 sm:w-96 rounded-xl shadow-2xl data-[state=open]:slide-in-from-bottom-[20%]"
+              : "fixed inset-0 sm:top-[50%] sm:left-[50%] z-150 w-full max-w-full sm:max-w-5xl lg:max-w-6xl h-dvh sm:h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-2rem)] sm:translate-x-[-50%] sm:translate-y-[-50%] rounded-none sm:rounded-xl shadow-lg data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
+          )}
+        >
           {/* Top bar */}
-          <div className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b bg-card/95 px-4 py-3 backdrop-blur sm:px-5">
-            <div className="min-w-0">
-              <DialogTitle className="truncate text-sm font-medium sm:text-base flex items-center gap-1.5">
+          <div
+            className={cn(
+              "sticky top-0 z-20 flex items-center justify-between gap-3 border-b bg-card/95 backdrop-blur",
+              isMinimized ? "px-3 py-2" : "px-4 py-3 sm:px-5",
+            )}
+          >
+            <div className="min-w-0 flex-1">
+              <DialogPrimitive.Title
+                className={cn(
+                  "truncate font-medium flex items-center gap-1.5",
+                  isMinimized ? "text-xs" : "text-sm sm:text-base",
+                )}
+              >
                 {isEncrypted && (
                   <Lock
-                    className="h-3.5 w-3.5 shrink-0 text-primary"
+                    className={cn(
+                      "shrink-0 text-primary",
+                      isMinimized ? "h-3 w-3" : "h-3.5 w-3.5",
+                    )}
                     aria-label="Encrypted"
                   />
                 )}
                 {name}
-              </DialogTitle>
-              <DialogDescription className="truncate text-xs text-muted-foreground">
-                {formatMB(file.size)} MB • {file.contentType}
-                {isEncrypted && " • e2e encrypted"}
-              </DialogDescription>
+              </DialogPrimitive.Title>
+              {!isMinimized && (
+                <DialogPrimitive.Description className="truncate text-xs text-muted-foreground mt-0.5">
+                  {formatMB(file.size)} MB • {file.contentType}
+                  {isEncrypted && " • e2e encrypted"}
+                </DialogPrimitive.Description>
+              )}
             </div>
 
-            <div className="flex shrink-0 items-center gap-2">
-              {url && (
-                <Button variant="outline" size="sm" onClick={handleDownload}>
+            <div className="flex shrink-0 items-center gap-1">
+              {url && !isMinimized && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDownload}
+                  className="mr-1"
+                >
                   Download
                 </Button>
               )}
 
+              <Button
+                variant="ghost"
+                size="icon"
+                className={isMinimized ? "h-6 w-6" : "h-8 w-8"}
+                aria-label="Toggle Minimize"
+                onClick={() => setIsMinimized((prev) => !prev)}
+              >
+                {isMinimized ? (
+                  <Maximize2 className="h-4 w-4" />
+                ) : (
+                  <Minimize2 className="h-4 w-4" />
+                )}
+              </Button>
+
               <DialogClose asChild>
-                <Button variant="ghost" size="icon" aria-label="Close">
-                  <X className="h-5 w-5" />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Close"
+                  className={isMinimized ? "h-6 w-6" : "h-8 w-8"}
+                >
+                  <X className="h-4 w-4" />
                 </Button>
               </DialogClose>
             </div>
           </div>
 
           {/* Preview area */}
-          <div className="flex-1 overflow-hidden">
+          <div
+            className={cn(
+              "overflow-hidden bg-black/5 dark:bg-black/20",
+              isMinimized ? "h-48" : "flex-1",
+            )}
+          >
             <div className="h-full w-full">{renderContent()}</div>
           </div>
-        </div>
-      </DialogContent>
+        </DialogPrimitive.Content>
+      </DialogPortal>
     </Dialog>
   );
 }

@@ -5,6 +5,7 @@ import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { UploadProvider } from "@/contexts/UploadContext";
 import { UploadProgress } from "@/components/upload/UploadProgress";
 import { CryptoProvider } from "@/contexts/CryptoContext";
+import { PreviewProvider } from "@/contexts/PreviewContext";
 import { DownloadProvider } from "@/contexts/DownloadContext";
 import { CryptoDashboardWrapper } from "@/components/dashboard/CryptoDashboardWrapper";
 import { DownloadProgress } from "@/components/dashboard/DownloadProgress";
@@ -33,24 +34,26 @@ export default async function DashboardLayout({
 
   return (
     <CryptoProvider>
-      <DownloadProvider>
-        <UploadProvider>
-          <DashboardShell
-            user={{
-              id: session.user.id,
-              name: session.user.name,
-              email: session.user.email,
-              image: session.user.image || undefined,
-            }}
-          >
-            <CryptoDashboardWrapper>{children}</CryptoDashboardWrapper>
-          </DashboardShell>
-          <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-4 w-96 max-w-[calc(100vw-2rem)] pointer-events-none *:pointer-events-auto">
-            <UploadProgress />
-            <DownloadProgress />
-          </div>
-        </UploadProvider>
-      </DownloadProvider>
+      <PreviewProvider>
+        <DownloadProvider>
+          <UploadProvider>
+            <DashboardShell
+              user={{
+                id: session.user.id,
+                name: session.user.name,
+                email: session.user.email,
+                image: session.user.image || undefined,
+              }}
+            >
+              <CryptoDashboardWrapper>{children}</CryptoDashboardWrapper>
+            </DashboardShell>
+            <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-4 w-96 max-w-[calc(100vw-2rem)] pointer-events-none *:pointer-events-auto">
+              <UploadProgress />
+              <DownloadProgress />
+            </div>
+          </UploadProvider>
+        </DownloadProvider>
+      </PreviewProvider>
     </CryptoProvider>
   );
 }

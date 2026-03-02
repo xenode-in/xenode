@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/admin/session";
 import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
+import ShareLink from "@/models/ShareLink";
 import mongoose from "mongoose";
 
 export async function GET(req: NextRequest) {
@@ -14,11 +15,14 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const page = Math.max(1, parseInt(searchParams.get("page") ?? "1"));
-  const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? "20")));
+  const limit = Math.min(
+    100,
+    Math.max(1, parseInt(searchParams.get("limit") ?? "20"))
+  );
   const skip = (page - 1) * limit;
   const search = searchParams.get("search") ?? "";
+  const plan = searchParams.get("plan") ?? "";
 
-  // Get user info from better-auth's "user" collection
   const db = mongoose.connection.db;
   if (!db) {
     return NextResponse.json({ error: "DB not connected" }, { status: 500 });
@@ -26,7 +30,7 @@ export async function GET(req: NextRequest) {
 
   const userCollection = db.collection("user");
 
-  const matchQuery = search
+  const matchQuery: Record<string, unknown> = search
     ? {
         $or: [
           { email: { $regex: search, $options: "i" } },
@@ -45,16 +49,39 @@ export async function GET(req: NextRequest) {
     userCollection.countDocuments(matchQuery),
   ]);
 
-  // Enrich with usage data
   const userIds = users.map((u) => u.id ?? u._id?.toString());
-  const usageRecords = await Usage.find({ userId: { $in: userIds } }).lean();
-  const usageMap = new Map(
-    usageRecords.map((u) => [u.userId, u])
+
+  const usageFilter: Record<string, unknown> = { userId: { $in: userIds } };
+  if (plan) usageFilter.plan = plan;
+
+  const [usageRecords, shareCounts] = await Promise.all([
+    Usage.find(usageFilter).lean(),
+    ShareLink.aggregate([
+      { $match: { createdBy: { $in: userIds } } },
+      {
+        $group: {
+          _id: "$createdBy",
+          total: { $sum: 1 },
+          totalDownloads: { $sum: "$downloadCount" },
+        },
+      },
+    ]),
+  ]);
+
+  const usageMap = new Map(usageRecords.map((u) => [u.userId, u]));
+  const shareMap = new Map(
+    shareCounts.map(
+      (s: { _id: string; total: number; totalDownloads: number }) => [
+        s._id,
+        s,
+      ]
+    )
   );
 
   const enriched = users.map((u) => {
     const uid = u.id ?? u._id?.toString();
     const usage = usageMap.get(uid);
+    const share = shareMap.get(uid);
     return {
       id: uid,
       name: u.name,
@@ -62,6 +89,9 @@ export async function GET(req: NextRequest) {
       image: u.image,
       createdAt: u.createdAt,
       emailVerified: u.emailVerified,
+      plan: usage?.plan ?? "free",
+      planExpiresAt: usage?.planExpiresAt ?? null,
+      lastActiveAt: usage?.lastActiveAt ?? null,
       storage: {
         totalStorageBytes: usage?.totalStorageBytes ?? 0,
         totalEgressBytes: usage?.totalEgressBytes ?? 0,
@@ -69,6 +99,12 @@ export async function GET(req: NextRequest) {
         totalBuckets: usage?.totalBuckets ?? 0,
         storageLimitBytes: usage?.storageLimitBytes ?? 1099511627776,
         egressLimitBytes: usage?.egressLimitBytes ?? 536870912000,
+        uploadCount: usage?.uploadCount ?? 0,
+        downloadCount: usage?.downloadCount ?? 0,
+      },
+      shareLinks: {
+        total: share?.total ?? 0,
+        totalDownloads: share?.totalDownloads ?? 0,
       },
     };
   });

@@ -2,18 +2,15 @@ import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import { captureEvent } from "@/lib/posthog";
 
 /**
  * Get or create usage record for a user
  */
 export async function getOrCreateUsage(userId: string) {
   await dbConnect();
-
   let usage = await Usage.findOne({ userId });
-  if (!usage) {
-    usage = await Usage.create({ userId });
-  }
-
+  if (!usage) usage = await Usage.create({ userId });
   return usage;
 }
 
@@ -34,7 +31,7 @@ export async function recalculateUsage(userId: string) {
 
   const totalStorageBytes = storageAgg[0]?.totalSize || 0;
 
-  const usage = await Usage.findOneAndUpdate(
+  return Usage.findOneAndUpdate(
     { userId },
     {
       $set: {
@@ -43,28 +40,38 @@ export async function recalculateUsage(userId: string) {
         totalBuckets: bucketCount,
       },
     },
-    { upsert: true, new: true },
+    { upsert: true, new: true }
   );
-
-  return usage;
 }
 
 /**
- * Increment storage usage when an object is uploaded
+ * Increment storage usage when an object is uploaded.
+ * Also tracks uploadCount and fires a PostHog event.
  */
-export async function incrementStorage(userId: string, sizeBytes: number) {
+export async function incrementStorage(
+  userId: string,
+  sizeBytes: number,
+  meta?: { contentType?: string; bucketId?: string; isEncrypted?: boolean }
+) {
   await dbConnect();
 
-  return Usage.findOneAndUpdate(
+  const usage = await Usage.findOneAndUpdate(
     { userId },
     {
-      $inc: {
-        totalStorageBytes: sizeBytes,
-        totalObjects: 1,
-      },
+      $inc: { totalStorageBytes: sizeBytes, totalObjects: 1, uploadCount: 1 },
+      $set: { lastActiveAt: new Date() },
     },
-    { upsert: true, new: true },
+    { upsert: true, new: true }
   );
+
+  captureEvent(userId, "object_uploaded", {
+    fileSizeMB: Number((sizeBytes / (1024 * 1024)).toFixed(2)),
+    contentType: meta?.contentType ?? "unknown",
+    bucketId: meta?.bucketId,
+    isEncrypted: meta?.isEncrypted ?? false,
+  });
+
+  return usage;
 }
 
 /**
@@ -76,30 +83,39 @@ export async function decrementStorage(userId: string, sizeBytes: number) {
   return Usage.findOneAndUpdate(
     { userId },
     {
-      $inc: {
-        totalStorageBytes: -sizeBytes,
-        totalObjects: -1,
-      },
+      $inc: { totalStorageBytes: -sizeBytes, totalObjects: -1 },
+      $set: { lastActiveAt: new Date() },
     },
-    { new: true },
+    { new: true }
   );
 }
 
 /**
- * Increment egress usage when an object is downloaded
+ * Increment egress usage when an object is downloaded.
+ * Also tracks downloadCount and fires a PostHog event.
  */
-export async function incrementEgress(userId: string, sizeBytes: number) {
+export async function incrementEgress(
+  userId: string,
+  sizeBytes: number,
+  meta?: { bucketId?: string }
+) {
   await dbConnect();
 
-  return Usage.findOneAndUpdate(
+  const usage = await Usage.findOneAndUpdate(
     { userId },
     {
-      $inc: {
-        totalEgressBytes: sizeBytes,
-      },
+      $inc: { totalEgressBytes: sizeBytes, downloadCount: 1 },
+      $set: { lastActiveAt: new Date() },
     },
-    { new: true },
+    { new: true }
   );
+
+  captureEvent(userId, "object_downloaded", {
+    fileSizeMB: Number((sizeBytes / (1024 * 1024)).toFixed(2)),
+    bucketId: meta?.bucketId,
+  });
+
+  return usage;
 }
 
 /**
@@ -110,12 +126,8 @@ export async function incrementBucketCount(userId: string) {
 
   return Usage.findOneAndUpdate(
     { userId },
-    {
-      $inc: {
-        totalBuckets: 1,
-      },
-    },
-    { upsert: true, new: true },
+    { $inc: { totalBuckets: 1 }, $set: { lastActiveAt: new Date() } },
+    { upsert: true, new: true }
   );
 }
 
@@ -127,12 +139,8 @@ export async function decrementBucketCount(userId: string) {
 
   return Usage.findOneAndUpdate(
     { userId },
-    {
-      $inc: {
-        totalBuckets: -1,
-      },
-    },
-    { new: true },
+    { $inc: { totalBuckets: -1 } },
+    { new: true }
   );
 }
 
@@ -142,19 +150,14 @@ export async function decrementBucketCount(userId: string) {
 export async function updateBucketStats(
   bucketId: string,
   objectCountDelta: number,
-  sizeDelta: number,
+  sizeDelta: number
 ) {
   await dbConnect();
 
   return Bucket.findByIdAndUpdate(
     bucketId,
-    {
-      $inc: {
-        objectCount: objectCountDelta,
-        totalSizeBytes: sizeDelta,
-      },
-    },
-    { new: true },
+    { $inc: { objectCount: objectCountDelta, totalSizeBytes: sizeDelta } },
+    { new: true }
   );
 }
 

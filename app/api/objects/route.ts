@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
+import { logRequest } from "@/lib/logRequest";
 
 export const dynamic = "force-dynamic";
 import dbConnect from "@/lib/mongodb";
@@ -22,24 +23,31 @@ const MAX_PAGE_SIZE = 100;
  * GET /api/objects?bucketId=xxx&page=1&limit=50 - List objects in a bucket
  */
 export async function GET(request: NextRequest) {
+  const startTime = Date.now();
+  let userId: string | null = null;
+  let statusCode = 200;
+  let errorMessage: string | undefined;
+
   try {
     const session = await requireAuth();
-    const userId = session.user.id;
+    userId = session.user.id;
 
     const { searchParams } = request.nextUrl;
     const bucketId = searchParams.get("bucketId");
     if (!bucketId) {
-      return NextResponse.json(
-        { error: "Bucket ID is required" },
-        { status: 400 },
-      );
+      statusCode = 400;
+      errorMessage = "Bucket ID is required";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
     // Pagination params — clamp to [1, MAX_PAGE_SIZE]
     const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
     const limit = Math.min(
       MAX_PAGE_SIZE,
-      Math.max(1, parseInt(searchParams.get("limit") || String(DEFAULT_PAGE_SIZE), 10)),
+      Math.max(
+        1,
+        parseInt(searchParams.get("limit") || String(DEFAULT_PAGE_SIZE), 10),
+      ),
     );
     const skip = (page - 1) * limit;
 
@@ -54,7 +62,9 @@ export async function GET(request: NextRequest) {
       .lean();
 
     if (!bucket) {
-      return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
+      statusCode = 404;
+      errorMessage = "Bucket not found";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
     // Build query — replace $regex with a range query for system-bucket prefix
@@ -89,10 +99,24 @@ export async function GET(request: NextRequest) {
     });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      statusCode = 401;
+      errorMessage = "Unauthorized";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
-    const message =
+    statusCode = 500;
+    errorMessage =
       error instanceof Error ? error.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: errorMessage }, { status: statusCode });
+  } finally {
+    logRequest({
+      userId,
+      method: request.method,
+      endpoint: request.nextUrl.pathname,
+      statusCode,
+      durationMs: Date.now() - startTime,
+      ip: request.headers.get("x-forwarded-for") || "unknown",
+      userAgent: request.headers.get("user-agent") || "unknown",
+      errorMessage,
+    });
   }
 }

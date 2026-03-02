@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
+import { logRequest } from "@/lib/logRequest";
 
 export const dynamic = "force-dynamic";
 import dbConnect from "@/lib/mongodb";
@@ -10,18 +11,22 @@ import { createApiKeySchema } from "@/lib/validations";
  * POST /api/keys - Create a new API key
  */
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  let userId: string | null = null;
+  let statusCode = 200;
+  let errorMessage: string | undefined;
+
   try {
     const session = await requireAuth();
-    const userId = session.user.id;
+    userId = session.user.id;
 
     const body = await request.json();
     const validation = createApiKeySchema.safeParse(body);
 
     if (!validation.success) {
-      return NextResponse.json(
-        { error: validation.error.issues[0].message },
-        { status: 400 },
-      );
+      statusCode = 400;
+      errorMessage = validation.error.issues[0].message;
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
     const { name, expiresIn } = validation.data;
@@ -31,10 +36,9 @@ export async function POST(request: NextRequest) {
     // Limit to 10 active keys per user
     const keyCount = await ApiKey.countDocuments({ userId });
     if (keyCount >= 10) {
-      return NextResponse.json(
-        { error: "Maximum of 10 API keys allowed" },
-        { status: 400 },
-      );
+      statusCode = 400;
+      errorMessage = "Maximum of 10 API keys allowed";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
     const { fullKey, keyPrefix, keyHash } = generateApiKey();
@@ -64,6 +68,7 @@ export async function POST(request: NextRequest) {
     });
 
     // Return the full key only on creation
+    statusCode = 201;
     return NextResponse.json(
       {
         key: {
@@ -75,25 +80,44 @@ export async function POST(request: NextRequest) {
           createdAt: apiKey.createdAt,
         },
       },
-      { status: 201 },
+      { status: statusCode },
     );
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      statusCode = 401;
+      errorMessage = "Unauthorized";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
-    const message =
+    statusCode = 500;
+    errorMessage =
       error instanceof Error ? error.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: errorMessage }, { status: statusCode });
+  } finally {
+    logRequest({
+      userId,
+      method: request.method,
+      endpoint: request.nextUrl.pathname,
+      statusCode,
+      durationMs: Date.now() - startTime,
+      ip: request.headers.get("x-forwarded-for") || "unknown",
+      userAgent: request.headers.get("user-agent") || "unknown",
+      errorMessage,
+    });
   }
 }
 
 /**
  * GET /api/keys - List user's API keys (without the actual key)
  */
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const startTime = Date.now();
+  let userId: string | null = null;
+  let statusCode = 200;
+  let errorMessage: string | undefined;
+
   try {
     const session = await requireAuth();
-    const userId = session.user.id;
+    userId = session.user.id;
 
     await dbConnect();
 
@@ -105,10 +129,24 @@ export async function GET() {
     return NextResponse.json({ keys });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      statusCode = 401;
+      errorMessage = "Unauthorized";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
-    const message =
+    statusCode = 500;
+    errorMessage =
       error instanceof Error ? error.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: errorMessage }, { status: statusCode });
+  } finally {
+    logRequest({
+      userId,
+      method: request.method,
+      endpoint: request.nextUrl.pathname,
+      statusCode,
+      durationMs: Date.now() - startTime,
+      ip: request.headers.get("x-forwarded-for") || "unknown",
+      userAgent: request.headers.get("user-agent") || "unknown",
+      errorMessage,
+    });
   }
 }
