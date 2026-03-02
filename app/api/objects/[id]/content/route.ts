@@ -107,7 +107,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     // 206 for partial content, 200 for full content
     const status = upstream.status === 206 ? 206 : 200;
 
-    return new NextResponse(upstream.body, { status, headers });
+    // Ensure we buffer it fully to prevent Next.js streaming issues from truncating ciphertext
+    const buffer = await upstream.arrayBuffer();
+    headers.set("Content-Length", buffer.byteLength.toString());
+
+    return new NextResponse(buffer, { status, headers });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

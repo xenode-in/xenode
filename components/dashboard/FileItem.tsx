@@ -19,11 +19,57 @@ import {
   Scissors,
   Lock,
   Link2,
+  Image as ImageIcon,
+  Video,
+  Music,
+  FileArchive,
+  FileCode,
+  FileSpreadsheet,
+  File as FileGeneric,
 } from "lucide-react";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { forwardRef, useRef, useCallback, useState, useEffect } from "react";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { decryptFileName } from "@/lib/crypto/fileEncryption";
+
+const getFileIcon = (contentType: string, className?: string) => {
+  if (!contentType) return <FileGeneric className={className} />;
+  if (contentType.startsWith("image/"))
+    return <ImageIcon className={className} />;
+  if (contentType.startsWith("video/")) return <Video className={className} />;
+  if (contentType.startsWith("audio/")) return <Music className={className} />;
+  if (contentType.includes("pdf")) return <FileText className={className} />;
+  if (
+    contentType.includes("zip") ||
+    contentType.includes("tar") ||
+    contentType.includes("rar") ||
+    contentType.includes("7z") ||
+    contentType.includes("compressed") ||
+    contentType.includes("archive")
+  ) {
+    return <FileArchive className={className} />;
+  }
+  if (
+    contentType.includes("javascript") ||
+    contentType.includes("json") ||
+    contentType.includes("html") ||
+    contentType.includes("css") ||
+    contentType.includes("xml")
+  ) {
+    return <FileCode className={className} />;
+  }
+  if (
+    contentType.includes("spreadsheet") ||
+    contentType.includes("excel") ||
+    contentType.includes("csv")
+  ) {
+    return <FileSpreadsheet className={className} />;
+  }
+  if (contentType.startsWith("text/"))
+    return <FileText className={className} />;
+
+  return <FileGeneric className={className} />;
+};
 
 interface ObjectData {
   id: string; // use id, not _id
@@ -89,6 +135,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
       if (item.isEncrypted && item.encryptedName && isUnlocked) {
         decryptFileName(item.encryptedName).then(setDecryptedName);
       } else {
+        // eslint-disable-next-line
         setDecryptedName(null);
       }
     }, [item.isEncrypted, item.encryptedName, isUnlocked]);
@@ -108,7 +155,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
 
     const name = decryptedName || baseName;
 
-    const DefaultActions = () => (
+    const defaultActions = (
       <>
         <ContextMenuSeparator className="bg-border" />
         <ContextMenuItem
@@ -190,7 +237,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
                 className="w-8 h-8 rounded object-cover border border-border"
               />
             ) : (
-              <FileText className="w-4 h-4 text-muted-foreground/30" />
+              getFileIcon(item.contentType, "w-4 h-4 text-muted-foreground/30")
             )}
             <span className="truncate max-w-[300px]">{name}</span>
             {item.isEncrypted && (
@@ -283,7 +330,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
             {isFolder ? (
               <Folder className="w-5 h-5 text-primary fill-primary/20" />
             ) : (
-              <FileText className="w-4 h-4 text-muted-foreground/30" />
+              getFileIcon(item.contentType, "w-4 h-4 text-muted-foreground/30")
             )}
             <span>{name}</span>
           </div>
@@ -327,7 +374,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
               </ContextMenuItem>
             </>
           )}
-          <DefaultActions />
+          {defaultActions}
         </ContextMenuContent>
       </ContextMenu>
     );
@@ -366,6 +413,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
       if (item.isEncrypted && item.encryptedName && isUnlocked) {
         decryptFileName(item.encryptedName).then(setDecryptedName);
       } else {
+        // eslint-disable-next-line
         setDecryptedName(null);
       }
     }, [item.isEncrypted, item.encryptedName, isUnlocked]);
@@ -384,7 +432,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
 
     const name = decryptedName || baseName;
 
-    const DefaultActions = () => (
+    const defaultActions = (
       <>
         <ContextMenuSeparator className="bg-white/10" />
         <ContextMenuItem
@@ -478,10 +526,13 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
               ) : item.contentType.startsWith("image/") ||
                 item.contentType.startsWith("video/") ? (
                 <div className="relative w-full h-full flex items-center justify-center">
-                  <FileText className="w-10 h-10 text-primary" />
+                  {getFileIcon(item.contentType, "w-10 h-10 text-primary")}
                 </div>
               ) : (
-                <FileText className="w-10 h-10 text-muted-foreground/20 group-hover:text-primary transition-colors" />
+                getFileIcon(
+                  item.contentType,
+                  "w-10 h-10 text-muted-foreground/20 group-hover:text-primary transition-colors",
+                )
               )}
             </div>
             <div className="w-full flex flex-col items-center gap-0.5 mt-2">
@@ -610,7 +661,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
               </ContextMenuItem>
             </>
           )}
-          <DefaultActions />
+          {defaultActions}
         </ContextMenuContent>
       </ContextMenu>
     );

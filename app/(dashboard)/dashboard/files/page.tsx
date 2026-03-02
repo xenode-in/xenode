@@ -47,6 +47,7 @@ import { ShareDialog, ShareableFile } from "@/components/share-dialog";
 import { useUpload } from "@/contexts/UploadContext";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { useDownload } from "@/contexts/DownloadContext";
+import { usePreview } from "@/contexts/PreviewContext";
 import { useDropzone } from "react-dropzone";
 import dynamic from "next/dynamic";
 import {
@@ -69,14 +70,6 @@ import {
 } from "@dnd-kit/sortable";
 import { FileItem, FileRow, FileCard } from "@/components/dashboard/FileItem";
 import { formatBytes, formatDate } from "@/lib/utils";
-
-const FilePreviewDialog = dynamic(
-  () =>
-    import("@/components/dashboard/FilePreviewDialog").then(
-      (mod) => mod.FilePreviewDialog,
-    ),
-  { ssr: false },
-);
 
 interface ObjectData {
   id: string; // use id, not _id
@@ -246,7 +239,7 @@ export default function FilesPage() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   // Preview State
-  const [previewFile, setPreviewFile] = useState<ObjectData | null>(null);
+  const { openPreview, closePreview } = usePreview();
 
   // Tagging State
   const [taggingObj, setTaggingObj] = useState<ObjectData | null>(null);
@@ -809,8 +802,10 @@ export default function FilesPage() {
       // Escape (Clear Selection)
       if (e.key === "Escape") {
         e.preventDefault();
+        setClipboard(null);
         setSelectedIds(new Set());
-        setPreviewFile(null);
+        setDownloadingId(null);
+        closePreview();
         setTaggingObj(null);
         setIsCreateFolderOpen(false);
         setDeleteIds([]);
@@ -1327,7 +1322,7 @@ export default function FilesPage() {
                       item={file}
                       viewMode="list"
                       currentPrefix={currentPrefix}
-                      onPreview={setPreviewFile}
+                      onPreview={openPreview}
                       onDownload={handleDownload}
                       onCut={handleCut}
                       onShare={setShareFile}
@@ -1400,7 +1395,7 @@ export default function FilesPage() {
                     item={file}
                     viewMode="grid"
                     currentPrefix={currentPrefix}
-                    onPreview={setPreviewFile}
+                    onPreview={openPreview}
                     onDownload={handleDownload}
                     onCut={handleCut}
                     onShare={setShareFile}
@@ -1466,12 +1461,6 @@ export default function FilesPage() {
           </DragOverlay>
         </DndContext>
       </div>
-
-      <FilePreviewDialog
-        file={previewFile}
-        isOpen={!!previewFile}
-        onClose={() => setPreviewFile(null)}
-      />
 
       <Dialog
         open={!!taggingObj}

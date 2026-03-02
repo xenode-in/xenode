@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Layers,
+  Settings,
 } from "lucide-react";
 
 interface AdminSidebarProps {
@@ -37,6 +38,18 @@ const navItems = [
     icon: ShieldCheck,
     roles: ["super_admin"],
   },
+  {
+    href: "/admin/dashboard/logs",
+    label: "Logs",
+    icon: ShieldCheck,
+    roles: ["super_admin"],
+  },
+  {
+    href: "/admin/dashboard/storage",
+    label: "Storage",
+    icon: ShieldCheck,
+    roles: ["super_admin"],
+  },
 ];
 
 export function AdminSidebar({ role, username }: AdminSidebarProps) {
@@ -45,9 +58,7 @@ export function AdminSidebar({ role, username }: AdminSidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
 
-  const visibleItems = navItems.filter((item) =>
-    item.roles.includes(role)
-  );
+  const visibleItems = navItems.filter((item) => item.roles.includes(role));
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -68,7 +79,9 @@ export function AdminSidebar({ role, username }: AdminSidebarProps) {
             <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center">
               <Layers className="w-4 h-4 text-white" />
             </div>
-            <span className="text-sm font-semibold text-white">Xnode Admin</span>
+            <span className="text-sm font-semibold text-white">
+              Xnode Admin
+            </span>
           </div>
         )}
         <button
