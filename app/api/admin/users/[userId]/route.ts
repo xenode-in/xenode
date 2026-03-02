@@ -24,9 +24,14 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: "DB not connected" }, { status: 500 });
 
   const [user, usage, shareStats, apiKeyCount] = await Promise.all([
-    db
-      .collection("user")
-      .findOne({ $or: [{ id: userId }, { _id: userId }] }),
+    db.collection("user").findOne({
+      $or: [
+        { id: userId },
+        ...(mongoose.Types.ObjectId.isValid(userId)
+          ? [{ _id: new mongoose.Types.ObjectId(userId) }]
+          : []),
+      ],
+    }),
     Usage.findOne({ userId }).lean(),
     ShareLink.aggregate([
       { $match: { createdBy: userId } },
@@ -93,7 +98,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     if (!["free", "pro", "enterprise"].includes(body.plan))
       return NextResponse.json(
         { error: "Invalid plan value" },
-        { status: 400 }
+        { status: 400 },
       );
     update.plan = body.plan;
     update.planActivatedAt = body.plan !== "free" ? new Date() : null;
@@ -104,7 +109,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     if (isNaN(val) || val < 0)
       return NextResponse.json(
         { error: "Invalid storageLimitBytes" },
-        { status: 400 }
+        { status: 400 },
       );
     update.storageLimitBytes = val;
   }
@@ -114,7 +119,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     if (isNaN(val) || val < 0)
       return NextResponse.json(
         { error: "Invalid egressLimitBytes" },
-        { status: 400 }
+        { status: 400 },
       );
     update.egressLimitBytes = val;
   }
@@ -128,7 +133,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
   if (Object.keys(update).length === 0)
     return NextResponse.json(
       { error: "No valid fields to update" },
-      { status: 400 }
+      { status: 400 },
     );
 
   await dbConnect();
@@ -136,7 +141,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
   const updated = await Usage.findOneAndUpdate(
     { userId },
     { $set: update },
-    { upsert: true, new: true }
+    { upsert: true, new: true },
   );
 
   return NextResponse.json({ usage: updated });
@@ -159,9 +164,14 @@ export async function DELETE(_req: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: "DB not connected" }, { status: 500 });
 
   await Promise.all([
-    db
-      .collection("user")
-      .deleteOne({ $or: [{ id: userId }, { _id: userId }] }),
+    db.collection("user").deleteOne({
+      $or: [
+        { id: userId },
+        ...(mongoose.Types.ObjectId.isValid(userId)
+          ? [{ _id: new mongoose.Types.ObjectId(userId) }]
+          : []),
+      ],
+    }),
     db.collection("session").deleteMany({ userId }),
     Bucket.deleteMany({ userId }),
     StorageObject.deleteMany({ userId }),

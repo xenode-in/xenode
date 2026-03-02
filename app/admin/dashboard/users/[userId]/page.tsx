@@ -33,9 +33,14 @@ export default async function UserDetailPage({ params }: RouteContext) {
   if (!db) return <div>DB not connected</div>;
 
   const [user, usage, shareStats, apiKeys, topBuckets] = await Promise.all([
-    db
-      .collection("user")
-      .findOne({ $or: [{ id: userId }, { _id: userId }] }),
+    db.collection("user").findOne({
+      $or: [
+        { id: userId },
+        ...(mongoose.Types.ObjectId.isValid(userId)
+          ? [{ _id: new mongoose.Types.ObjectId(userId) }]
+          : []),
+      ],
+    }),
     Usage.findOne({ userId }).lean(),
     ShareLink.aggregate([
       { $match: { createdBy: userId } },
@@ -64,9 +69,7 @@ export default async function UserDetailPage({ params }: RouteContext) {
   const storageGB = bytesToGB(usage?.totalStorageBytes ?? 0);
   const storageLimitGB = bytesToGB(usage?.storageLimitBytes ?? 1099511627776);
   const storagePct =
-    storageLimitGB > 0
-      ? Math.min((storageGB / storageLimitGB) * 100, 100)
-      : 0;
+    storageLimitGB > 0 ? Math.min((storageGB / storageLimitGB) * 100, 100) : 0;
 
   const plan = usage?.plan ?? "free";
   const planBadge: Record<string, string> = {
@@ -157,8 +160,7 @@ export default async function UserDetailPage({ params }: RouteContext) {
             </p>
             {usage?.lastActiveAt && (
               <p>
-                Last active{" "}
-                {new Date(usage.lastActiveAt).toLocaleDateString()}
+                Last active {new Date(usage.lastActiveAt).toLocaleDateString()}
               </p>
             )}
             <p

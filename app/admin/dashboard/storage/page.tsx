@@ -22,14 +22,16 @@ export default async function StoragePage() {
     .lean();
 
   const userIds = topUsage.map((u) => u.userId);
+  const objectIds = userIds
+    .filter((id) => mongoose.Types.ObjectId.isValid(id))
+    .map((id) => new mongoose.Types.ObjectId(id));
+
   const userDocs = await db
     .collection("user")
-    .find({ $or: [{ id: { $in: userIds } }, { _id: { $in: userIds } }] })
+    .find({ $or: [{ id: { $in: userIds } }, { _id: { $in: objectIds } }] })
     .toArray();
 
-  const userMap = new Map(
-    userDocs.map((u) => [u.id ?? u._id?.toString(), u])
-  );
+  const userMap = new Map(userDocs.map((u) => [u.id ?? u._id?.toString(), u]));
 
   return (
     <div className="space-y-6">
@@ -76,7 +78,7 @@ export default async function StoragePage() {
                         (
                           (u.totalStorageBytes / u.storageLimitBytes) *
                           100
-                        ).toFixed(1)
+                        ).toFixed(1),
                       )
                     : 0;
                 return (
