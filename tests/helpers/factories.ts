@@ -16,6 +16,30 @@ export const makeUserId = () => new mongoose.Types.ObjectId().toString();
 export const makeTxnid = () =>
   "TXN" + Date.now() + crypto.randomBytes(8).toString("hex");
 
+/**
+ * Seed a user document into the 'user' collection.
+ *
+ * WHY THIS IS NEEDED:
+ * The PayU success route does db.collection('user').findOne({ _id: ObjectId(udf1) })
+ * to verify the user exists before writing Usage/Payment. In the in-memory
+ * test DB this collection is empty by default, so the route returns a
+ * user_not_found redirect before any writes happen.
+ *
+ * Always call seedUser(userId) in any test that exercises the success callback.
+ */
+export async function seedUser(userId: string, overrides: Record<string, unknown> = {}) {
+  const db = mongoose.connection.db;
+  if (!db) throw new Error("DB not connected");
+  await db.collection("user").insertOne({
+    _id: new mongoose.Types.ObjectId(userId),
+    email: overrides.email ?? `${userId}@xenode.app`,
+    name:  overrides.name  ?? "Test User",
+    phone: overrides.phone ?? "",
+    createdAt: new Date(),
+    ...overrides,
+  });
+}
+
 /** Compute PayU reverse hash (success callback verification) */
 export function computePayuHash(
   fields: {
@@ -45,6 +69,9 @@ export async function createUsage(overrides: Partial<{
   planPriceINR: number;
   planExpiresAt: Date | null;
   planActivatedAt: Date | null;
+  scheduledDowngradePlan: string | null;
+  scheduledDowngradeLimitBytes: number | null;
+  scheduledDowngradeAt: Date | null;
 }> = {}) {
   const userId = overrides.userId ?? makeUserId();
   return Usage.create({
@@ -55,6 +82,9 @@ export async function createUsage(overrides: Partial<{
     planPriceINR: 0,
     planExpiresAt: null,
     planActivatedAt: null,
+    scheduledDowngradePlan: null,
+    scheduledDowngradeLimitBytes: null,
+    scheduledDowngradeAt: null,
     ...overrides,
   });
 }

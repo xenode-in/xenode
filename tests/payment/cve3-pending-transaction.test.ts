@@ -3,11 +3,19 @@
  *
  * Tests that storageLimitBytes is ALWAYS resolved from the server-side
  * PendingTransaction record, never from the client-supplied productinfo field.
+ *
+ * FIX NOTES:
+ * seedUser(userId) is required for any test that reaches the Usage/Payment write
+ * path, because the route does db.collection('user').findOne() first.
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import Usage from "@/models/Usage";
 import PendingTransaction from "@/models/PendingTransaction";
-import { computePayuHash, makeUserId, makeTxnid, createUsage, createPendingTxn, PRO_100_BYTES, PRO_500_BYTES, FREE_TIER_BYTES } from "../helpers/factories";
+import {
+  makeUserId, makeTxnid, createUsage, createPendingTxn,
+  seedUser,
+  PRO_100_BYTES, PRO_500_BYTES, FREE_TIER_BYTES,
+} from "../helpers/factories";
 
 const PAYU_KEY  = "test_key";
 const PAYU_SALT = "test_salt";
@@ -22,12 +30,12 @@ describe("CVE-3 — Plan from PendingTransaction", () => {
   it("upgrades quota from PendingTransaction, not from productinfo", async () => {
     const userId = makeUserId();
     const txnid  = makeTxnid();
+    await seedUser(userId);                    // ← required: route verifies user in DB
     await createUsage({ userId });
-    // PendingTransaction says 100GB
     await createPendingTxn({ txnid, userId, storageLimitBytes: PRO_100_BYTES, planName: "100GB Model" });
 
     const fd = new FormData();
-    // productinfo says "2TB Model" — should be ignored
+    // productinfo says "2TB Model" — must be ignored; plan comes from PendingTransaction
     [["status","success"],["txnid",txnid],["amount","149.00"],["productinfo","2TB Model"],
      ["email","t@x.app"],["firstname","T"],["udf1",userId],["hash","ignored"]]
       .forEach(([k,v]) => fd.append(k,v));
@@ -47,6 +55,7 @@ describe("CVE-3 — Plan from PendingTransaction", () => {
   it("rejects callback when no PendingTransaction exists for txnid", async () => {
     const userId = makeUserId();
     const txnid  = makeTxnid();
+    await seedUser(userId);
     await createUsage({ userId });
     // NO PendingTransaction seeded
 
@@ -64,7 +73,6 @@ describe("CVE-3 — Plan from PendingTransaction", () => {
     const body = await res.text();
     expect(body).toContain("transaction_not_found");
 
-    // Usage must NOT be upgraded
     const usage = await Usage.findOne({ userId });
     expect(usage?.storageLimitBytes).toBe(FREE_TIER_BYTES);
   });
@@ -73,12 +81,13 @@ describe("CVE-3 — Plan from PendingTransaction", () => {
     const realUserId  = makeUserId();
     const otherUserId = makeUserId();
     const txnid = makeTxnid();
+    await seedUser(realUserId);
+    await seedUser(otherUserId);
     await createUsage({ userId: realUserId });
-    // PendingTransaction belongs to realUserId
     await createPendingTxn({ txnid, userId: realUserId, storageLimitBytes: PRO_100_BYTES });
 
     const fd = new FormData();
-    // Attacker supplies otherUserId as udf1
+    // Attacker supplies otherUserId as udf1 — PendingTransaction.userId won't match
     [["status","success"],["txnid",txnid],["amount","149.00"],["productinfo","100GB Model"],
      ["email","atk@x.app"],["firstname","A"],["udf1",otherUserId],["hash","ignored"]]
       .forEach(([k,v]) => fd.append(k,v));
@@ -92,7 +101,6 @@ describe("CVE-3 — Plan from PendingTransaction", () => {
     const body = await res.text();
     expect(body).toContain("transaction_not_found");
 
-    // realUserId's quota must not change
     const usage = await Usage.findOne({ userId: realUserId });
     expect(usage?.storageLimitBytes).toBe(FREE_TIER_BYTES);
   });
@@ -100,6 +108,7 @@ describe("CVE-3 — Plan from PendingTransaction", () => {
   it("PendingTransaction is deleted after successful processing", async () => {
     const userId = makeUserId();
     const txnid  = makeTxnid();
+    await seedUser(userId);                    // ← required
     await createUsage({ userId });
     await createPendingTxn({ txnid, userId, storageLimitBytes: PRO_100_BYTES });
 

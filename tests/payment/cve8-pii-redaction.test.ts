@@ -3,10 +3,18 @@
  *
  * Tests that the Payment model never stores email, phone, firstname,
  * or udf1 in the payuResponse field for both success and failure callbacks.
+ *
+ * FIX NOTES:
+ * seedUser(userId) is required for the success callback test — route does
+ * db.collection('user').findOne() before writing the Payment record.
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import Payment from "@/models/Payment";
-import { makeUserId, makeTxnid, createUsage, createPendingTxn, PRO_100_BYTES } from "../helpers/factories";
+import {
+  makeUserId, makeTxnid, createUsage, createPendingTxn,
+  seedUser,
+  PRO_100_BYTES,
+} from "../helpers/factories";
 
 describe("CVE-8 — PII Redaction", () => {
   beforeEach(() => {
@@ -18,6 +26,7 @@ describe("CVE-8 — PII Redaction", () => {
   it("success callback: payuResponse does NOT contain email, phone, or firstname", async () => {
     const userId = makeUserId();
     const txnid  = makeTxnid();
+    await seedUser(userId);                    // ← required: route verifies user before Payment.create
     await createUsage({ userId });
     await createPendingTxn({ txnid, userId, storageLimitBytes: PRO_100_BYTES });
 
@@ -57,6 +66,7 @@ describe("CVE-8 — PII Redaction", () => {
   it("failure callback: payuResponse does NOT contain PII", async () => {
     const userId = makeUserId();
     const txnid  = makeTxnid();
+    // Failure route does NOT do user lookup — no seedUser needed here
 
     const fd = new FormData();
     [
