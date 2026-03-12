@@ -1,6 +1,18 @@
 import { NextResponse } from "next/server";
 import dbConnect from "@/lib/mongodb";
 import Payment from "@/models/Payment";
+import crypto from "crypto";
+
+const redirectHtml = (url: string) => `
+  <!DOCTYPE html>
+  <html>
+    <head><meta http-equiv="refresh" content="0;url=${url}"></head>
+    <body>
+      <p>Redirecting...</p>
+      <script>window.location.href = "${url}";</script>
+    </body>
+  </html>
+`;
 
 export async function POST(req: Request) {
   try {
@@ -10,41 +22,43 @@ export async function POST(req: Request) {
       data[key] = value.toString();
     });
 
-    console.error("Payment failed", data);
-
     const { amount, txnid, productinfo, udf1 } = data;
+
+    // CVE-8: Redacted safe log — never log PII (email, phone, name)
+    console.error("[Payment failed]", {
+      txnid: txnid || "unknown",
+      amount: amount || "unknown",
+      productinfo: productinfo || "unknown",
+    });
 
     if (udf1) {
       await dbConnect();
       try {
-        await Payment.create({
-          userId: udf1,
-          amount: parseFloat(amount) || 0,
-          currency: "INR",
-          status: "failed",
-          txnid: txnid || `failed-${Date.now()}`,
-          planName: productinfo || "Unknown",
-          payuResponse: data,
-        });
+        // CVE-2: Idempotency — don't duplicate failed payment records
+        const existing = await Payment.findOne({ txnid });
+        if (!existing) {
+          await Payment.create({
+            userId: udf1,
+            amount: parseFloat(amount) || 0,
+            currency: "INR",
+            status: "failed",
+            // CVE-7: fallback txnid still uses randomBytes for uniqueness
+            txnid: txnid || "FAILED-" + crypto.randomBytes(8).toString("hex"),
+            planName: productinfo || "Unknown",
+            // CVE-8: Only store non-PII fields
+            payuResponse: {
+              status: data.status,
+              txnid: data.txnid,
+              mode: data.mode,
+              error: data.error,
+              error_Message: data.error_Message,
+            },
+          });
+        }
       } catch (err) {
         console.error("Failed to save failed payment to DB", err);
       }
     }
-
-    const redirectHtml = (url: string) => `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta http-equiv="refresh" content="0;url=${url}">
-        </head>
-        <body>
-          <p>Redirecting...</p>
-          <script>
-            window.location.href = "${url}";
-          </script>
-        </body>
-      </html>
-    `;
 
     return new NextResponse(
       redirectHtml(
@@ -55,7 +69,7 @@ export async function POST(req: Request) {
   } catch (error) {
     console.error("PayU failure callback error:", error);
     return new NextResponse(
-      `<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=/dashboard/billing?error=server_error"></head><body><script>window.location.href="/dashboard/billing?error=server_error";</script></body></html>`,
+      redirectHtml("/dashboard/billing?error=server_error"),
       { headers: { "Content-Type": "text/html" } },
     );
   }

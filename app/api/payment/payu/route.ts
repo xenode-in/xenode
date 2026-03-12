@@ -3,6 +3,21 @@ import crypto from "crypto";
 import { getServerSession } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
+import PendingTransaction from "@/models/PendingTransaction";
+import mongoose from "mongoose";
+
+/** Server-authoritative plan definitions.
+ *  NEVER derive these from client input.
+ */
+const PLAN_CONFIG: Record<
+  string,
+  { storageLimitBytes: number; priceINR: number }
+> = {
+  "100GB Model": { storageLimitBytes: 100 * 1024 * 1024 * 1024, priceINR: 149 },
+  "500GB Model": { storageLimitBytes: 500 * 1024 * 1024 * 1024, priceINR: 399 },
+  "1TB Model":   { storageLimitBytes: 1024 * 1024 * 1024 * 1024, priceINR: 699 },
+  "2TB Model":   { storageLimitBytes: 2 * 1024 * 1024 * 1024 * 1024, priceINR: 999 },
+};
 
 export async function POST(req: Request) {
   try {
@@ -12,67 +27,66 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { amount, planName } = await req.json();
-    let finalAmount = parseFloat(amount);
+    const { planName } = await req.json();
 
-    if (isNaN(finalAmount) || finalAmount <= 0 || !planName) {
+    // Validate planName against server-authoritative allowlist
+    const plan = PLAN_CONFIG[planName];
+    if (!plan) {
       return NextResponse.json(
-        { error: "Amount and plan details are required" },
+        { error: "Invalid plan selection" },
         { status: 400 },
       );
     }
 
+    let finalAmount = plan.priceINR;
+
     await dbConnect();
+
+    // Fetch user phone from profile (never hardcode)
+    const db = mongoose.connection.db;
+    if (!db) throw new Error("Database not connected");
+    const userDoc = await db
+      .collection("user")
+      .findOne(
+        { _id: new mongoose.Types.ObjectId(session.user.id) },
+        { projection: { phone: 1 } },
+      );
+    const phone = userDoc?.phone || "";
+
     const currentUsage = await Usage.findOne({ userId: session.user.id });
 
-    // --- DISCOUNT PRORATION LOGIC ---
-    // If the user is on a paid plan and it hasn't expired yet, apply discount
+    // --- PRORATION LOGIC (uses stored planPriceINR, not byte-matching) ---
     if (
       currentUsage &&
       currentUsage.plan !== "free" &&
       currentUsage.planExpiresAt &&
-      currentUsage.planExpiresAt.getTime() > Date.now()
+      currentUsage.planExpiresAt.getTime() > Date.now() &&
+      currentUsage.planPriceINR > 0
     ) {
-      const msRemaining = currentUsage.planExpiresAt.getTime() - Date.now();
+      const msRemaining =
+        currentUsage.planExpiresAt.getTime() - Date.now();
       const daysRemaining = msRemaining / (1000 * 60 * 60 * 24);
-
-      // Identify the cost of their OLD plan
-      let oldPlanCost = 149; // fallback
-      if (currentUsage.storageLimitBytes === 2 * 1024 * 1024 * 1024 * 1024)
-        oldPlanCost = 999;
-      else if (currentUsage.storageLimitBytes === 1024 * 1024 * 1024 * 1024)
-        oldPlanCost = 699;
-      else if (currentUsage.storageLimitBytes === 500 * 1024 * 1024 * 1024)
-        oldPlanCost = 399;
-
-      // Find the unused monetary value of their old plan
-      const unusedValue = (oldPlanCost / 30) * daysRemaining;
-
-      // Subtract unused value from the new plan cost
-      finalAmount = finalAmount - unusedValue;
-
-      // PayU requires amount > 0. If discount covers whole new plan, charge minimum ₹1
-      // (in a real app, you might bypass the payment gateway entirely, but PayU requires a float)
-      finalAmount = Math.max(1, finalAmount);
+      const unusedValue = (currentUsage.planPriceINR / 30) * daysRemaining;
+      finalAmount = Math.max(1, finalAmount - unusedValue);
     }
 
-    // Format to 2 decimal places to satisfy PayU requirements
     const formattedAmount = finalAmount.toFixed(2);
 
     const key = process.env.PAYU_MERCHANT_KEY || "";
     const salt = process.env.PAYU_MERCHANT_SALT || "";
 
-    // PayU Test URL or Production URL based on env
-    const isTestMode = process.env.PAYU_TEST_MODE !== "false";
+    const isTestMode = process.env.NODE_ENV !== "production";
     const payuAction = isTestMode
       ? "https://test.payu.in/_payment"
       : "https://secure.payu.in/_payment";
 
-    const txnid = "TXN" + Date.now() + Math.floor(Math.random() * 1000);
+    // CVE-7: cryptographically secure txnid
+    const txnid = "TXN" + Date.now() + crypto.randomBytes(8).toString("hex");
+
     const productinfo = planName;
     const firstname = session.user.name || "User";
     const email = session.user.email;
-    const phone = "9999999999";
+    const udf1 = session.user.id;
 
     const proto = req.headers.get("x-forwarded-proto") || "http";
     const host = req.headers.get("host");
@@ -80,11 +94,22 @@ export async function POST(req: Request) {
 
     const surl = `${baseUrl}/api/payment/payu/success`;
     const furl = `${baseUrl}/api/payment/payu/failure`;
-    const udf1 = session.user.id;
 
-    // Hash sequence: key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||SALT
     const hashString = `${key}|${txnid}|${formattedAmount}|${productinfo}|${firstname}|${email}|${udf1}||||||||||${salt}`;
-    const hash = crypto.createHash("sha512").update(hashString).digest("hex");
+    const hash = crypto
+      .createHash("sha512")
+      .update(hashString)
+      .digest("hex");
+
+    // CVE-3: persist intended plan server-side with 1-hour TTL
+    await PendingTransaction.create({
+      txnid,
+      userId: session.user.id,
+      planName,
+      storageLimitBytes: plan.storageLimitBytes,
+      planPriceINR: plan.priceINR,
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000), // 1 hour TTL
+    });
 
     const params = {
       key,
