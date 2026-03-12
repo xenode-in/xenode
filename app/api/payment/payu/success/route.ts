@@ -6,9 +6,8 @@ import Payment from "@/models/Payment";
 import PendingTransaction from "@/models/PendingTransaction";
 import mongoose from "mongoose";
 
-// ─── helpers ────────────────────────────────────────────────────────────────
+// ── helpers ──────────────────────────────────────────────────────────────
 
-/** Build a Next.js redirect to our own payment result pages */
 function toSuccessPage(baseUrl: string, params: Record<string, string>) {
   const url = new URL("/payment/success", baseUrl);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
@@ -21,26 +20,43 @@ function toFailurePage(baseUrl: string, params: Record<string, string>) {
   return NextResponse.redirect(url.toString(), { status: 303 });
 }
 
-// ─── route ──────────────────────────────────────────────────────────────────
+/**
+ * Verify PayU reverse hash.
+ * Supports both regular and SI (UPI Autopay mandate) formats:
+ *   Regular : salt|status||||||||||udf1|email|firstname|productinfo|amount|txnid|key
+ *   SI      : salt|status||||||||||udf1|email|firstname|productinfo|amount|txnid|key|si_details
+ */
+function verifyHash(data: Record<string, string>, salt: string, key: string): boolean {
+  const { status, udf1, email, firstname, productinfo, amount, txnid, hash: resHash, si_details } = data;
+
+  // Try SI hash first if si_details is present
+  if (si_details) {
+    const siHashStr = `${salt}|${status}||||||||||${udf1}|${email}|${firstname}|${productinfo}|${amount}|${txnid}|${key}|${si_details}`;
+    const siHash = crypto.createHash("sha512").update(siHashStr).digest("hex");
+    if (siHash === resHash) return true;
+  }
+
+  // Fall back to regular hash
+  const hashStr = `${salt}|${status}||||||||||${udf1}|${email}|${firstname}|${productinfo}|${amount}|${txnid}|${key}`;
+  const hash = crypto.createHash("sha512").update(hashStr).digest("hex");
+  return hash === resHash;
+}
+
+// ── route ──────────────────────────────────────────────────────────────────
 
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
     const data: Record<string, string> = {};
-    formData.forEach((value, key) => {
-      data[key] = value.toString();
-    });
+    formData.forEach((value, key) => { data[key] = value.toString(); });
 
     const key  = process.env.PAYU_MERCHANT_KEY  || "";
     const salt = process.env.PAYU_MERCHANT_SALT || "";
 
-    const { status, firstname, amount, txnid, hash: resHash, productinfo, email, udf1 } = data;
+    const { status, firstname, amount, txnid, productinfo, email, udf1 } = data;
 
-    // CVE-1: Always verify hash — only bypass in non-production with explicit warning
-    const hashString = `${salt}|${status}||||||||||${udf1}|${email}|${firstname}|${productinfo}|${amount}|${txnid}|${key}`;
-    const calculatedHash = crypto.createHash("sha512").update(hashString).digest("hex");
-
-    const hashValid = calculatedHash === resHash;
+    // CVE-1: Hash verification — supports both SI and regular formats
+    const hashValid = verifyHash(data, salt, key);
     if (!hashValid) {
       if (process.env.NODE_ENV === "production") {
         return toFailurePage(req.url, { txnid: txnid ?? "", error: "hash_mismatch", plan: productinfo ?? "", amount: amount ?? "" });
@@ -52,7 +68,7 @@ export async function POST(req: Request) {
       return toFailurePage(req.url, { txnid: txnid ?? "", error: "payment_failed", plan: productinfo ?? "", amount: amount ?? "" });
     }
 
-    // CVE-4: Strict udf1 validation — no email fallback
+    // CVE-4: Strict udf1 validation
     if (!udf1 || !mongoose.Types.ObjectId.isValid(udf1)) {
       console.error("[SECURITY] Invalid udf1 in PayU success callback", { txnid });
       return toFailurePage(req.url, { txnid: txnid ?? "", error: "invalid_session", plan: productinfo ?? "", amount: amount ?? "" });
@@ -70,7 +86,7 @@ export async function POST(req: Request) {
       });
     }
 
-    // CVE-3: Resolve plan from server-side PendingTransaction — never from productinfo
+    // CVE-3: Resolve plan from server-side PendingTransaction
     const pending = await PendingTransaction.findOne({ txnid, userId: udf1 });
     if (!pending) {
       console.error("[SECURITY] No pending transaction found for txnid", { txnid, udf1 });
@@ -88,7 +104,18 @@ export async function POST(req: Request) {
       return toFailurePage(req.url, { txnid, error: "user_not_found", plan: productinfo ?? "", amount: amount ?? "" });
     }
 
-    // CVE-2: Atomic transaction — both writes succeed or both fail
+    // Persist billing address to user profile if provided
+    if (pending.billingAddress) {
+      await db.collection("user").updateOne(
+        { _id: new mongoose.Types.ObjectId(udf1) },
+        { $set: { billingAddress: pending.billingAddress } },
+      );
+    }
+
+    // For UPI Autopay: capture the authpayuid returned by PayU
+    const authpayuid = data.payuMoneyId || data.authpayuid || null;
+
+    // CVE-2: Atomic transaction
     const mongoSession = await mongoose.startSession();
     mongoSession.startTransaction();
     try {
@@ -104,12 +131,14 @@ export async function POST(req: Request) {
             scheduledDowngradePlan: null,
             scheduledDowngradeLimitBytes: null,
             scheduledDowngradeAt: null,
+            // Store autopay mandate ID for recurring charge cron
+            ...(authpayuid ? { autopayMandateId: authpayuid, autopayActive: true } : {}),
           },
         },
         { upsert: true, session: mongoSession },
       );
 
-      // CVE-8: Only persist safe, non-PII fields from PayU response
+      // CVE-8: Only persist safe, non-PII fields
       await Payment.create(
         [
           {
@@ -125,6 +154,7 @@ export async function POST(req: Request) {
               mode: data.mode,
               PG_TYPE: data.PG_TYPE,
               bank_ref_num: data.bank_ref_num,
+              ...(authpayuid ? { authpayuid } : {}),
             },
           },
         ],
@@ -139,13 +169,14 @@ export async function POST(req: Request) {
       mongoSession.endSession();
     }
 
-    // CVE-3: Clean up pending transaction after successful processing
+    // CVE-3: Clean up pending transaction
     await PendingTransaction.deleteOne({ txnid });
 
     return toSuccessPage(req.url, {
       txnid,
       plan: pending.planName,
       amount: pending.planPriceINR.toString(),
+      method: pending.paymentMethod,
     });
 
   } catch (error) {
