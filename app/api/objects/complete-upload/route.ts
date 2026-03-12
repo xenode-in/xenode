@@ -15,6 +15,11 @@ export async function POST(request: NextRequest) {
     const userId = session.user.id;
 
     const {
+      /**
+       * GAP-4: objectKey is now the OPAQUE key returned by presign-upload.
+       * It has the form: users/{userId}/{randomHex32}
+       * The client MUST pass back the exact key it received — never reconstruct from filename.
+       */
       objectKey,
       bucketId,
       size,
@@ -23,7 +28,7 @@ export async function POST(request: NextRequest) {
       encryptedDEK,
       iv,
       isEncrypted,
-      encryptedName,
+      encryptedName, // AES-GCM encrypted original display name — only display metadata
       chunkSize,
       chunkCount,
       chunkIvs,
@@ -36,9 +41,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validate opaque key format — must start with users/{userId}/
+    if (!objectKey.startsWith(`users/${userId}/`)) {
+      return NextResponse.json(
+        { error: "Invalid object key" },
+        { status: 403 },
+      );
+    }
+
     await dbConnect();
 
-    // Verify bucket ownership
     const bucket = await Bucket.findOne({
       _id: bucketId,
       $or: [{ userId }, { userId: "system" }],
@@ -48,7 +60,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
 
-    // Retrieve B2 File ID (VersionId) from S3
+    // Retrieve B2 File ID from storage
     let b2FileId = "";
     try {
       const command = new HeadObjectCommand({
@@ -56,7 +68,6 @@ export async function POST(request: NextRequest) {
         Key: objectKey,
       });
       const s3Response = await getS3Client().send(command);
-      // B2 S3 Compat uses VersionId as the B2 File ID
       b2FileId = s3Response.VersionId || `${bucket.b2BucketId}/${objectKey}`;
     } catch (err) {
       console.error("Failed to head object from B2:", err);
@@ -66,7 +77,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if object already exists (overwrite)
+    // Overwrite scenario — key is opaque so this handles the same file re-uploaded
     const existingObject = await StorageObject.findOne({
       bucketId,
       key: objectKey,
@@ -76,7 +87,7 @@ export async function POST(request: NextRequest) {
       const sizeDiff = size - existingObject.size;
       existingObject.size = size;
       existingObject.contentType = contentType;
-      existingObject.b2FileId = b2FileId; // Update File ID
+      existingObject.b2FileId = b2FileId;
       if (thumbnail) existingObject.thumbnail = thumbnail;
       if (isEncrypted) {
         existingObject.isEncrypted = true;
@@ -101,7 +112,7 @@ export async function POST(request: NextRequest) {
     const storageObject = await StorageObject.create({
       bucketId,
       userId,
-      key: objectKey,
+      key: objectKey,       // opaque — no filename semantics
       size,
       contentType,
       b2FileId,
@@ -109,19 +120,24 @@ export async function POST(request: NextRequest) {
       isEncrypted: isEncrypted ?? false,
       encryptedDEK: encryptedDEK ?? undefined,
       iv: iv ?? undefined,
-      encryptedName: encryptedName ?? undefined,
+      encryptedName: encryptedName ?? undefined, // only display name, always encrypted
       chunkSize: chunkSize ?? undefined,
       chunkCount: chunkCount ?? undefined,
       chunkIvs: chunkIvs ?? undefined,
     });
 
-    // Update usage
-    await incrementStorage(userId, size);
+    await incrementStorage(userId, size, { contentType, bucketId, isEncrypted });
     await updateBucketStats(bucketId, 1, size);
 
     return NextResponse.json({ object: storageObject }, { status: 201 });
   } catch (error) {
     console.error("Upload completion error:", error);
+    if (error instanceof Error && error.message === "QUOTA_EXCEEDED") {
+      return NextResponse.json(
+        { error: "Storage quota exceeded" },
+        { status: 402 },
+      );
+    }
     const message =
       error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json({ error: message }, { status: 500 });
