@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { PaymentFailureIcon } from "@/components/payment/PaymentResultIcon";
+import { PaymentFailureIcon } from "@/app/components/payment/PaymentResultIcon";
 
 interface FailurePageProps {
   searchParams: Promise<{
@@ -20,13 +20,16 @@ export const metadata = {
 const ERROR_MESSAGES: Record<string, string> = {
   payment_failed: "Your payment could not be processed.",
   hash_mismatch: "Payment verification failed. Please try again.",
-  transaction_not_found: "Transaction record not found. Please contact support.",
+  transaction_not_found:
+    "Transaction record not found. Please contact support.",
   invalid_session: "Your session expired. Please start a new checkout.",
   user_not_found: "Account not found. Please sign in and try again.",
   server_error: "Something went wrong on our end. Please try again shortly.",
 };
 
-export default async function PaymentFailurePage({ searchParams }: FailurePageProps) {
+export default async function PaymentFailurePage({
+  searchParams,
+}: FailurePageProps) {
   const params = await searchParams;
   const { txnid, error, plan, amount } = params;
 
@@ -72,7 +75,10 @@ export default async function PaymentFailurePage({ searchParams }: FailurePagePr
           <div className="space-y-3">
             {plan && <DetailRow label="Plan" value={plan} />}
             {amount && (
-              <DetailRow label="Amount" value={`₹${parseFloat(amount).toFixed(2)}`} />
+              <DetailRow
+                label="Amount"
+                value={`₹${parseFloat(amount).toFixed(2)}`}
+              />
             )}
             <DetailRow label="Date" value={formattedDate} />
             {shortTxnId && (

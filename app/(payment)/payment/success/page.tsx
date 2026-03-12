@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import Link from "next/link";
-import { PaymentSuccessIcon } from "@/components/payment/PaymentResultIcon";
+import { PaymentSuccessIcon } from "@/app/components/payment/PaymentResultIcon";
 
 interface SuccessPageProps {
   searchParams: Promise<{
@@ -16,16 +16,16 @@ export const metadata = {
   robots: "noindex",
 };
 
-export default async function PaymentSuccessPage({ searchParams }: SuccessPageProps) {
+export default async function PaymentSuccessPage({
+  searchParams,
+}: SuccessPageProps) {
   const params = await searchParams;
   const { txnid, plan, amount } = params;
 
   // Hard guard — never show a blank success page without a txnid
   if (!txnid) redirect("/dashboard/billing");
 
-  const formattedAmount = amount
-    ? `₹${parseFloat(amount).toFixed(2)}`
-    : null;
+  const formattedAmount = amount ? `₹${parseFloat(amount).toFixed(2)}` : null;
 
   const formattedDate = new Date().toLocaleDateString("en-IN", {
     day: "2-digit",
@@ -59,11 +59,13 @@ export default async function PaymentSuccessPage({ searchParams }: SuccessPagePr
             Receipt
           </h2>
           <div className="space-y-3">
-            {plan && (
-              <ReceiptRow label="Plan" value={plan} />
-            )}
+            {plan && <ReceiptRow label="Plan" value={plan} />}
             {formattedAmount && (
-              <ReceiptRow label="Amount Paid" value={formattedAmount} highlight />
+              <ReceiptRow
+                label="Amount Paid"
+                value={formattedAmount}
+                highlight
+              />
             )}
             <ReceiptRow label="Date" value={formattedDate} />
             <ReceiptRow label="Transaction ID" value={shortTxnId} mono />
