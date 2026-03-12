@@ -4,8 +4,11 @@ import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
+import Usage from "@/models/Usage";
 
 export const dynamic = "force-dynamic";
+
+const FREE_TIER_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB
 
 export async function POST(request: NextRequest) {
   try {
@@ -64,6 +67,44 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // CVE-5: Enforce quota BEFORE issuing presigned URL
+    const usage = await Usage.findOne({ userId });
+    if (usage) {
+      // Enforce plan expiry at access time
+      if (
+        usage.plan !== "free" &&
+        usage.planExpiresAt &&
+        usage.planExpiresAt < new Date()
+      ) {
+        await Usage.updateOne(
+          { userId },
+          {
+            $set: {
+              plan: "free",
+              storageLimitBytes: FREE_TIER_BYTES,
+              planPriceINR: 0,
+            },
+          },
+        );
+        usage.storageLimitBytes = FREE_TIER_BYTES;
+      }
+
+      const fileSizeBytes = typeof fileSize === "number" ? fileSize : 0;
+      const projectedUsage = (usage.totalStorageBytes || 0) + fileSizeBytes;
+
+      if (projectedUsage > usage.storageLimitBytes) {
+        return NextResponse.json(
+          {
+            error: "storage_quota_exceeded",
+            message: "You have reached your storage limit. Please upgrade your plan or delete files.",
+            currentBytes: usage.totalStorageBytes,
+            limitBytes: usage.storageLimitBytes,
+          },
+          { status: 402 },
+        );
+      }
+    }
+
     const objectKey = `${prefix}${fileName}`;
 
     // Configure S3 client for B2
@@ -85,7 +126,7 @@ export async function POST(request: NextRequest) {
     });
 
     const presignedUrl = await getSignedUrl(s3Client, command, {
-      expiresIn: 3600, // 1 hour validity
+      expiresIn: 3600,
     });
 
     return NextResponse.json({
