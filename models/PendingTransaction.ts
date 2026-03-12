@@ -5,7 +5,7 @@ export interface SIDetails {
   billingCycle: "MONTHLY" | "YEARLY" | "WEEKLY" | "ADHOC";
   billingInterval: number;
   paymentStartDate: string; // YYYY-MM-DD
-  paymentEndDate: string;   // YYYY-MM-DD
+  paymentEndDate: string; // YYYY-MM-DD
   remarks: string;
 }
 
@@ -40,7 +40,11 @@ const PendingTransactionSchema = new Schema<IPendingTransaction>(
     storageLimitBytes: { type: Number, required: true },
     planPriceINR: { type: Number, required: true },
     expiresAt: { type: Date, required: true, index: { expireAfterSeconds: 0 } },
-    paymentMethod: { type: String, enum: ["autopay", "direct"], default: "direct" },
+    paymentMethod: {
+      type: String,
+      enum: ["autopay", "direct"],
+      default: "direct",
+    },
     siDetails: {
       type: {
         billingAmount: String,
@@ -69,6 +73,9 @@ const PendingTransactionSchema = new Schema<IPendingTransaction>(
 
 const PendingTransaction: Model<IPendingTransaction> =
   mongoose.models.PendingTransaction ||
-  mongoose.model<IPendingTransaction>("PendingTransaction", PendingTransactionSchema);
+  mongoose.model<IPendingTransaction>(
+    "PendingTransaction",
+    PendingTransactionSchema,
+  );
 
 export default PendingTransaction;

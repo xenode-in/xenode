@@ -70,17 +70,26 @@ export async function POST(req: Request) {
 
     const plan = PLAN_CONFIG[planName];
     if (!plan) {
-      return NextResponse.json({ error: "Invalid plan selection" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid plan selection" },
+        { status: 400 },
+      );
     }
 
     if (paymentMethod !== "autopay" && paymentMethod !== "direct") {
-      return NextResponse.json({ error: "Invalid payment method" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid payment method" },
+        { status: 400 },
+      );
     }
 
-    const phone = typeof clientPhone === "string" ? clientPhone.replace(/\s/g, "") : "";
+    const phone =
+      typeof clientPhone === "string" ? clientPhone.replace(/\s/g, "") : "";
     if (!PHONE_RE.test(phone)) {
       return NextResponse.json(
-        { error: "Invalid phone number. Enter a 10-digit Indian mobile number." },
+        {
+          error: "Invalid phone number. Enter a 10-digit Indian mobile number.",
+        },
         { status: 400 },
       );
     }
@@ -120,7 +129,7 @@ export async function POST(req: Request) {
     }
 
     const formattedAmount = finalAmount.toFixed(2);
-    const key  = process.env.PAYU_MERCHANT_KEY  || "";
+    const key = process.env.PAYU_MERCHANT_KEY || "";
     const salt = process.env.PAYU_MERCHANT_SALT || "";
 
     const isTestMode = process.env.NODE_ENV !== "production";
@@ -128,17 +137,17 @@ export async function POST(req: Request) {
       ? "https://test.payu.in/_payment"
       : "https://secure.payu.in/_payment";
 
-    const txnid       = "TXN" + Date.now() + crypto.randomBytes(8).toString("hex");
+    const txnid = "TXN" + Date.now() + crypto.randomBytes(8).toString("hex");
     const productinfo = planName;
-    const firstname   = userDoc.name || session.user.name || "User";
-    const email       = session.user.email;
-    const udf1        = session.user.id;
+    const firstname = userDoc.name || session.user.name || "User";
+    const email = session.user.email;
+    const udf1 = session.user.id;
 
-    const proto   = req.headers.get("x-forwarded-proto") || "http";
-    const host    = req.headers.get("host");
+    const proto = req.headers.get("x-forwarded-proto") || "http";
+    const host = req.headers.get("host");
     const baseUrl = `${proto}://${host}`;
-    const surl    = `${baseUrl}/api/payment/payu/success`;
-    const furl    = `${baseUrl}/api/payment/payu/failure`;
+    const surl = `${baseUrl}/api/payment/payu/success`;
+    const furl = `${baseUrl}/api/payment/payu/failure`;
 
     let siDetails: object | null = null;
     let params: Record<string, string>;
@@ -155,7 +164,17 @@ export async function POST(req: Request) {
       };
       const siDetailsStr = JSON.stringify(siDetails);
 
-      hash = forwardHash(key, salt, txnid, formattedAmount, productinfo, firstname, email, udf1, siDetailsStr);
+      hash = forwardHash(
+        key,
+        salt,
+        txnid,
+        formattedAmount,
+        productinfo,
+        firstname,
+        email,
+        udf1,
+        siDetailsStr,
+      );
 
       params = {
         key,
@@ -175,7 +194,16 @@ export async function POST(req: Request) {
         si_details: siDetailsStr,
       };
     } else {
-      hash = forwardHash(key, salt, txnid, formattedAmount, productinfo, firstname, email, udf1);
+      hash = forwardHash(
+        key,
+        salt,
+        txnid,
+        formattedAmount,
+        productinfo,
+        firstname,
+        email,
+        udf1,
+      );
 
       params = {
         key,
@@ -200,7 +228,6 @@ export async function POST(req: Request) {
       planPriceINR: plan.priceINR,
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       paymentMethod,
-      siDetails,
       billingAddress: billingAddress ?? null,
     });
 
@@ -212,6 +239,9 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     console.error("PayU initialization error:", error);
-    return NextResponse.json({ error: "Failed to initialize payment" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to initialize payment" },
+      { status: 500 },
+    );
   }
 }
