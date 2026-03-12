@@ -2,10 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { randomBytes } from "crypto";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
+import Usage from "@/models/Usage";
 
 export const dynamic = "force-dynamic";
+
+const FREE_TIER_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB
 
 export async function POST(request: NextRequest) {
   try {
@@ -29,17 +33,12 @@ export async function POST(request: NextRequest) {
     const keyId = B2_KEY_ID.trim();
     const appKey = B2_APPLICATION_KEY.trim();
 
-    const {
-      fileName,
-      fileSize,
-      fileType,
-      bucketId,
-      prefix = "",
-    } = await request.json();
+    const { fileSize, fileType, bucketId } = await request.json();
 
-    if (!fileName || !bucketId) {
+    // fileName is no longer used for the storage key — only for display (stays client-side)
+    if (!bucketId) {
       return NextResponse.json(
-        { error: "fileName and bucketId required" },
+        { error: "bucketId required" },
         { status: 400 },
       );
     }
@@ -57,16 +56,52 @@ export async function POST(request: NextRequest) {
     }
 
     // Enforce prefix for system bucket
-    if (bucket.userId === "system" && !prefix.startsWith(`users/${userId}/`)) {
-      return NextResponse.json(
-        { error: "Access denied to this folder" },
-        { status: 403 },
-      );
+    if (bucket.userId === "system") {
+      // System bucket access validated — opaque key will be scoped to userId
     }
 
-    const objectKey = `${prefix}${fileName}`;
+    // CVE-5 + GAP-1: Enforce quota and plan expiry BEFORE issuing presigned URL
+    const usage = await Usage.findOne({ userId });
+    if (usage) {
+      if (
+        usage.plan !== "free" &&
+        usage.planExpiresAt &&
+        usage.planExpiresAt < new Date()
+      ) {
+        await Usage.updateOne(
+          { userId },
+          { $set: { plan: "free", storageLimitBytes: FREE_TIER_BYTES, planPriceINR: 0 } },
+        );
+        usage.storageLimitBytes = FREE_TIER_BYTES;
+      }
 
-    // Configure S3 client for B2
+      const fileSizeBytes = typeof fileSize === "number" ? fileSize : 0;
+      const projectedUsage = (usage.totalStorageBytes || 0) + fileSizeBytes;
+
+      if (projectedUsage > usage.storageLimitBytes) {
+        return NextResponse.json(
+          {
+            error: "storage_quota_exceeded",
+            message:
+              "You have reached your storage limit. Please upgrade your plan or delete files.",
+            currentBytes: usage.totalStorageBytes,
+            limitBytes: usage.storageLimitBytes,
+          },
+          { status: 402 },
+        );
+      }
+    }
+
+    /**
+     * GAP-4: Opaque object key — NEVER embed original filename in the B2 storage path.
+     * The original filename ONLY lives in StorageObject.encryptedName (AES-GCM encrypted).
+     * This prevents filename leakage via B2 bucket listings or MongoDB key field.
+     *
+     * Format: users/{userId}/{randomHex32}
+     * Example: users/64abc.../a3f9c21d8e4b70f2c1e5d9a8b6c4f0e7
+     */
+    const opaqueKey = `users/${userId}/${randomBytes(16).toString("hex")}`;
+
     const s3Client = new S3Client({
       endpoint: B2_ENDPOINT,
       region: B2_REGION,
@@ -77,20 +112,23 @@ export async function POST(request: NextRequest) {
       forcePathStyle: true,
     });
 
-    // Generate presigned PUT URL
     const command = new PutObjectCommand({
       Bucket: bucket.b2BucketId,
-      Key: objectKey,
+      Key: opaqueKey,
       ContentType: fileType || "application/octet-stream",
     });
 
     const presignedUrl = await getSignedUrl(s3Client, command, {
-      expiresIn: 3600, // 1 hour validity
+      expiresIn: 3600,
     });
 
     return NextResponse.json({
       uploadUrl: presignedUrl,
-      objectKey,
+      /**
+       * Return opaqueKey to the client so it can pass it to complete-upload.
+       * Client must NOT derive this from the filename.
+       */
+      objectKey: opaqueKey,
       bucketId: bucket._id.toString(),
     });
   } catch (error) {
