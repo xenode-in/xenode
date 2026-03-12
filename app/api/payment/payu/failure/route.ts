@@ -3,16 +3,15 @@ import dbConnect from "@/lib/mongodb";
 import Payment from "@/models/Payment";
 import crypto from "crypto";
 
-const redirectHtml = (url: string) => `
-  <!DOCTYPE html>
-  <html>
-    <head><meta http-equiv="refresh" content="0;url=${url}"></head>
-    <body>
-      <p>Redirecting...</p>
-      <script>window.location.href = "${url}";</script>
-    </body>
-  </html>
-`;
+// ─── helpers ────────────────────────────────────────────────────────────────
+
+function toFailurePage(baseUrl: string, params: Record<string, string>) {
+  const url = new URL("/payment/failure", baseUrl);
+  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+  return NextResponse.redirect(url.toString(), { status: 303 });
+}
+
+// ─── route ──────────────────────────────────────────────────────────────────
 
 export async function POST(req: Request) {
   try {
@@ -42,7 +41,6 @@ export async function POST(req: Request) {
             amount: parseFloat(amount) || 0,
             currency: "INR",
             status: "failed",
-            // CVE-7: fallback txnid still uses randomBytes for uniqueness
             txnid: txnid || "FAILED-" + crypto.randomBytes(8).toString("hex"),
             planName: productinfo || "Unknown",
             // CVE-8: Only store non-PII fields
@@ -60,17 +58,15 @@ export async function POST(req: Request) {
       }
     }
 
-    return new NextResponse(
-      redirectHtml(
-        new URL("/dashboard/billing?error=payment_failed", req.url).toString(),
-      ),
-      { headers: { "Content-Type": "text/html" } },
-    );
+    return toFailurePage(req.url, {
+      txnid: txnid ?? "",
+      error: "payment_failed",
+      plan: productinfo ?? "",
+      amount: amount ?? "",
+    });
+
   } catch (error) {
     console.error("PayU failure callback error:", error);
-    return new NextResponse(
-      redirectHtml("/dashboard/billing?error=server_error"),
-      { headers: { "Content-Type": "text/html" } },
-    );
+    return toFailurePage("http://localhost:3000", { error: "server_error" });
   }
 }
