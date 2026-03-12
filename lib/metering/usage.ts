@@ -4,6 +4,8 @@ import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import { captureEvent } from "@/lib/posthog";
 
+const FREE_TIER_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB
+
 /**
  * Get or create usage record for a user
  */
@@ -46,7 +48,7 @@ export async function recalculateUsage(userId: string) {
 
 /**
  * Increment storage usage when an object is uploaded.
- * Also tracks uploadCount and fires a PostHog event.
+ * GAP-2: Enforces quota ceiling BEFORE incrementing.
  */
 export async function incrementStorage(
   userId: string,
@@ -55,7 +57,29 @@ export async function incrementStorage(
 ) {
   await dbConnect();
 
-  const usage = await Usage.findOneAndUpdate(
+  const usage = await Usage.findOne({ userId });
+
+  if (usage) {
+    // Enforce plan expiry at metering time
+    if (
+      usage.plan !== "free" &&
+      usage.planExpiresAt &&
+      usage.planExpiresAt < new Date()
+    ) {
+      await Usage.updateOne(
+        { userId },
+        { $set: { plan: "free", storageLimitBytes: FREE_TIER_BYTES, planPriceINR: 0 } },
+      );
+      usage.storageLimitBytes = FREE_TIER_BYTES;
+    }
+
+    const projectedUsage = (usage.totalStorageBytes || 0) + sizeBytes;
+    if (projectedUsage > usage.storageLimitBytes) {
+      throw new Error("QUOTA_EXCEEDED");
+    }
+  }
+
+  const updatedUsage = await Usage.findOneAndUpdate(
     { userId },
     {
       $inc: { totalStorageBytes: sizeBytes, totalObjects: 1, uploadCount: 1 },
@@ -71,7 +95,7 @@ export async function incrementStorage(
     isEncrypted: meta?.isEncrypted ?? false,
   });
 
-  return usage;
+  return updatedUsage;
 }
 
 /**
@@ -92,7 +116,6 @@ export async function decrementStorage(userId: string, sizeBytes: number) {
 
 /**
  * Increment egress usage when an object is downloaded.
- * Also tracks downloadCount and fires a PostHog event.
  */
 export async function incrementEgress(
   userId: string,
@@ -123,7 +146,6 @@ export async function incrementEgress(
  */
 export async function incrementBucketCount(userId: string) {
   await dbConnect();
-
   return Usage.findOneAndUpdate(
     { userId },
     { $inc: { totalBuckets: 1 }, $set: { lastActiveAt: new Date() } },
@@ -136,7 +158,6 @@ export async function incrementBucketCount(userId: string) {
  */
 export async function decrementBucketCount(userId: string) {
   await dbConnect();
-
   return Usage.findOneAndUpdate(
     { userId },
     { $inc: { totalBuckets: -1 } },
@@ -153,7 +174,6 @@ export async function updateBucketStats(
   sizeDelta: number
 ) {
   await dbConnect();
-
   return Bucket.findByIdAndUpdate(
     bucketId,
     { $inc: { objectCount: objectCountDelta, totalSizeBytes: sizeDelta } },
@@ -161,24 +181,15 @@ export async function updateBucketStats(
   );
 }
 
-/**
- * Format bytes to human-readable string
- */
 export function formatBytes(bytes: number, decimals: number = 2): string {
   if (bytes === 0) return "0 Bytes";
-
   const k = 1024;
   const dm = decimals < 0 ? 0 : decimals;
   const sizes = ["Bytes", "KB", "MB", "GB", "TB", "PB"];
-
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 }
 
-/**
- * Convert bytes to GB
- */
 export function bytesToGB(bytes: number): number {
   return Number((bytes / (1024 * 1024 * 1024)).toFixed(2));
 }

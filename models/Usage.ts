@@ -13,11 +13,17 @@ export interface IUsage extends Document {
   plan: "free" | "pro" | "enterprise";
   planActivatedAt: Date | null;
   planExpiresAt: Date | null;
+  /** Stored at activation — used for proration instead of byte-matching */
+  planPriceINR: number;
   uploadCount: number;
   downloadCount: number;
   lastActiveAt: Date | null;
   updatedAt: Date;
   createdAt: Date;
+  // Downgrade scheduling
+  scheduledDowngradePlan: string | null;
+  scheduledDowngradeLimitBytes: number | null;
+  scheduledDowngradeAt: Date | null;
 }
 
 const UsageSchema = new Schema<IUsage>(
@@ -32,8 +38,8 @@ const UsageSchema = new Schema<IUsage>(
     totalEgressBytes: { type: Number, default: 0, min: 0 },
     totalObjects: { type: Number, default: 0, min: 0 },
     totalBuckets: { type: Number, default: 0, min: 0 },
-    // 1 TB default storage limit
-    storageLimitBytes: { type: Number, default: 1099511627776 },
+    // 10 GB free tier default
+    storageLimitBytes: { type: Number, default: 10 * 1024 * 1024 * 1024 },
     // 500 GB default egress limit
     egressLimitBytes: { type: Number, default: 536870912000 },
     plan: {
@@ -44,9 +50,14 @@ const UsageSchema = new Schema<IUsage>(
     },
     planActivatedAt: { type: Date, default: null },
     planExpiresAt: { type: Date, default: null },
+    planPriceINR: { type: Number, default: 0 },
     uploadCount: { type: Number, default: 0, min: 0 },
     downloadCount: { type: Number, default: 0, min: 0 },
     lastActiveAt: { type: Date, default: null, index: true },
+    // Scheduled downgrade fields
+    scheduledDowngradePlan: { type: String, default: null },
+    scheduledDowngradeLimitBytes: { type: Number, default: null },
+    scheduledDowngradeAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
