@@ -20,18 +20,21 @@ function addYearStr(date: Date) {
 }
 
 /**
- * Build PayU forward hash string.
+ * PayU forward hash — pipe count verified against live working transaction.
  *
- * Regular (one-time):
- *   key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||SALT
+ * From PayU error response on the working direct payment:
+ *   key|txnid|amount|productinfo|firstname|email|udf1||||||||||SALT
+ *                                                    ^^^^^^^^^^
+ *                                                    8 pipes (udf2-5 + 4 reserved)
  *
- * SI / UPI Autopay (per PayU docs):
- *   key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||si_details|SALT
- *
- * udf2–udf5 are empty strings; the 6 trailing pipes represent
- * additional_charges and 5 reserved fields — all empty.
+ * SI (UPI Autopay) — per PayU docs, si_details inserted before SALT:
+ *   key|txnid|amount|productinfo|firstname|email|udf1||||||||||si_details|SALT
  */
-function buildForwardHash(
+function sha512(str: string): string {
+  return crypto.createHash("sha512").update(str).digest("hex");
+}
+
+function forwardHash(
   key: string,
   salt: string,
   txnid: string,
@@ -42,20 +45,12 @@ function buildForwardHash(
   udf1: string,
   siDetailsStr?: string,
 ): string {
-  const base = `${key}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|${udf1}||||||||||||${salt}`;
-
-  // For SI: insert si_details between the trailing pipes and SALT
-  // Formula: key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||si_details|SALT
-  // Breakdown after email: |udf1|''|''|''|''||||||  = udf1 + udf2 + udf3 + udf4 + udf5 + 6 empty = 10 pipes after udf1
-  const udfAndPipes = `${udf1}|||||||||`; // udf1|udf2|udf3|udf4|udf5||||||  (udf2-5 empty, then 5 more empty fields)
-
+  // 8 pipes after udf1 = udf2|udf3|udf4|udf5|reserved1|reserved2|reserved3|reserved4
+  const core = `${key}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|${udf1}||||||||||`;
   if (siDetailsStr) {
-    const hashStr = `${key}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|${udfAndPipes}|${siDetailsStr}|${salt}`;
-    return crypto.createHash("sha512").update(hashStr).digest("hex");
+    return sha512(`${core}${siDetailsStr}|${salt}`);
   }
-
-  const hashStr = `${key}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|${udfAndPipes}|${salt}`;
-  return crypto.createHash("sha512").update(hashStr).digest("hex");
+  return sha512(`${core}${salt}`);
 }
 
 export async function POST(req: Request) {
@@ -133,7 +128,7 @@ export async function POST(req: Request) {
       ? "https://test.payu.in/_payment"
       : "https://secure.payu.in/_payment";
 
-    const txnid      = "TXN" + Date.now() + crypto.randomBytes(8).toString("hex");
+    const txnid       = "TXN" + Date.now() + crypto.randomBytes(8).toString("hex");
     const productinfo = planName;
     const firstname   = userDoc.name || session.user.name || "User";
     const email       = session.user.email;
@@ -160,9 +155,7 @@ export async function POST(req: Request) {
       };
       const siDetailsStr = JSON.stringify(siDetails);
 
-      // Correct SI forward hash:
-      // key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||si_details|SALT
-      hash = buildForwardHash(key, salt, txnid, formattedAmount, productinfo, firstname, email, udf1, siDetailsStr);
+      hash = forwardHash(key, salt, txnid, formattedAmount, productinfo, firstname, email, udf1, siDetailsStr);
 
       params = {
         key,
@@ -182,9 +175,7 @@ export async function POST(req: Request) {
         si_details: siDetailsStr,
       };
     } else {
-      // Correct regular forward hash:
-      // key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||SALT
-      hash = buildForwardHash(key, salt, txnid, formattedAmount, productinfo, firstname, email, udf1);
+      hash = forwardHash(key, salt, txnid, formattedAmount, productinfo, firstname, email, udf1);
 
       params = {
         key,
