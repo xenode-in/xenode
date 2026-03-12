@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { Navbar } from "@/components/Navbar";
 import PricingComparison from "@/components/PricingComparison";
@@ -6,7 +7,7 @@ import { Button } from "@/components/ui/button";
 export const metadata = {
   title: "Pricing | Xenode",
   description:
-    "Simple, transparent pricing for S3-compatible object storage. Up to 10× cheaper than traditional cloud providers.",
+    "Simple, transparent pricing for our End-to-End Encrypted (E2EE) platform.",
 };
 
 export default function PricingPage() {
@@ -30,13 +31,15 @@ export default function PricingPage() {
 
       {/* Main Content */}
       <main className="flex-1 relative z-10">
-        <PricingComparison />
+        <Suspense fallback={<div>Loading pricing...</div>}>
+          <PricingComparison />
+        </Suspense>
 
         {/* CTA Section */}
         <section className="px-8 pb-20">
           <div className="max-w-[600px] mx-auto text-center">
             <h3 className="text-2xl md:text-3xl font-semibold mb-4 text-[#e8e4d9]">
-              Ready to save on cloud storage?
+              Ready to secure your data?
             </h3>
 
             <Link href="/">
