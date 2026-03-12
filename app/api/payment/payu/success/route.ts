@@ -21,44 +21,32 @@ function toFailurePage(baseUrl: string, params: Record<string, string>) {
 /**
  * Verify PayU reverse hash — supports both regular and SI formats.
  *
- * Regular reverse hash:
- *   SALT|status||||||udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key
- *   (udf2-udf5 are empty, so in practice: SALT|status||||||||||udf1|email|...)
- *
- * SI reverse hash (per PayU docs):
- *   SALT|si_details|status||||||udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key
- *   (si_details comes immediately after SALT, before status)
+ * Regular:  SALT|status||||||udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key
+ * SI:       SALT|si_details|status||||||udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key
  */
 function verifyHash(data: Record<string, string>, salt: string, key: string): boolean {
   const {
     status,
-    udf1 = "",
-    udf2 = "",
-    udf3 = "",
-    udf4 = "",
-    udf5 = "",
-    email,
-    firstname,
-    productinfo,
-    amount,
-    txnid,
+    udf1 = "", udf2 = "", udf3 = "", udf4 = "", udf5 = "",
+    email, firstname, productinfo, amount, txnid,
     hash: resHash,
     si_details,
   } = data;
 
-  // Reverse field order (after status): udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key
   const reversePart = `${udf5}|${udf4}|${udf3}|${udf2}|${udf1}|${email}|${firstname}|${productinfo}|${amount}|${txnid}|${key}`;
 
-  // Try SI reverse hash first if si_details is present
   if (si_details) {
-    const siHashStr = `${salt}|${si_details}|${status}||||||${reversePart}`;
-    const siHash = crypto.createHash("sha512").update(siHashStr).digest("hex");
+    const siHash = crypto
+      .createHash("sha512")
+      .update(`${salt}|${si_details}|${status}||||||${reversePart}`)
+      .digest("hex");
     if (siHash === resHash) return true;
   }
 
-  // Regular reverse hash
-  const hashStr = `${salt}|${status}||||||${reversePart}`;
-  const hash = crypto.createHash("sha512").update(hashStr).digest("hex");
+  const hash = crypto
+    .createHash("sha512")
+    .update(`${salt}|${status}||||||${reversePart}`)
+    .digest("hex");
   return hash === resHash;
 }
 
@@ -77,39 +65,24 @@ export async function POST(req: Request) {
     const hashValid = verifyHash(data, salt, key);
     if (!hashValid) {
       if (process.env.NODE_ENV === "production") {
-        return toFailurePage(req.url, {
-          txnid: txnid ?? "",
-          error: "hash_mismatch",
-          plan: productinfo ?? "",
-          amount: amount ?? "",
-        });
+        return toFailurePage(req.url, { txnid: txnid ?? "", error: "hash_mismatch", plan: productinfo ?? "", amount: amount ?? "" });
       }
       console.warn("[SECURITY WARNING] Hash mismatch bypassed — NOT safe for production");
     }
 
     if (status !== "success") {
-      return toFailurePage(req.url, {
-        txnid: txnid ?? "",
-        error: "payment_failed",
-        plan: productinfo ?? "",
-        amount: amount ?? "",
-      });
+      return toFailurePage(req.url, { txnid: txnid ?? "", error: "payment_failed", plan: productinfo ?? "", amount: amount ?? "" });
     }
 
     // CVE-4: Strict udf1 validation
     if (!udf1 || !mongoose.Types.ObjectId.isValid(udf1)) {
       console.error("[SECURITY] Invalid udf1 in PayU success callback", { txnid });
-      return toFailurePage(req.url, {
-        txnid: txnid ?? "",
-        error: "invalid_session",
-        plan: productinfo ?? "",
-        amount: amount ?? "",
-      });
+      return toFailurePage(req.url, { txnid: txnid ?? "", error: "invalid_session", plan: productinfo ?? "", amount: amount ?? "" });
     }
 
     await dbConnect();
 
-    // CVE-2: Idempotency guard
+    // CVE-2: Idempotency guard — this is the safety net in absence of a transaction
     const existingPayment = await Payment.findOne({ txnid });
     if (existingPayment) {
       return toSuccessPage(req.url, {
@@ -123,12 +96,7 @@ export async function POST(req: Request) {
     const pending = await PendingTransaction.findOne({ txnid, userId: udf1 });
     if (!pending) {
       console.error("[SECURITY] No pending transaction found", { txnid, udf1 });
-      return toFailurePage(req.url, {
-        txnid,
-        error: "transaction_not_found",
-        plan: productinfo ?? "",
-        amount: amount ?? "",
-      });
+      return toFailurePage(req.url, { txnid, error: "transaction_not_found", plan: productinfo ?? "", amount: amount ?? "" });
     }
 
     const db = mongoose.connection.db;
@@ -139,12 +107,7 @@ export async function POST(req: Request) {
       .findOne({ _id: new mongoose.Types.ObjectId(udf1) });
 
     if (!user) {
-      return toFailurePage(req.url, {
-        txnid,
-        error: "user_not_found",
-        plan: productinfo ?? "",
-        amount: amount ?? "",
-      });
+      return toFailurePage(req.url, { txnid, error: "user_not_found", plan: productinfo ?? "", amount: amount ?? "" });
     }
 
     // Persist billing address to user profile if provided
@@ -155,60 +118,45 @@ export async function POST(req: Request) {
       );
     }
 
-    // For UPI Autopay: capture the mandate ID returned by PayU
     const authpayuid = data.payuMoneyId || data.authpayuid || null;
 
-    const mongoSession = await mongoose.startSession();
-    mongoSession.startTransaction();
-    try {
-      await Usage.findOneAndUpdate(
-        { userId: user._id.toString() },
-        {
-          $set: {
-            plan: "pro",
-            storageLimitBytes: pending.storageLimitBytes,
-            planPriceINR: pending.planPriceINR,
-            planActivatedAt: new Date(),
-            planExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
-            scheduledDowngradePlan: null,
-            scheduledDowngradeLimitBytes: null,
-            scheduledDowngradeAt: null,
-            ...(authpayuid ? { autopayMandateId: authpayuid, autopayActive: true } : {}),
-          },
+    // Update Usage — sequential writes; idempotency guard above prevents double-activation
+    await Usage.findOneAndUpdate(
+      { userId: user._id.toString() },
+      {
+        $set: {
+          plan: pending.planName,
+          storageLimitBytes: pending.storageLimitBytes,
+          planPriceINR: pending.planPriceINR,
+          planActivatedAt: new Date(),
+          planExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          scheduledDowngradePlan: null,
+          scheduledDowngradeLimitBytes: null,
+          scheduledDowngradeAt: null,
+          ...(authpayuid ? { autopayMandateId: authpayuid, autopayActive: true } : {}),
         },
-        { upsert: true, session: mongoSession },
-      );
+      },
+      { upsert: true },
+    );
 
-      await Payment.create(
-        [
-          {
-            userId: user._id.toString(),
-            amount: parseFloat(amount),
-            currency: "INR",
-            status: "success",
-            txnid,
-            planName: pending.planName,
-            payuResponse: {
-              status: data.status,
-              txnid: data.txnid,
-              mode: data.mode,
-              PG_TYPE: data.PG_TYPE,
-              bank_ref_num: data.bank_ref_num,
-              ...(authpayuid ? { authpayuid } : {}),
-            },
-          },
-        ],
-        { session: mongoSession },
-      );
+    await Payment.create({
+      userId: user._id.toString(),
+      amount: parseFloat(amount),
+      currency: "INR",
+      status: "success",
+      txnid,
+      planName: pending.planName,
+      payuResponse: {
+        status: data.status,
+        txnid: data.txnid,
+        mode: data.mode,
+        PG_TYPE: data.PG_TYPE,
+        bank_ref_num: data.bank_ref_num,
+        ...(authpayuid ? { authpayuid } : {}),
+      },
+    });
 
-      await mongoSession.commitTransaction();
-    } catch (txnError) {
-      await mongoSession.abortTransaction();
-      throw txnError;
-    } finally {
-      mongoSession.endSession();
-    }
-
+    // CVE-3: Clean up pending transaction
     await PendingTransaction.deleteOne({ txnid });
 
     return toSuccessPage(req.url, {
