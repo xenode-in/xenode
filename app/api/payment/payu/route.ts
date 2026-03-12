@@ -7,7 +7,6 @@ import PendingTransaction from "@/models/PendingTransaction";
 import mongoose from "mongoose";
 import { PLAN_CONFIG } from "@/lib/config/plans";
 
-// Indian mobile number regex
 const PHONE_RE = /^[6-9]\d{9}$/;
 
 function todayStr() {
@@ -20,6 +19,45 @@ function addYearStr(date: Date) {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * Build PayU forward hash string.
+ *
+ * Regular (one-time):
+ *   key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||SALT
+ *
+ * SI / UPI Autopay (per PayU docs):
+ *   key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||si_details|SALT
+ *
+ * udf2–udf5 are empty strings; the 6 trailing pipes represent
+ * additional_charges and 5 reserved fields — all empty.
+ */
+function buildForwardHash(
+  key: string,
+  salt: string,
+  txnid: string,
+  amount: string,
+  productinfo: string,
+  firstname: string,
+  email: string,
+  udf1: string,
+  siDetailsStr?: string,
+): string {
+  const base = `${key}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|${udf1}||||||||||||${salt}`;
+
+  // For SI: insert si_details between the trailing pipes and SALT
+  // Formula: key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||si_details|SALT
+  // Breakdown after email: |udf1|''|''|''|''||||||  = udf1 + udf2 + udf3 + udf4 + udf5 + 6 empty = 10 pipes after udf1
+  const udfAndPipes = `${udf1}|||||||||`; // udf1|udf2|udf3|udf4|udf5||||||  (udf2-5 empty, then 5 more empty fields)
+
+  if (siDetailsStr) {
+    const hashStr = `${key}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|${udfAndPipes}|${siDetailsStr}|${salt}`;
+    return crypto.createHash("sha512").update(hashStr).digest("hex");
+  }
+
+  const hashStr = `${key}|${txnid}|${amount}|${productinfo}|${firstname}|${email}|${udfAndPipes}|${salt}`;
+  return crypto.createHash("sha512").update(hashStr).digest("hex");
+}
+
 export async function POST(req: Request) {
   try {
     const session = await getServerSession();
@@ -30,26 +68,26 @@ export async function POST(req: Request) {
     const body = await req.json();
     const {
       planName,
-      paymentMethod = "direct",   // 'autopay' | 'direct'
+      paymentMethod = "direct",
       phone: clientPhone,
       billingAddress,
     } = body;
 
-    // Validate planName against server-authoritative allowlist
     const plan = PLAN_CONFIG[planName];
     if (!plan) {
       return NextResponse.json({ error: "Invalid plan selection" }, { status: 400 });
     }
 
-    // Validate paymentMethod
     if (paymentMethod !== "autopay" && paymentMethod !== "direct") {
       return NextResponse.json({ error: "Invalid payment method" }, { status: 400 });
     }
 
-    // Validate phone — must be a valid Indian mobile number (CVE-9 fix)
     const phone = typeof clientPhone === "string" ? clientPhone.replace(/\s/g, "") : "";
     if (!PHONE_RE.test(phone)) {
-      return NextResponse.json({ error: "Invalid phone number. Enter a 10-digit Indian mobile number." }, { status: 400 });
+      return NextResponse.json(
+        { error: "Invalid phone number. Enter a 10-digit Indian mobile number." },
+        { status: 400 },
+      );
     }
 
     let finalAmount = plan.priceINR;
@@ -73,7 +111,6 @@ export async function POST(req: Request) {
 
     const currentUsage = await Usage.findOne({ userId: session.user.id });
 
-    // Proration: credit unused days of current active plan
     if (
       currentUsage &&
       currentUsage.plan !== "free" &&
@@ -96,9 +133,7 @@ export async function POST(req: Request) {
       ? "https://test.payu.in/_payment"
       : "https://secure.payu.in/_payment";
 
-    // CVE-7: cryptographically secure txnid
-    const txnid = "TXN" + Date.now() + crypto.randomBytes(8).toString("hex");
-
+    const txnid      = "TXN" + Date.now() + crypto.randomBytes(8).toString("hex");
     const productinfo = planName;
     const firstname   = userDoc.name || session.user.name || "User";
     const email       = session.user.email;
@@ -110,29 +145,24 @@ export async function POST(req: Request) {
     const surl    = `${baseUrl}/api/payment/payu/success`;
     const furl    = `${baseUrl}/api/payment/payu/failure`;
 
-    // Build SI details for UPI Autopay mandate
-    let siDetails = null;
+    let siDetails: object | null = null;
     let params: Record<string, string>;
     let hash: string;
-
-    const today = todayStr();
-    const endDate = addYearStr(new Date());
 
     if (paymentMethod === "autopay") {
       siDetails = {
         billingAmount: formattedAmount,
-        billingCycle: "MONTHLY" as const,
+        billingCycle: "MONTHLY",
         billingInterval: 1,
-        paymentStartDate: today,
-        paymentEndDate: endDate,
+        paymentStartDate: todayStr(),
+        paymentEndDate: addYearStr(new Date()),
         remarks: `Xenode ${planName} monthly`,
       };
-
       const siDetailsStr = JSON.stringify(siDetails);
 
-      // SI hash: key|txnid|amount|productinfo|firstname|email|udf1||||||||||salt|si_details
-      const siHashString = `${key}|${txnid}|${formattedAmount}|${productinfo}|${firstname}|${email}|${udf1}||||||||||${salt}|${siDetailsStr}`;
-      hash = crypto.createHash("sha512").update(siHashString).digest("hex");
+      // Correct SI forward hash:
+      // key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||si_details|SALT
+      hash = buildForwardHash(key, salt, txnid, formattedAmount, productinfo, firstname, email, udf1, siDetailsStr);
 
       params = {
         key,
@@ -146,16 +176,15 @@ export async function POST(req: Request) {
         surl,
         furl,
         hash,
-        // UPI Autopay SI fields
         pg: "UPI",
         bankcode: "UPI",
         si: "1",
         si_details: siDetailsStr,
       };
     } else {
-      // Regular one-time payment hash
-      const hashString = `${key}|${txnid}|${formattedAmount}|${productinfo}|${firstname}|${email}|${udf1}||||||||||${salt}`;
-      hash = crypto.createHash("sha512").update(hashString).digest("hex");
+      // Correct regular forward hash:
+      // key|txnid|amount|productinfo|firstname|email|udf1|udf2|udf3|udf4|udf5||||||SALT
+      hash = buildForwardHash(key, salt, txnid, formattedAmount, productinfo, firstname, email, udf1);
 
       params = {
         key,
@@ -172,7 +201,6 @@ export async function POST(req: Request) {
       };
     }
 
-    // CVE-3: persist intended plan + method server-side with 1-hour TTL
     await PendingTransaction.create({
       txnid,
       userId: session.user.id,

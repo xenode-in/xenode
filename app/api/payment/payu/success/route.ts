@@ -6,8 +6,6 @@ import Payment from "@/models/Payment";
 import PendingTransaction from "@/models/PendingTransaction";
 import mongoose from "mongoose";
 
-// ── helpers ──────────────────────────────────────────────────────────────
-
 function toSuccessPage(baseUrl: string, params: Record<string, string>) {
   const url = new URL("/payment/success", baseUrl);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
@@ -21,28 +19,48 @@ function toFailurePage(baseUrl: string, params: Record<string, string>) {
 }
 
 /**
- * Verify PayU reverse hash.
- * Supports both regular and SI (UPI Autopay mandate) formats:
- *   Regular : salt|status||||||||||udf1|email|firstname|productinfo|amount|txnid|key
- *   SI      : salt|status||||||||||udf1|email|firstname|productinfo|amount|txnid|key|si_details
+ * Verify PayU reverse hash — supports both regular and SI formats.
+ *
+ * Regular reverse hash:
+ *   SALT|status||||||udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key
+ *   (udf2-udf5 are empty, so in practice: SALT|status||||||||||udf1|email|...)
+ *
+ * SI reverse hash (per PayU docs):
+ *   SALT|si_details|status||||||udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key
+ *   (si_details comes immediately after SALT, before status)
  */
 function verifyHash(data: Record<string, string>, salt: string, key: string): boolean {
-  const { status, udf1, email, firstname, productinfo, amount, txnid, hash: resHash, si_details } = data;
+  const {
+    status,
+    udf1 = "",
+    udf2 = "",
+    udf3 = "",
+    udf4 = "",
+    udf5 = "",
+    email,
+    firstname,
+    productinfo,
+    amount,
+    txnid,
+    hash: resHash,
+    si_details,
+  } = data;
 
-  // Try SI hash first if si_details is present
+  // Reverse field order (after status): udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key
+  const reversePart = `${udf5}|${udf4}|${udf3}|${udf2}|${udf1}|${email}|${firstname}|${productinfo}|${amount}|${txnid}|${key}`;
+
+  // Try SI reverse hash first if si_details is present
   if (si_details) {
-    const siHashStr = `${salt}|${status}||||||||||${udf1}|${email}|${firstname}|${productinfo}|${amount}|${txnid}|${key}|${si_details}`;
+    const siHashStr = `${salt}|${si_details}|${status}||||||${reversePart}`;
     const siHash = crypto.createHash("sha512").update(siHashStr).digest("hex");
     if (siHash === resHash) return true;
   }
 
-  // Fall back to regular hash
-  const hashStr = `${salt}|${status}||||||||||${udf1}|${email}|${firstname}|${productinfo}|${amount}|${txnid}|${key}`;
+  // Regular reverse hash
+  const hashStr = `${salt}|${status}||||||${reversePart}`;
   const hash = crypto.createHash("sha512").update(hashStr).digest("hex");
   return hash === resHash;
 }
-
-// ── route ──────────────────────────────────────────────────────────────────
 
 export async function POST(req: Request) {
   try {
@@ -53,25 +71,40 @@ export async function POST(req: Request) {
     const key  = process.env.PAYU_MERCHANT_KEY  || "";
     const salt = process.env.PAYU_MERCHANT_SALT || "";
 
-    const { status, firstname, amount, txnid, productinfo, email, udf1 } = data;
+    const { status, amount, txnid, productinfo, udf1 } = data;
 
-    // CVE-1: Hash verification — supports both SI and regular formats
+    // CVE-1: Hash verification
     const hashValid = verifyHash(data, salt, key);
     if (!hashValid) {
       if (process.env.NODE_ENV === "production") {
-        return toFailurePage(req.url, { txnid: txnid ?? "", error: "hash_mismatch", plan: productinfo ?? "", amount: amount ?? "" });
+        return toFailurePage(req.url, {
+          txnid: txnid ?? "",
+          error: "hash_mismatch",
+          plan: productinfo ?? "",
+          amount: amount ?? "",
+        });
       }
       console.warn("[SECURITY WARNING] Hash mismatch bypassed — NOT safe for production");
     }
 
     if (status !== "success") {
-      return toFailurePage(req.url, { txnid: txnid ?? "", error: "payment_failed", plan: productinfo ?? "", amount: amount ?? "" });
+      return toFailurePage(req.url, {
+        txnid: txnid ?? "",
+        error: "payment_failed",
+        plan: productinfo ?? "",
+        amount: amount ?? "",
+      });
     }
 
     // CVE-4: Strict udf1 validation
     if (!udf1 || !mongoose.Types.ObjectId.isValid(udf1)) {
       console.error("[SECURITY] Invalid udf1 in PayU success callback", { txnid });
-      return toFailurePage(req.url, { txnid: txnid ?? "", error: "invalid_session", plan: productinfo ?? "", amount: amount ?? "" });
+      return toFailurePage(req.url, {
+        txnid: txnid ?? "",
+        error: "invalid_session",
+        plan: productinfo ?? "",
+        amount: amount ?? "",
+      });
     }
 
     await dbConnect();
@@ -89,8 +122,13 @@ export async function POST(req: Request) {
     // CVE-3: Resolve plan from server-side PendingTransaction
     const pending = await PendingTransaction.findOne({ txnid, userId: udf1 });
     if (!pending) {
-      console.error("[SECURITY] No pending transaction found for txnid", { txnid, udf1 });
-      return toFailurePage(req.url, { txnid, error: "transaction_not_found", plan: productinfo ?? "", amount: amount ?? "" });
+      console.error("[SECURITY] No pending transaction found", { txnid, udf1 });
+      return toFailurePage(req.url, {
+        txnid,
+        error: "transaction_not_found",
+        plan: productinfo ?? "",
+        amount: amount ?? "",
+      });
     }
 
     const db = mongoose.connection.db;
@@ -101,7 +139,12 @@ export async function POST(req: Request) {
       .findOne({ _id: new mongoose.Types.ObjectId(udf1) });
 
     if (!user) {
-      return toFailurePage(req.url, { txnid, error: "user_not_found", plan: productinfo ?? "", amount: amount ?? "" });
+      return toFailurePage(req.url, {
+        txnid,
+        error: "user_not_found",
+        plan: productinfo ?? "",
+        amount: amount ?? "",
+      });
     }
 
     // Persist billing address to user profile if provided
@@ -112,10 +155,9 @@ export async function POST(req: Request) {
       );
     }
 
-    // For UPI Autopay: capture the authpayuid returned by PayU
+    // For UPI Autopay: capture the mandate ID returned by PayU
     const authpayuid = data.payuMoneyId || data.authpayuid || null;
 
-    // CVE-2: Atomic transaction
     const mongoSession = await mongoose.startSession();
     mongoSession.startTransaction();
     try {
@@ -131,14 +173,12 @@ export async function POST(req: Request) {
             scheduledDowngradePlan: null,
             scheduledDowngradeLimitBytes: null,
             scheduledDowngradeAt: null,
-            // Store autopay mandate ID for recurring charge cron
             ...(authpayuid ? { autopayMandateId: authpayuid, autopayActive: true } : {}),
           },
         },
         { upsert: true, session: mongoSession },
       );
 
-      // CVE-8: Only persist safe, non-PII fields
       await Payment.create(
         [
           {
@@ -169,7 +209,6 @@ export async function POST(req: Request) {
       mongoSession.endSession();
     }
 
-    // CVE-3: Clean up pending transaction
     await PendingTransaction.deleteOne({ txnid });
 
     return toSuccessPage(req.url, {
