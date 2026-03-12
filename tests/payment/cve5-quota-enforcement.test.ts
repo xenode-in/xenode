@@ -3,11 +3,16 @@
  *
  * Tests that /api/objects/presign-upload refuses to issue a presigned URL
  * when the user's storage is at or over their plan limit.
+ *
+ * FIX NOTES:
+ * - Usage is a default export; use default import not named destructure.
+ *   { Usage } = import('@/models/Usage') returns undefined because models
+ *   export `export default model(...)` not `export const Usage`.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { makeUserId, createUsage, PRO_100_BYTES, FREE_TIER_BYTES } from "../helpers/factories";
-import mongoose from "mongoose";
+import Usage from "@/models/Usage";           // ← default import (fixed)
 import Bucket from "@/models/Bucket";
+import { makeUserId, createUsage, PRO_100_BYTES, FREE_TIER_BYTES } from "../helpers/factories";
 
 async function seedBucket(userId: string) {
   return Bucket.create({
@@ -20,7 +25,6 @@ async function seedBucket(userId: string) {
 
 describe("CVE-5 — Quota Enforcement at Presign", () => {
   beforeEach(() => {
-    // Mock B2 S3 client to prevent real network calls
     vi.mock("@aws-sdk/client-s3", () => ({ S3Client: vi.fn(), PutObjectCommand: vi.fn() }));
     vi.mock("@aws-sdk/s3-request-presigner", () => ({
       getSignedUrl: vi.fn().mockResolvedValue("https://b2.example.com/presigned-url"),
@@ -78,18 +82,16 @@ describe("CVE-5 — Quota Enforcement at Presign", () => {
     const { requireAuth } = await import("@/lib/auth/session");
     vi.mocked(requireAuth).mockResolvedValue({ user: { id: userId } } as any);
 
-    // User was on Pro 100GB but plan expired; usage is only 1GB
     await createUsage({
       userId,
       plan: "pro",
       totalStorageBytes: 1 * 1024 * 1024 * 1024,
       storageLimitBytes: PRO_100_BYTES,
-      planExpiresAt: new Date(Date.now() - 1000), // expired 1 second ago
+      planExpiresAt: new Date(Date.now() - 1000),
       planPriceINR: 149,
     });
     const bucket = await seedBucket(userId);
 
-    // File that fits in free tier (1GB used + 100MB file < 10GB free limit)
     const req = new Request("http://localhost/api/objects/presign-upload", {
       method: "POST",
       body: JSON.stringify({
@@ -102,10 +104,9 @@ describe("CVE-5 — Quota Enforcement at Presign", () => {
 
     const { POST } = await import("@/app/api/objects/presign-upload/route");
     const res = await POST(req as any);
-    // Quota is 1GB + 100MB < 10GB — should succeed after inline downgrade
     expect(res.status).toBe(200);
 
-    const { Usage } = await import("@/models/Usage");
+    // ← fixed: default import at top of file, not dynamic named destructure
     const usage = await Usage.findOne({ userId });
     expect(usage?.plan).toBe("free");
     expect(usage?.storageLimitBytes).toBe(FREE_TIER_BYTES);

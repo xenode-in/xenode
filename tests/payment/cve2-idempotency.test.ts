@@ -3,12 +3,20 @@
  *
  * Tests that replaying the PayU success callback with the same txnid
  * does NOT re-upgrade the user's storage quota or create duplicate Payment records.
+ *
+ * FIX NOTES:
+ * seedUser(userId) is required before any success callback test because the
+ * route does db.collection('user').findOne() and aborts if user is missing.
  */
 import { describe, it, expect, beforeEach } from "vitest";
-import crypto from "crypto";
 import Usage from "@/models/Usage";
 import Payment from "@/models/Payment";
-import { computePayuHash, makeUserId, makeTxnid, createUsage, createPendingTxn, createPayment, PRO_100_BYTES, FREE_TIER_BYTES } from "../helpers/factories";
+import {
+  computePayuHash, makeUserId, makeTxnid,
+  createUsage, createPendingTxn, createPayment,
+  seedUser,
+  PRO_100_BYTES, FREE_TIER_BYTES,
+} from "../helpers/factories";
 
 const PAYU_KEY  = "test_key";
 const PAYU_SALT = "test_salt";
@@ -34,12 +42,13 @@ describe("CVE-2 — Idempotency", () => {
   beforeEach(() => {
     process.env.PAYU_MERCHANT_KEY  = PAYU_KEY;
     process.env.PAYU_MERCHANT_SALT = PAYU_SALT;
-    process.env.NODE_ENV = "development"; // skip hash for isolation
+    process.env.NODE_ENV = "development";
   });
 
   it("processes a first-time success callback and upgrades quota exactly once", async () => {
     const userId = makeUserId();
     const txnid  = makeTxnid();
+    await seedUser(userId);                    // ← required: success route verifies user exists
     await createUsage({ userId });
     await createPendingTxn({ txnid, userId, storageLimitBytes: PRO_100_BYTES, planPriceINR: 149 });
 
@@ -62,6 +71,7 @@ describe("CVE-2 — Idempotency", () => {
   it("replaying the same txnid does NOT double-upgrade quota", async () => {
     const userId = makeUserId();
     const txnid  = makeTxnid();
+    await seedUser(userId);
     await createUsage({ userId });
     await createPendingTxn({ txnid, userId, storageLimitBytes: PRO_100_BYTES, planPriceINR: 149 });
 
@@ -75,11 +85,9 @@ describe("CVE-2 — Idempotency", () => {
     await POST(makeReq() as any); // replay
     await POST(makeReq() as any); // replay again
 
-    // Usage should still only reflect one upgrade
     const usage = await Usage.findOne({ userId });
     expect(usage?.storageLimitBytes).toBe(PRO_100_BYTES);
 
-    // Payment records must be exactly 1 (unique txnid)
     const payments = await Payment.find({ txnid });
     expect(payments).toHaveLength(1);
   });
@@ -87,7 +95,7 @@ describe("CVE-2 — Idempotency", () => {
   it("replaying after a successful payment returns success redirect without DB write", async () => {
     const userId = makeUserId();
     const txnid  = makeTxnid();
-    // Pre-seed: payment already exists (already processed)
+    await seedUser(userId);
     await createUsage({ userId, plan: "pro", storageLimitBytes: PRO_100_BYTES });
     await createPayment({ userId, txnid, status: "success" });
 
@@ -100,9 +108,7 @@ describe("CVE-2 — Idempotency", () => {
     const res = await POST(req as any);
     const body = await res.text();
 
-    // Should redirect to success
     expect(body).toContain("success=true");
-    // Payment count must still be 1
     const payments = await Payment.find({ txnid });
     expect(payments).toHaveLength(1);
   });
@@ -110,6 +116,7 @@ describe("CVE-2 — Idempotency", () => {
   it("resets planExpiresAt to a fresh 30 days only once, not on replay", async () => {
     const userId = makeUserId();
     const txnid  = makeTxnid();
+    await seedUser(userId);
     await createUsage({ userId });
     await createPendingTxn({ txnid, userId, storageLimitBytes: PRO_100_BYTES, planPriceINR: 149 });
 
@@ -127,7 +134,6 @@ describe("CVE-2 — Idempotency", () => {
     await POST(makeReq() as any); // replay
 
     const second = await Usage.findOne({ userId });
-    // planExpiresAt must not change on replay
     expect(second?.planExpiresAt?.getTime()).toBe(firstExpiry);
   });
 });
