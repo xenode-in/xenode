@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
 import { logRequest } from "@/lib/logRequest";
+import { randomBytes } from "crypto";
 
 export const dynamic = "force-dynamic";
 import dbConnect from "@/lib/mongodb";
@@ -10,7 +11,11 @@ import { uploadObject } from "@/lib/b2/objects";
 import { incrementStorage, updateBucketStats } from "@/lib/metering/usage";
 
 /**
- * POST /api/objects/upload - Upload a file
+ * POST /api/objects/upload - Direct (non-presigned) file upload.
+ *
+ * GAP-4: Object key is generated server-side as an opaque random hex string.
+ * The original filename NEVER appears in the B2 storage path or MongoDB key field.
+ * Display name must be stored exclusively in StorageObject.encryptedName.
  */
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
@@ -25,7 +30,9 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     const bucketId = formData.get("bucketId") as string | null;
-    const prefix = (formData.get("prefix") as string | null) || "";
+    // encryptedName is the AES-GCM encrypted display name from the client
+    const encryptedName = formData.get("encryptedName") as string | null;
+    const isEncrypted = formData.get("isEncrypted") === "true";
 
     if (!file) {
       statusCode = 400;
@@ -41,7 +48,6 @@ export async function POST(request: NextRequest) {
 
     await dbConnect();
 
-    // Verify bucket ownership
     const bucket = await Bucket.findOne({
       _id: bucketId,
       $or: [{ userId }, { userId: "system" }],
@@ -54,28 +60,25 @@ export async function POST(request: NextRequest) {
     }
 
     if (bucket.userId === "system") {
-      if (!prefix.startsWith(`users/${userId}/`)) {
-        statusCode = 403;
-        errorMessage = "Access denied to this folder";
-        return NextResponse.json(
-          { error: errorMessage },
-          { status: statusCode },
-        );
-      }
+      // System bucket — ownership validated above, opaque key will be scoped to userId
     }
 
-    const key = `${prefix}${file.name}`;
+    /**
+     * GAP-4: Opaque key — never use file.name as the storage key.
+     * Format: users/{userId}/{randomHex32}
+     */
+    const opaqueKey = `users/${userId}/${randomBytes(16).toString("hex")}`;
+
     const buffer = Buffer.from(await file.arrayBuffer());
     const size = buffer.length;
     const contentType = file.type || "application/octet-stream";
     const b2BucketName = bucket.b2BucketId;
 
-    // Upload to B2
     let uploadResult: { etag: string; b2FileId: string };
     try {
       uploadResult = await uploadObject(
         b2BucketName,
-        key,
+        opaqueKey, // opaque key — not filename
         buffer,
         contentType,
         size,
@@ -87,38 +90,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    // Check if object already exists (overwrite scenario)
-    const existingObject = await StorageObject.findOne({
-      bucketId: bucket._id,
-      key,
-    });
-    if (existingObject) {
-      const sizeDiff = size - existingObject.size;
-      existingObject.size = size;
-      existingObject.contentType = contentType;
-      existingObject.b2FileId = uploadResult.b2FileId;
-      await existingObject.save();
-
-      if (sizeDiff !== 0) {
-        await incrementStorage(userId, sizeDiff);
-        await updateBucketStats(bucket._id.toString(), 0, sizeDiff);
-      }
-
-      return NextResponse.json({ object: existingObject }, { status: 200 });
-    }
-
-    // Create object record
+    // Create object record — key is opaque, display name is in encryptedName
     const storageObject = await StorageObject.create({
       bucketId: bucket._id,
       userId,
-      key,
+      key: opaqueKey,
       size,
       contentType,
       b2FileId: uploadResult.b2FileId,
+      isEncrypted,
+      encryptedName: encryptedName ?? undefined,
     });
 
-    // Update usage
-    await incrementStorage(userId, size);
+    await incrementStorage(userId, size, { contentType, bucketId, isEncrypted });
     await updateBucketStats(bucket._id.toString(), 1, size);
 
     statusCode = 201;
@@ -127,6 +111,11 @@ export async function POST(request: NextRequest) {
     if (error instanceof Error && error.message === "Unauthorized") {
       statusCode = 401;
       errorMessage = "Unauthorized";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    }
+    if (error instanceof Error && error.message === "QUOTA_EXCEEDED") {
+      statusCode = 402;
+      errorMessage = "Storage quota exceeded";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
     statusCode = 500;
