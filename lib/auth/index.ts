@@ -1,20 +1,32 @@
 import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
-import { MongoClient } from "mongodb";
+import dbConnect from "@/lib/mongodb";
+import mongoose from "mongoose";
+
+/**
+ * GAP-3: Reuse the existing Mongoose connection's native db client for better-auth.
+ * This eliminates the duplicate standalone MongoClient that was previously created,
+ * reducing connection pool overhead and enabling future cross-collection transactions.
+ *
+ * Pattern: lazy singleton that waits for Mongoose to be connected before
+ * handing the native db reference to better-auth.
+ */
+async function getDb() {
+  await dbConnect();
+  const db = mongoose.connection.db;
+  if (!db) throw new Error("MongoDB connection not established");
+  return db;
+}
 
 function createAuth() {
-  const MONGODB_URI = process.env.MONGODB_URI;
-
-  if (!MONGODB_URI) {
-    throw new Error("MONGODB_URI environment variable is required");
-  }
-
-  const client = new MongoClient(MONGODB_URI);
-  const db = client.db();
+  // We pass a db-getter-compatible adapter.
+  // better-auth mongodbAdapter accepts a db promise as well.
+  const dbPromise = getDb();
 
   return betterAuth({
-    database: mongodbAdapter(db, {
+    database: mongodbAdapter(dbPromise as any, {
       usePlural: false,
+      // transaction: false is kept for now — enabling requires replica set
       transaction: false,
     }),
     secret: process.env.BETTER_AUTH_SECRET,
@@ -67,7 +79,7 @@ function createAuth() {
   });
 }
 
-// Lazy singleton pattern to avoid initialization during build
+// Lazy singleton — avoids initialization during build
 let _auth: ReturnType<typeof createAuth> | null = null;
 
 export function getAuth() {
