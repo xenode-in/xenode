@@ -1,6 +1,6 @@
 import { MetadataRoute } from "next";
 import { getAllSlugs as getBlogSlugs } from "@/lib/blog";
-import { getAllSlugs as getChangelogSlugs } from "@/lib/changelog";
+import { getAllChangelogEntries as getChangelogSlugs } from "@/lib/changelog";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
