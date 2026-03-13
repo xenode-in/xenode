@@ -8,6 +8,7 @@ import React, {
   useEffect,
   useRef,
 } from "react";
+import { useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { encryptFile, encryptFileChunked } from "@/lib/crypto/fileEncryption";
 import { toB64 } from "@/lib/crypto/utils";
@@ -84,6 +85,10 @@ const generateThumbnail = (file: File): Promise<string | undefined> => {
 };
 
 export function UploadProvider({ children }: { children: React.ReactNode }) {
+  const { data: session } = useSession();
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+
   const [tasks, setTasks] = useState<UploadTask[]>([]);
   const [activeUploads, setActiveUploads] = useState(0);
   const uploadingIds = useRef(new Set<string>());
@@ -98,15 +103,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
    * Determine whether we should encrypt this upload.
    * Requires BOTH:
    *  1. Vault is unlocked (publicKey in memory), AND
-   *  2. User has opted in via Settings toggle (localStorage pref)
+   *  2. User has opted in via User Model preference (session.user.encryptByDefault)
    */
   function shouldEncryptNow(): boolean {
     if (!cryptoPublicKeyRef.current) return false;
-    try {
-      return localStorage.getItem("xenode.encryptUploads") === "true";
-    } catch {
-      return false;
-    }
+    // @ts-expect-error additionalFields
+    return sessionRef.current?.user?.encryptByDefault || false;
   }
 
   // Prevent page reload/close during active uploads

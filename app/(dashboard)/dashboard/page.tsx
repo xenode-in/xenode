@@ -31,7 +31,7 @@ export default async function DashboardPage() {
   const { usage, recentBuckets } = await getDashboardData(session.user.id);
 
   const storageUsedGB = bytesToGB(usage.totalStorageBytes);
-  const storageLimitGB = bytesToGB(usage.storageLimitBytes);
+  const storageLimitGB = bytesToGB(usage.storageLimitBytes || 0);
   const storagePercent =
     storageLimitGB > 0
       ? Math.min((storageUsedGB / storageLimitGB) * 100, 100)
