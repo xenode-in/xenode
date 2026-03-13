@@ -6,13 +6,28 @@ import { useTheme } from "next-themes";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
-import { authClient } from "@/lib/auth/client";
+import { authClient, useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { generateRecoveryKit, formatRecoveryKitDownload } from "@/lib/crypto/recovery";
 import {
-  Moon, Sun, Monitor, Shield, ArrowRight, ExternalLink,
-  ChevronLeft, CheckCircle2, KeyRound, ShieldCheck,
-  Copy, Download, AlertTriangle, Eye, EyeOff,
+  generateRecoveryKit,
+  formatRecoveryKitDownload,
+} from "@/lib/crypto/recovery";
+import {
+  Moon,
+  Sun,
+  Monitor,
+  Shield,
+  ArrowRight,
+  ExternalLink,
+  ChevronLeft,
+  CheckCircle2,
+  KeyRound,
+  ShieldCheck,
+  Copy,
+  Download,
+  AlertTriangle,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { WelcomeBalloons } from "@/components/onboarding/WelcomeBalloons";
@@ -22,7 +37,12 @@ import { WellDone } from "@/components/onboarding/WellDone";
 
 import { Button } from "@/components/ui/button";
 import {
-  Form, FormControl, FormDescription, FormField, FormItem, FormLabel,
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
 } from "@/components/ui/form";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
@@ -43,6 +63,7 @@ export function OnboardingForm() {
   const router = useRouter();
   const { setTheme, theme } = useTheme();
   const { setup } = useCrypto();
+  const { data: session } = useSession();
   const [isPending, startTransition] = useTransition();
   const [mounted, setMounted] = useState(false);
 
@@ -65,7 +86,9 @@ export function OnboardingForm() {
   // ─── Step 3: recovery kit ───
   const [kitSaved, setKitSaved] = useState(false);
 
-  useEffect(() => { setMounted(true); }, []);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const form = useForm({
     resolver: zodResolver(onboardingSchema),
@@ -87,24 +110,42 @@ export function OnboardingForm() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "xenode-recovery-kit.txt";
+    
+    // Sanitize user name for filename
+    const userName = session?.user?.name || "user";
+    const sanitizedName = userName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    
+    a.download = `xenode-recovery-kit-${sanitizedName}.txt`;
     a.click();
     URL.revokeObjectURL(url);
     toast.success("Recovery kit downloaded");
-  }, [kit]);
+  }, [kit, session]);
 
   function handlePasswordNext() {
     setPwError("");
-    if (vaultPassword.length < 8) { setPwError("Password must be at least 8 characters."); return; }
-    if (vaultPassword !== vaultConfirm) { setPwError("Passwords don't match."); return; }
+    if (vaultPassword.length < 8) {
+      setPwError("Password must be at least 8 characters.");
+      return;
+    }
+    if (vaultPassword !== vaultConfirm) {
+      setPwError("Passwords don't match.");
+      return;
+    }
     setStep(3);
   }
 
-  const nextStep = () => { if (step < totalSteps) setStep(step + 1); };
-  const prevStep = () => { if (step > 1) setStep(step - 1); };
+  const nextStep = () => {
+    if (step < totalSteps) setStep(step + 1);
+  };
+  const prevStep = () => {
+    if (step > 1) setStep(step - 1);
+  };
 
   async function onSubmit(data: OnboardingValues) {
-    if (step !== totalSteps) { nextStep(); return; }
+    if (step !== totalSteps) {
+      nextStep();
+      return;
+    }
 
     startTransition(async () => {
       try {
@@ -147,13 +188,21 @@ export function OnboardingForm() {
         {/* Progress bar */}
         <div className="flex justify-between items-center mb-6">
           {step > 1 && step < totalSteps ? (
-            <Button variant="ghost" size="sm" onClick={prevStep} className="-ml-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={prevStep}
+              className="-ml-2"
+            >
               <ChevronLeft className="mr-2 h-4 w-4" /> Back
             </Button>
-          ) : <div />}
+          ) : (
+            <div />
+          )}
           <div className="flex gap-1">
             {Array.from({ length: totalSteps }).map((_, i) => (
-              <div key={i}
+              <div
+                key={i}
                 className={`h-2 w-8 rounded-full transition-colors ${
                   step >= i + 1 ? "bg-primary" : "bg-muted"
                 }`}
@@ -166,17 +215,25 @@ export function OnboardingForm() {
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
             <div className="overflow-hidden min-h-[400px]">
               <AnimatePresence mode="wait">
-
                 {/* ───── STEP 1: Welcome ───── */}
                 {step === 1 && (
-                  <motion.div key="step1" variants={slideVariants} initial="hidden" animate="visible" exit="exit"
-                    className="flex flex-col items-center text-center space-y-6">
+                  <motion.div
+                    key="step1"
+                    variants={slideVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    className="flex flex-col items-center text-center space-y-6"
+                  >
                     <WelcomeBalloons className="h-64 w-auto drop-shadow-sm" />
                     <div className="space-y-2">
-                      <h2 className="text-3xl font-bold tracking-tight">Welcome into Xenode!</h2>
+                      <h2 className="text-3xl font-bold tracking-tight">
+                        Welcome into Xenode!
+                      </h2>
                       <p className="text-muted-foreground px-4 text-balance">
                         We’re thrilled to have you. Let’s get your account
-                        personalized and set up perfectly for your needs in just a few clicks.
+                        personalized and set up perfectly for your needs in just
+                        a few clicks.
                       </p>
                     </div>
                   </motion.div>
@@ -184,16 +241,25 @@ export function OnboardingForm() {
 
                 {/* ───── STEP 2: Vault Master Password ───── */}
                 {step === 2 && (
-                  <motion.div key="step2" variants={slideVariants} initial="hidden" animate="visible" exit="exit"
-                    className="space-y-5">
+                  <motion.div
+                    key="step2"
+                    variants={slideVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    className="space-y-5"
+                  >
                     <div className="flex flex-col items-center text-center space-y-2">
                       <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
                         <KeyRound className="h-7 w-7 text-primary" />
                       </div>
-                      <h2 className="text-2xl font-bold">Create your master password</h2>
+                      <h2 className="text-2xl font-bold">
+                        Create your master password
+                      </h2>
                       <p className="text-muted-foreground text-sm max-w-sm">
-                        This password encrypts your files. It never leaves your device.
-                        Choose something strong — you’ll need it on every new device.
+                        This password encrypts your files. It never leaves your
+                        device. Choose something strong — you’ll need it on
+                        every new device.
                       </p>
                     </div>
 
@@ -210,15 +276,24 @@ export function OnboardingForm() {
                             autoComplete="new-password"
                             className="pr-10"
                           />
-                          <button type="button" onClick={() => setShowPw(v => !v)}
+                          <button
+                            type="button"
+                            onClick={() => setShowPw((v) => !v)}
                             className="absolute inset-y-0 right-3 flex items-center text-muted-foreground hover:text-foreground"
-                            tabIndex={-1}>
-                            {showPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                            tabIndex={-1}
+                          >
+                            {showPw ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
                           </button>
                         </div>
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="ob-vault-confirm">Confirm password</Label>
+                        <Label htmlFor="ob-vault-confirm">
+                          Confirm password
+                        </Label>
                         <Input
                           id="ob-vault-confirm"
                           type={showPw ? "text" : "password"}
@@ -226,14 +301,24 @@ export function OnboardingForm() {
                           onChange={(e) => setVaultConfirm(e.target.value)}
                           placeholder="Repeat your password"
                           autoComplete="new-password"
-                          onKeyDown={(e) => { if (e.key === "Enter") handlePasswordNext(); }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handlePasswordNext();
+                          }}
                         />
                       </div>
-                      {pwError && <p className="text-sm text-destructive">{pwError}</p>}
+                      {pwError && (
+                        <p className="text-sm text-destructive">{pwError}</p>
+                      )}
 
                       <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-xs text-muted-foreground space-y-1">
-                        <p className="font-medium text-foreground text-sm">Why a separate password?</p>
-                        <p>Your login (Google, GitHub, or email) is separate from your vault. This ensures even Xenode can’t read your files.</p>
+                        <p className="font-medium text-foreground text-sm">
+                          Why a separate password?
+                        </p>
+                        <p>
+                          Your login (Google, GitHub, or email) is separate from
+                          your vault. This ensures even Xenode can’t read your
+                          files.
+                        </p>
                       </div>
                     </div>
                   </motion.div>
@@ -241,33 +326,57 @@ export function OnboardingForm() {
 
                 {/* ───── STEP 3: Recovery Kit ───── */}
                 {step === 3 && (
-                  <motion.div key="step3" variants={slideVariants} initial="hidden" animate="visible" exit="exit"
-                    className="space-y-4">
+                  <motion.div
+                    key="step3"
+                    variants={slideVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    className="space-y-4"
+                  >
                     <div className="flex flex-col items-center text-center space-y-2">
                       <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
                         <ShieldCheck className="h-7 w-7 text-primary" />
                       </div>
-                      <h2 className="text-2xl font-bold">Save your Recovery Kit</h2>
+                      <h2 className="text-2xl font-bold">
+                        Save your Recovery Kit
+                      </h2>
                       <p className="text-muted-foreground text-sm max-w-sm">
-                        If you ever forget your master password, these 12 words are your only backup.
-                        Store them somewhere safe — offline is best.
+                        If you ever forget your master password, these 12 words
+                        are your only backup. Store them somewhere safe —
+                        offline is best.
                       </p>
                     </div>
 
                     <div className="grid grid-cols-3 gap-2">
                       {kit.words.map((word, i) => (
-                        <div key={i} className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2">
-                          <span className="text-xs text-muted-foreground w-4 shrink-0">{i + 1}.</span>
+                        <div
+                          key={i}
+                          className="flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2"
+                        >
+                          <span className="text-xs text-muted-foreground w-4 shrink-0">
+                            {i + 1}.
+                          </span>
                           <span className="text-sm font-medium">{word}</span>
                         </div>
                       ))}
                     </div>
 
                     <div className="flex gap-2">
-                      <Button type="button" variant="outline" className="flex-1" onClick={handleCopy}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="flex-1"
+                        onClick={handleCopy}
+                      >
                         <Copy className="mr-2 h-4 w-4" /> Copy
                       </Button>
-                      <Button type="button" variant="outline" className="flex-1" onClick={handleDownload}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="flex-1"
+                        onClick={handleDownload}
+                      >
                         <Download className="mr-2 h-4 w-4" /> Download
                       </Button>
                     </div>
@@ -275,143 +384,279 @@ export function OnboardingForm() {
                     <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
                       <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
                       <p className="text-xs text-amber-600 dark:text-amber-400">
-                        These words only work with your master password. Neither alone unlocks your vault.
+                        These words only work with your master password. Neither
+                        alone unlocks your vault.
                       </p>
                     </div>
 
                     <label className="flex items-center gap-3 cursor-pointer select-none">
                       <div
                         className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border-2 transition-colors ${
-                          kitSaved ? "border-primary bg-primary" : "border-border bg-transparent"
+                          kitSaved
+                            ? "border-primary bg-primary"
+                            : "border-border bg-transparent"
                         }`}
-                        onClick={() => setKitSaved(v => !v)}
+                        onClick={() => setKitSaved((v) => !v)}
                       >
-                        {kitSaved && <CheckCircle2 className="h-3.5 w-3.5 text-primary-foreground" />}
+                        {kitSaved && (
+                          <CheckCircle2 className="h-3.5 w-3.5 text-primary-foreground" />
+                        )}
                       </div>
-                      <span className="text-sm">I’ve saved my recovery kit in a safe place</span>
+                      <span className="text-sm">
+                        I’ve saved my recovery kit in a safe place
+                      </span>
                     </label>
                   </motion.div>
                 )}
 
                 {/* ───── STEP 4: Preferences ───── */}
                 {step === 4 && (
-                  <motion.div key="step4" variants={slideVariants} initial="hidden" animate="visible" exit="exit"
-                    className="space-y-6">
+                  <motion.div
+                    key="step4"
+                    variants={slideVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    className="space-y-6"
+                  >
                     <div className="text-center space-y-2">
                       <PersonalSettings className="h-48 w-auto mx-auto drop-shadow-sm" />
                       <h2 className="text-2xl font-bold">Preferences</h2>
-                      <p className="text-muted-foreground">Customize your working environment</p>
+                      <p className="text-muted-foreground">
+                        Customize your working environment
+                      </p>
                     </div>
 
                     <div className="space-y-6 max-w-lg mx-auto">
-                      <FormField control={form.control} name="plan" render={({ field }) => (
-                        <FormItem>
-                          <FormLabel className="font-semibold">Plan</FormLabel>
-                          <FormControl>
-                            <RadioGroup onValueChange={field.onChange} defaultValue={field.value} className="grid md:grid-cols-2 gap-4">
-                              <FormItem>
-                                <FormLabel className="[&:has([data-state=checked])>div]:border-primary [&:has([data-state=checked])>div]:bg-primary/5 cursor-pointer">
-                                  <FormControl><RadioGroupItem value="free" className="sr-only" /></FormControl>
-                                  <div className="rounded-xl border-2 p-4 transition-all hover:bg-muted">
-                                    <div className="flex justify-between items-center mb-2">
-                                      <span className="font-semibold text-lg">Starter</span>
-                                      {field.value === "free" && <CheckCircle2 className="h-5 w-5 text-primary" />}
-                                    </div>
-                                    <div className="text-2xl font-bold mb-1">₹0<span className="text-sm font-normal text-muted-foreground">/mo</span></div>
-                                    <ul className="mt-4 space-y-2 text-sm">
-                                      <li className="flex items-center gap-2"><div className="h-1.5 w-1.5 rounded-full bg-primary" />5 GB Storage</li>
-                                      <li className="flex items-center gap-2"><div className="h-1.5 w-1.5 rounded-full bg-primary" />Community Support</li>
-                                    </ul>
-                                  </div>
-                                </FormLabel>
-                              </FormItem>
-                              <FormItem>
-                                <FormLabel className="[&:has([data-state=checked])>div]:border-primary [&:has([data-state=checked])>div]:bg-primary/5 cursor-pointer">
-                                  <FormControl><RadioGroupItem value="pro" className="sr-only" /></FormControl>
-                                  <div className="rounded-xl border-2 p-4 transition-all hover:bg-muted">
-                                    <div className="flex justify-between items-center mb-2">
-                                      <span className="font-semibold text-lg">Pro Builder</span>
-                                      {field.value === "pro" && <CheckCircle2 className="h-5 w-5 text-primary" />}
-                                    </div>
-                                    <div className="text-2xl font-bold mb-1">₹1.5<span className="text-sm font-normal text-muted-foreground">/GB</span></div>
-                                    <ul className="mt-4 space-y-2 text-sm">
-                                      <li className="flex items-center gap-2"><div className="h-1.5 w-1.5 rounded-full bg-primary" />Unlimited Storage</li>
-                                      <li className="flex items-center gap-2"><div className="h-1.5 w-1.5 rounded-full bg-primary" />Priority Support</li>
-                                    </ul>
-                                  </div>
-                                </FormLabel>
-                              </FormItem>
-                            </RadioGroup>
-                          </FormControl>
-                        </FormItem>
-                      )} />
-
-                      <FormField control={form.control} name="theme" render={({ field }) => (
-                        <FormItem className="space-y-3">
-                          <FormLabel className="font-semibold">Appearance</FormLabel>
-                          <FormControl>
-                            <RadioGroup onValueChange={(val) => { field.onChange(val); setTheme(val); }} defaultValue={field.value} className="grid grid-cols-3 gap-4">
-                              {(["light", "dark", "system"] as const).map((val) => (
-                                <FormItem key={val}>
-                                  <FormLabel className="[&:has([data-state=checked])>div]:border-primary cursor-pointer transition-all">
-                                    <FormControl><RadioGroupItem value={val} className="sr-only" /></FormControl>
-                                    <div className="items-center rounded-xl border-2 border-muted bg-popover p-1 hover:bg-accent">
-                                      <div className={`space-y-2 rounded-sm p-2 ${
-                                        val === "dark" ? "bg-slate-950" : val === "light" ? "bg-[#ecedef]" : "bg-[#ecedef] dark:bg-slate-950"
-                                      }`}>
-                                        <div className={`space-y-2 rounded-md p-2 shadow-sm ${
-                                          val === "dark" ? "bg-slate-800" : val === "light" ? "bg-white" : "bg-white dark:bg-slate-800"
-                                        }`}>
-                                          <div className={`h-2 w-full rounded-lg ${
-                                            val === "dark" ? "bg-slate-400" : val === "light" ? "bg-[#ecedef]" : "bg-[#ecedef] dark:bg-slate-400"
-                                          }`} />
-                                        </div>
-                                        <div className={`flex items-center space-x-2 rounded-md p-2 shadow-sm ${
-                                          val === "dark" ? "bg-slate-800" : val === "light" ? "bg-white" : "bg-white dark:bg-slate-800"
-                                        }`}>
-                                          {val === "light" && <Sun className="h-4 w-4 text-muted-foreground" />}
-                                          {val === "dark" && <Moon className="h-4 w-4 text-slate-400" />}
-                                          {val === "system" && <Monitor className="h-4 w-4 text-muted-foreground dark:text-slate-400" />}
-                                        </div>
+                      <FormField
+                        control={form.control}
+                        name="plan"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="font-semibold">
+                              Plan
+                            </FormLabel>
+                            <FormControl>
+                              <RadioGroup
+                                onValueChange={field.onChange}
+                                defaultValue={field.value}
+                                className="grid md:grid-cols-2 gap-4"
+                              >
+                                <FormItem>
+                                  <FormLabel className="[&:has([data-state=checked])>div]:border-primary [&:has([data-state=checked])>div]:bg-primary/5 cursor-pointer">
+                                    <FormControl>
+                                      <RadioGroupItem
+                                        value="free"
+                                        className="sr-only"
+                                      />
+                                    </FormControl>
+                                    <div className="rounded-xl border-2 p-4 transition-all hover:bg-muted">
+                                      <div className="flex justify-between items-center mb-2">
+                                        <span className="font-semibold text-lg">
+                                          Starter
+                                        </span>
+                                        {field.value === "free" && (
+                                          <CheckCircle2 className="h-5 w-5 text-primary" />
+                                        )}
                                       </div>
+                                      <div className="text-2xl font-bold mb-1">
+                                        ₹0
+                                        <span className="text-sm font-normal text-muted-foreground">
+                                          /mo
+                                        </span>
+                                      </div>
+                                      <ul className="mt-4 space-y-2 text-sm">
+                                        <li className="flex items-center gap-2">
+                                          <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+                                          5 GB Storage
+                                        </li>
+                                        <li className="flex items-center gap-2">
+                                          <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+                                          Community Support
+                                        </li>
+                                      </ul>
                                     </div>
-                                    <span className="block w-full pt-2 text-center text-sm font-medium capitalize">{val}</span>
                                   </FormLabel>
                                 </FormItem>
-                              ))}
-                            </RadioGroup>
-                          </FormControl>
-                        </FormItem>
-                      )} />
+                                <FormItem>
+                                  <FormLabel className="[&:has([data-state=checked])>div]:border-primary [&:has([data-state=checked])>div]:bg-primary/5 cursor-pointer">
+                                    <FormControl>
+                                      <RadioGroupItem
+                                        value="pro"
+                                        className="sr-only"
+                                      />
+                                    </FormControl>
+                                    <div className="rounded-xl border-2 p-4 transition-all hover:bg-muted">
+                                      <div className="flex justify-between items-center mb-2">
+                                        <span className="font-semibold text-lg">
+                                          Pro Builder
+                                        </span>
+                                        {field.value === "pro" && (
+                                          <CheckCircle2 className="h-5 w-5 text-primary" />
+                                        )}
+                                      </div>
+                                      <div className="text-2xl font-bold mb-1">
+                                        ₹1.5
+                                        <span className="text-sm font-normal text-muted-foreground">
+                                          /GB
+                                        </span>
+                                      </div>
+                                      <ul className="mt-4 space-y-2 text-sm">
+                                        <li className="flex items-center gap-2">
+                                          <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+                                          Unlimited Storage
+                                        </li>
+                                        <li className="flex items-center gap-2">
+                                          <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+                                          Priority Support
+                                        </li>
+                                      </ul>
+                                    </div>
+                                  </FormLabel>
+                                </FormItem>
+                              </RadioGroup>
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
 
-                      <FormField control={form.control} name="encryptByDefault" render={({ field }) => (
-                        <FormItem className="flex flex-row items-center justify-between rounded-xl border-2 p-4">
-                          <div className="space-y-1 mr-4">
-                            <div className="flex items-center gap-2">
-                              <Shield className="h-4 w-4 text-primary" />
-                              <FormLabel className="text-base font-semibold">Encrypt files by default</FormLabel>
+                      <FormField
+                        control={form.control}
+                        name="theme"
+                        render={({ field }) => (
+                          <FormItem className="space-y-3">
+                            <FormLabel className="font-semibold">
+                              Appearance
+                            </FormLabel>
+                            <FormControl>
+                              <RadioGroup
+                                onValueChange={(val) => {
+                                  field.onChange(val);
+                                  setTheme(val);
+                                }}
+                                defaultValue={field.value}
+                                className="grid grid-cols-3 gap-4"
+                              >
+                                {(["light", "dark", "system"] as const).map(
+                                  (val) => (
+                                    <FormItem key={val}>
+                                      <FormLabel className="[&:has([data-state=checked])>div]:border-primary cursor-pointer transition-all">
+                                        <FormControl>
+                                          <RadioGroupItem
+                                            value={val}
+                                            className="sr-only"
+                                          />
+                                        </FormControl>
+                                        <div className="items-center rounded-xl border-2 border-muted bg-popover p-1 hover:bg-accent">
+                                          <div
+                                            className={`space-y-2 rounded-sm p-2 ${
+                                              val === "dark"
+                                                ? "bg-slate-950"
+                                                : val === "light"
+                                                  ? "bg-[#ecedef]"
+                                                  : "bg-[#ecedef] dark:bg-slate-950"
+                                            }`}
+                                          >
+                                            <div
+                                              className={`space-y-2 rounded-md p-2 shadow-sm ${
+                                                val === "dark"
+                                                  ? "bg-slate-800"
+                                                  : val === "light"
+                                                    ? "bg-white"
+                                                    : "bg-white dark:bg-slate-800"
+                                              }`}
+                                            >
+                                              <div
+                                                className={`h-2 w-full rounded-lg ${
+                                                  val === "dark"
+                                                    ? "bg-slate-400"
+                                                    : val === "light"
+                                                      ? "bg-[#ecedef]"
+                                                      : "bg-[#ecedef] dark:bg-slate-400"
+                                                }`}
+                                              />
+                                            </div>
+                                            <div
+                                              className={`flex items-center space-x-2 rounded-md p-2 shadow-sm ${
+                                                val === "dark"
+                                                  ? "bg-slate-800"
+                                                  : val === "light"
+                                                    ? "bg-white"
+                                                    : "bg-white dark:bg-slate-800"
+                                              }`}
+                                            >
+                                              {val === "light" && (
+                                                <Sun className="h-4 w-4 text-muted-foreground" />
+                                              )}
+                                              {val === "dark" && (
+                                                <Moon className="h-4 w-4 text-slate-400" />
+                                              )}
+                                              {val === "system" && (
+                                                <Monitor className="h-4 w-4 text-muted-foreground dark:text-slate-400" />
+                                              )}
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <span className="block w-full pt-2 text-center text-sm font-medium capitalize">
+                                          {val}
+                                        </span>
+                                      </FormLabel>
+                                    </FormItem>
+                                  ),
+                                )}
+                              </RadioGroup>
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name="encryptByDefault"
+                        render={({ field }) => (
+                          <FormItem className="flex flex-row items-center justify-between rounded-xl border-2 p-4">
+                            <div className="space-y-1 mr-4">
+                              <div className="flex items-center gap-2">
+                                <Shield className="h-4 w-4 text-primary" />
+                                <FormLabel className="text-base font-semibold">
+                                  Encrypt files by default
+                                </FormLabel>
+                              </div>
+                              <FormDescription className="text-sm leading-snug">
+                                Encrypt files in the browser before upload.
+                              </FormDescription>
+                              <a
+                                href="/blog/encryption-pros-cons"
+                                target="_blank"
+                                className="inline-flex mt-1 items-center gap-1 text-xs font-medium text-primary hover:underline"
+                              >
+                                Read trade-offs{" "}
+                                <ExternalLink className="h-3 w-3" />
+                              </a>
                             </div>
-                            <FormDescription className="text-sm leading-snug">
-                              Encrypt files in the browser before upload.
-                            </FormDescription>
-                            <a href="/blog/encryption-pros-cons" target="_blank"
-                              className="inline-flex mt-1 items-center gap-1 text-xs font-medium text-primary hover:underline">
-                              Read trade-offs <ExternalLink className="h-3 w-3" />
-                            </a>
-                          </div>
-                          <FormControl>
-                            <Switch checked={field.value} onCheckedChange={field.onChange} />
-                          </FormControl>
-                        </FormItem>
-                      )} />
+                            <FormControl>
+                              <Switch
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                              />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
                     </div>
                   </motion.div>
                 )}
 
                 {/* ───── STEP 5: Well Done ───── */}
                 {step === 5 && (
-                  <motion.div key="step5" variants={slideVariants} initial="hidden" animate="visible" exit="exit"
-                    className="flex flex-col items-center text-center space-y-6 py-6">
+                  <motion.div
+                    key="step5"
+                    variants={slideVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
+                    className="flex flex-col items-center text-center space-y-6 py-6"
+                  >
                     <WellDone className="h-64 w-auto drop-shadow-sm" />
                     <div className="space-y-2">
                       <h2 className="text-3xl font-bold">You’re All Set!</h2>
@@ -422,7 +667,6 @@ export function OnboardingForm() {
                     </div>
                   </motion.div>
                 )}
-
               </AnimatePresence>
             </div>
 
@@ -430,31 +674,47 @@ export function OnboardingForm() {
             <div className="pt-4 border-t w-full flex justify-end">
               {/* Step 2: custom next (validate password) */}
               {step === 2 && (
-                <Button type="button" size="lg" onClick={handlePasswordNext}
+                <Button
+                  type="button"
+                  size="lg"
+                  onClick={handlePasswordNext}
                   disabled={!vaultPassword || !vaultConfirm}
-                  className="w-full sm:w-auto min-w-[120px]">
+                  className="w-full sm:w-auto min-w-[120px]"
+                >
                   Continue <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               )}
               {/* Step 3: disabled until checkbox */}
               {step === 3 && (
-                <Button type="button" size="lg" onClick={nextStep}
+                <Button
+                  type="button"
+                  size="lg"
+                  onClick={nextStep}
                   disabled={!kitSaved}
-                  className="w-full sm:w-auto min-w-[120px]">
+                  className="w-full sm:w-auto min-w-[120px]"
+                >
                   Continue <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               )}
               {/* All other non-final steps */}
               {step !== 2 && step !== 3 && step < totalSteps && (
-                <Button type="button" size="lg" onClick={nextStep}
-                  className="w-full sm:w-auto min-w-[120px]">
+                <Button
+                  type="button"
+                  size="lg"
+                  onClick={nextStep}
+                  className="w-full sm:w-auto min-w-[120px]"
+                >
                   Continue <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               )}
               {/* Final step */}
               {step === totalSteps && (
-                <Button type="submit" size="lg" disabled={isPending}
-                  className="w-full sm:w-auto min-w-[150px]">
+                <Button
+                  type="submit"
+                  size="lg"
+                  disabled={isPending}
+                  className="w-full sm:w-auto min-w-[150px]"
+                >
                   {isPending ? "Setting up..." : "Go to Dashboard"}
                   {!isPending && <ArrowRight className="ml-2 h-4 w-4" />}
                 </Button>
