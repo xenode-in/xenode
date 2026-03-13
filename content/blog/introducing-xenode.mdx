@@ -1,65 +1,71 @@
 ---
-title: "Introducing Xenode: S3 Compatible Object Storage for India"
-description: "We're building affordable, high-performance object storage optimized for developers in India. Here's our vision and what makes Xenode different."
+title: "Introducing Xenode: Store Files. Share Securely. Stay Private."
+description: "We're building end-to-end encrypted cloud storage that puts privacy first. Here's why we're building Xenode and what makes it different."
 date: "2026-02-09"
 author: "Xenode Team"
-tags: ["announcement", "storage", "infrastructure"]
+tags: ["announcement", "privacy", "encryption"]
 ---
 
 ## Why We're Building Xenode
 
-Cloud storage pricing hasn't made sense for Indian developers for a long time. Global providers optimize for Western markets—their pricing, infrastructure, and support all reflect that. If you're building from India, you're often paying more for worse latency.
+Most cloud storage works like this: you upload a file, it lands on a server, and the company that runs that server can technically read it. They might say they don't. But they *can*.
 
-We're building **Xenode** to change that. S3-compatible object storage, designed specifically for the Indian market.
+We don't think that's good enough.
+
+**Xenode** is built on a simple idea — your files should be encrypted before they ever leave your device. Not on the server. Not in transit. *In your browser*, before the upload even begins. By the time your file reaches our servers, it's already locked. We never hold the key.
 
 ## What Makes Xenode Different
 
-### Optimized for India
+### Your Key, Your Files
 
-- **Local infrastructure**: Your data stays in India
-- **Lower latency**: Optimized routing for Indian networks
-- **Rupee pricing**: No USD conversion, no surprises
+We use **AES-GCM encryption** handled entirely in your browser using the Web Crypto API. When you enable encryption, your files are locked with a key derived from your password. That key never touches our servers. If we were hacked tomorrow, attackers would find nothing but encrypted data they cannot read.
 
-### Simple Pricing
+### Built for Everyone
 
-- **Storage** — ₹1.5 per GB/month
-- **Egress** — ₹0.75 per GB
-- **Requests** — ₹0.004 per 1,000 requests
+Xenode is not just for developers. Anyone who cares about keeping their files private can use it:
 
-No complex tiers. No "contact sales." You see exactly what you pay.
+- Store personal documents, photos, and sensitive files safely
+- Share files with friends and colleagues using secure share links
+- Set expiry dates and passwords on shared links
+- Manage everything from a clean, simple dashboard
 
-### Developer-First
+### Also Great for Developers
 
-- **S3-compatible API**: Works with aws-cli, boto3, rclone—everything you already use
-- **Clean dashboard**: Built with Next.js and shadcn/ui
-- **Good docs**: Because we actually use our own product
+If you want to integrate storage into your app, Xenode has you covered:
+
+- **API key access** with scopes and rate limits
+- **Bucket and object management** via a clean REST API
+- **Presigned URLs** for direct browser uploads
+- **Usage metering** so you always know what you're consuming
+
+### Simple, Honest Pricing
+
+No complex tiers. No "contact sales". No USD conversion surprises. You see exactly what you pay, in rupees, upfront.
 
 ## Who This Is For
 
-- Startups storing user uploads and documents
-- Edtech platforms hosting course videos
-- Agencies backing up client files
-- Anyone tired of overpaying for basic storage
+- Anyone who wants their personal files to stay personal
+- Developers building privacy-first applications
+- Teams sharing sensitive documents and project files
+- People tired of trusting big tech companies with their data
 
 ## Join the Waitlist
 
-We're building towards a mid-2026 launch. If you're interested in early access, [join the waitlist](/) and we'll reach out when we're ready.
+We're building toward a mid-2026 launch. If this sounds like something you've been waiting for, [join the waitlist](/) and you'll be first to know when we're ready.
 
-Early waitlist members will get:
+Early waitlist members get:
 
 - First access to the platform
 - Locked-in early adopter pricing
-- Direct line to us for feedback and support
+- A direct line to us for feedback and requests
 
 ## What's Coming
 
-Over the next few months, we'll be sharing:
+Over the next few months we'll be sharing:
 
-1. Architecture deep-dives
-2. Performance benchmarks
-3. Migration guides from AWS S3
+1. How the browser-side encryption actually works
+2. Our approach to zero-knowledge key management
+3. Secure file sharing deep-dives
 4. Beta access announcements
 
-Follow along as we build this.
-
----
+Follow along as we build this. We're not going silent.
