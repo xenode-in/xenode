@@ -1,5 +1,14 @@
 import mongoose, { Schema, Document, Model } from "mongoose";
 
+// ─── Plan limit constants ────────────────────────────────────────────────────
+// Single source of truth — import these wherever you need plan limits.
+// Never hardcode GB values in route files.
+//
+// PRO_TIER_LIMIT_BYTES = null means unlimited (no quota enforcement).
+// In presign-upload/route.ts, treat null as "skip the quota check entirely".
+export const FREE_TIER_LIMIT_BYTES = 5 * 1024 * 1024 * 1024; // 5 GB
+export const PRO_TIER_LIMIT_BYTES: null = null;               // Unlimited
+
 export interface IUsage extends Document {
   _id: mongoose.Types.ObjectId;
   userId: string;
@@ -7,7 +16,7 @@ export interface IUsage extends Document {
   totalEgressBytes: number;
   totalObjects: number;
   totalBuckets: number;
-  storageLimitBytes: number;
+  storageLimitBytes: number | null; // null = unlimited (pro/enterprise)
   egressLimitBytes: number;
   plan: "free" | "pro" | "enterprise";
   planActivatedAt: Date | null;
@@ -22,9 +31,9 @@ export interface IUsage extends Document {
   scheduledDowngradeLimitBytes: number | null;
   scheduledDowngradeAt: Date | null;
   // UPI Autopay mandate fields
-  autopayMandateId: string | null;   // authpayuid from PayU SI registration
+  autopayMandateId: string | null;
   autopayActive: boolean;
-  lastRenewalTxnid: string | null;   // txnid of the most recent recurring charge attempt
+  lastRenewalTxnid: string | null;
 }
 
 const UsageSchema = new Schema<IUsage>(
@@ -34,7 +43,8 @@ const UsageSchema = new Schema<IUsage>(
     totalEgressBytes:  { type: Number, default: 0, min: 0 },
     totalObjects:      { type: Number, default: 0, min: 0 },
     totalBuckets:      { type: Number, default: 0, min: 0 },
-    storageLimitBytes: { type: Number, default: 10 * 1024 * 1024 * 1024 },
+    // null = unlimited (pro). Default is FREE_TIER_LIMIT_BYTES (5 GB) for new users.
+    storageLimitBytes: { type: Number, default: FREE_TIER_LIMIT_BYTES },
     egressLimitBytes:  { type: Number, default: 536870912000 },
     plan: {
       type: String,
@@ -48,13 +58,13 @@ const UsageSchema = new Schema<IUsage>(
     uploadCount:      { type: Number, default: 0, min: 0 },
     downloadCount:    { type: Number, default: 0, min: 0 },
     lastActiveAt:     { type: Date, default: null, index: true },
-    scheduledDowngradePlan:        { type: String, default: null },
-    scheduledDowngradeLimitBytes:  { type: Number, default: null },
-    scheduledDowngradeAt:          { type: Date,   default: null },
+    scheduledDowngradePlan:        { type: String,  default: null },
+    scheduledDowngradeLimitBytes:  { type: Number,  default: null },
+    scheduledDowngradeAt:          { type: Date,    default: null },
     // UPI Autopay
-    autopayMandateId:   { type: String, default: null },
+    autopayMandateId:   { type: String,  default: null },
     autopayActive:      { type: Boolean, default: false },
-    lastRenewalTxnid:   { type: String, default: null },
+    lastRenewalTxnid:   { type: String,  default: null },
   },
   { timestamps: true },
 );

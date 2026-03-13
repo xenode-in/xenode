@@ -1,41 +1,49 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Lock, ShieldCheck, ShieldOff } from "lucide-react";
+import { useState } from "react";
+import { Lock, ShieldCheck, ShieldOff, Loader2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useCrypto } from "@/contexts/CryptoContext";
-
-export const ENCRYPT_PREF_KEY = "xenode.encryptUploads";
+import { authClient, useSession } from "@/lib/auth/client";
+import { toast } from "sonner";
 
 export function EncryptionSettingsSection() {
   const { isUnlocked, needsSetup } = useCrypto();
-  const [enabled, setEnabled] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  const { data: session } = useSession();
+  const [isUpdating, setIsUpdating] = useState(false);
 
-  // Read preference from localStorage after mount (SSR-safe)
-  useEffect(() => {
-    setMounted(true);
-    try {
-      const stored = localStorage.getItem(ENCRYPT_PREF_KEY);
-      setEnabled(stored === "true");
-    } catch {
-      // localStorage not available (private browsing edge cases)
-    }
-  }, []);
+  // @ts-expect-error additionalFields
+  const enabled = session?.user?.encryptByDefault || false;
 
-  function handleToggle(checked: boolean) {
-    setEnabled(checked);
+  async function handleToggle(checked: boolean) {
+    setIsUpdating(true);
     try {
-      localStorage.setItem(ENCRYPT_PREF_KEY, String(checked));
-    } catch {
-      /* ignore */
+      const { error } = await authClient.updateUser({
+        // @ts-expect-error additionalFields
+        encryptByDefault: checked,
+      });
+
+      if (error) {
+        throw new Error(error.message || "Failed to update preference");
+      }
+
+      toast.success(
+        checked
+          ? "Encryption enabled by default"
+          : "Encryption disabled by default",
+      );
+    } catch (err) {
+      toast.error("Failed to update settings. Please try again.");
+      console.error(err);
+    } finally {
+      setIsUpdating(false);
     }
   }
 
   const vaultReady = isUnlocked;
-  const disabled = !vaultReady;
+  const disabled = !vaultReady || isUpdating;
 
-  if (!mounted) return null; // prevent hydration flash
+  if (!session) return null; // prevent hydration flash or show nothing if no session
 
   return (
     <div className="flex items-center justify-between py-3 border-b border-border">
