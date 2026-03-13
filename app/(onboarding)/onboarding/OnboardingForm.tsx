@@ -37,7 +37,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { WelcomeBalloons } from "@/components/onboarding/WelcomeBalloons";
 import { PersonalSettings } from "@/components/onboarding/PersonalSettings";
 import { WellDone } from "@/components/onboarding/WellDone";
-import PaymentMethodToggle from "@/components/checkout/PaymentMethodToggle";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -56,28 +55,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 
 // ─── Schema ──────────────────────────────────────────────────────────────────
-// selectedPlan: "free" | plan.slug ("basic" | "pro" | "plus" | "max")
-// phone + paymentMethod only required when selectedPlan !== "free"
 
-const onboardingSchema = z
-  .object({
-    theme: z.enum(["light", "dark", "system"]),
-    encryptByDefault: z.boolean().default(false),
-    selectedPlan: z.string().default("free"),
-    phone: z.string().optional(),
-    paymentMethod: z.enum(["autopay", "direct"]).default("direct"),
-  })
-  .superRefine((data, ctx) => {
-    if (data.selectedPlan !== "free") {
-      if (!data.phone || !/^[6-9]\d{9}$/.test(data.phone)) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["phone"],
-          message: "Enter a valid 10-digit Indian mobile number",
-        });
-      }
-    }
-  });
+const onboardingSchema = z.object({
+  theme: z.enum(["light", "dark", "system"]),
+  encryptByDefault: z.boolean().default(false),
+  selectedPlan: z.string().default("free"),
+});
 
 type OnboardingValues = z.infer<typeof onboardingSchema>;
 
@@ -113,13 +96,10 @@ export function OnboardingForm() {
       theme: (theme as "light" | "dark" | "system") || "system",
       encryptByDefault: false,
       selectedPlan: "free",
-      phone: "",
-      paymentMethod: "direct",
     },
   });
 
   const selectedPlan = form.watch("selectedPlan");
-  const paymentMethod = form.watch("paymentMethod");
   const isPaidPlan = selectedPlan !== "free";
   const chosenPlanConfig = PLANS.find((p) => p.slug === selectedPlan);
 
@@ -171,9 +151,9 @@ export function OnboardingForm() {
         });
         if (result.error) throw new Error(result.error.message || "Failed to save preferences");
 
-        // 4. Always create a free Usage doc first.
-        //    If payment succeeds later, the PayU success webhook upgrades it.
-        //    This ensures the user always has a valid Usage doc even if payment fails.
+        // 4. Always create Usage doc as free first.
+        //    For paid plans: PayU success webhook upgrades it after payment.
+        //    For free plan: this is the final state.
         const usageRes = await fetch("/api/onboarding/complete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -192,36 +172,9 @@ export function OnboardingForm() {
           return;
         }
 
-        // 5b. Paid plan — kick off PayU payment flow
-        if (!chosenPlanConfig) throw new Error("Invalid plan selected");
-
-        const payuRes = await fetch("/api/payment/payu", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            planName: chosenPlanConfig.name,
-            paymentMethod: data.paymentMethod,
-            phone: data.phone,
-          }),
-        });
-
-        const payuData = await payuRes.json();
-        if (!payuRes.ok) throw new Error(payuData.error || "Failed to initialise payment");
-
-        // Build + auto-submit hidden form to PayU gateway
-        const form = document.createElement("form");
-        form.method = "POST";
-        form.action = payuData.action;
-        Object.entries(payuData.params as Record<string, string>).forEach(([k, v]) => {
-          const input = document.createElement("input");
-          input.type = "hidden";
-          input.name = k;
-          input.value = v;
-          form.appendChild(input);
-        });
-        document.body.appendChild(form);
-        form.submit();
-        // Browser navigates away — no further code runs here
+        // 5b. Paid plan — send to /checkout?plan=<slug>
+        //     Checkout page handles phone, billing address, PayU, proration — everything.
+        router.push(`/checkout?plan=${selectedPlan}`);
       } catch (error) {
         toast.error("Something went wrong. Please try again.");
         console.error(error);
@@ -472,88 +425,6 @@ export function OnboardingForm() {
                         )}
                       />
 
-                      {/* ── Phone + Payment method (slides in when paid plan selected) ── */}
-                      <AnimatePresence>
-                        {isPaidPlan && (
-                          <motion.div
-                            key="payment-fields"
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: "auto" }}
-                            exit={{ opacity: 0, height: 0 }}
-                            transition={{ duration: 0.25 }}
-                            className="overflow-hidden space-y-4"
-                          >
-                            {/* Phone */}
-                            <FormField
-                              control={form.control}
-                              name="phone"
-                              render={({ field, fieldState }) => (
-                                <FormItem>
-                                  <FormLabel className="font-semibold">
-                                    Phone Number <span className="text-destructive">*</span>
-                                  </FormLabel>
-                                  <FormControl>
-                                    <div className="flex">
-                                      <span className="flex items-center rounded-l-lg border border-r-0 border-border bg-muted px-3 text-sm text-muted-foreground select-none">
-                                        🇮🇳 +91
-                                      </span>
-                                      <input
-                                        {...field}
-                                        type="tel"
-                                        maxLength={10}
-                                        placeholder="9876543210"
-                                        className="flex-1 rounded-r-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                                      />
-                                    </div>
-                                  </FormControl>
-                                  {fieldState.error && (
-                                    <p className="text-xs text-destructive">{fieldState.error.message}</p>
-                                  )}
-                                  <FormDescription className="text-xs">
-                                    Required by PayU for payment processing.
-                                  </FormDescription>
-                                </FormItem>
-                              )}
-                            />
-
-                            {/* Payment method */}
-                            <FormField
-                              control={form.control}
-                              name="paymentMethod"
-                              render={({ field }) => (
-                                <FormItem>
-                                  <FormLabel className="font-semibold">Payment Method</FormLabel>
-                                  <FormControl>
-                                    <PaymentMethodToggle
-                                      value={field.value}
-                                      onChange={field.onChange}
-                                    />
-                                  </FormControl>
-                                  {paymentMethod === "autopay" && (
-                                    <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
-                                      <p className="text-xs text-muted-foreground">
-                                        <span className="font-semibold text-foreground">How it works: </span>
-                                        You'll approve a UPI mandate in your UPI app. Xenode will
-                                        automatically charge ₹{chosenPlanConfig?.priceINR} every 30 days.
-                                        Cancel anytime from your UPI app or billing settings.
-                                      </p>
-                                    </div>
-                                  )}
-                                </FormItem>
-                              )}
-                            />
-
-                            {/* Amount preview */}
-                            <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 flex items-center justify-between">
-                              <span className="text-sm text-muted-foreground">Amount due today</span>
-                              <span className="text-sm font-semibold">
-                                ₹{chosenPlanConfig?.priceINR?.toFixed(2)} / month
-                              </span>
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-
                       {/* ── Theme picker ── */}
                       <FormField
                         control={form.control}
@@ -642,7 +513,7 @@ export function OnboardingForm() {
                       <p className="text-muted-foreground">
                         Your vault is protected and your workspace is ready.
                         {isPaidPlan
-                          ? " Complete your payment to activate your plan."
+                          ? " One last step — complete your payment to activate your plan."
                           : " Let's start uploading and sharing files securely."}
                       </p>
                     </div>
@@ -674,8 +545,10 @@ export function OnboardingForm() {
               {step === totalSteps && (
                 <Button type="submit" size="lg" disabled={isPending} className="w-full sm:w-auto min-w-[180px]">
                   {isPending
-                    ? (isPaidPlan ? "Redirecting to payment…" : "Setting up...")
-                    : (isPaidPlan ? `Pay ₹${chosenPlanConfig?.priceINR} & Get Started` : "Go to Dashboard")}
+                    ? (isPaidPlan ? "Redirecting…" : "Setting up...")
+                    : (isPaidPlan
+                        ? `Continue to Checkout → ₹${chosenPlanConfig?.priceINR}/mo`
+                        : "Go to Dashboard")}
                   {!isPending && <ArrowRight className="ml-2 h-4 w-4" />}
                 </Button>
               )}
