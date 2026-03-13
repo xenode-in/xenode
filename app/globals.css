@@ -223,7 +223,11 @@
   --secondary: color-mix(in oklab, var(--color-white) 5%, transparent);
   --secondary-foreground: #7cb686;
   --muted: color-mix(in oklab, var(--color-white) 5%, transparent);
-  --muted-foreground: #7cb686; /* using text-primary as muted-foreground based on user request */
+  --muted-foreground: color-mix(
+    in oklab,
+    var(--sidebar-foreground) 70%,
+    transparent
+  );
   --accent: color-mix(in oklab, var(--color-white) 5%, transparent);
   --accent-foreground: #7cb686;
   --destructive: oklch(0.704 0.191 22.216);

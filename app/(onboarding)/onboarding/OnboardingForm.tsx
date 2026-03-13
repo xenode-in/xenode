@@ -4,7 +4,7 @@ import { useTransition, useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
+import { useForm, type SubmitHandler, type UseFormReturn } from "react-hook-form";
 import * as z from "zod";
 import { authClient, useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
@@ -57,7 +57,7 @@ import { toast } from "sonner";
 // Paid plans (100GB, 500GB, 1TB, 2TB) are purchased from the dashboard.
 const onboardingSchema = z.object({
   theme: z.enum(["light", "dark", "system"]),
-  encryptByDefault: z.boolean().default(false),
+  encryptByDefault: z.boolean(),
 });
 
 type OnboardingValues = z.infer<typeof onboardingSchema>;
@@ -99,7 +99,7 @@ export function OnboardingForm() {
       theme: (theme as "light" | "dark" | "system") || "system",
       encryptByDefault: false,
     },
-  });
+  }) as UseFormReturn<OnboardingValues>;
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(kit.words.join(" "));
@@ -145,7 +145,7 @@ export function OnboardingForm() {
     if (step > 1) setStep(step - 1);
   };
 
-  async function onSubmit(data: OnboardingValues) {
+  const onSubmit: SubmitHandler<OnboardingValues> = async (data) => {
     if (step !== totalSteps) {
       nextStep();
       return;
@@ -234,7 +234,6 @@ export function OnboardingForm() {
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
             <div className="overflow-hidden min-h-[400px]">
               <AnimatePresence mode="wait">
-
                 {/* ───── STEP 1: Welcome ───── */}
                 {step === 1 && (
                   <motion.div
@@ -448,11 +447,12 @@ export function OnboardingForm() {
                     </div>
 
                     <div className="space-y-6 max-w-lg mx-auto">
-
                       {/* Free tier info card — no plan picker */}
                       <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-4 space-y-3">
                         <div className="flex items-center justify-between">
-                          <span className="font-semibold text-lg">Starter — Free forever</span>
+                          <span className="font-semibold text-lg">
+                            Starter — Free forever
+                          </span>
                           <CheckCircle2 className="h-5 w-5 text-primary" />
                         </div>
                         <ul className="space-y-2 text-sm text-muted-foreground">
@@ -620,7 +620,6 @@ export function OnboardingForm() {
                     </div>
                   </motion.div>
                 )}
-
               </AnimatePresence>
             </div>
 
