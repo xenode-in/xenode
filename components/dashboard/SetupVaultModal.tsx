@@ -26,6 +26,7 @@ import {
   Loader2, AlertTriangle, Eye, EyeOff, KeyRound,
 } from "lucide-react";
 import { useCrypto } from "@/contexts/CryptoContext";
+import { useSession } from "@/lib/auth/client";
 import { generateRecoveryKit, formatRecoveryKitDownload } from "@/lib/crypto/recovery";
 import { toast } from "sonner";
 
@@ -36,6 +37,7 @@ interface SetupVaultModalProps {
 
 export function SetupVaultModal({ open, onClose }: SetupVaultModalProps) {
   const { setup } = useCrypto();
+  const { data: session } = useSession();
 
   const [kit] = useState(() => generateRecoveryKit());
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -73,11 +75,16 @@ export function SetupVaultModal({ open, onClose }: SetupVaultModalProps) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "xenode-recovery-kit.txt";
+    
+    // Sanitize user name for filename
+    const userName = session?.user?.name || "user";
+    const sanitizedName = userName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+    
+    a.download = `xenode-recovery-kit-${sanitizedName}.txt`;
     a.click();
     URL.revokeObjectURL(url);
     toast.success("Recovery kit downloaded");
-  }, [kit]);
+  }, [kit, session]);
 
   function handlePasswordNext() {
     setPwError("");
