@@ -2,8 +2,9 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 
-const ADMIN_COOKIE = "xnode_admin_session";
-const ADMIN_JWT_SECRET = process.env.ADMIN_JWT_SECRET || "change_me_in_production";
+const ADMIN_COOKIE = "Xenode_admin_session";
+const ADMIN_JWT_SECRET =
+  process.env.ADMIN_JWT_SECRET || "change_me_in_production";
 
 if (process.env.NODE_ENV === "production" && !process.env.ADMIN_JWT_SECRET) {
   throw new Error("ADMIN_JWT_SECRET env variable is required in production");
@@ -61,7 +62,7 @@ export async function getAdminSession(): Promise<AdminJWTPayload | null> {
  * Read and verify the admin session from a NextRequest (proxy / middleware helpers).
  */
 export async function getAdminSessionFromRequest(
-  req: NextRequest
+  req: NextRequest,
 ): Promise<AdminJWTPayload | null> {
   try {
     const token = req.cookies.get(ADMIN_COOKIE)?.value;

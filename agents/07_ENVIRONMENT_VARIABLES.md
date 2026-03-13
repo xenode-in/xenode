@@ -7,8 +7,8 @@ All environment variables are listed in `.env.example`. Copy it to `.env.local` 
 ## Database
 
 ```bash
-MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/xnode
-MONGODB_LOGS_URI=mongodb+srv://user:pass@cluster.mongodb.net/xnode-logs
+MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/Xenode
+MONGODB_LOGS_URI=mongodb+srv://user:pass@cluster.mongodb.net/Xenode-logs
 ```
 
 - `MONGODB_URI` — Main application database

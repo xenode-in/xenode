@@ -3,10 +3,10 @@ import "../globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "Xnode Admin",
-    template: "%s | Xnode Admin",
+    default: "Xenode Admin",
+    template: "%s | Xenode Admin",
   },
-  description: "Xnode Administration Panel",
+  description: "Xenode Administration Panel",
   robots: { index: false, follow: false },
 };
 
@@ -16,8 +16,6 @@ export default function AdminRootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      {children}
-    </div>
+    <div className="min-h-screen bg-background text-foreground">{children}</div>
   );
 }

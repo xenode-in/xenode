@@ -45,7 +45,7 @@ export function LandingFooter() {
           {/* Social */}
           <div className="flex items-center gap-4">
             <a
-              href="https://github.com/santhoshkumar-dev/xnode"
+              href="https://github.com/santhoshkumar-dev/Xenode"
               target="_blank"
               rel="noopener noreferrer"
               className="opacity-50 hover:opacity-90 transition-opacity"

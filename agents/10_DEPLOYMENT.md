@@ -6,8 +6,8 @@
 
 ```bash
 # 1. Clone repo
-git clone https://github.com/santhoshkumar-dev/xnode.git
-cd xnode
+git clone https://github.com/santhoshkumar-dev/Xenode.git
+cd Xenode
 
 # 2. Install dependencies
 npm install
@@ -33,16 +33,18 @@ npx ts-node proxy.ts
 docker-compose up --build
 
 # Or build image manually
-docker build -t xnode .
-docker run -p 3000:3000 --env-file .env.local xnode
+docker build -t Xenode .
+docker run -p 3000:3000 --env-file .env.local Xenode
 ```
 
 The `Dockerfile` uses a multi-stage build:
+
 1. **Build stage** — `node:20-alpine`, installs deps, runs `next build`
 2. **Runner stage** — Minimal node image, copies `.next/standalone` output
 
 The `docker-compose.yml` sets up:
-- `xnode` service (the Next.js app)
+
+- `Xenode` service (the Next.js app)
 - Environment variable passthrough from `.env.local`
 - Port mapping `3000:3000`
 
@@ -65,11 +67,11 @@ vercel deploy
   "crons": [
     {
       "path": "/api/cron/reset-usage",
-      "schedule": "0 0 1 * *"  // First day of every month
+      "schedule": "0 0 1 * *" // First day of every month
     },
     {
       "path": "/api/cron/cleanup",
-      "schedule": "0 2 * * *"  // Daily at 2am
+      "schedule": "0 2 * * *" // Daily at 2am
     }
   ]
 }
@@ -89,7 +91,7 @@ Add `Authorization: Bearer $CRON_SECRET` in Vercel Cron headers.
 ```json
 [
   {
-    "corsRuleName": "xnode-uploads",
+    "corsRuleName": "Xenode-uploads",
     "allowedOrigins": ["https://yourdomain.com"],
     "allowedHeaders": ["*"],
     "allowedOperations": ["s3_put"],
@@ -105,7 +107,7 @@ Add `Authorization: Bearer $CRON_SECRET` in Vercel Cron headers.
 ## MongoDB Setup
 
 1. Create a MongoDB Atlas cluster (M0 free tier works for development)
-2. Create two databases: `xnode` and `xnode-logs`
+2. Create two databases: `Xenode` and `Xenode-logs`
 3. Create a database user with read/write access
 4. Whitelist your IP (or `0.0.0.0/0` for Vercel serverless)
 5. Copy connection strings to `MONGODB_URI` and `MONGODB_LOGS_URI`

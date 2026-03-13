@@ -80,7 +80,7 @@ export function AdminSidebar({ role, username }: AdminSidebarProps) {
               <Layers className="w-4 h-4 text-white" />
             </div>
             <span className="text-sm font-semibold text-white">
-              Xnode Admin
+              Xenode Admin
             </span>
           </div>
         )}
