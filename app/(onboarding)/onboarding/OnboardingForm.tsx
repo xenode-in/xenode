@@ -28,10 +28,12 @@ import {
   AlertTriangle,
   Eye,
   EyeOff,
+  HardDrive,
+  Lock,
+  Zap,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { WelcomeBalloons } from "@/components/onboarding/WelcomeBalloons";
-import { ChoosePlan } from "@/components/onboarding/ChoosePlan";
 import { PersonalSettings } from "@/components/onboarding/PersonalSettings";
 import { WellDone } from "@/components/onboarding/WellDone";
 
@@ -51,10 +53,11 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 
+// No plan selection at onboarding — everyone starts on the free tier.
+// Paid plans (100GB, 500GB, 1TB, 2TB) are purchased from the dashboard.
 const onboardingSchema = z.object({
   theme: z.enum(["light", "dark", "system"]),
   encryptByDefault: z.boolean().default(false),
-  plan: z.enum(["free", "pro"]).default("free"),
 });
 
 type OnboardingValues = z.infer<typeof onboardingSchema>;
@@ -71,7 +74,7 @@ export function OnboardingForm() {
   // 1 = Welcome
   // 2 = Vault Password Setup
   // 3 = Save Recovery Kit
-  // 4 = Preferences (plan + theme + encryption toggle)
+  // 4 = Preferences (theme + encryption toggle)
   // 5 = Well Done
   const totalSteps = 5;
   const [step, setStep] = useState(1);
@@ -90,12 +93,11 @@ export function OnboardingForm() {
     setMounted(true);
   }, []);
 
-  const form = useForm({
+  const form = useForm<OnboardingValues>({
     resolver: zodResolver(onboardingSchema),
     defaultValues: {
       theme: (theme as "light" | "dark" | "system") || "system",
       encryptByDefault: false,
-      plan: "free",
     },
   });
 
@@ -151,7 +153,7 @@ export function OnboardingForm() {
 
     startTransition(async () => {
       try {
-        // 1. Apply theme immediately
+        // 1. Apply theme
         setTheme(data.theme);
 
         // 2. Setup the vault (master password + recovery kit)
@@ -168,13 +170,12 @@ export function OnboardingForm() {
           throw new Error(result.error.message || "Failed to save preferences");
         }
 
-        // 4. Create/upsert Usage document with the chosen plan and storage limit.
-        //    free → 5 GB hard limit
-        //    pro  → null (unlimited) — billing handled separately by payment webhook
+        // 4. Create Usage document — always free tier, 5 GB.
+        //    Paid plans are purchased from the dashboard via /checkout.
         const usageRes = await fetch("/api/onboarding/complete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ plan: data.plan }),
+          body: JSON.stringify({}),
         });
 
         if (!usageRes.ok) {
@@ -183,11 +184,6 @@ export function OnboardingForm() {
         }
 
         toast.success("All set! Welcome to Xenode.");
-
-        // 5. All plans go to dashboard.
-        //    Pro users can upgrade from within the dashboard/settings.
-        //    We never redirect to /pricing during onboarding — it's jarring
-        //    and the user hasn't finished setting up yet.
         router.push("/dashboard");
         router.refresh();
       } catch (error) {
@@ -238,6 +234,7 @@ export function OnboardingForm() {
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
             <div className="overflow-hidden min-h-[400px]">
               <AnimatePresence mode="wait">
+
                 {/* ───── STEP 1: Welcome ───── */}
                 {step === 1 && (
                   <motion.div
@@ -451,106 +448,30 @@ export function OnboardingForm() {
                     </div>
 
                     <div className="space-y-6 max-w-lg mx-auto">
-                      <FormField
-                        control={form.control}
-                        name="plan"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel className="font-semibold">
-                              Plan
-                            </FormLabel>
-                            <FormControl>
-                              <RadioGroup
-                                onValueChange={field.onChange}
-                                defaultValue={field.value}
-                                className="grid md:grid-cols-2 gap-4"
-                              >
-                                <FormItem>
-                                  <FormLabel className="[&:has([data-state=checked])>div]:border-primary [&:has([data-state=checked])>div]:bg-primary/5 cursor-pointer">
-                                    <FormControl>
-                                      <RadioGroupItem
-                                        value="free"
-                                        className="sr-only"
-                                      />
-                                    </FormControl>
-                                    <div className="rounded-xl border-2 p-4 transition-all hover:bg-muted">
-                                      <div className="flex justify-between items-center mb-2">
-                                        <span className="font-semibold text-lg">
-                                          Starter
-                                        </span>
-                                        {field.value === "free" && (
-                                          <CheckCircle2 className="h-5 w-5 text-primary" />
-                                        )}
-                                      </div>
-                                      <div className="text-2xl font-bold mb-1">
-                                        ₹0
-                                        <span className="text-sm font-normal text-muted-foreground">
-                                          /mo
-                                        </span>
-                                      </div>
-                                      <ul className="mt-4 space-y-2 text-sm">
-                                        <li className="flex items-center gap-2">
-                                          <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                                          5 GB Storage
-                                        </li>
-                                        <li className="flex items-center gap-2">
-                                          <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                                          E2EE Encryption
-                                        </li>
-                                        <li className="flex items-center gap-2">
-                                          <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                                          Community Support
-                                        </li>
-                                      </ul>
-                                    </div>
-                                  </FormLabel>
-                                </FormItem>
-                                <FormItem>
-                                  <FormLabel className="[&:has([data-state=checked])>div]:border-primary [&:has([data-state=checked])>div]:bg-primary/5 cursor-pointer">
-                                    <FormControl>
-                                      <RadioGroupItem
-                                        value="pro"
-                                        className="sr-only"
-                                      />
-                                    </FormControl>
-                                    <div className="rounded-xl border-2 p-4 transition-all hover:bg-muted">
-                                      <div className="flex justify-between items-center mb-2">
-                                        <span className="font-semibold text-lg">
-                                          Pro Builder
-                                        </span>
-                                        {field.value === "pro" && (
-                                          <CheckCircle2 className="h-5 w-5 text-primary" />
-                                        )}
-                                      </div>
-                                      <div className="text-2xl font-bold mb-1">
-                                        ₹1.5
-                                        <span className="text-sm font-normal text-muted-foreground">
-                                          /GB
-                                        </span>
-                                      </div>
-                                      <ul className="mt-4 space-y-2 text-sm">
-                                        <li className="flex items-center gap-2">
-                                          <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                                          Unlimited Storage
-                                        </li>
-                                        <li className="flex items-center gap-2">
-                                          <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                                          E2EE Encryption
-                                        </li>
-                                        <li className="flex items-center gap-2">
-                                          <div className="h-1.5 w-1.5 rounded-full bg-primary" />
-                                          Priority Support
-                                        </li>
-                                      </ul>
-                                    </div>
-                                  </FormLabel>
-                                </FormItem>
-                              </RadioGroup>
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
 
+                      {/* Free tier info card — no plan picker */}
+                      <div className="rounded-xl border-2 border-primary/30 bg-primary/5 p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="font-semibold text-lg">Starter — Free forever</span>
+                          <CheckCircle2 className="h-5 w-5 text-primary" />
+                        </div>
+                        <ul className="space-y-2 text-sm text-muted-foreground">
+                          <li className="flex items-center gap-2">
+                            <HardDrive className="h-4 w-4 text-primary shrink-0" />
+                            5 GB encrypted storage
+                          </li>
+                          <li className="flex items-center gap-2">
+                            <Lock className="h-4 w-4 text-primary shrink-0" />
+                            End-to-end encryption
+                          </li>
+                          <li className="flex items-center gap-2">
+                            <Zap className="h-4 w-4 text-primary shrink-0" />
+                            Upgrade anytime from the dashboard
+                          </li>
+                        </ul>
+                      </div>
+
+                      {/* Theme picker */}
                       <FormField
                         control={form.control}
                         name="theme"
@@ -641,6 +562,7 @@ export function OnboardingForm() {
                         )}
                       />
 
+                      {/* Encrypt by default toggle */}
                       <FormField
                         control={form.control}
                         name="encryptByDefault"
@@ -698,6 +620,7 @@ export function OnboardingForm() {
                     </div>
                   </motion.div>
                 )}
+
               </AnimatePresence>
             </div>
 

@@ -8,39 +8,34 @@ export const dynamic = "force-dynamic";
 /**
  * POST /api/onboarding/complete
  *
- * Called at the end of the onboarding flow after the user picks a plan.
- * Creates or updates the Usage document for the user with the correct
- * plan and storageLimitBytes.
+ * Called at the very end of the onboarding wizard.
+ * Creates (or safely upserts) the Usage document for the user.
  *
- * Body:
- *   plan  "free" | "pro"
+ * ALWAYS sets plan = "free" with storageLimitBytes = FREE_TIER_LIMIT_BYTES (5 GB).
  *
- * Behaviour:
- *   free → storageLimitBytes = FREE_TIER_LIMIT_BYTES (5 GB), plan = "free"
- *   pro  → storageLimitBytes = null (unlimited), plan = "pro"
- *          (actual billing handled by payment webhook — we do NOT redirect
- *           to /pricing here; the client handles navigation)
+ * Reasoning:
+ *  - Xenode does NOT have a "pro" plan selectable at sign-up.
+ *  - Real paid plans (100GB, 500GB, 1TB, 2TB) are purchased via
+ *    /checkout?plan=... after the user is in the dashboard.
+ *  - The PayU success webhook (app/api/payment/payu/success/route.ts)
+ *    is the ONLY place that sets plan to a paid tier and updates
+ *    storageLimitBytes from the server-authoritative PendingTransaction.
  *
- * This is the ONLY place where a fresh Usage document should be created
- * during normal sign-up. All other routes (presign-upload, complete-upload)
- * rely on this document already existing.
+ * This separation means:
+ *  - Onboarding is always clean and fast (no payment during signup)
+ *  - Usage document is always in a valid state after onboarding
+ *  - No broken "pro" ghost state in the database
  */
-export async function POST(request: NextRequest) {
+export async function POST(_request: NextRequest) {
   try {
     const session = await requireAuth();
     const userId = session.user.id;
 
-    const body = await request.json();
-    // Default to "free" — pro requires explicit opt-in
-    const plan: "free" | "pro" = body.plan === "pro" ? "pro" : "free";
-
-    // Free = 5 GB hard limit. Pro = null (unlimited, enforced via billing).
-    const storageLimitBytes = plan === "pro" ? null : FREE_TIER_LIMIT_BYTES;
-
     await dbConnect();
 
-    // Upsert — safe to call even if Usage doc was somehow created already.
-    // $setOnInsert never overwrites existing usage counters on subsequent calls.
+    // Upsert — safe to call even if a Usage doc was somehow pre-created.
+    // $setOnInsert never overwrites counters if the doc already exists.
+    // $set always ensures plan and limit are correct for a fresh signup.
     await Usage.findOneAndUpdate(
       { userId },
       {
@@ -53,17 +48,22 @@ export async function POST(request: NextRequest) {
           downloadCount: 0,
         },
         $set: {
-          plan,
-          storageLimitBytes,
+          plan: "free",
+          storageLimitBytes: FREE_TIER_LIMIT_BYTES,
           planActivatedAt: new Date(),
           planExpiresAt: null,
+          planPriceINR: 0,
           lastActiveAt: new Date(),
         },
       },
       { upsert: true, new: true },
     );
 
-    return NextResponse.json({ success: true, plan, storageLimitBytes });
+    return NextResponse.json({
+      success: true,
+      plan: "free",
+      storageLimitBytes: FREE_TIER_LIMIT_BYTES,
+    });
   } catch (error) {
     console.error("[onboarding/complete] error:", error);
     const message =
