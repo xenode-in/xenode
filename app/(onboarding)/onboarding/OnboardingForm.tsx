@@ -110,11 +110,14 @@ export function OnboardingForm() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    
+
     // Sanitize user name for filename
     const userName = session?.user?.name || "user";
-    const sanitizedName = userName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
-    
+    const sanitizedName = userName
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9-]/g, "");
+
     a.download = `xenode-recovery-kit-${sanitizedName}.txt`;
     a.click();
     URL.revokeObjectURL(url);
@@ -149,11 +152,13 @@ export function OnboardingForm() {
 
     startTransition(async () => {
       try {
+        // 1. Apply theme immediately
         setTheme(data.theme);
 
-        // Setup the vault (master password + recovery kit)
+        // 2. Setup the vault (master password + recovery kit)
         await setup(vaultPassword, kit.passphrase);
 
+        // 3. Mark user as onboarded + save encrypt-by-default preference
         const result = await authClient.updateUser({
           // @ts-expect-error additionalFields
           onboarded: true,
@@ -164,8 +169,32 @@ export function OnboardingForm() {
           throw new Error(result.error.message || "Failed to save preferences");
         }
 
+        // 4. Create/update Usage document with the chosen plan and correct storage limit.
+        //    POST /api/onboarding/complete sets:
+        //      free → storageLimitBytes = 5 GB
+        //      pro  → storageLimitBytes = unlimited (billing handled by payment webhook)
+        const usageRes = await fetch("/api/onboarding/complete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ plan: data.plan }),
+        });
+
+        if (!usageRes.ok) {
+          const err = await usageRes.json().catch(() => ({}));
+          throw new Error(err?.error || "Failed to initialise storage quota");
+        }
+
         toast.success("All set! Welcome to Xenode.");
-        router.push("/dashboard");
+
+        // 5. Redirect based on plan choice
+        //    Pro users go to pricing/payment to complete their subscription.
+        //    Free users go straight to the dashboard.
+        if (data.plan === "pro") {
+          router.push("/pricing");
+        } else {
+          router.push("/dashboard");
+        }
+
         router.refresh();
       } catch (error) {
         toast.error("Something went wrong. Please try again.");
@@ -231,7 +260,7 @@ export function OnboardingForm() {
                         Welcome into Xenode!
                       </h2>
                       <p className="text-muted-foreground px-4 text-balance">
-                        We’re thrilled to have you. Let’s get your account
+                        We're thrilled to have you. Let's get your account
                         personalized and set up perfectly for your needs in just
                         a few clicks.
                       </p>
@@ -258,7 +287,7 @@ export function OnboardingForm() {
                       </h2>
                       <p className="text-muted-foreground text-sm max-w-sm">
                         This password encrypts your files. It never leaves your
-                        device. Choose something strong — you’ll need it on
+                        device. Choose something strong — you'll need it on
                         every new device.
                       </p>
                     </div>
@@ -316,7 +345,7 @@ export function OnboardingForm() {
                         </p>
                         <p>
                           Your login (Google, GitHub, or email) is separate from
-                          your vault. This ensures even Xenode can’t read your
+                          your vault. This ensures even Xenode can't read your
                           files.
                         </p>
                       </div>
@@ -403,7 +432,7 @@ export function OnboardingForm() {
                         )}
                       </div>
                       <span className="text-sm">
-                        I’ve saved my recovery kit in a safe place
+                        I've saved my recovery kit in a safe place
                       </span>
                     </label>
                   </motion.div>
@@ -472,6 +501,10 @@ export function OnboardingForm() {
                                         </li>
                                         <li className="flex items-center gap-2">
                                           <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+                                          E2EE Encryption
+                                        </li>
+                                        <li className="flex items-center gap-2">
+                                          <div className="h-1.5 w-1.5 rounded-full bg-primary" />
                                           Community Support
                                         </li>
                                       </ul>
@@ -505,6 +538,10 @@ export function OnboardingForm() {
                                         <li className="flex items-center gap-2">
                                           <div className="h-1.5 w-1.5 rounded-full bg-primary" />
                                           Unlimited Storage
+                                        </li>
+                                        <li className="flex items-center gap-2">
+                                          <div className="h-1.5 w-1.5 rounded-full bg-primary" />
+                                          E2EE Encryption
                                         </li>
                                         <li className="flex items-center gap-2">
                                           <div className="h-1.5 w-1.5 rounded-full bg-primary" />
@@ -659,10 +696,10 @@ export function OnboardingForm() {
                   >
                     <WellDone className="h-64 w-auto drop-shadow-sm" />
                     <div className="space-y-2">
-                      <h2 className="text-3xl font-bold">You’re All Set!</h2>
+                      <h2 className="text-3xl font-bold">You're All Set!</h2>
                       <p className="text-muted-foreground">
                         Your vault is protected and your workspace is ready.
-                        Let’s start uploading and sharing files securely.
+                        Let's start uploading and sharing files securely.
                       </p>
                     </div>
                   </motion.div>
@@ -672,7 +709,6 @@ export function OnboardingForm() {
 
             {/* Footer buttons */}
             <div className="pt-4 border-t w-full flex justify-end">
-              {/* Step 2: custom next (validate password) */}
               {step === 2 && (
                 <Button
                   type="button"
@@ -684,7 +720,6 @@ export function OnboardingForm() {
                   Continue <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               )}
-              {/* Step 3: disabled until checkbox */}
               {step === 3 && (
                 <Button
                   type="button"
@@ -696,7 +731,6 @@ export function OnboardingForm() {
                   Continue <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               )}
-              {/* All other non-final steps */}
               {step !== 2 && step !== 3 && step < totalSteps && (
                 <Button
                   type="button"
@@ -707,7 +741,6 @@ export function OnboardingForm() {
                   Continue <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               )}
-              {/* Final step */}
               {step === totalSteps && (
                 <Button
                   type="submit"
@@ -715,7 +748,11 @@ export function OnboardingForm() {
                   disabled={isPending}
                   className="w-full sm:w-auto min-w-[150px]"
                 >
-                  {isPending ? "Setting up..." : "Go to Dashboard"}
+                  {isPending
+                    ? "Setting up..."
+                    : form.getValues("plan") === "pro"
+                      ? "Continue to Payment"
+                      : "Go to Dashboard"}
                   {!isPending && <ArrowRight className="ml-2 h-4 w-4" />}
                 </Button>
               )}
