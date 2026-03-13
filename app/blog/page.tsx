@@ -1,10 +1,63 @@
+import { Metadata } from "next";
 import Link from "next/link";
 import { Navbar } from "@/components/Navbar";
 import { getAllPosts } from "@/lib/blog";
 import { Calendar, Clock, User } from "lucide-react";
 
+const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+
+export const metadata: Metadata = {
+  title: "Blog",
+  description:
+    "Insights, security deep-dives, and product updates from the Xenode team.",
+  alternates: {
+    canonical: `${BASE_URL}/blog`,
+  },
+  openGraph: {
+    type: "website",
+    url: `${BASE_URL}/blog`,
+    title: "Blog — Xenode",
+    description:
+      "Insights, security deep-dives, and product updates from the Xenode team.",
+    images: [
+      {
+        url: `${BASE_URL}/og-image.png`,
+        width: 1200,
+        height: 630,
+        alt: "Xenode Blog",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Blog — Xenode",
+    description:
+      "Insights, security deep-dives, and product updates from the Xenode team.",
+    images: [`${BASE_URL}/og-image.png`],
+  },
+};
+
 export default function BlogPage() {
   const posts = getAllPosts();
+
+  const breadcrumbJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      {
+        "@type": "ListItem",
+        position: 1,
+        name: "Home",
+        item: BASE_URL,
+      },
+      {
+        "@type": "ListItem",
+        position: 2,
+        name: "Blog",
+        item: `${BASE_URL}/blog`,
+      },
+    ],
+  };
 
   return (
     <div
@@ -13,6 +66,13 @@ export default function BlogPage() {
         background: "linear-gradient(268deg, #295d32 4.2%, #273f2c 98.63%)",
       }}
     >
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(breadcrumbJsonLd),
+        }}
+      />
+
       {/* Grain overlay */}
       <div
         className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat"
