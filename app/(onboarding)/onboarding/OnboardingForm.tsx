@@ -111,7 +111,6 @@ export function OnboardingForm() {
     const a = document.createElement("a");
     a.href = url;
 
-    // Sanitize user name for filename
     const userName = session?.user?.name || "user";
     const sanitizedName = userName
       .toLowerCase()
@@ -169,10 +168,9 @@ export function OnboardingForm() {
           throw new Error(result.error.message || "Failed to save preferences");
         }
 
-        // 4. Create/update Usage document with the chosen plan and correct storage limit.
-        //    POST /api/onboarding/complete sets:
-        //      free → storageLimitBytes = 5 GB
-        //      pro  → storageLimitBytes = unlimited (billing handled by payment webhook)
+        // 4. Create/upsert Usage document with the chosen plan and storage limit.
+        //    free → 5 GB hard limit
+        //    pro  → null (unlimited) — billing handled separately by payment webhook
         const usageRes = await fetch("/api/onboarding/complete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -186,15 +184,11 @@ export function OnboardingForm() {
 
         toast.success("All set! Welcome to Xenode.");
 
-        // 5. Redirect based on plan choice
-        //    Pro users go to pricing/payment to complete their subscription.
-        //    Free users go straight to the dashboard.
-        if (data.plan === "pro") {
-          router.push("/pricing");
-        } else {
-          router.push("/dashboard");
-        }
-
+        // 5. All plans go to dashboard.
+        //    Pro users can upgrade from within the dashboard/settings.
+        //    We never redirect to /pricing during onboarding — it's jarring
+        //    and the user hasn't finished setting up yet.
+        router.push("/dashboard");
         router.refresh();
       } catch (error) {
         toast.error("Something went wrong. Please try again.");
@@ -748,11 +742,7 @@ export function OnboardingForm() {
                   disabled={isPending}
                   className="w-full sm:w-auto min-w-[150px]"
                 >
-                  {isPending
-                    ? "Setting up..."
-                    : form.getValues("plan") === "pro"
-                      ? "Continue to Payment"
-                      : "Go to Dashboard"}
+                  {isPending ? "Setting up..." : "Go to Dashboard"}
                   {!isPending && <ArrowRight className="ml-2 h-4 w-4" />}
                 </Button>
               )}
