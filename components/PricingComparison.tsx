@@ -1,135 +1,22 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { toast } from "sonner";
 import { useSession } from "@/lib/auth/client";
-
-const plans = [
-  {
-    name: "100GB Model",
-    storage: "100 GB",
-    price: 149,
-    features: [
-      "100 GB E2EE Storage",
-      "End-to-End Encryption",
-      "Global Access",
-      "No Hidden Fees",
-    ],
-  },
-  {
-    name: "500GB Model",
-    storage: "500 GB",
-    price: 399,
-    features: [
-      "500 GB E2EE Storage",
-      "End-to-End Encryption",
-      "Global Access",
-      "No Hidden Fees",
-    ],
-  },
-  {
-    name: "1TB Model",
-    storage: "1 TB",
-    price: 699,
-    isPopular: true,
-    features: [
-      "1 TB E2EE Storage",
-      "End-to-End Encryption",
-      "Priority Support",
-      "Global Access",
-    ],
-  },
-  {
-    name: "2TB Model",
-    storage: "2 TB",
-    price: 999,
-    features: [
-      "2 TB E2EE Storage",
-      "End-to-End Encryption",
-      "Priority Support",
-      "Global Access",
-    ],
-  },
-];
+import { PLANS } from "@/lib/config/plans";
+import { toast } from "sonner";
 
 export default function PricingComparison() {
-  const [isLoading, setIsLoading] = useState<string | null>(null);
-  const searchParams = useSearchParams();
   const router = useRouter();
   const { data: session } = useSession();
-  console.log(session);
 
-  useEffect(() => {
-    const errorParam = searchParams.get("error");
-    if (errorParam) {
-      if (errorParam === "payment_failed") {
-        toast.error("Payment failed or was cancelled. Please try again.");
-      } else if (errorParam === "hash_mismatch") {
-        toast.error("Security verification failed. Please try again.");
-      } else if (errorParam === "server_error") {
-        toast.error("An unexpected server error occurred.");
-      } else {
-        toast.error("An error occurred during payment.");
-      }
-
-      // Remove the error parameter from the URL cleanly
-      router.replace(session ? "/dashboard/billing" : "/pricing", {
-        scroll: false,
-      });
+  const handleSelectPlan = (slug: string) => {
+    if (!session) {
+      toast.error("Please sign in first to subscribe.");
+      router.push("/sign-in");
+      return;
     }
-  }, [searchParams, router, session]);
-
-  const handleBuyPlan = async (price: number, name: string) => {
-    try {
-      if (!session) {
-        toast.error("Please login first to subscribe.");
-        router.push("/sign-in");
-        return;
-      }
-
-      setIsLoading(name);
-
-      const response = await fetch("/api/payment/payu", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          amount: price,
-          planName: name,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to initialize payment");
-      }
-
-      // Create a form to submit to PayU
-      const form = document.createElement("form");
-      form.method = "POST";
-      form.action = data.action;
-
-      // Add all parameters as hidden inputs
-      Object.keys(data.params).forEach((key) => {
-        const input = document.createElement("input");
-        input.type = "hidden";
-        input.name = key;
-        input.value = data.params[key];
-        form.appendChild(input);
-      });
-
-      document.body.appendChild(form);
-      form.submit();
-    } catch (error) {
-      console.error("Payment initialization failed:", error);
-      alert("Failed to initialize payment. Please try again.");
-    } finally {
-      setIsLoading(null);
-    }
+    router.push(`/checkout?plan=${slug}`);
   };
 
   return (
@@ -148,7 +35,7 @@ export default function PricingComparison() {
 
         {/* Pricing Grid */}
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
-          {plans.map((plan) => (
+          {PLANS.map((plan) => (
             <div
               key={plan.name}
               className={`relative bg-white/5 border rounded-2xl p-6 flex flex-col ${
@@ -163,13 +50,9 @@ export default function PricingComparison() {
                 </div>
               )}
 
-              <h3 className="text-xl font-semibold text-[#e8e4d9] mb-2">
-                {plan.name}
-              </h3>
+              <h3 className="text-xl font-semibold text-[#e8e4d9] mb-2">{plan.name}</h3>
               <div className="mb-6 flex-1">
-                <span className="text-4xl font-bold text-[#7cb686]">
-                  ₹{plan.price}
-                </span>
+                <span className="text-4xl font-bold text-[#7cb686]">₹{plan.priceINR}</span>
                 <span className="text-[#e8e4d9]/70">/month</span>
               </div>
 
@@ -183,17 +66,14 @@ export default function PricingComparison() {
               </ul>
 
               <Button
-                onClick={() => handleBuyPlan(plan.price, plan.name)}
-                disabled={isLoading === plan.name}
+                onClick={() => handleSelectPlan(plan.slug)}
                 className={`w-full py-6 font-semibold transition-all ${
                   plan.isPopular
                     ? "bg-[#7cb686] hover:bg-[#6ba075] text-[#1a2e1d]"
                     : "bg-white/10 hover:bg-white/20 text-[#e8e4d9]"
                 }`}
               >
-                {isLoading === plan.name
-                  ? "Processing..."
-                  : `Buy ${plan.storage} Plan`}
+                Get {plan.storage} Plan
               </Button>
             </div>
           ))}
