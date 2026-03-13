@@ -1,16 +1,63 @@
 import { Suspense } from "react";
 import Link from "next/link";
+import { Metadata } from "next";
 import { Navbar } from "@/components/Navbar";
 import PricingComparison from "@/components/PricingComparison";
 import { Button } from "@/components/ui/button";
 
-export const metadata = {
-  title: "Pricing | Xenode",
+const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+
+export const metadata: Metadata = {
+  title: "Pricing",
   description:
-    "Simple, transparent pricing for our End-to-End Encrypted (E2EE) platform.",
+    "Simple, transparent pricing for encrypted cloud storage. No hidden fees, no compromises on your privacy.",
+  alternates: {
+    canonical: `${BASE_URL}/pricing`,
+  },
+  openGraph: {
+    type: "website",
+    url: `${BASE_URL}/pricing`,
+    title: "Pricing — Xenode",
+    description:
+      "Simple, transparent pricing for encrypted cloud storage. No hidden fees, no compromises on your privacy.",
+    images: [
+      {
+        url: `${BASE_URL}/og-image.png`,
+        width: 1200,
+        height: 630,
+        alt: "Xenode Pricing — Encrypted Cloud Storage",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Pricing — Xenode",
+    description:
+      "Simple, transparent pricing for end-to-end encrypted cloud storage.",
+    images: [`${BASE_URL}/og-image.png`],
+  },
 };
 
 export default function PricingPage() {
+  const breadcrumbJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      {
+        "@type": "ListItem",
+        position: 1,
+        name: "Home",
+        item: BASE_URL,
+      },
+      {
+        "@type": "ListItem",
+        position: 2,
+        name: "Pricing",
+        item: `${BASE_URL}/pricing`,
+      },
+    ],
+  };
+
   return (
     <div
       className="relative min-h-screen flex flex-col text-[#e8e4d9] font-sans force-dark"
@@ -18,6 +65,13 @@ export default function PricingPage() {
         background: "linear-gradient(268deg, #295d32 4.2%, #273f2c 98.63%)",
       }}
     >
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(breadcrumbJsonLd),
+        }}
+      />
+
       {/* Grain overlay */}
       <div
         className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat"
@@ -39,7 +93,7 @@ export default function PricingPage() {
         <section className="px-8 pb-20">
           <div className="max-w-[600px] mx-auto text-center">
             <h3 className="text-2xl md:text-3xl font-semibold mb-4 text-[#e8e4d9]">
-              Ready to secure your data?
+              Ready to keep your data private?
             </h3>
 
             <Link href="/">
