@@ -5,11 +5,9 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { randomBytes } from "crypto";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
-import Usage from "@/models/Usage";
+import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 
 export const dynamic = "force-dynamic";
-
-const FREE_TIER_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB
 
 export async function POST(request: NextRequest) {
   try {
@@ -35,7 +33,6 @@ export async function POST(request: NextRequest) {
 
     const { fileSize, fileType, bucketId } = await request.json();
 
-    // fileName is no longer used for the storage key — only for display (stays client-side)
     if (!bucketId) {
       return NextResponse.json(
         { error: "bucketId required" },
@@ -55,14 +52,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
 
-    // Enforce prefix for system bucket
-    if (bucket.userId === "system") {
-      // System bucket access validated — opaque key will be scoped to userId
-    }
-
-    // CVE-5 + GAP-1: Enforce quota and plan expiry BEFORE issuing presigned URL
+    // CVE-5 + GAP-1: Enforce quota and plan expiry BEFORE issuing presigned URL.
     const usage = await Usage.findOne({ userId });
     if (usage) {
+      // If a paid plan has expired, downgrade to free tier immediately.
       if (
         usage.plan !== "free" &&
         usage.planExpiresAt &&
@@ -70,35 +63,41 @@ export async function POST(request: NextRequest) {
       ) {
         await Usage.updateOne(
           { userId },
-          { $set: { plan: "free", storageLimitBytes: FREE_TIER_BYTES, planPriceINR: 0 } },
+          {
+            $set: {
+              plan: "free",
+              storageLimitBytes: FREE_TIER_LIMIT_BYTES,
+              planPriceINR: 0,
+            },
+          },
         );
-        usage.storageLimitBytes = FREE_TIER_BYTES;
+        usage.storageLimitBytes = FREE_TIER_LIMIT_BYTES;
       }
 
-      const fileSizeBytes = typeof fileSize === "number" ? fileSize : 0;
-      const projectedUsage = (usage.totalStorageBytes || 0) + fileSizeBytes;
+      // Only enforce quota if storageLimitBytes is set (non-null).
+      // null means unlimited (pro/enterprise) — skip the check entirely.
+      if (usage.storageLimitBytes !== null) {
+        const fileSizeBytes = typeof fileSize === "number" ? fileSize : 0;
+        const projectedUsage = (usage.totalStorageBytes || 0) + fileSizeBytes;
 
-      if (projectedUsage > usage.storageLimitBytes) {
-        return NextResponse.json(
-          {
-            error: "storage_quota_exceeded",
-            message:
-              "You have reached your storage limit. Please upgrade your plan or delete files.",
-            currentBytes: usage.totalStorageBytes,
-            limitBytes: usage.storageLimitBytes,
-          },
-          { status: 402 },
-        );
+        if (projectedUsage > usage.storageLimitBytes) {
+          return NextResponse.json(
+            {
+              error: "storage_quota_exceeded",
+              message:
+                "You have reached your storage limit. Please upgrade your plan or delete files.",
+              currentBytes: usage.totalStorageBytes,
+              limitBytes: usage.storageLimitBytes,
+            },
+            { status: 402 },
+          );
+        }
       }
     }
 
     /**
      * GAP-4: Opaque object key — NEVER embed original filename in the B2 storage path.
-     * The original filename ONLY lives in StorageObject.encryptedName (AES-GCM encrypted).
-     * This prevents filename leakage via B2 bucket listings or MongoDB key field.
-     *
      * Format: users/{userId}/{randomHex32}
-     * Example: users/64abc.../a3f9c21d8e4b70f2c1e5d9a8b6c4f0e7
      */
     const opaqueKey = `users/${userId}/${randomBytes(16).toString("hex")}`;
 
@@ -124,10 +123,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       uploadUrl: presignedUrl,
-      /**
-       * Return opaqueKey to the client so it can pass it to complete-upload.
-       * Client must NOT derive this from the filename.
-       */
       objectKey: opaqueKey,
       bucketId: bucket._id.toString(),
     });

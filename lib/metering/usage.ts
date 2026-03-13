@@ -1,18 +1,25 @@
 import dbConnect from "@/lib/mongodb";
-import Usage from "@/models/Usage";
+import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import { captureEvent } from "@/lib/posthog";
 
-const FREE_TIER_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB
-
 /**
- * Get or create usage record for a user
+ * Get or create usage record for a user.
+ * NOTE: Only call this AFTER onboarding is complete.
+ * During normal signup, /api/onboarding/complete creates the Usage doc.
+ * This is a safety net for edge cases (e.g. admin tools, migrations).
  */
 export async function getOrCreateUsage(userId: string) {
   await dbConnect();
   let usage = await Usage.findOne({ userId });
-  if (!usage) usage = await Usage.create({ userId });
+  if (!usage) {
+    usage = await Usage.create({
+      userId,
+      plan: "free",
+      storageLimitBytes: FREE_TIER_LIMIT_BYTES,
+    });
+  }
   return usage;
 }
 
@@ -49,6 +56,10 @@ export async function recalculateUsage(userId: string) {
 /**
  * Increment storage usage when an object is uploaded.
  * GAP-2: Enforces quota ceiling BEFORE incrementing.
+ *
+ * Quota logic:
+ *  - storageLimitBytes === null  → unlimited (paid plan), skip check
+ *  - storageLimitBytes is a number → enforce hard ceiling
  */
 export async function incrementStorage(
   userId: string,
@@ -60,7 +71,7 @@ export async function incrementStorage(
   const usage = await Usage.findOne({ userId });
 
   if (usage) {
-    // Enforce plan expiry at metering time
+    // Enforce plan expiry — downgrade to free if paid plan has expired
     if (
       usage.plan !== "free" &&
       usage.planExpiresAt &&
@@ -68,14 +79,23 @@ export async function incrementStorage(
     ) {
       await Usage.updateOne(
         { userId },
-        { $set: { plan: "free", storageLimitBytes: FREE_TIER_BYTES, planPriceINR: 0 } },
+        {
+          $set: {
+            plan: "free",
+            storageLimitBytes: FREE_TIER_LIMIT_BYTES,
+            planPriceINR: 0,
+          },
+        },
       );
-      usage.storageLimitBytes = FREE_TIER_BYTES;
+      usage.storageLimitBytes = FREE_TIER_LIMIT_BYTES;
     }
 
-    const projectedUsage = (usage.totalStorageBytes || 0) + sizeBytes;
-    if (projectedUsage > usage.storageLimitBytes) {
-      throw new Error("QUOTA_EXCEEDED");
+    // null storageLimitBytes = unlimited (active paid plan) — skip quota check
+    if (usage.storageLimitBytes !== null) {
+      const projectedUsage = (usage.totalStorageBytes || 0) + sizeBytes;
+      if (projectedUsage > usage.storageLimitBytes) {
+        throw new Error("QUOTA_EXCEEDED");
+      }
     }
   }
 
