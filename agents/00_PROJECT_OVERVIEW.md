@@ -1,14 +1,15 @@
-# xnode — Project Overview
+# Xenode — Project Overview
 
 > **Purpose of this folder:** All `.md` files inside `/agents` are written for AI coding agents (Atigravity, Claude, Cursor, Copilot, etc.) to understand this codebase quickly and accurately. Read ALL files in this folder before making changes.
 
 ---
 
-## What is xnode?
+## What is Xenode?
 
-**xnode** is a full-stack, self-hosted cloud object storage SaaS — similar to AWS S3 or Cloudflare R2 — but with a polished web UI, billing, API key access, end-to-end encryption, and a public blog/changelog system.
+**Xenode** is a full-stack, self-hosted cloud object storage SaaS — similar to AWS S3 or Cloudflare R2 — but with a polished web UI, billing, API key access, end-to-end encryption, and a public blog/changelog system.
 
 Users can:
+
 - Create **buckets** (logical namespaces for files)
 - Upload, download, preview, and manage **objects** (files) within buckets
 - Share files publicly via **share links** (with optional expiry and password)
@@ -21,31 +22,31 @@ Users can:
 
 ## Tech Stack (Quick Reference)
 
-| Layer | Technology |
-|---|---|
-| Framework | **Next.js 16.1.6** — App Router, React 19, Server Components |
-| Language | **TypeScript 5** throughout |
-| Database | **MongoDB** via **Mongoose** (two connections: main + logs) |
-| Auth | **better-auth** v1.4 (session-based, cookie auth) |
-| Storage Backend | **Backblaze B2** via AWS S3-compatible SDK (`@aws-sdk/client-s3`) |
-| File Upload | **Uppy** (Dashboard UI + AWS S3 multipart + XHR fallback) |
-| Encryption | **AES-GCM** (Web Crypto API, client-side) |
-| Payments | Custom payment integration (Razorpay-style webhook flow) |
-| Analytics | **PostHog** (client + server-side) |
-| UI Components | **shadcn/ui** + **Radix UI** + **Tailwind CSS v4** |
-| Animations | **Framer Motion** + **Lenis** (smooth scroll) |
-| Content (Blog/Changelog) | **MDX** files parsed with `gray-matter` + `next-mdx-remote` |
-| Charts | **Recharts** (usage dashboard) |
-| Validation | **Zod** v4 |
-| Testing | **Vitest** |
-| Deployment | **Docker** + `docker-compose` |
+| Layer                    | Technology                                                        |
+| ------------------------ | ----------------------------------------------------------------- |
+| Framework                | **Next.js 16.1.6** — App Router, React 19, Server Components      |
+| Language                 | **TypeScript 5** throughout                                       |
+| Database                 | **MongoDB** via **Mongoose** (two connections: main + logs)       |
+| Auth                     | **better-auth** v1.4 (session-based, cookie auth)                 |
+| Storage Backend          | **Backblaze B2** via AWS S3-compatible SDK (`@aws-sdk/client-s3`) |
+| File Upload              | **Uppy** (Dashboard UI + AWS S3 multipart + XHR fallback)         |
+| Encryption               | **AES-GCM** (Web Crypto API, client-side)                         |
+| Payments                 | Custom payment integration (Razorpay-style webhook flow)          |
+| Analytics                | **PostHog** (client + server-side)                                |
+| UI Components            | **shadcn/ui** + **Radix UI** + **Tailwind CSS v4**                |
+| Animations               | **Framer Motion** + **Lenis** (smooth scroll)                     |
+| Content (Blog/Changelog) | **MDX** files parsed with `gray-matter` + `next-mdx-remote`       |
+| Charts                   | **Recharts** (usage dashboard)                                    |
+| Validation               | **Zod** v4                                                        |
+| Testing                  | **Vitest**                                                        |
+| Deployment               | **Docker** + `docker-compose`                                     |
 
 ---
 
 ## Repository Structure (Top Level)
 
 ```
-xnode/
+Xenode/
 ├── agents/                  ← YOU ARE HERE — AI agent context docs
 ├── app/                     ← Next.js App Router (pages + API routes)
 │   ├── (auth)/              ← Login, register, forgot-password pages
@@ -101,6 +102,6 @@ The default branch is **`master`** (not `main`).
 2. **Backblaze B2 as storage** — All binary file data goes to B2. MongoDB only stores metadata.
 3. **Two MongoDB connections** — `lib/mongodb.ts` (main app data) and `lib/mongodb-logs.ts` (API request logs, kept separate for performance).
 4. **Client-side encryption is optional** — Users can enable AES-GCM encryption. The encrypted key is stored in `UserKeyVault`, never the raw key.
-5. **API keys are first-class** — Developers can use xnode programmatically. Every API key request is logged in `ApiLog`.
+5. **API keys are first-class** — Developers can use Xenode programmatically. Every API key request is logged in `ApiLog`.
 6. **File-based content** — Blog and changelog are `.mdx` files in `/content`, not a CMS or database.
 7. **Presigned URLs for downloads** — Files are never proxied through Next.js; presigned B2 URLs are generated and cached in `lib/downloadCache.ts`.

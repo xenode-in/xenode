@@ -9,8 +9,8 @@ services:
     ports:
       - 3000:3000
     environment:
-      - MONGODB_URI=mongodb://mongo:27017/xnode
-      - MONGODB_LOGS_URI=mongodb://mongo-logs:27017/xnode-logs
+      - MONGODB_URI=mongodb://mongo:27017/Xenode
+      - MONGODB_LOGS_URI=mongodb://mongo-logs:27017/Xenode-logs
       - NEXT_TELEMETRY_DISABLED=1
       # Optional: PostHog
       - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY}

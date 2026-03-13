@@ -1,12 +1,12 @@
 import mongoose from "mongoose";
 
 const LOGS_URI =
-  process.env.MONGODB_LOGS_URI || "mongodb://mongo-logs:27017/xnode-logs";
+  process.env.MONGODB_LOGS_URI || "mongodb://mongo-logs:27017/Xenode-logs";
 
 let logsConnection: mongoose.Connection | null = null;
 
 /**
- * Returns a dedicated Mongoose connection for the xnode-logs database.
+ * Returns a dedicated Mongoose connection for the Xenode-logs database.
  * Kept separate from the production DB so analytics writes never
  * compete with user-facing queries.
  */
