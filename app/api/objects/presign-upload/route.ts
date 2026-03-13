@@ -53,10 +53,9 @@ export async function POST(request: NextRequest) {
     }
 
     // CVE-5 + GAP-1: Enforce quota and plan expiry BEFORE issuing presigned URL.
-    // FREE_TIER_LIMIT_BYTES is imported from models/Usage — single source of truth.
     const usage = await Usage.findOne({ userId });
     if (usage) {
-      // If a paid plan has expired, downgrade to free tier immediately
+      // If a paid plan has expired, downgrade to free tier immediately.
       if (
         usage.plan !== "free" &&
         usage.planExpiresAt &&
@@ -75,26 +74,29 @@ export async function POST(request: NextRequest) {
         usage.storageLimitBytes = FREE_TIER_LIMIT_BYTES;
       }
 
-      const fileSizeBytes = typeof fileSize === "number" ? fileSize : 0;
-      const projectedUsage = (usage.totalStorageBytes || 0) + fileSizeBytes;
+      // Only enforce quota if storageLimitBytes is set (non-null).
+      // null means unlimited (pro/enterprise) — skip the check entirely.
+      if (usage.storageLimitBytes !== null) {
+        const fileSizeBytes = typeof fileSize === "number" ? fileSize : 0;
+        const projectedUsage = (usage.totalStorageBytes || 0) + fileSizeBytes;
 
-      if (projectedUsage > usage.storageLimitBytes) {
-        return NextResponse.json(
-          {
-            error: "storage_quota_exceeded",
-            message:
-              "You have reached your storage limit. Please upgrade your plan or delete files.",
-            currentBytes: usage.totalStorageBytes,
-            limitBytes: usage.storageLimitBytes,
-          },
-          { status: 402 },
-        );
+        if (projectedUsage > usage.storageLimitBytes) {
+          return NextResponse.json(
+            {
+              error: "storage_quota_exceeded",
+              message:
+                "You have reached your storage limit. Please upgrade your plan or delete files.",
+              currentBytes: usage.totalStorageBytes,
+              limitBytes: usage.storageLimitBytes,
+            },
+            { status: 402 },
+          );
+        }
       }
     }
 
     /**
      * GAP-4: Opaque object key — NEVER embed original filename in the B2 storage path.
-     * The original filename ONLY lives in StorageObject.encryptedName (AES-GCM encrypted).
      * Format: users/{userId}/{randomHex32}
      */
     const opaqueKey = `users/${userId}/${randomBytes(16).toString("hex")}`;

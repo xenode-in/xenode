@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
-import Usage, { FREE_TIER_LIMIT_BYTES, PRO_TIER_LIMIT_BYTES } from "@/models/Usage";
+import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 
 export const dynamic = "force-dynamic";
 
@@ -13,12 +13,13 @@ export const dynamic = "force-dynamic";
  * plan and storageLimitBytes.
  *
  * Body:
- *   plan           "free" | "pro"
+ *   plan  "free" | "pro"
  *
  * Behaviour:
- *   free  → storageLimitBytes = FREE_TIER_LIMIT_BYTES (5 GB), plan = "free"
- *   pro   → storageLimitBytes = PRO_TIER_LIMIT_BYTES, plan = "pro"
- *           (actual billing is handled separately by the payment webhook)
+ *   free → storageLimitBytes = FREE_TIER_LIMIT_BYTES (5 GB), plan = "free"
+ *   pro  → storageLimitBytes = null (unlimited), plan = "pro"
+ *          (actual billing handled by payment webhook — we do NOT redirect
+ *           to /pricing here; the client handles navigation)
  *
  * This is the ONLY place where a fresh Usage document should be created
  * during normal sign-up. All other routes (presign-upload, complete-upload)
@@ -30,20 +31,20 @@ export async function POST(request: NextRequest) {
     const userId = session.user.id;
 
     const body = await request.json();
+    // Default to "free" — pro requires explicit opt-in
     const plan: "free" | "pro" = body.plan === "pro" ? "pro" : "free";
 
-    // Map plan to storage limit
-    const storageLimitBytes =
-      plan === "pro" ? PRO_TIER_LIMIT_BYTES : FREE_TIER_LIMIT_BYTES;
+    // Free = 5 GB hard limit. Pro = null (unlimited, enforced via billing).
+    const storageLimitBytes = plan === "pro" ? null : FREE_TIER_LIMIT_BYTES;
 
     await dbConnect();
 
-    // Upsert — safe to call even if Usage doc was somehow created already
+    // Upsert — safe to call even if Usage doc was somehow created already.
+    // $setOnInsert never overwrites existing usage counters on subsequent calls.
     await Usage.findOneAndUpdate(
       { userId },
       {
         $setOnInsert: {
-          // Only set these on first creation — never overwrite existing usage counters
           totalStorageBytes: 0,
           totalEgressBytes: 0,
           totalObjects: 0,
@@ -55,7 +56,6 @@ export async function POST(request: NextRequest) {
           plan,
           storageLimitBytes,
           planActivatedAt: new Date(),
-          // Free tier has no expiry
           planExpiresAt: null,
           lastActiveAt: new Date(),
         },
