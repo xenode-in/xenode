@@ -1,42 +1,53 @@
 import { MetadataRoute } from "next";
-import { getAllSlugs } from "@/lib/blog";
+import { getAllSlugs as getBlogSlugs } from "@/lib/blog";
+import { getAllSlugs as getChangelogSlugs } from "@/lib/changelog";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-  const blogSlugs = getAllSlugs();
+
+  const blogSlugs = getBlogSlugs();
+  const changelogSlugs = getChangelogSlugs();
 
   const blogUrls = blogSlugs.map((slug) => ({
     url: `${baseUrl}/blog/${slug}`,
     lastModified: new Date(),
     changeFrequency: "weekly" as const,
-    priority: 0.8,
+    priority: 0.7,
+  }));
+
+  const changelogUrls = changelogSlugs.map((slug) => ({
+    url: `${baseUrl}/changelog/${slug}`,
+    lastModified: new Date(),
+    changeFrequency: "weekly" as const,
+    priority: 0.6,
   }));
 
   return [
     {
       url: baseUrl,
       lastModified: new Date(),
-      changeFrequency: "daily",
-      priority: 1,
+      changeFrequency: "daily" as const,
+      priority: 1.0,
     },
     {
       url: `${baseUrl}/pricing`,
       lastModified: new Date(),
-      changeFrequency: "weekly",
+      changeFrequency: "weekly" as const,
       priority: 0.9,
     },
     {
       url: `${baseUrl}/blog`,
       lastModified: new Date(),
-      changeFrequency: "daily",
-      priority: 0.9,
+      changeFrequency: "daily" as const,
+      priority: 0.8,
     },
     {
       url: `${baseUrl}/changelog`,
       lastModified: new Date(),
-      changeFrequency: "weekly",
+      changeFrequency: "weekly" as const,
       priority: 0.8,
     },
     ...blogUrls,
+    ...changelogUrls,
   ];
 }

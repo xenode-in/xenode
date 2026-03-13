@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { Metadata } from "next";
 import Link from "next/link";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import { getPostBySlug, getAllSlugs } from "@/lib/blog";
@@ -6,6 +7,8 @@ import { useMDXComponents } from "@/mdx-components";
 import { Navbar } from "@/components/Navbar";
 import { Calendar, Clock, User } from "lucide-react";
 import remarkGfm from "remark-gfm";
+
+const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
 interface BlogPostPageProps {
   params: Promise<{ slug: string }>;
@@ -16,7 +19,9 @@ export async function generateStaticParams() {
   return slugs.map((slug) => ({ slug }));
 }
 
-export async function generateMetadata({ params }: BlogPostPageProps) {
+export async function generateMetadata({
+  params,
+}: BlogPostPageProps): Promise<Metadata> {
   const { slug } = await params;
   const post = getPostBySlug(slug);
 
@@ -24,9 +29,38 @@ export async function generateMetadata({ params }: BlogPostPageProps) {
     return { title: "Post Not Found" };
   }
 
+  const postUrl = `${BASE_URL}/blog/${slug}`;
+  const ogImage = `${BASE_URL}/og-image.png`;
+
   return {
-    title: `${post.title} | Xenode Blog`,
+    title: post.title,
     description: post.description,
+    alternates: {
+      canonical: postUrl,
+    },
+    openGraph: {
+      type: "article",
+      url: postUrl,
+      title: post.title,
+      description: post.description,
+      publishedTime: post.date,
+      authors: [post.author],
+      tags: post.tags,
+      images: [
+        {
+          url: ogImage,
+          width: 1200,
+          height: 630,
+          alt: post.title,
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: post.title,
+      description: post.description,
+      images: [ogImage],
+    },
   };
 }
 
@@ -39,6 +73,46 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
   }
 
   const components = useMDXComponents({});
+  const postUrl = `${BASE_URL}/blog/${slug}`;
+
+  const articleJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    headline: post.title,
+    description: post.description,
+    url: postUrl,
+    datePublished: post.date,
+    dateModified: post.date,
+    author: {
+      "@type": "Person",
+      name: post.author,
+    },
+    publisher: {
+      "@type": "Organization",
+      name: "Xenode",
+      logo: {
+        "@type": "ImageObject",
+        url: `${BASE_URL}/icons/android-icon-192x192.png`,
+      },
+    },
+    image: {
+      "@type": "ImageObject",
+      url: `${BASE_URL}/og-image.png`,
+      width: 1200,
+      height: 630,
+    },
+    keywords: post.tags.join(", "),
+  };
+
+  const breadcrumbJsonLd = {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    itemListElement: [
+      { "@type": "ListItem", position: 1, name: "Home", item: BASE_URL },
+      { "@type": "ListItem", position: 2, name: "Blog", item: `${BASE_URL}/blog` },
+      { "@type": "ListItem", position: 3, name: post.title, item: postUrl },
+    ],
+  };
 
   return (
     <div
@@ -47,12 +121,19 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
         background: "linear-gradient(268deg, #295d32 4.2%, #273f2c 98.63%)",
       }}
     >
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(articleJsonLd) }}
+      />
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
+      />
+
       {/* Grain overlay */}
       <div
         className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat"
-        style={{
-          backgroundImage: "url('/grain.png')",
-        }}
+        style={{ backgroundImage: "url('/grain.png')" }}
       />
 
       {/* Navigation */}
