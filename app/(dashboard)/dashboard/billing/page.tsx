@@ -1,5 +1,5 @@
 import UpgradePlanModal from "@/components/dashboard/UpgradePlanModal";
-import { CreditCard, Clock, FileText } from "lucide-react";
+import { FileText } from "lucide-react";
 import { getServerSession } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
@@ -37,8 +37,10 @@ export default async function BillingPage() {
   const egressLimit = usage?.egressLimitBytes
     ? formatBytes(usage.egressLimitBytes)
     : "500 GB";
+
   return (
     <div className="space-y-8">
+      {/* ── Header ── */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Billing</h1>
@@ -46,18 +48,21 @@ export default async function BillingPage() {
             Manage your subscription and billing
           </p>
         </div>
-        <UpgradePlanModal />
+
+        <div>
+          <UpgradePlanModal />
+        </div>
       </div>
 
-      {/* Current Plan */}
-      <div className="bg-card border border-border rounded-xl p-6">
+      {/* ── Current Plan ── */}
+      <div className="rounded-xl border border-border bg-card p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-sm font-medium text-foreground">Current Plan</h3>
           <span
-            className={`text-xs font-medium px-3 py-1 rounded-full ${
+            className={`text-xs font-medium px-3 py-1 rounded-full border ${
               isPro
-                ? "bg-[#7cb686]/20 text-[#7cb686]"
-                : "bg-primary/10 text-primary"
+                ? "bg-primary/10 text-primary border-primary/20"
+                : "bg-muted text-muted-foreground border-border"
             }`}
           >
             {planName}
@@ -79,88 +84,94 @@ export default async function BillingPage() {
         </div>
       </div>
 
-      {/* Invoice History */}
-      <h3 className="text-lg font-medium text-foreground mt-12 mb-2">
-        Invoice History
-      </h3>
-      <div className="bg-card border border-border rounded-xl tracking-tight overflow-hidden">
-        {payments.length === 0 ? (
-          <div className="px-6 py-12 text-center text-[#e8e4d9]/70">
-            <p>
-              No invoices yet. Billing history will appear here once you
-              upgrade.
-            </p>
-          </div>
-        ) : (
-          <div className="w-full relative overflow-x-auto text-[#e8e4d9]/80 text-sm">
-            <table className="w-full text-left">
-              <thead className="text-xs uppercase bg-white/5 text-[#e8e4d9]/60">
-                <tr>
-                  <th scope="col" className="px-6 py-4 font-medium">
-                    Date
-                  </th>
-                  <th scope="col" className="px-6 py-4 font-medium">
-                    Amount
-                  </th>
-                  <th scope="col" className="px-6 py-4 font-medium">
-                    Status
-                  </th>
-                  <th scope="col" className="px-6 py-4 font-medium">
-                    Plan
-                  </th>
-                  <th scope="col" className="px-6 py-4 font-medium text-right">
-                    Receipt
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {payments.map((payment) => (
-                  <tr
-                    key={payment._id.toString()}
-                    className="hover:bg-white/5 transition-colors"
-                  >
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {new Date(payment.createdAt).toLocaleDateString(
-                        undefined,
-                        {
-                          year: "numeric",
-                          month: "short",
-                          day: "numeric",
-                        },
-                      )}
-                    </td>
-                    <td className="px-6 py-4">₹{payment.amount.toFixed(2)}</td>
-                    <td className="px-6 py-4">
-                      {payment.status === "success" ? (
-                        <span className="text-xs font-medium px-2 py-1 rounded bg-[#7cb686]/20 text-[#7cb686]">
-                          Completed
-                        </span>
-                      ) : payment.status === "failed" ? (
-                        <span className="text-xs font-medium px-2 py-1 rounded bg-red-500/20 text-red-500">
-                          Failed
-                        </span>
-                      ) : (
-                        <span className="text-xs font-medium px-2 py-1 rounded bg-yellow-500/20 text-yellow-500">
-                          Pending
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4">{payment.planName}</td>
-                    <td className="px-6 py-4 text-right">
-                      {payment.status === "success" ? (
-                        <span className="text-[#7cb686] hover:text-[#6ba075] cursor-pointer inline-flex items-center transition-colors">
-                          <FileText className="w-4 h-4 mr-1" /> PDF
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground">-</span>
-                      )}
-                    </td>
+      {/* ── Invoice History ── */}
+      <div>
+        <h3 className="text-lg font-medium text-foreground mb-4">
+          Invoice History
+        </h3>
+        <div className="rounded-xl border border-border bg-card overflow-hidden">
+          {payments.length === 0 ? (
+            <div className="px-6 py-12 text-center">
+              <p className="text-sm text-muted-foreground">
+                No invoices yet. Billing history will appear here once you
+                upgrade.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-left">
+                <thead className="border-b border-border">
+                  <tr>
+                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Date
+                    </th>
+                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Amount
+                    </th>
+                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Status
+                    </th>
+                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Plan
+                    </th>
+                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground text-right">
+                      Receipt
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {payments.map((payment) => (
+                    <tr
+                      key={payment._id.toString()}
+                      className="hover:bg-accent/40 transition-colors"
+                    >
+                      <td className="px-5 py-4 whitespace-nowrap text-foreground">
+                        {new Date(payment.createdAt).toLocaleDateString(
+                          undefined,
+                          {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                          },
+                        )}
+                      </td>
+                      <td className="px-5 py-4 text-foreground">
+                        ₹{payment.amount.toFixed(2)}
+                      </td>
+                      <td className="px-5 py-4">
+                        {payment.status === "success" ? (
+                          <span className="inline-flex items-center rounded-full bg-primary/10 border border-primary/20 px-2.5 py-0.5 text-xs font-medium text-primary">
+                            Completed
+                          </span>
+                        ) : payment.status === "failed" ? (
+                          <span className="inline-flex items-center rounded-full bg-destructive/10 border border-destructive/20 px-2.5 py-0.5 text-xs font-medium text-destructive">
+                            Failed
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center rounded-full bg-yellow-500/10 border border-yellow-500/20 px-2.5 py-0.5 text-xs font-medium text-yellow-600 dark:text-yellow-400">
+                            Pending
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-5 py-4 text-foreground">
+                        {payment.planName}
+                      </td>
+                      <td className="px-5 py-4 text-right">
+                        {payment.status === "success" ? (
+                          <button className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                            <FileText className="h-3.5 w-3.5" /> PDF
+                          </button>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
