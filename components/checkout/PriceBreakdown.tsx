@@ -1,10 +1,18 @@
 interface PriceBreakdownProps {
   planPrice: number;
+  campaignDiscount: number;
+  campaignBadge: string | null;
   prorationCredit: number;
   finalAmount: number;
 }
 
-export default function PriceBreakdown({ planPrice, prorationCredit, finalAmount }: PriceBreakdownProps) {
+export default function PriceBreakdown({
+  planPrice,
+  campaignDiscount,
+  campaignBadge,
+  prorationCredit,
+  finalAmount,
+}: PriceBreakdownProps) {
   return (
     <div className="rounded-xl border border-border bg-card p-5">
       <h3 className="mb-3 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
@@ -15,6 +23,15 @@ export default function PriceBreakdown({ planPrice, prorationCredit, finalAmount
           <span className="text-muted-foreground">Plan price</span>
           <span className="text-foreground">₹{planPrice.toFixed(2)}</span>
         </div>
+
+        {campaignDiscount > 0 && (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">
+              {campaignBadge ? `${campaignBadge} discount` : "Campaign discount"}
+            </span>
+            <span className="text-emerald-500">- ₹{campaignDiscount.toFixed(2)}</span>
+          </div>
+        )}
 
         {prorationCredit > 0 && (
           <div className="flex justify-between">
@@ -28,9 +45,11 @@ export default function PriceBreakdown({ planPrice, prorationCredit, finalAmount
             <span className="font-semibold text-foreground">Due today</span>
             <span className="text-lg font-bold text-foreground">₹{finalAmount.toFixed(2)}</span>
           </div>
-          {prorationCredit > 0 && (
+          {(campaignDiscount > 0 || prorationCredit > 0) && (
             <p className="mt-1 text-xs text-muted-foreground">
-              Includes ₹{prorationCredit.toFixed(2)} credit from your current plan.
+              {prorationCredit > 0
+                ? `Includes ₹${prorationCredit.toFixed(2)} credit from your current plan.`
+                : ""}
             </p>
           )}
         </div>

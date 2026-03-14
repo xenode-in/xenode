@@ -1,6 +1,6 @@
 "use client";
 
-import type { PlanConfig } from "@/lib/config/plans";
+import type { IPlan } from "@/models/PricingConfig";
 import OrderSummary from "./OrderSummary";
 import CheckoutForm from "./CheckoutForm";
 
@@ -21,8 +21,20 @@ export interface CheckoutUser {
   billingAddress: BillingAddress | null;
 }
 
+/** IPlan extended with campaign pricing fields computed server-side */
+export interface CheckoutPlan extends IPlan {
+  /** Base price before any campaign discount */
+  originalPrice: number;
+  /** Discount amount in ₹ (0 if no active campaign) */
+  campaignDiscount: number;
+  /** Campaign badge text e.g. "🎉 Sale" (null if no campaign) */
+  campaignBadge: string | null;
+  /** Campaign discount % (null if no campaign) */
+  campaignDiscountPercent: number | null;
+}
+
 interface CheckoutPageProps {
-  plan: PlanConfig;
+  plan: CheckoutPlan;
   user: CheckoutUser;
   prorationCredit: number;
   finalAmount: number;
