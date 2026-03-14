@@ -48,7 +48,10 @@ export default async function BillingPage() {
             Manage your subscription and billing
           </p>
         </div>
-        <UpgradePlanModal />
+
+        <div>
+          <UpgradePlanModal />
+        </div>
       </div>
 
       {/* ── Current Plan ── */}
@@ -83,12 +86,15 @@ export default async function BillingPage() {
 
       {/* ── Invoice History ── */}
       <div>
-        <h3 className="text-lg font-medium text-foreground mb-4">Invoice History</h3>
+        <h3 className="text-lg font-medium text-foreground mb-4">
+          Invoice History
+        </h3>
         <div className="rounded-xl border border-border bg-card overflow-hidden">
           {payments.length === 0 ? (
             <div className="px-6 py-12 text-center">
               <p className="text-sm text-muted-foreground">
-                No invoices yet. Billing history will appear here once you upgrade.
+                No invoices yet. Billing history will appear here once you
+                upgrade.
               </p>
             </div>
           ) : (
@@ -96,11 +102,21 @@ export default async function BillingPage() {
               <table className="w-full text-sm text-left">
                 <thead className="border-b border-border">
                   <tr>
-                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Date</th>
-                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Amount</th>
-                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</th>
-                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Plan</th>
-                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground text-right">Receipt</th>
+                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Date
+                    </th>
+                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Amount
+                    </th>
+                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Status
+                    </th>
+                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Plan
+                    </th>
+                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground text-right">
+                      Receipt
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -110,13 +126,18 @@ export default async function BillingPage() {
                       className="hover:bg-accent/40 transition-colors"
                     >
                       <td className="px-5 py-4 whitespace-nowrap text-foreground">
-                        {new Date(payment.createdAt).toLocaleDateString(undefined, {
-                          year: "numeric",
-                          month: "short",
-                          day: "numeric",
-                        })}
+                        {new Date(payment.createdAt).toLocaleDateString(
+                          undefined,
+                          {
+                            year: "numeric",
+                            month: "short",
+                            day: "numeric",
+                          },
+                        )}
                       </td>
-                      <td className="px-5 py-4 text-foreground">₹{payment.amount.toFixed(2)}</td>
+                      <td className="px-5 py-4 text-foreground">
+                        ₹{payment.amount.toFixed(2)}
+                      </td>
                       <td className="px-5 py-4">
                         {payment.status === "success" ? (
                           <span className="inline-flex items-center rounded-full bg-primary/10 border border-primary/20 px-2.5 py-0.5 text-xs font-medium text-primary">
@@ -129,10 +150,12 @@ export default async function BillingPage() {
                         ) : (
                           <span className="inline-flex items-center rounded-full bg-yellow-500/10 border border-yellow-500/20 px-2.5 py-0.5 text-xs font-medium text-yellow-600 dark:text-yellow-400">
                             Pending
-          </span>
+                          </span>
                         )}
                       </td>
-                      <td className="px-5 py-4 text-foreground">{payment.planName}</td>
+                      <td className="px-5 py-4 text-foreground">
+                        {payment.planName}
+                      </td>
                       <td className="px-5 py-4 text-right">
                         {payment.status === "success" ? (
                           <button className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
