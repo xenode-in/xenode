@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { Lock } from "lucide-react";
 import type { CheckoutPlan } from "./CheckoutPage";
 import type { CheckoutUser } from "./CheckoutPage";
 import PaymentMethodToggle from "./PaymentMethodToggle";
@@ -96,13 +97,11 @@ export default function CheckoutForm({
           couponCode: appliedCoupon?.code ?? null,
         }),
       });
-
       const data = await res.json();
       if (!res.ok) {
         setServerError(data.error || "Failed to initialize payment. Please try again.");
         return;
       }
-
       const form = document.createElement("form");
       form.method = "POST";
       form.action = data.action;
@@ -123,16 +122,15 @@ export default function CheckoutForm({
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-5" noValidate>
-      <h2 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-        Payment Details
-      </h2>
+    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
+      {/* Section label */}
+      <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Payment Details</p>
 
-      {/* Contact */}
+      {/* Contact card */}
       <div className="rounded-xl border border-border bg-card p-5 space-y-4">
         <p className="text-sm font-semibold text-foreground">Contact</p>
         <div>
-          <label className="mb-1 block text-xs font-medium text-muted-foreground">Email</label>
+          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">Email</label>
           <input
             value={user.email}
             readOnly
@@ -140,7 +138,7 @@ export default function CheckoutForm({
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs font-medium text-muted-foreground">
+          <label className="mb-1.5 block text-xs font-medium text-muted-foreground">
             Phone Number <span className="text-destructive">*</span>
           </label>
           <div className="flex">
@@ -152,14 +150,14 @@ export default function CheckoutForm({
               type="tel"
               maxLength={10}
               placeholder="9876543210"
-              className="flex-1 rounded-r-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+              className="flex-1 rounded-r-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
-          {errors.phone && <p className="mt-1 text-xs text-destructive">{errors.phone.message}</p>}
+          {errors.phone && <p className="mt-1.5 text-xs text-destructive">{errors.phone.message}</p>}
         </div>
       </div>
 
-      {/* Coupon */}
+      {/* Coupon card */}
       <div className="rounded-xl border border-border bg-card p-5 space-y-3">
         <p className="text-sm font-semibold text-foreground">Coupon Code</p>
         <CouponInput
@@ -170,14 +168,14 @@ export default function CheckoutForm({
         />
       </div>
 
-      {/* Billing Address */}
+      {/* Address */}
       <AddressSection
         register={register}
         errors={errors}
         defaultOpen={!!user.billingAddress?.name}
       />
 
-      {/* Payment Method */}
+      {/* Payment method */}
       <div className="rounded-xl border border-border bg-card p-5 space-y-3">
         <p className="text-sm font-semibold text-foreground">Payment Method</p>
         <PaymentMethodToggle
@@ -190,22 +188,24 @@ export default function CheckoutForm({
               <span className="font-semibold text-foreground">How it works: </span>
               You’ll approve a UPI mandate in your UPI app (GPay / PhonePe / Paytm).
               Xenode will automatically charge ₹{finalAmount.toFixed(2)} every 30 days.
-              You can cancel anytime from your UPI app or from your Xenode billing page.
+              You can cancel anytime from your UPI app or your Xenode billing page.
             </p>
           </div>
         )}
       </div>
 
+      {/* Server error */}
       {serverError && (
         <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
           <p className="text-sm text-destructive">{serverError}</p>
         </div>
       )}
 
+      {/* Submit */}
       <button
         type="submit"
         disabled={isSubmitting}
-        className="flex h-12 w-full items-center justify-center gap-2 rounded-lg bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+        className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 shadow-md"
       >
         {isSubmitting ? (
           <>
@@ -213,13 +213,13 @@ export default function CheckoutForm({
             Processing…
           </>
         ) : (
-          <>🔒 Pay ₹{finalAmount.toFixed(2)} securely</>
+          <><Lock className="h-4 w-4" /> Pay ₹{finalAmount.toFixed(2)} securely</>
         )}
       </button>
 
       <p className="text-center text-xs text-muted-foreground">
         By completing this purchase you agree to Xenode’s{" "}
-        <a href="/terms" className="underline hover:text-foreground">Terms of Service</a>.
+        <a href="/terms" className="underline hover:text-foreground transition-colors">Terms of Service</a>.
       </p>
     </form>
   );

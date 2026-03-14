@@ -6,10 +6,32 @@ import {
   DialogContent,
   DialogTrigger,
   DialogTitle,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import PricingGrid from "@/components/PricingGrid";
 import type { IPlan, ICampaign } from "@/models/PricingConfig";
+
+function PricingSkeletons() {
+  return (
+    <div className="grid gap-5 px-5 pb-6 sm:grid-cols-2 lg:grid-cols-4">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="rounded-2xl border border-border bg-card p-6 space-y-4">
+          <Skeleton className="h-3 w-16" />
+          <Skeleton className="h-6 w-24" />
+          <Skeleton className="h-10 w-20" />
+          <div className="space-y-2 pt-2">
+            {Array.from({ length: 4 }).map((_, j) => (
+              <Skeleton key={j} className="h-3.5 w-full" />
+            ))}
+          </div>
+          <Skeleton className="h-10 w-full mt-4" />
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function UpgradePlanModal() {
   const [open, setOpen] = useState(false);
@@ -18,11 +40,8 @@ export default function UpgradePlanModal() {
   const [campaign, setCampaign] = useState<ICampaign | null>(null);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  useEffect(() => { setMounted(true); }, []);
 
-  // Always re-fetch fresh plans + campaign whenever the modal opens
   useEffect(() => {
     if (!open) return;
     setLoading(true);
@@ -34,7 +53,7 @@ export default function UpgradePlanModal() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [open]); // re-runs every time modal opens — always fresh
+  }, [open]);
 
   if (!mounted) {
     return <Button className="w-full sm:w-auto invisible">Upgrade Plan</Button>;
@@ -43,21 +62,39 @@ export default function UpgradePlanModal() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button className="w-full sm:w-auto" onClick={() => setOpen(true)}>
-          Upgrade Plan
-        </Button>
+        <Button className="w-full sm:w-auto">Upgrade Plan</Button>
       </DialogTrigger>
-      <DialogContent className="max-w-[700px] max-h-[90vh] overflow-y-auto w-[90vw] p-0 bg-[#0c140e] border-[#1a2e1d]/50">
-        <DialogTitle className="sr-only">Upgrade Plan</DialogTitle>
-        <div className="pt-8">
-          {loading || plans.length === 0 ? (
+
+      <DialogContent
+        className={[
+          "w-[95vw] max-w-5xl p-0",
+          "bg-background border-border",
+          "max-h-[92vh] overflow-y-auto",
+          "rounded-2xl",
+        ].join(" ")}
+      >
+        {/* Header */}
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-border bg-background/95 px-6 py-4 backdrop-blur-sm">
+          <div>
+            <DialogTitle className="text-base font-semibold text-foreground">
+              Choose Your Plan
+            </DialogTitle>
+            <DialogDescription className="mt-0.5 text-xs text-muted-foreground">
+              Upgrade to unlock more storage and features.
+            </DialogDescription>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="pt-4">
+          {loading ? (
+            <PricingSkeletons />
+          ) : plans.length === 0 ? (
             <div className="flex items-center justify-center py-20">
-              <span className="text-sm text-[#e8e4d9]/50">
-                {loading ? "Loading plans…" : "No plans available"}
-              </span>
+              <span className="text-sm text-muted-foreground">No plans available.</span>
             </div>
           ) : (
-            <PricingGrid plans={plans} campaign={campaign} />
+            <PricingGrid plans={plans} campaign={campaign} compact />
           )}
         </div>
       </DialogContent>

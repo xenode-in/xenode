@@ -51,32 +51,42 @@ export default function CheckoutPage({
 }: CheckoutPageProps) {
   const [appliedCoupon, setAppliedCoupon] = useState<CouponResult | null>(null);
 
-  // Recompute final amount client-side as coupon is applied/removed
-  // Server will re-validate on submit — this is just for display
   const campaignPrice = plan.originalPrice - plan.campaignDiscount;
   const couponDiscount = appliedCoupon?.discountAmount ?? 0;
   const finalAmount = Math.max(1, campaignPrice - couponDiscount - prorationCredit);
 
   return (
-    <div className="xenode-green min-h-screen w-full bg-background">
-      <header className="border-b border-border px-6 py-4">
-        <div className="mx-auto flex max-w-5xl items-center justify-between">
-          <span className="font-brand text-lg font-bold tracking-tight text-foreground">xenode</span>
-          <span className="text-xs text-muted-foreground">Secure Checkout · 256-bit SSL</span>
+    // No hardcoded theme class — inherits whatever theme the user has selected
+    <div className="min-h-screen w-full bg-background">
+      {/* Header */}
+      <header className="sticky top-0 z-20 border-b border-border bg-background/90 backdrop-blur-md">
+        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-6">
+          <span className="font-brand text-lg font-bold tracking-tight text-foreground">
+            xenode
+          </span>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="inline-block h-2 w-2 rounded-full bg-primary" />
+            Secure Checkout · 256-bit SSL
+          </div>
         </div>
       </header>
 
-      <main className="mx-auto max-w-5xl px-4 py-10">
+      {/* Progress breadcrumb */}
+      <div className="border-b border-border bg-muted/40">
+        <div className="mx-auto flex h-9 max-w-5xl items-center gap-2 px-4 sm:px-6">
+          <span className="text-xs font-medium text-primary">Cart</span>
+          <span className="text-xs text-muted-foreground">/</span>
+          <span className="text-xs font-semibold text-foreground">Payment</span>
+          <span className="text-xs text-muted-foreground">/</span>
+          <span className="text-xs text-muted-foreground">Confirmation</span>
+        </div>
+      </div>
+
+      {/* Main */}
+      <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:py-12">
         <div className="flex flex-col gap-8 lg:flex-row lg:items-start">
-          <aside className="w-full lg:w-[380px] lg:shrink-0">
-            <OrderSummary
-              plan={plan}
-              prorationCredit={prorationCredit}
-              finalAmount={finalAmount}
-              appliedCoupon={appliedCoupon}
-            />
-          </aside>
-          <section className="flex-1">
+          {/* Left — form */}
+          <section className="flex-1 min-w-0">
             <CheckoutForm
               plan={plan}
               user={user}
@@ -86,6 +96,16 @@ export default function CheckoutPage({
               appliedCoupon={appliedCoupon}
             />
           </section>
+
+          {/* Right — summary (sticky on desktop) */}
+          <aside className="w-full lg:w-[360px] lg:shrink-0 lg:sticky lg:top-24">
+            <OrderSummary
+              plan={plan}
+              prorationCredit={prorationCredit}
+              finalAmount={finalAmount}
+              appliedCoupon={appliedCoupon}
+            />
+          </aside>
         </div>
       </main>
     </div>

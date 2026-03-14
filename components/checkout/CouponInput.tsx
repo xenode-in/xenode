@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Tag, X, CheckCircle } from "lucide-react";
+import { Tag, X, CheckCircle, Loader2 } from "lucide-react";
 
 interface CouponResult {
   couponId: string;
@@ -34,12 +34,7 @@ export default function CouponInput({ planSlug, planPriceINR, onApply, applied }
     const data = await res.json();
     setLoading(false);
     if (data.valid) {
-      onApply({
-        couponId: data.couponId,
-        code: data.code,
-        discountAmount: data.discountAmount,
-        discountLabel: data.discountLabel,
-      });
+      onApply({ couponId: data.couponId, code: data.code, discountAmount: data.discountAmount, discountLabel: data.discountLabel });
       setCode("");
       setError(null);
     } else {
@@ -54,47 +49,47 @@ export default function CouponInput({ planSlug, planPriceINR, onApply, applied }
     setError(null);
   }
 
-  // Applied state
   if (applied) {
     return (
-      <div className="flex items-center justify-between rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+      <div className="flex items-center justify-between rounded-lg border border-primary/30 bg-primary/10 px-4 py-3">
         <div className="flex items-center gap-2">
-          <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+          <CheckCircle className="h-4 w-4 text-primary shrink-0" />
           <div>
-            <span className="font-mono text-sm font-semibold text-emerald-400">{applied.code}</span>
-            <span className="ml-2 text-xs text-emerald-500">— {applied.discountLabel} applied</span>
+            <span className="font-mono text-sm font-semibold text-primary">{applied.code}</span>
+            <span className="ml-2 text-xs text-muted-foreground">— {applied.discountLabel} applied</span>
           </div>
         </div>
-        <button onClick={remove} className="text-zinc-500 hover:text-white transition-colors">
-          <X className="w-4 h-4" />
+        <button
+          onClick={remove}
+          aria-label="Remove coupon"
+          className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded"
+        >
+          <X className="h-4 w-4" />
         </button>
       </div>
     );
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-1.5">
       <div className="flex gap-2">
         <div className="relative flex-1">
-          <Tag className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+          <Tag className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <input
             value={code}
             onChange={(e) => { setCode(e.target.value.toUpperCase()); setError(null); }}
             onKeyDown={(e) => e.key === "Enter" && apply()}
             placeholder="Enter coupon code"
-            className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-background text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary font-mono uppercase"
+            className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-background text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring font-mono uppercase tracking-wider"
           />
         </div>
         <button
+          type="button"
           onClick={apply}
           disabled={loading || !code.trim()}
-          className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
+          className="px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity min-w-[72px] flex items-center justify-center"
         >
-          {loading ? (
-            <span className="h-4 w-4 inline-block animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
-          ) : (
-            "Apply"
-          )}
+          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Apply"}
         </button>
       </div>
       {error && <p className="text-xs text-destructive">{error}</p>}
