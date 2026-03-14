@@ -1,3 +1,14 @@
+/**
+ * app/api/payment/payu/success/route.ts — PayU success webhook.
+ *
+ * FIXES (multi-cycle refactor):
+ *   - planExpiresAt now uses getSubscriptionEndDate(now, pending.billingCycle)
+ *     instead of the old hardcoded +30 days. Yearly plan → +1 year.
+ *   - Payment record now stores billingCycle, subscriptionStartDate,
+ *     subscriptionEndDate — the three new fields added to Payment model.
+ *   - Usage.planPriceINR stores the base cycle price (not final charged amount)
+ *     so future proration calculations remain correct.
+ */
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import dbConnect from "@/lib/mongodb";
@@ -6,6 +17,7 @@ import Payment from "@/models/Payment";
 import PendingTransaction from "@/models/PendingTransaction";
 import Coupon from "@/models/Coupon";
 import mongoose from "mongoose";
+import { getSubscriptionEndDate } from "@/lib/pricing/pricingService";
 
 function toSuccessPage(baseUrl: string, params: Record<string, string>) {
   const url = new URL("/payment/success", baseUrl);
@@ -97,15 +109,21 @@ export async function POST(req: Request) {
 
     const authpayuid = data.payuMoneyId || data.authpayuid || null;
 
+    // ── Compute subscription window ───────────────────────────────────────────
+    const billingCycle = pending.billingCycle ?? "monthly";
+    const subscriptionStartDate = new Date();
+    const subscriptionEndDate = getSubscriptionEndDate(subscriptionStartDate, billingCycle);
+
+    // ── Update Usage ──────────────────────────────────────────────────────────
     await Usage.findOneAndUpdate(
       { userId: user._id.toString() },
       {
         $set: {
           plan: pending.planName,
           storageLimitBytes: pending.storageLimitBytes,
-          planPriceINR: pending.planPriceINR,
-          planActivatedAt: new Date(),
-          planExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+          planPriceINR: pending.planPriceINR,   // base cycle price for future proration
+          planActivatedAt: subscriptionStartDate,
+          planExpiresAt: subscriptionEndDate,    // FIXED: was +30 days always
           scheduledDowngradePlan: null,
           scheduledDowngradeLimitBytes: null,
           scheduledDowngradeAt: null,
@@ -115,6 +133,7 @@ export async function POST(req: Request) {
       { upsert: true }
     );
 
+    // ── Create Payment record ─────────────────────────────────────────────────
     await Payment.create({
       userId: user._id.toString(),
       amount: parseFloat(amount),
@@ -122,6 +141,9 @@ export async function POST(req: Request) {
       status: "success",
       txnid,
       planName: pending.planName,
+      billingCycle,                              // NEW
+      subscriptionStartDate,                     // NEW
+      subscriptionEndDate,                       // NEW
       payuResponse: {
         status: data.status, txnid: data.txnid, mode: data.mode,
         PG_TYPE: data.PG_TYPE, bank_ref_num: data.bank_ref_num,
@@ -129,9 +151,7 @@ export async function POST(req: Request) {
       },
     });
 
-    // ───────────────────────────────────────────────────────────────
-    // Atomically consume coupon — only after payment confirmed
-    // ───────────────────────────────────────────────────────────────
+    // ── Consume coupon atomically ─────────────────────────────────────────────
     if (pending.couponId) {
       await Coupon.findByIdAndUpdate(pending.couponId, {
         $inc: { usedCount: 1 },
@@ -152,6 +172,7 @@ export async function POST(req: Request) {
       plan: pending.planName,
       amount: pending.planPriceINR.toString(),
       method: pending.paymentMethod,
+      cycle: billingCycle,
       ...(pending.couponCode ? { coupon: pending.couponCode } : {}),
     });
   } catch (error) {

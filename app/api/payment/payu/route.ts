@@ -1,3 +1,14 @@
+/**
+ * app/api/payment/payu/route.ts — Payment initiation.
+ *
+ * FIXES (multi-cycle refactor):
+ *   - Reads `billingCycle` from request body (sent by CheckoutForm).
+ *   - Passes cycle to getPlanConfigFromDB() so yearly price is used for yearly checkouts.
+ *   - Stores billingCycle + planSlug in PendingTransaction for the success webhook.
+ *   - planPriceINR stored in PendingTransaction is the BASE price (before coupon/proration)
+ *     so the success webhook can correctly calculate subscription end date.
+ *   - autopay si_details.billingCycle now reflects the actual selected cycle.
+ */
 import { NextResponse } from "next/server";
 import crypto from "crypto";
 import { getServerSession } from "@/lib/auth/session";
@@ -7,15 +18,30 @@ import PendingTransaction from "@/models/PendingTransaction";
 import Coupon from "@/models/Coupon";
 import mongoose from "mongoose";
 import { getPlanConfigFromDB } from "@/lib/config/getPricingConfig";
+import type { BillingCycle } from "@/types/pricing";
 
 const PHONE_RE = /^[6-9]\d{9}$/;
+const VALID_CYCLES: BillingCycle[] = ["monthly", "yearly", "quarterly", "lifetime"];
+
+// Map our BillingCycle to PayU SI billingCycle strings
+const PAYU_SI_CYCLE: Record<BillingCycle, string> = {
+  monthly: "MONTHLY",
+  yearly: "YEARLY",
+  quarterly: "QUARTERLY",
+  lifetime: "MONTHLY", // lifetime has no autopay equivalent — fallback
+};
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
-function addYearStr(date: Date) {
+function addPeriodStr(date: Date, cycle: BillingCycle): string {
   const d = new Date(date);
-  d.setFullYear(d.getFullYear() + 1);
+  switch (cycle) {
+    case "monthly":   d.setMonth(d.getMonth() + 1); break;
+    case "yearly":    d.setFullYear(d.getFullYear() + 1); break;
+    case "quarterly": d.setMonth(d.getMonth() + 3); break;
+    case "lifetime":  d.setFullYear(d.getFullYear() + 99); break;
+  }
   return d.toISOString().slice(0, 10);
 }
 function sha512(str: string): string {
@@ -42,14 +68,20 @@ export async function POST(req: Request) {
     const {
       planName,
       planSlug,
+      billingCycle: rawCycle,
       paymentMethod = "direct",
       phone: clientPhone,
       billingAddress,
       couponCode,
     } = body;
 
-    // Fetch server-authoritative plan config from DB (campaign discounts applied)
-    const PLAN_CONFIG = await getPlanConfigFromDB();
+    // Validate and normalise billing cycle — default to monthly
+    const billingCycle: BillingCycle =
+      rawCycle && VALID_CYCLES.includes(rawCycle) ? rawCycle : "monthly";
+
+    // Fetch server-authoritative plan config for the selected cycle
+    // This is the ONLY place that should determine the charge amount.
+    const PLAN_CONFIG = await getPlanConfigFromDB(billingCycle);
     const plan = PLAN_CONFIG[planName];
     if (!plan) {
       return NextResponse.json({ error: "Invalid plan selection" }, { status: 400 });
@@ -82,9 +114,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
-    // ───────────────────────────────────────────────────────────────
-    // Server-side coupon validation (re-validate — never trust client)
-    // ───────────────────────────────────────────────────────────────
+    // ── Server-side coupon validation ────────────────────────────────────────
     let couponId: string | null = null;
     let couponDiscount = 0;
     let validatedCouponCode: string | null = null;
@@ -114,9 +144,9 @@ export async function POST(req: Request) {
           couponDiscount = Math.min(coupon.discountValue, plan.priceINR - 1);
         }
       }
-      // If coupon is invalid server-side, silently ignore (don't fail checkout)
     }
 
+    // plan.priceINR is already the campaign-discounted price from getPlanConfigFromDB
     let finalAmount = plan.priceINR - couponDiscount;
     let prorationCredit = 0;
 
@@ -162,11 +192,11 @@ export async function POST(req: Request) {
     if (paymentMethod === "autopay") {
       const siDetails = {
         billingAmount: formattedAmount,
-        billingCycle: "MONTHLY",
+        billingCycle: PAYU_SI_CYCLE[billingCycle],
         billingInterval: 1,
         paymentStartDate: todayStr(),
-        paymentEndDate: addYearStr(new Date()),
-        remarks: `Xenode ${planName} monthly`,
+        paymentEndDate: addPeriodStr(new Date(), billingCycle),
+        remarks: `Xenode ${planName} ${billingCycle}`,
       };
       const siDetailsStr = JSON.stringify(siDetails);
       hash = forwardHash(key, salt, txnid, formattedAmount, productinfo, firstname, email, udf1, siDetailsStr);
@@ -180,12 +210,16 @@ export async function POST(req: Request) {
       params = { key, txnid, amount: formattedAmount, productinfo, firstname, email, phone, udf1, surl, furl, hash };
     }
 
+    // Store BASE price (plan.priceINR — already campaign-adjusted) so the
+    // success webhook can use it to compute subscription end date correctly.
     await PendingTransaction.create({
       txnid,
       userId: session.user.id,
       planName,
+      planSlug: planSlug ?? "",
       storageLimitBytes: plan.storageLimitBytes,
-      planPriceINR: plan.priceINR,
+      planPriceINR: plan.priceINR, // base for this cycle, campaign applied
+      billingCycle,               // NEW — needed by success webhook
       couponId,
       couponCode: validatedCouponCode,
       couponDiscount,
