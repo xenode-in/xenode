@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { IPlan } from "@/models/PricingConfig";
 import OrderSummary from "./OrderSummary";
 import CheckoutForm from "./CheckoutForm";
@@ -21,16 +22,18 @@ export interface CheckoutUser {
   billingAddress: BillingAddress | null;
 }
 
-/** IPlan extended with campaign pricing fields computed server-side */
 export interface CheckoutPlan extends IPlan {
-  /** Base price before any campaign discount */
   originalPrice: number;
-  /** Discount amount in ₹ (0 if no active campaign) */
   campaignDiscount: number;
-  /** Campaign badge text e.g. "🎉 Sale" (null if no campaign) */
   campaignBadge: string | null;
-  /** Campaign discount % (null if no campaign) */
   campaignDiscountPercent: number | null;
+}
+
+export interface CouponResult {
+  couponId: string;
+  code: string;
+  discountAmount: number;
+  discountLabel: string;
 }
 
 interface CheckoutPageProps {
@@ -44,41 +47,43 @@ export default function CheckoutPage({
   plan,
   user,
   prorationCredit,
-  finalAmount,
+  finalAmount: serverFinalAmount,
 }: CheckoutPageProps) {
+  const [appliedCoupon, setAppliedCoupon] = useState<CouponResult | null>(null);
+
+  // Recompute final amount client-side as coupon is applied/removed
+  // Server will re-validate on submit — this is just for display
+  const campaignPrice = plan.originalPrice - plan.campaignDiscount;
+  const couponDiscount = appliedCoupon?.discountAmount ?? 0;
+  const finalAmount = Math.max(1, campaignPrice - couponDiscount - prorationCredit);
+
   return (
     <div className="xenode-green min-h-screen w-full bg-background">
-      {/* Top bar */}
       <header className="border-b border-border px-6 py-4">
         <div className="mx-auto flex max-w-5xl items-center justify-between">
-          <span className="font-brand text-lg font-bold tracking-tight text-foreground">
-            xenode
-          </span>
-          <span className="text-xs text-muted-foreground">
-            Secure Checkout · 256-bit SSL
-          </span>
+          <span className="font-brand text-lg font-bold tracking-tight text-foreground">xenode</span>
+          <span className="text-xs text-muted-foreground">Secure Checkout · 256-bit SSL</span>
         </div>
       </header>
 
-      {/* Two-column layout */}
       <main className="mx-auto max-w-5xl px-4 py-10">
         <div className="flex flex-col gap-8 lg:flex-row lg:items-start">
-          {/* LEFT — Order Summary */}
           <aside className="w-full lg:w-[380px] lg:shrink-0">
             <OrderSummary
               plan={plan}
               prorationCredit={prorationCredit}
               finalAmount={finalAmount}
+              appliedCoupon={appliedCoupon}
             />
           </aside>
-
-          {/* RIGHT — Payment Form */}
           <section className="flex-1">
             <CheckoutForm
               plan={plan}
               user={user}
               prorationCredit={prorationCredit}
               finalAmount={finalAmount}
+              onCouponChange={setAppliedCoupon}
+              appliedCoupon={appliedCoupon}
             />
           </section>
         </div>

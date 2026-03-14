@@ -4,6 +4,7 @@ import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
 import Payment from "@/models/Payment";
 import PendingTransaction from "@/models/PendingTransaction";
+import Coupon from "@/models/Coupon";
 import mongoose from "mongoose";
 
 function toSuccessPage(baseUrl: string, params: Record<string, string>) {
@@ -11,43 +12,27 @@ function toSuccessPage(baseUrl: string, params: Record<string, string>) {
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   return NextResponse.redirect(url.toString(), { status: 303 });
 }
-
 function toFailurePage(baseUrl: string, params: Record<string, string>) {
   const url = new URL("/payment/failure", baseUrl);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   return NextResponse.redirect(url.toString(), { status: 303 });
 }
 
-/**
- * Verify PayU reverse hash — supports both regular and SI formats.
- *
- * Regular:  SALT|status||||||udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key
- * SI:       SALT|si_details|status||||||udf5|udf4|udf3|udf2|udf1|email|firstname|productinfo|amount|txnid|key
- */
 function verifyHash(data: Record<string, string>, salt: string, key: string): boolean {
   const {
     status,
     udf1 = "", udf2 = "", udf3 = "", udf4 = "", udf5 = "",
     email, firstname, productinfo, amount, txnid,
-    hash: resHash,
-    si_details,
+    hash: resHash, si_details,
   } = data;
-
   const reversePart = `${udf5}|${udf4}|${udf3}|${udf2}|${udf1}|${email}|${firstname}|${productinfo}|${amount}|${txnid}|${key}`;
-
   if (si_details) {
-    const siHash = crypto
-      .createHash("sha512")
-      .update(`${salt}|${si_details}|${status}||||||${reversePart}`)
-      .digest("hex");
+    const siHash = crypto.createHash("sha512")
+      .update(`${salt}|${si_details}|${status}||||||${reversePart}`).digest("hex");
     if (siHash === resHash) return true;
   }
-
-  const hash = crypto
-    .createHash("sha512")
-    .update(`${salt}|${status}||||||${reversePart}`)
-    .digest("hex");
-  return hash === resHash;
+  return crypto.createHash("sha512")
+    .update(`${salt}|${status}||||||${reversePart}`).digest("hex") === resHash;
 }
 
 export async function POST(req: Request) {
@@ -58,10 +43,8 @@ export async function POST(req: Request) {
 
     const key  = process.env.PAYU_MERCHANT_KEY  || "";
     const salt = process.env.PAYU_MERCHANT_SALT || "";
-
     const { status, amount, txnid, productinfo, udf1 } = data;
 
-    // CVE-1: Hash verification
     const hashValid = verifyHash(data, salt, key);
     if (!hashValid) {
       if (process.env.NODE_ENV === "production") {
@@ -74,7 +57,6 @@ export async function POST(req: Request) {
       return toFailurePage(req.url, { txnid: txnid ?? "", error: "payment_failed", plan: productinfo ?? "", amount: amount ?? "" });
     }
 
-    // CVE-4: Strict udf1 validation
     if (!udf1 || !mongoose.Types.ObjectId.isValid(udf1)) {
       console.error("[SECURITY] Invalid udf1 in PayU success callback", { txnid });
       return toFailurePage(req.url, { txnid: txnid ?? "", error: "invalid_session", plan: productinfo ?? "", amount: amount ?? "" });
@@ -82,7 +64,7 @@ export async function POST(req: Request) {
 
     await dbConnect();
 
-    // CVE-2: Idempotency guard — this is the safety net in absence of a transaction
+    // Idempotency guard
     const existingPayment = await Payment.findOne({ txnid });
     if (existingPayment) {
       return toSuccessPage(req.url, {
@@ -92,7 +74,6 @@ export async function POST(req: Request) {
       });
     }
 
-    // CVE-3: Resolve plan from server-side PendingTransaction
     const pending = await PendingTransaction.findOne({ txnid, userId: udf1 });
     if (!pending) {
       console.error("[SECURITY] No pending transaction found", { txnid, udf1 });
@@ -102,25 +83,20 @@ export async function POST(req: Request) {
     const db = mongoose.connection.db;
     if (!db) throw new Error("Database not connected");
 
-    const user = await db
-      .collection("user")
-      .findOne({ _id: new mongoose.Types.ObjectId(udf1) });
-
+    const user = await db.collection("user").findOne({ _id: new mongoose.Types.ObjectId(udf1) });
     if (!user) {
       return toFailurePage(req.url, { txnid, error: "user_not_found", plan: productinfo ?? "", amount: amount ?? "" });
     }
 
-    // Persist billing address to user profile if provided
     if (pending.billingAddress) {
       await db.collection("user").updateOne(
         { _id: new mongoose.Types.ObjectId(udf1) },
-        { $set: { billingAddress: pending.billingAddress } },
+        { $set: { billingAddress: pending.billingAddress } }
       );
     }
 
     const authpayuid = data.payuMoneyId || data.authpayuid || null;
 
-    // Update Usage — sequential writes; idempotency guard above prevents double-activation
     await Usage.findOneAndUpdate(
       { userId: user._id.toString() },
       {
@@ -136,7 +112,7 @@ export async function POST(req: Request) {
           ...(authpayuid ? { autopayMandateId: authpayuid, autopayActive: true } : {}),
         },
       },
-      { upsert: true },
+      { upsert: true }
     );
 
     await Payment.create({
@@ -147,16 +123,28 @@ export async function POST(req: Request) {
       txnid,
       planName: pending.planName,
       payuResponse: {
-        status: data.status,
-        txnid: data.txnid,
-        mode: data.mode,
-        PG_TYPE: data.PG_TYPE,
-        bank_ref_num: data.bank_ref_num,
+        status: data.status, txnid: data.txnid, mode: data.mode,
+        PG_TYPE: data.PG_TYPE, bank_ref_num: data.bank_ref_num,
         ...(authpayuid ? { authpayuid } : {}),
       },
     });
 
-    // CVE-3: Clean up pending transaction
+    // ───────────────────────────────────────────────────────────────
+    // Atomically consume coupon — only after payment confirmed
+    // ───────────────────────────────────────────────────────────────
+    if (pending.couponId) {
+      await Coupon.findByIdAndUpdate(pending.couponId, {
+        $inc: { usedCount: 1 },
+        $push: {
+          usedBy: {
+            userId: udf1,
+            usedAt: new Date(),
+            txnid,
+          },
+        },
+      });
+    }
+
     await PendingTransaction.deleteOne({ txnid });
 
     return toSuccessPage(req.url, {
@@ -164,8 +152,8 @@ export async function POST(req: Request) {
       plan: pending.planName,
       amount: pending.planPriceINR.toString(),
       method: pending.paymentMethod,
+      ...(pending.couponCode ? { coupon: pending.couponCode } : {}),
     });
-
   } catch (error) {
     console.error("PayU success callback error:", error);
     return toFailurePage("http://localhost:3000", { error: "server_error" });
