@@ -1,12 +1,24 @@
+/**
+ * PendingTransaction.ts
+ *
+ * SCHEMA CHANGE (multi-cycle refactor):
+ *   - Added `billingCycle` — used by success webhook to compute planExpiresAt
+ *     via getSubscriptionEndDate() instead of the old hardcoded +30 days.
+ *   - Default: "monthly" for backward compatibility with existing pending rows.
+ */
 import mongoose, { Schema, Document, Model } from "mongoose";
+import type { BillingCycle } from "@/types/pricing";
 
 export interface IPendingTransaction extends Document {
   txnid: string;
   userId: string;
   planName: string;
+  planSlug: string;
   storageLimitBytes: number;
+  /** Base plan price for the selected cycle (before coupon/proration deductions) */
   planPriceINR: number;
-  /** Coupon applied to this transaction (if any) */
+  /** Billing cycle the user selected (monthly, yearly, etc.) */
+  billingCycle: BillingCycle;
   couponId?: string;
   couponCode?: string;
   couponDiscount?: number;
@@ -20,8 +32,14 @@ const PendingTransactionSchema = new Schema<IPendingTransaction>(
     txnid: { type: String, required: true, unique: true },
     userId: { type: String, required: true },
     planName: { type: String, required: true },
+    planSlug: { type: String, default: "" },
     storageLimitBytes: { type: Number, required: true },
     planPriceINR: { type: Number, required: true },
+    billingCycle: {
+      type: String,
+      enum: ["monthly", "yearly", "quarterly", "lifetime"],
+      default: "monthly",
+    },
     couponId: { type: String, default: null },
     couponCode: { type: String, default: null },
     couponDiscount: { type: Number, default: 0 },

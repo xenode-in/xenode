@@ -1,3 +1,12 @@
+/**
+ * CheckoutForm.tsx
+ *
+ * FIXES (multi-cycle refactor):
+ *   - POST body to /api/payment/payu now includes `billingCycle` (plan.billingCycle).
+ *     Without this the API always defaulted to monthly price even on yearly checkout.
+ *   - CouponInput: planPriceINR prop replaced with getEffectivePriceForCycle()
+ *     because plan.priceINR no longer exists on IPlan after the schema refactor.
+ */
 "use client";
 
 import { useState } from "react";
@@ -10,6 +19,7 @@ import type { CheckoutUser } from "./CheckoutPage";
 import PaymentMethodToggle from "./PaymentMethodToggle";
 import AddressSection from "./AddressSection";
 import CouponInput from "./CouponInput";
+import { getEffectivePriceForCycle } from "@/lib/pricing/pricingService";
 
 const addressSchema = z.object({
   name:    z.string().optional(),
@@ -78,6 +88,9 @@ export default function CheckoutForm({
 
   const paymentMethod = watch("paymentMethod");
 
+  // Base price for this cycle — used for coupon validation on the server
+  const cycleBasePrice = getEffectivePriceForCycle(plan.pricing, plan.billingCycle);
+
   const onSubmit = async (values: CheckoutFormValues) => {
     setServerError(null);
     setIsSubmitting(true);
@@ -88,6 +101,7 @@ export default function CheckoutForm({
         body: JSON.stringify({
           planName: plan.name,
           planSlug: plan.slug,
+          billingCycle: plan.billingCycle,    // FIX: was missing — API always used monthly
           paymentMethod: values.paymentMethod,
           phone: values.phone,
           billingAddress:
@@ -123,7 +137,6 @@ export default function CheckoutForm({
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
-      {/* Section label */}
       <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">Payment Details</p>
 
       {/* Contact card */}
@@ -162,7 +175,7 @@ export default function CheckoutForm({
         <p className="text-sm font-semibold text-foreground">Coupon Code</p>
         <CouponInput
           planSlug={plan.slug}
-          planPriceINR={plan.priceINR}
+          planPriceINR={cycleBasePrice}   {/* FIX: was plan.priceINR → undefined */}
           onApply={onCouponChange}
           applied={appliedCoupon}
         />
@@ -186,8 +199,9 @@ export default function CheckoutForm({
           <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
             <p className="text-xs text-muted-foreground">
               <span className="font-semibold text-foreground">How it works: </span>
-              You’ll approve a UPI mandate in your UPI app (GPay / PhonePe / Paytm).
-              Xenode will automatically charge ₹{finalAmount.toFixed(2)} every 30 days.
+              You'll approve a UPI mandate in your UPI app (GPay / PhonePe / Paytm).
+              Xenode will automatically charge ₹{finalAmount.toFixed(2)} every{" "}
+              {plan.billingCycle === "yearly" ? "year" : plan.billingCycle === "quarterly" ? "3 months" : "30 days"}.
               You can cancel anytime from your UPI app or your Xenode billing page.
             </p>
           </div>
@@ -218,7 +232,7 @@ export default function CheckoutForm({
       </button>
 
       <p className="text-center text-xs text-muted-foreground">
-        By completing this purchase you agree to Xenode’s{" "}
+        By completing this purchase you agree to Xenode's{" "}
         <a href="/terms" className="underline hover:text-foreground transition-colors">Terms of Service</a>.
       </p>
     </form>
