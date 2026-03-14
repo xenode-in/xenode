@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { Check, Zap } from "lucide-react";
+import { Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useSession } from "@/lib/auth/client";
@@ -12,11 +12,14 @@ import type { IPlan, ICampaign } from "@/models/PricingConfig";
 interface Props {
   plans: IPlan[];
   campaign: ICampaign | null;
-  /** When true renders in compact modal mode (no outer py padding) */
   compact?: boolean;
 }
 
-export default function PricingGrid({ plans, campaign, compact = false }: Props) {
+export default function PricingGrid({
+  plans,
+  campaign,
+  compact = false,
+}: Props) {
   const router = useRouter();
   const { data: session } = useSession();
 
@@ -26,6 +29,7 @@ export default function PricingGrid({ plans, campaign, compact = false }: Props)
       router.push("/sign-in");
       return;
     }
+
     router.push(`/checkout?plan=${slug}`);
   };
 
@@ -33,8 +37,8 @@ export default function PricingGrid({ plans, campaign, compact = false }: Props)
     campaign ? Math.round(price * (1 - campaign.discountPercent / 100)) : price;
 
   return (
-    <section className={cn("w-full", compact ? "px-5 pb-6" : "py-20 px-6")}>
-      <div className="mx-auto max-w-5xl">
+    <section className={cn("w-full", compact ? "px-4 pb-6" : "py-20 px-6")}>
+      <div className={cn("mx-auto", compact ? "max-w-none" : "max-w-5xl")}>
         {/* Header */}
         {!compact && (
           <div className="mb-14 text-center">
@@ -51,15 +55,22 @@ export default function PricingGrid({ plans, campaign, compact = false }: Props)
         {/* Campaign banner */}
         {campaign && (
           <div className="mb-8 flex items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-5 py-3">
-            <Zap className="h-4 w-4 text-primary" />
             <span className="text-sm font-semibold text-primary">
-              {campaign.badge} {campaign.name} — {campaign.discountPercent}% off all plans!
+              {campaign.badge} {campaign.name} — {campaign.discountPercent}% off
+              all plans!
             </span>
           </div>
         )}
 
-        {/* Cards */}
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Plans Grid */}
+        <div
+          className={cn(
+            "grid gap-5",
+            compact
+              ? "grid-cols-1 sm:grid-cols-2"
+              : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4",
+          )}
+        >
           {plans.map((plan) => {
             const finalPrice = discountedPrice(plan.priceINR);
             const isDiscounted = finalPrice !== plan.priceINR;
@@ -68,10 +79,11 @@ export default function PricingGrid({ plans, campaign, compact = false }: Props)
               <div
                 key={plan.name}
                 className={cn(
-                  "relative flex flex-col rounded-2xl border bg-card p-6 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg",
+                  "relative flex flex-col rounded-2xl border bg-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg",
+                  compact ? "p-4" : "p-6",
                   plan.isPopular
                     ? "border-primary shadow-[0_0_0_1px_var(--color-primary),0_8px_32px_hsl(var(--primary)/0.18)] bg-primary/5"
-                    : "border-border hover:border-primary/40"
+                    : "border-border hover:border-primary/40",
                 )}
               >
                 {/* Popular badge */}
@@ -83,11 +95,14 @@ export default function PricingGrid({ plans, campaign, compact = false }: Props)
                   </div>
                 )}
 
-                {/* Plan name */}
+                {/* Plan title */}
                 <p className="mb-1 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
                   {plan.storage} Plan
                 </p>
-                <h3 className="mb-4 text-xl font-bold text-foreground">{plan.name}</h3>
+
+                <h3 className="mb-4 text-xl font-bold text-foreground">
+                  {plan.name}
+                </h3>
 
                 {/* Price */}
                 <div className="mb-6 flex items-baseline gap-2">
@@ -97,17 +112,29 @@ export default function PricingGrid({ plans, campaign, compact = false }: Props)
                         ₹{plan.priceINR}
                       </span>
                     )}
-                    <span className={cn("text-4xl font-extrabold", plan.isPopular ? "text-primary" : "text-foreground")}>
+
+                    <span
+                      className={cn(
+                        "text-4xl font-extrabold",
+                        plan.isPopular ? "text-primary" : "text-foreground",
+                      )}
+                    >
                       ₹{finalPrice}
                     </span>
-                    <span className="ml-1 text-sm text-muted-foreground">/mo</span>
+
+                    <span className="ml-1 text-sm text-muted-foreground">
+                      /mo
+                    </span>
                   </div>
                 </div>
 
                 {/* Features */}
                 <ul className="mb-8 flex-1 space-y-2.5">
                   {plan.features.map((feature, i) => (
-                    <li key={i} className="flex items-start gap-2.5 text-sm text-muted-foreground">
+                    <li
+                      key={i}
+                      className="flex items-start gap-2.5 text-sm text-muted-foreground"
+                    >
                       <Check className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                       <span>{feature}</span>
                     </li>
@@ -120,7 +147,7 @@ export default function PricingGrid({ plans, campaign, compact = false }: Props)
                   variant={plan.isPopular ? "default" : "outline"}
                   className={cn(
                     "w-full font-semibold transition-all",
-                    plan.isPopular && "shadow-md"
+                    plan.isPopular && "shadow-md",
                   )}
                 >
                   Get {plan.name}
