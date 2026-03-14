@@ -1,3 +1,13 @@
+/**
+ * app/(payment)/checkout/page.tsx — Server component.
+ *
+ * FIX (multi-cycle refactor):
+ *   - Reads ?cycle= search param (defaults to "monthly" if omitted).
+ *   - Uses getEffectivePriceForCycle() from pricingService instead of
+ *     the removed plan.priceINR scalar — this was the NaN source.
+ *   - Passes billingCycle into CheckoutPlan so CheckoutPage/OrderSummary
+ *     can display the correct label and yearly savings line.
+ */
 import { redirect } from "next/navigation";
 import { unstable_noStore as noStore } from "next/cache";
 import { getServerSession } from "@/lib/auth/session";
@@ -8,15 +18,22 @@ import {
   getPlanBySlugFromDB,
   getPricingConfig,
 } from "@/lib/config/getPricingConfig";
+import {
+  getEffectivePriceForCycle,
+  resolveActiveCampaign,
+} from "@/lib/pricing/pricingService";
 import CheckoutPage from "@/components/checkout/CheckoutPage";
+import type { BillingCycle } from "@/types/pricing";
 
 export const metadata = {
   title: "Checkout — Xenode",
   robots: "noindex",
 };
 
+const VALID_CYCLES: BillingCycle[] = ["monthly", "yearly", "quarterly", "lifetime"];
+
 interface CheckoutPageProps {
-  searchParams: Promise<{ plan?: string }>;
+  searchParams: Promise<{ plan?: string; cycle?: string }>;
 }
 
 export default async function Page({ searchParams }: CheckoutPageProps) {
@@ -25,26 +42,36 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
   const params = await searchParams;
   const planSlug = params.plan;
 
+  // Default to monthly if cycle param is missing or invalid
+  const rawCycle = params.cycle as BillingCycle | undefined;
+  const billingCycle: BillingCycle =
+    rawCycle && VALID_CYCLES.includes(rawCycle) ? rawCycle : "monthly";
+
   const plan = planSlug ? await getPlanBySlugFromDB(planSlug) : undefined;
   if (!plan) redirect("/pricing");
 
   const { campaign } = await getPricingConfig();
-  const now = new Date();
-  const activeCampaign =
-    campaign?.isActive &&
-    now >= new Date(campaign.startDate) &&
-    now <= new Date(campaign.endDate)
-      ? campaign
-      : null;
+  const activeCampaign = resolveActiveCampaign(campaign ?? null);
 
-  const originalPrice = plan.priceINR;
+  // ── Server-authoritative price for this cycle ──────────────────────────────
+  // getEffectivePriceForCycle throws if the cycle isn't configured for the plan.
+  // We catch that and fall back to monthly so the page never shows NaN.
+  let originalPrice: number;
+  try {
+    originalPrice = getEffectivePriceForCycle(plan.pricing, billingCycle);
+  } catch {
+    // Cycle not configured for this plan — fall back to monthly
+    originalPrice = getEffectivePriceForCycle(plan.pricing, "monthly");
+  }
+
   const campaignDiscount = activeCampaign
     ? Math.round(originalPrice * (activeCampaign.discountPercent / 100))
     : 0;
   const campaignPrice = originalPrice - campaignDiscount;
 
+  // ── Auth ───────────────────────────────────────────────────────────────────
   const session = await getServerSession();
-  if (!session?.user) redirect(`/sign-in?next=/checkout?plan=${planSlug}`);
+  if (!session?.user) redirect(`/sign-in?next=/checkout?plan=${planSlug}&cycle=${billingCycle}`);
 
   await dbConnect();
   const db = mongoose.connection.db;
@@ -57,6 +84,7 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
       { projection: { phone: 1, billingAddress: 1 } }
     );
 
+  // ── Proration credit ───────────────────────────────────────────────────────
   const currentUsage = await Usage.findOne({ userId: session.user.id }).lean();
   let prorationCredit = 0;
   if (
@@ -75,15 +103,16 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
 
   const finalAmount = Math.max(1, campaignPrice - prorationCredit);
 
-  // Destructure out Mongoose-specific fields (_id, __v) that can't be
-  // serialized across the server→client boundary (ObjectId has toJSON).
+  // Strip Mongoose-specific fields before passing across server→client boundary
   const { _id, __v, ...plainPlan } = plan as typeof plan & { _id?: unknown; __v?: unknown };
-  void _id; void __v;
+  void _id;
+  void __v;
 
   return (
     <CheckoutPage
       plan={{
         ...plainPlan,
+        billingCycle,
         originalPrice,
         campaignDiscount,
         campaignBadge: activeCampaign?.badge ?? null,
