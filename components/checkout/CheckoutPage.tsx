@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { ShieldCheck } from "lucide-react";
 import type { IPlan } from "@/models/PricingConfig";
 import OrderSummary from "./OrderSummary";
 import CheckoutForm from "./CheckoutForm";
@@ -47,7 +48,7 @@ export default function CheckoutPage({
   plan,
   user,
   prorationCredit,
-  finalAmount: serverFinalAmount,
+  finalAmount: _serverFinalAmount,
 }: CheckoutPageProps) {
   const [appliedCoupon, setAppliedCoupon] = useState<CouponResult | null>(null);
 
@@ -56,25 +57,26 @@ export default function CheckoutPage({
   const finalAmount = Math.max(1, campaignPrice - couponDiscount - prorationCredit);
 
   return (
-    // No hardcoded theme class — inherits whatever theme the user has selected
-    <div className="min-h-screen w-full bg-background">
-      {/* Header */}
+    <div className="min-h-screen w-full bg-background text-foreground">
+
+      {/* ── Header ───────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-20 border-b border-border bg-background/90 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-6">
-          <span className="font-brand text-lg font-bold tracking-tight text-foreground">
+          {/* Wordmark — uses font-brand (Libre Baskerville italic) from root layout */}
+          <span className="font-brand text-xl font-bold tracking-tight text-foreground select-none">
             xenode
           </span>
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="inline-block h-2 w-2 rounded-full bg-primary" />
-            Secure Checkout · 256-bit SSL
+          <div className="flex items-center gap-1.5">
+            <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+            <span className="text-xs text-muted-foreground">Secure Checkout · 256-bit SSL</span>
           </div>
         </div>
       </header>
 
-      {/* Progress breadcrumb */}
-      <div className="border-b border-border bg-muted/40">
+      {/* ── Breadcrumb ───────────────────────────────────────────────── */}
+      <div className="border-b border-border bg-muted/30">
         <div className="mx-auto flex h-9 max-w-5xl items-center gap-2 px-4 sm:px-6">
-          <span className="text-xs font-medium text-primary">Cart</span>
+          <span className="text-xs text-muted-foreground">Cart</span>
           <span className="text-xs text-muted-foreground">/</span>
           <span className="text-xs font-semibold text-foreground">Payment</span>
           <span className="text-xs text-muted-foreground">/</span>
@@ -82,11 +84,16 @@ export default function CheckoutPage({
         </div>
       </div>
 
-      {/* Main */}
+      {/* ── Main ─────────────────────────────────────────────────────── */}
       <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:py-12">
+        {/*
+          Mobile:  single column, summary below form
+          Desktop: form left (flex-1), sticky summary right (360px)
+        */}
         <div className="flex flex-col gap-8 lg:flex-row lg:items-start">
-          {/* Left — form */}
-          <section className="flex-1 min-w-0">
+
+          {/* Payment form */}
+          <section className="min-w-0 flex-1">
             <CheckoutForm
               plan={plan}
               user={user}
@@ -97,8 +104,8 @@ export default function CheckoutPage({
             />
           </section>
 
-          {/* Right — summary (sticky on desktop) */}
-          <aside className="w-full lg:w-[360px] lg:shrink-0 lg:sticky lg:top-24">
+          {/* Order summary — sticky on desktop */}
+          <aside className="w-full lg:w-[360px] lg:shrink-0 lg:sticky lg:top-[88px]">
             <OrderSummary
               plan={plan}
               prorationCredit={prorationCredit}
@@ -106,6 +113,7 @@ export default function CheckoutPage({
               appliedCoupon={appliedCoupon}
             />
           </aside>
+
         </div>
       </main>
     </div>
