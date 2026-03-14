@@ -12,7 +12,7 @@ import {
   generateRecoveryKit,
   formatRecoveryKitDownload,
 } from "@/lib/crypto/recovery";
-import { PLANS } from "@/lib/config/plans";
+import type { IPlan } from "@/models/PricingConfig";
 import {
   Moon,
   Sun,
@@ -54,7 +54,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 
-// ─── Schema ──────────────────────────────────────────────────────────────────
+// ─── Schema ─────────────────────────────────────────────────────────────────────────────────
 
 const onboardingSchema = z.object({
   theme: z.enum(["light", "dark", "system"]),
@@ -64,7 +64,7 @@ const onboardingSchema = z.object({
 
 type OnboardingValues = z.infer<typeof onboardingSchema>;
 
-// ─── Component ───────────────────────────────────────────────────────────────
+// ─── Component ───────────────────────────────────────────────────────────────────────────
 
 export function OnboardingForm() {
   const router = useRouter();
@@ -88,7 +88,24 @@ export function OnboardingForm() {
   // Step 3: recovery kit
   const [kitSaved, setKitSaved] = useState(false);
 
+  // Plans fetched from DB
+  const [plans, setPlans] = useState<IPlan[]>([]);
+  const [plansLoading, setPlansLoading] = useState(true);
+
   useEffect(() => { setMounted(true); }, []);
+
+  // Fetch live plans from DB when component mounts
+  useEffect(() => {
+    fetch("/api/admin/pricing/plans-public")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.plans) setPlans(data.plans);
+      })
+      .catch(() => {
+        // silently fall back — plan picker just shows nothing until load
+      })
+      .finally(() => setPlansLoading(false));
+  }, []);
 
   const form = useForm<OnboardingValues>({
     resolver: zodResolver(onboardingSchema),
@@ -101,7 +118,7 @@ export function OnboardingForm() {
 
   const selectedPlan = form.watch("selectedPlan");
   const isPaidPlan = selectedPlan !== "free";
-  const chosenPlanConfig = PLANS.find((p) => p.slug === selectedPlan);
+  const chosenPlanConfig = plans.find((p) => p.slug === selectedPlan);
 
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(kit.words.join(" "));
@@ -384,41 +401,49 @@ export function OnboardingForm() {
                                   </FormLabel>
                                 </FormItem>
 
-                                {/* Paid plan cards — generated from PLANS */}
-                                {PLANS.map((plan) => (
-                                  <FormItem key={plan.slug}>
-                                    <FormLabel className="[&:has([data-state=checked])>div]:border-primary [&:has([data-state=checked])>div]:bg-primary/5 cursor-pointer">
-                                      <FormControl>
-                                        <RadioGroupItem value={plan.slug} className="sr-only" />
-                                      </FormControl>
-                                      <div className={`relative rounded-xl border-2 p-3 transition-all hover:bg-muted h-full ${
-                                        plan.isPopular ? "border-primary/40" : ""
-                                      }`}>
-                                        {plan.isPopular && (
-                                          <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground px-2 py-0.5 rounded-full text-[10px] font-bold uppercase whitespace-nowrap">
-                                            Popular
-                                          </span>
-                                        )}
-                                        <div className="flex justify-between items-start mb-1">
-                                          <span className="font-semibold text-sm">{plan.storage}</span>
-                                          {field.value === plan.slug && <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />}
-                                        </div>
-                                        <div className="text-xl font-bold">
-                                          ₹{plan.priceINR}
-                                          <span className="text-xs font-normal text-muted-foreground">/mo</span>
-                                        </div>
-                                        <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-                                          <li className="flex items-center gap-1.5">
-                                            <HardDrive className="h-3 w-3 text-primary shrink-0" /> {plan.storage} E2EE
-                                          </li>
-                                          <li className="flex items-center gap-1.5">
-                                            <Lock className="h-3 w-3 text-primary shrink-0" /> Encrypted
-                                          </li>
-                                        </ul>
-                                      </div>
-                                    </FormLabel>
+                                {/* Paid plan cards — fetched from DB */}
+                                {plansLoading ? (
+                                  <FormItem>
+                                    <div className="rounded-xl border-2 border-muted p-3 h-full flex items-center justify-center">
+                                      <span className="text-xs text-muted-foreground">Loading plans…</span>
+                                    </div>
                                   </FormItem>
-                                ))}
+                                ) : (
+                                  plans.map((plan) => (
+                                    <FormItem key={plan.slug}>
+                                      <FormLabel className="[&:has([data-state=checked])>div]:border-primary [&:has([data-state=checked])>div]:bg-primary/5 cursor-pointer">
+                                        <FormControl>
+                                          <RadioGroupItem value={plan.slug} className="sr-only" />
+                                        </FormControl>
+                                        <div className={`relative rounded-xl border-2 p-3 transition-all hover:bg-muted h-full ${
+                                          plan.isPopular ? "border-primary/40" : ""
+                                        }`}>
+                                          {plan.isPopular && (
+                                            <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground px-2 py-0.5 rounded-full text-[10px] font-bold uppercase whitespace-nowrap">
+                                              Popular
+                                            </span>
+                                          )}
+                                          <div className="flex justify-between items-start mb-1">
+                                            <span className="font-semibold text-sm">{plan.storage}</span>
+                                            {field.value === plan.slug && <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />}
+                                          </div>
+                                          <div className="text-xl font-bold">
+                                            ₹{plan.priceINR}
+                                            <span className="text-xs font-normal text-muted-foreground">/mo</span>
+                                          </div>
+                                          <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                                            <li className="flex items-center gap-1.5">
+                                              <HardDrive className="h-3 w-3 text-primary shrink-0" /> {plan.storage} E2EE
+                                            </li>
+                                            <li className="flex items-center gap-1.5">
+                                              <Lock className="h-3 w-3 text-primary shrink-0" /> Encrypted
+                                            </li>
+                                          </ul>
+                                        </div>
+                                      </FormLabel>
+                                    </FormItem>
+                                  ))
+                                )}
                               </RadioGroup>
                             </FormControl>
                           </FormItem>

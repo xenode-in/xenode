@@ -5,7 +5,7 @@ import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
 import PendingTransaction from "@/models/PendingTransaction";
 import mongoose from "mongoose";
-import { PLAN_CONFIG } from "@/lib/config/plans";
+import { getPlanConfigFromDB } from "@/lib/config/getPricingConfig";
 
 const PHONE_RE = /^[6-9]\d{9}$/;
 
@@ -68,6 +68,8 @@ export async function POST(req: Request) {
       billingAddress,
     } = body;
 
+    // Fetch server-authoritative plan config from DB (campaign discounts applied)
+    const PLAN_CONFIG = await getPlanConfigFromDB();
     const plan = PLAN_CONFIG[planName];
     if (!plan) {
       return NextResponse.json(

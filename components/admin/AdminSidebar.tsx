@@ -11,7 +11,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Layers,
-  Settings,
+  DollarSign,
 } from "lucide-react";
 
 interface AdminSidebarProps {
@@ -48,6 +48,12 @@ const navItems = [
     href: "/admin/dashboard/storage",
     label: "Storage",
     icon: ShieldCheck,
+    roles: ["super_admin"],
+  },
+  {
+    href: "/admin/dashboard/pricing",
+    label: "Pricing",
+    icon: DollarSign,
     roles: ["super_admin"],
   },
 ];
