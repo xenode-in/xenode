@@ -4,13 +4,11 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { useRouter } from "next/navigation";
 import type { CheckoutPlan } from "./CheckoutPage";
 import type { CheckoutUser } from "./CheckoutPage";
 import PaymentMethodToggle from "./PaymentMethodToggle";
 import AddressSection from "./AddressSection";
-
-// ── Zod schema ───────────────────────────────────────────────────
+import CouponInput from "./CouponInput";
 
 const addressSchema = z.object({
   name:    z.string().optional(),
@@ -22,26 +20,36 @@ const addressSchema = z.object({
 });
 
 const schema = z.object({
-  phone: z
-    .string()
-    .regex(/^[6-9]\d{9}$/, "Enter a valid 10-digit Indian mobile number"),
+  phone: z.string().regex(/^[6-9]\d{9}$/, "Enter a valid 10-digit Indian mobile number"),
   paymentMethod: z.enum(["autopay", "direct"]),
   address: addressSchema,
 });
 
 export type CheckoutFormValues = z.infer<typeof schema>;
 
-// ── component ───────────────────────────────────────────────────
+interface CouponResult {
+  couponId: string;
+  code: string;
+  discountAmount: number;
+  discountLabel: string;
+}
 
 interface CheckoutFormProps {
   plan: CheckoutPlan;
   user: CheckoutUser;
   prorationCredit: number;
   finalAmount: number;
+  onCouponChange: (result: CouponResult | null) => void;
+  appliedCoupon: CouponResult | null;
 }
 
-export default function CheckoutForm({ plan, user, finalAmount }: CheckoutFormProps) {
-  const router = useRouter();
+export default function CheckoutForm({
+  plan,
+  user,
+  finalAmount,
+  onCouponChange,
+  appliedCoupon,
+}: CheckoutFormProps) {
   const [serverError, setServerError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -78,12 +86,14 @@ export default function CheckoutForm({ plan, user, finalAmount }: CheckoutFormPr
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           planName: plan.name,
+          planSlug: plan.slug,
           paymentMethod: values.paymentMethod,
           phone: values.phone,
           billingAddress:
             values.address?.name || values.address?.line1
               ? { ...values.address, country: "India" }
               : null,
+          couponCode: appliedCoupon?.code ?? null,
         }),
       });
 
@@ -93,7 +103,6 @@ export default function CheckoutForm({ plan, user, finalAmount }: CheckoutFormPr
         return;
       }
 
-      // Build and auto-submit a hidden form to PayU
       const form = document.createElement("form");
       form.method = "POST";
       form.action = data.action;
@@ -119,11 +128,9 @@ export default function CheckoutForm({ plan, user, finalAmount }: CheckoutFormPr
         Payment Details
       </h2>
 
-      {/* ── Section A: Contact ── */}
+      {/* Contact */}
       <div className="rounded-xl border border-border bg-card p-5 space-y-4">
         <p className="text-sm font-semibold text-foreground">Contact</p>
-
-        {/* Email — read-only */}
         <div>
           <label className="mb-1 block text-xs font-medium text-muted-foreground">Email</label>
           <input
@@ -132,8 +139,6 @@ export default function CheckoutForm({ plan, user, finalAmount }: CheckoutFormPr
             className="w-full rounded-lg border border-border bg-muted px-3 py-2 text-sm text-muted-foreground cursor-not-allowed"
           />
         </div>
-
-        {/* Phone with +91 prefix */}
         <div>
           <label className="mb-1 block text-xs font-medium text-muted-foreground">
             Phone Number <span className="text-destructive">*</span>
@@ -150,20 +155,29 @@ export default function CheckoutForm({ plan, user, finalAmount }: CheckoutFormPr
               className="flex-1 rounded-r-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
             />
           </div>
-          {errors.phone && (
-            <p className="mt-1 text-xs text-destructive">{errors.phone.message}</p>
-          )}
+          {errors.phone && <p className="mt-1 text-xs text-destructive">{errors.phone.message}</p>}
         </div>
       </div>
 
-      {/* ── Section B: Billing Address (collapsible) ── */}
+      {/* Coupon */}
+      <div className="rounded-xl border border-border bg-card p-5 space-y-3">
+        <p className="text-sm font-semibold text-foreground">Coupon Code</p>
+        <CouponInput
+          planSlug={plan.slug}
+          planPriceINR={plan.priceINR}
+          onApply={onCouponChange}
+          applied={appliedCoupon}
+        />
+      </div>
+
+      {/* Billing Address */}
       <AddressSection
         register={register}
         errors={errors}
         defaultOpen={!!user.billingAddress?.name}
       />
 
-      {/* ── Section C: Payment Method ── */}
+      {/* Payment Method */}
       <div className="rounded-xl border border-border bg-card p-5 space-y-3">
         <p className="text-sm font-semibold text-foreground">Payment Method</p>
         <PaymentMethodToggle
@@ -182,14 +196,12 @@ export default function CheckoutForm({ plan, user, finalAmount }: CheckoutFormPr
         )}
       </div>
 
-      {/* Server error */}
       {serverError && (
         <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
           <p className="text-sm text-destructive">{serverError}</p>
         </div>
       )}
 
-      {/* CTA */}
       <button
         type="submit"
         disabled={isSubmitting}

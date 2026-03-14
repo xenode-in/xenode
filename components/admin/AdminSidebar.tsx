@@ -12,6 +12,7 @@ import {
   ChevronRight,
   Layers,
   DollarSign,
+  Ticket,
 } from "lucide-react";
 
 interface AdminSidebarProps {
@@ -56,6 +57,12 @@ const navItems = [
     icon: DollarSign,
     roles: ["super_admin"],
   },
+  {
+    href: "/admin/dashboard/coupons",
+    label: "Coupons",
+    icon: Ticket,
+    roles: ["super_admin"],
+  },
 ];
 
 export function AdminSidebar({ role, username }: AdminSidebarProps) {
@@ -78,31 +85,23 @@ export function AdminSidebar({ role, username }: AdminSidebarProps) {
         collapsed ? "w-16" : "w-56"
       }`}
     >
-      {/* Header */}
       <div className="flex items-center justify-between px-4 py-4 border-b border-zinc-800">
         {!collapsed && (
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center">
               <Layers className="w-4 h-4 text-white" />
             </div>
-            <span className="text-sm font-semibold text-white">
-              Xenode Admin
-            </span>
+            <span className="text-sm font-semibold text-white">Xenode Admin</span>
           </div>
         )}
         <button
           onClick={() => setCollapsed((c) => !c)}
           className="p-1 rounded-md hover:bg-zinc-800 text-zinc-400 hover:text-white transition-colors"
         >
-          {collapsed ? (
-            <ChevronRight className="w-4 h-4" />
-          ) : (
-            <ChevronLeft className="w-4 h-4" />
-          )}
+          {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
         </button>
       </div>
 
-      {/* Nav */}
       <nav className="flex-1 py-4 space-y-1 px-2">
         {visibleItems.map((item) => {
           const Icon = item.icon;
@@ -124,14 +123,11 @@ export function AdminSidebar({ role, username }: AdminSidebarProps) {
         })}
       </nav>
 
-      {/* Footer */}
       <div className="border-t border-zinc-800 px-2 py-3">
         {!collapsed && (
           <div className="px-3 py-1.5 mb-1">
             <p className="text-xs text-zinc-500 truncate">{username}</p>
-            <p className="text-xs text-zinc-600">
-              {role === "super_admin" ? "Super Admin" : "Admin"}
-            </p>
+            <p className="text-xs text-zinc-600">{role === "super_admin" ? "Super Admin" : "Admin"}</p>
           </div>
         )}
         <button
