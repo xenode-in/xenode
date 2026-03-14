@@ -1,9 +1,13 @@
-// This is now an async server component — fetches plans from DB.
-// The interactive parts (buttons, session check) live in PricingGrid.
+// Async server component — fetches plans from DB on every request (no-store).
+// Interactive parts (buttons, session, router) live in PricingGrid (client).
+import { unstable_noStore as noStore } from "next/cache";
 import { getPricingConfig } from "@/lib/config/getPricingConfig";
 import PricingGrid from "@/components/PricingGrid";
 
 export default async function PricingComparison() {
+  // Opt out of Next.js full-route caching so prices are always live
+  noStore();
+
   const { plans, campaign } = await getPricingConfig();
 
   const now = new Date();
