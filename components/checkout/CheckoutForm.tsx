@@ -5,19 +5,19 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useRouter } from "next/navigation";
-import type { PlanConfig } from "@/lib/config/plans";
+import type { CheckoutPlan } from "./CheckoutPage";
 import type { CheckoutUser } from "./CheckoutPage";
 import PaymentMethodToggle from "./PaymentMethodToggle";
 import AddressSection from "./AddressSection";
 
-// ── Zod schema ──────────────────────────────────────────────────────────────
+// ── Zod schema ───────────────────────────────────────────────────
 
 const addressSchema = z.object({
-  name:  z.string().optional(),
-  line1: z.string().optional(),
-  city:  z.string().optional(),
-  state: z.string().optional(),
-  pin:   z.string().regex(/^\d{6}$/, "Must be a 6-digit PIN").optional().or(z.literal("")),
+  name:    z.string().optional(),
+  line1:   z.string().optional(),
+  city:    z.string().optional(),
+  state:   z.string().optional(),
+  pin:     z.string().regex(/^\d{6}$/, "Must be a 6-digit PIN").optional().or(z.literal("")),
   country: z.string().optional(),
 });
 
@@ -31,10 +31,10 @@ const schema = z.object({
 
 export type CheckoutFormValues = z.infer<typeof schema>;
 
-// ── component ────────────────────────────────────────────────────────────
+// ── component ───────────────────────────────────────────────────
 
 interface CheckoutFormProps {
-  plan: PlanConfig;
+  plan: CheckoutPlan;
   user: CheckoutUser;
   prorationCredit: number;
   finalAmount: number;
@@ -174,8 +174,8 @@ export default function CheckoutForm({ plan, user, finalAmount }: CheckoutFormPr
           <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
             <p className="text-xs text-muted-foreground">
               <span className="font-semibold text-foreground">How it works: </span>
-              You'll approve a UPI mandate in your UPI app (GPay / PhonePe / Paytm).
-              Xenode will automatically charge ₹{plan.priceINR} every 30 days.
+              You’ll approve a UPI mandate in your UPI app (GPay / PhonePe / Paytm).
+              Xenode will automatically charge ₹{finalAmount.toFixed(2)} every 30 days.
               You can cancel anytime from your UPI app or from your Xenode billing page.
             </p>
           </div>
@@ -206,7 +206,7 @@ export default function CheckoutForm({ plan, user, finalAmount }: CheckoutFormPr
       </button>
 
       <p className="text-center text-xs text-muted-foreground">
-        By completing this purchase you agree to Xenode's{" "}
+        By completing this purchase you agree to Xenode’s{" "}
         <a href="/terms" className="underline hover:text-foreground">Terms of Service</a>.
       </p>
     </form>
