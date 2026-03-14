@@ -1,8 +1,17 @@
+/**
+ * CheckoutPage.tsx
+ *
+ * CHANGES (multi-cycle refactor):
+ *  - CheckoutPlan now carries `billingCycle` instead of the old scalar priceINR.
+ *  - `originalPrice` is the cycle-specific base price (monthly or yearly).
+ *  - Passes billingCycle down to CheckoutForm and OrderSummary.
+ */
 "use client";
 
 import { useState } from "react";
 import { ShieldCheck } from "lucide-react";
 import type { IPlan } from "@/models/PricingConfig";
+import type { BillingCycle } from "@/types/pricing";
 import OrderSummary from "./OrderSummary";
 import CheckoutForm from "./CheckoutForm";
 
@@ -24,6 +33,9 @@ export interface CheckoutUser {
 }
 
 export interface CheckoutPlan extends IPlan {
+  /** The billing cycle selected on the pricing page */
+  billingCycle: BillingCycle;
+  /** Base price for this cycle (before campaign/coupon discounts) */
   originalPrice: number;
   campaignDiscount: number;
   campaignBadge: string | null;
@@ -64,7 +76,6 @@ export default function CheckoutPage({
       {/* ── Header ───────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-20 border-b border-border bg-background/90 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-6">
-          {/* Wordmark — uses font-brand (Libre Baskerville italic) from root layout */}
           <h1 className="text-2xl md:text-3xl font-brand italic tracking-tight text-foreground select-none">
             Xenode
           </h1>
@@ -90,10 +101,6 @@ export default function CheckoutPage({
 
       {/* ── Main ─────────────────────────────────────────────────────── */}
       <main className="mx-auto max-w-5xl px-4 py-8 sm:px-6 lg:py-12">
-        {/*
-          Mobile:  single column, summary below form
-          Desktop: form left (flex-1), sticky summary right (360px)
-        */}
         <div className="flex flex-col gap-8 lg:flex-row lg:items-start">
           {/* Payment form */}
           <section className="min-w-0 flex-1">
