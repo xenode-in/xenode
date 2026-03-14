@@ -9,27 +9,32 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import PricingGrid from "@/components/PricingGrid";
-import type { IPlan } from "@/models/PricingConfig";
+import type { IPlan, ICampaign } from "@/models/PricingConfig";
 
 export default function UpgradePlanModal() {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [plans, setPlans] = useState<IPlan[]>([]);
+  const [campaign, setCampaign] = useState<ICampaign | null>(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  // Fetch plans from DB when modal is first opened
+  // Always re-fetch fresh plans + campaign whenever the modal opens
   useEffect(() => {
-    if (!open || plans.length > 0) return;
+    if (!open) return;
+    setLoading(true);
     fetch("/api/admin/pricing/plans-public")
       .then((r) => r.json())
       .then((data) => {
         if (data.plans) setPlans(data.plans);
+        setCampaign(data.campaign ?? null);
       })
-      .catch(() => {});
-  }, [open, plans.length]);
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [open]); // re-runs every time modal opens — always fresh
 
   if (!mounted) {
     return <Button className="w-full sm:w-auto invisible">Upgrade Plan</Button>;
@@ -45,12 +50,14 @@ export default function UpgradePlanModal() {
       <DialogContent className="max-w-[700px] max-h-[90vh] overflow-y-auto w-[90vw] p-0 bg-[#0c140e] border-[#1a2e1d]/50">
         <DialogTitle className="sr-only">Upgrade Plan</DialogTitle>
         <div className="pt-8">
-          {plans.length === 0 ? (
+          {loading || plans.length === 0 ? (
             <div className="flex items-center justify-center py-20">
-              <span className="text-sm text-[#e8e4d9]/50">Loading plans…</span>
+              <span className="text-sm text-[#e8e4d9]/50">
+                {loading ? "Loading plans…" : "No plans available"}
+              </span>
             </div>
           ) : (
-            <PricingGrid plans={plans} campaign={null} />
+            <PricingGrid plans={plans} campaign={campaign} />
           )}
         </div>
       </DialogContent>

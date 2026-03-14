@@ -24,15 +24,28 @@ interface Props {
   initialConfig: { plans: IPlan[]; campaign: Campaign };
 }
 
+// Safely converts any date value (Date object or ISO string) to YYYY-MM-DD
 const formatDate = (d: string | Date) =>
   new Date(d).toISOString().slice(0, 10);
+
+// Normalizes a raw campaign from the API response (dates may be strings)
+function normalizeCampaign(raw: Campaign): Campaign {
+  if (!raw) return null;
+  return {
+    ...raw,
+    startDate: new Date(raw.startDate),
+    endDate: new Date(raw.endDate),
+  };
+}
 
 export function PricingManager({ initialConfig }: Props) {
   const [plans, setPlans] = useState<IPlan[]>(initialConfig.plans ?? []);
   const [editingPlan, setEditingPlan] = useState<string | null>(null);
   const [planDraft, setPlanDraft] = useState<IPlan | null>(null);
 
-  const [campaign, setCampaign] = useState<Campaign>(initialConfig.campaign ?? null);
+  const [campaign, setCampaign] = useState<Campaign>(
+    normalizeCampaign(initialConfig.campaign ?? null)
+  );
   const [editingCampaign, setEditingCampaign] = useState(false);
   const [campDraft, setCampDraft] = useState({
     name: "",
@@ -70,9 +83,13 @@ export function PricingManager({ initialConfig }: Props) {
     });
     setSaving(false);
     if (res.ok) {
-      setPlans(updated);
+      const json = await res.json();
+      // Use API response as source of truth to stay in sync with DB
+      setPlans(json.config.plans ?? updated);
+      // Also sync campaign in case server normalized something
+      setCampaign(normalizeCampaign(json.config.campaign ?? null));
       cancelEditPlan();
-      toast.success(`${planDraft.name} prices saved`);
+      toast.success(`${planDraft.name} updated`);
     } else {
       toast.error("Failed to save plan");
     }
@@ -90,7 +107,10 @@ export function PricingManager({ initialConfig }: Props) {
     setSaving(false);
     if (res.ok) {
       const json = await res.json();
-      setCampaign(json.config.campaign ?? null);
+      // Normalize dates from API response before storing in state
+      setCampaign(normalizeCampaign(json.config.campaign ?? null));
+      // Also sync plans in case server normalized something
+      setPlans(json.config.plans ?? plans);
       setEditingCampaign(false);
       toast.success(data ? "Campaign saved" : "Campaign removed");
     } else {
@@ -100,7 +120,12 @@ export function PricingManager({ initialConfig }: Props) {
 
   async function toggleCampaignActive(active: boolean) {
     if (!campaign) return;
-    await saveCampaign({ ...campaign, isActive: active, startDate: formatDate(campaign.startDate), endDate: formatDate(campaign.endDate) });
+    await saveCampaign({
+      ...campaign,
+      isActive: active,
+      startDate: formatDate(campaign.startDate),
+      endDate: formatDate(campaign.endDate),
+    });
   }
 
   // ── Render ────────────────────────────────────────────────────

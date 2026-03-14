@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { getAdminSession } from "@/lib/admin/session";
 import dbConnect from "@/lib/mongodb";
 import { PricingConfig } from "@/models/PricingConfig";
@@ -14,7 +15,7 @@ export async function GET() {
   return NextResponse.json({ config });
 }
 
-// PATCH — update plans and/or campaign
+// PATCH — update plans and/or campaign, then bust Next.js cache
 export async function PATCH(req: NextRequest) {
   const session = await getAdminSession();
   if (!session)
@@ -24,7 +25,6 @@ export async function PATCH(req: NextRequest) {
   const update: Record<string, unknown> = { updatedBy: session.username };
 
   if (body.plans !== undefined) {
-    // Basic validation — ensure all required fields are present
     if (!Array.isArray(body.plans)) {
       return NextResponse.json({ error: "plans must be an array" }, { status: 400 });
     }
@@ -55,6 +55,10 @@ export async function PATCH(req: NextRequest) {
     { $set: update },
     { new: true, upsert: true }
   ).lean();
+
+  // Bust Next.js full-route cache so PricingComparison re-renders fresh
+  revalidatePath("/pricing");
+  revalidatePath("/dashboard/billing");
 
   return NextResponse.json({ config });
 }
