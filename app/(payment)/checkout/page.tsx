@@ -20,17 +20,14 @@ interface CheckoutPageProps {
 }
 
 export default async function Page({ searchParams }: CheckoutPageProps) {
-  // Always read fresh pricing — never serve cached campaign state
   noStore();
 
   const params = await searchParams;
   const planSlug = params.plan;
 
-  // Load plan from DB (slug lookup)
   const plan = planSlug ? await getPlanBySlugFromDB(planSlug) : undefined;
   if (!plan) redirect("/pricing");
 
-  // Load campaign to compute discounted price
   const { campaign } = await getPricingConfig();
   const now = new Date();
   const activeCampaign =
@@ -46,7 +43,6 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
     : 0;
   const campaignPrice = originalPrice - campaignDiscount;
 
-  // Guard: must be authenticated
   const session = await getServerSession();
   if (!session?.user) redirect(`/sign-in?next=/checkout?plan=${planSlug}`);
 
@@ -54,7 +50,6 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
   const db = mongoose.connection.db;
   if (!db) redirect("/pricing");
 
-  // Fetch user profile for pre-fill
   const userDoc = await db
     .collection("user")
     .findOne(
@@ -62,7 +57,6 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
       { projection: { phone: 1, billingAddress: 1 } }
     );
 
-  // Calculate proration credit against the campaign price (what they'll actually pay)
   const currentUsage = await Usage.findOne({ userId: session.user.id }).lean();
   let prorationCredit = 0;
   if (
@@ -79,13 +73,17 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
       Math.round((currentUsage.planPriceINR / 30) * daysRemaining * 100) / 100;
   }
 
-  // Final amount = campaign price minus any proration credit, minimum ₹1
   const finalAmount = Math.max(1, campaignPrice - prorationCredit);
+
+  // Destructure out Mongoose-specific fields (_id, __v) that can't be
+  // serialized across the server→client boundary (ObjectId has toJSON).
+  const { _id, __v, ...plainPlan } = plan as typeof plan & { _id?: unknown; __v?: unknown };
+  void _id; void __v;
 
   return (
     <CheckoutPage
       plan={{
-        ...plan,
+        ...plainPlan,
         originalPrice,
         campaignDiscount,
         campaignBadge: activeCampaign?.badge ?? null,
