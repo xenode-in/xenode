@@ -1,7 +1,12 @@
-// Async server component — fetches plans from DB on every request (no-store).
-// Interactive parts (buttons, session, router) live in PricingGrid (client).
+/**
+ * PricingComparison.tsx — Async server component.
+ *
+ * Fetches live pricing from DB, resolves active campaign via pricingService,
+ * then hands off to PricingGrid (client) for interactivity.
+ */
 import { unstable_noStore as noStore } from "next/cache";
 import { getPricingConfig } from "@/lib/config/getPricingConfig";
+import { resolveActiveCampaign } from "@/lib/pricing/pricingService";
 import PricingGrid from "@/components/PricingGrid";
 
 export default async function PricingComparison() {
@@ -9,14 +14,7 @@ export default async function PricingComparison() {
   noStore();
 
   const { plans, campaign } = await getPricingConfig();
-
-  const now = new Date();
-  const activeCampaign =
-    campaign?.isActive &&
-    now >= new Date(campaign.startDate) &&
-    now <= new Date(campaign.endDate)
-      ? campaign
-      : null;
+  const activeCampaign = resolveActiveCampaign(campaign);
 
   return <PricingGrid plans={plans} campaign={activeCampaign} />;
 }
