@@ -54,21 +54,25 @@ export default function CheckoutPage({
 
   const campaignPrice = plan.originalPrice - plan.campaignDiscount;
   const couponDiscount = appliedCoupon?.discountAmount ?? 0;
-  const finalAmount = Math.max(1, campaignPrice - couponDiscount - prorationCredit);
+  const finalAmount = Math.max(
+    1,
+    campaignPrice - couponDiscount - prorationCredit,
+  );
 
   return (
     <div className="min-h-screen w-full bg-background text-foreground">
-
       {/* ── Header ───────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-20 border-b border-border bg-background/90 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4 sm:px-6">
           {/* Wordmark — uses font-brand (Libre Baskerville italic) from root layout */}
-          <span className="font-brand text-xl font-bold tracking-tight text-foreground select-none">
-            xenode
-          </span>
+          <h1 className="text-2xl md:text-3xl font-brand italic tracking-tight text-foreground select-none">
+            Xenode
+          </h1>
           <div className="flex items-center gap-1.5">
             <ShieldCheck className="h-3.5 w-3.5 text-primary" />
-            <span className="text-xs text-muted-foreground">Secure Checkout · 256-bit SSL</span>
+            <span className="text-xs text-muted-foreground">
+              Secure Checkout · 256-bit SSL
+            </span>
           </div>
         </div>
       </header>
@@ -91,7 +95,6 @@ export default function CheckoutPage({
           Desktop: form left (flex-1), sticky summary right (360px)
         */}
         <div className="flex flex-col gap-8 lg:flex-row lg:items-start">
-
           {/* Payment form */}
           <section className="min-w-0 flex-1">
             <CheckoutForm
@@ -113,7 +116,6 @@ export default function CheckoutPage({
               appliedCoupon={appliedCoupon}
             />
           </aside>
-
         </div>
       </main>
     </div>
