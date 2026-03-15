@@ -27,7 +27,7 @@ import type { BillingCycle } from "@/types/pricing";
 
 const DEFAULT_PLANS: IPlan[] = [
   {
-    name: "100GB Model",
+    name: "Basic",
     slug: "basic",
     storage: "100 GB",
     storageLimitBytes: 100 * 1024 * 1024 * 1024,
@@ -43,7 +43,7 @@ const DEFAULT_PLANS: IPlan[] = [
     ],
   },
   {
-    name: "500GB Model",
+    name: "Pro",
     slug: "pro",
     storage: "500 GB",
     storageLimitBytes: 500 * 1024 * 1024 * 1024,
@@ -59,7 +59,7 @@ const DEFAULT_PLANS: IPlan[] = [
     ],
   },
   {
-    name: "1TB Model",
+    name: "Plus",
     slug: "plus",
     storage: "1 TB",
     storageLimitBytes: 1024 * 1024 * 1024 * 1024,
@@ -76,7 +76,7 @@ const DEFAULT_PLANS: IPlan[] = [
     ],
   },
   {
-    name: "2TB Model",
+    name: "Max",
     slug: "max",
     storage: "2 TB",
     storageLimitBytes: 2 * 1024 * 1024 * 1024 * 1024,

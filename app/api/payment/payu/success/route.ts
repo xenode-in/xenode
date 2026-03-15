@@ -119,7 +119,7 @@ export async function POST(req: Request) {
       { userId: user._id.toString() },
       {
         $set: {
-          plan: pending.planName,
+          plan: pending.planSlug,
           storageLimitBytes: pending.storageLimitBytes,
           planPriceINR: pending.planPriceINR,   // base cycle price for future proration
           planActivatedAt: subscriptionStartDate,

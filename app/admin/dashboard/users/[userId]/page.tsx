@@ -74,9 +74,23 @@ export default async function UserDetailPage({ params }: RouteContext) {
   const plan = usage?.plan ?? "free";
   const planBadge: Record<string, string> = {
     free: "bg-secondary text-muted-foreground",
-    pro: "bg-blue-500/10 text-blue-500",
-    enterprise: "bg-purple-500/10 text-purple-500",
+    basic: "bg-blue-500/10 text-blue-500",
+    pro: "bg-purple-500/10 text-purple-500",
+    plus: "bg-amber-500/10 text-amber-500",
+    max: "bg-emerald-500/10 text-emerald-500",
+    enterprise: "bg-red-500/10 text-red-500",
   };
+
+  const PLAN_DISPLAY_NAMES: Record<string, string> = {
+    free: "Free",
+    basic: "Basic",
+    pro: "Pro",
+    plus: "Plus",
+    max: "Max",
+    enterprise: "Enterprise",
+  };
+
+  const displayPlan = PLAN_DISPLAY_NAMES[plan] || plan;
 
   const stats = [
     {
@@ -141,7 +155,7 @@ export default async function UserDetailPage({ params }: RouteContext) {
                     planBadge[plan]
                   }`}
                 >
-                  {plan}
+                  {displayPlan}
                 </span>
                 {usage?.planExpiresAt && (
                   <span className="text-xs text-muted-foreground">

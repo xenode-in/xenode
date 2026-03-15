@@ -220,8 +220,8 @@ export async function POST(req: Request) {
       storageLimitBytes: plan.storageLimitBytes,
       planPriceINR: plan.priceINR, // base for this cycle, campaign applied
       billingCycle,               // NEW — needed by success webhook
-      couponId,
-      couponCode: validatedCouponCode,
+      ...(couponId ? { couponId } : {}),
+      ...(validatedCouponCode ? { couponCode: validatedCouponCode } : {}),
       couponDiscount,
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
       paymentMethod,

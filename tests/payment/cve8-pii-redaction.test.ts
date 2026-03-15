@@ -24,7 +24,7 @@ describe("CVE-8 — PII Redaction", () => {
     const fd = new FormData();
     [
       ["status","success"],["txnid",txnid],["amount","149.00"],
-      ["productinfo","100GB Model"],["email","private@xenode.app"],
+      ["productinfo","Basic"],["email","private@xenode.app"],
       ["phone","9876543210"],["firstname","PrivateUser"],
       ["udf1",userId],["mode","CC"],["PG_TYPE","VISA"],["bank_ref_num","REF123"],
       ["hash","ignored"],
@@ -61,7 +61,7 @@ describe("CVE-8 — PII Redaction", () => {
     const fd = new FormData();
     [
       ["status","failure"],["txnid",txnid],["amount","149.00"],
-      ["productinfo","100GB Model"],["email","private@xenode.app"],
+      ["productinfo","Basic"],["email","private@xenode.app"],
       ["phone","9876543210"],["firstname","PrivateUser"],
       ["udf1",userId],["mode","CC"],["error","E001"],["error_Message","Card declined"],
     ].forEach(([k,v]) => fd.append(k,v));
@@ -91,7 +91,7 @@ describe("CVE-8 — PII Redaction", () => {
     const fd = new FormData();
     [
       ["status","failure"],["txnid",txnid],["amount","149.00"],
-      ["productinfo","100GB Model"],["email","shouldnotlog@xenode.app"],
+      ["productinfo","Basic"],["email","shouldnotlog@xenode.app"],
       ["phone","9876543210"],["firstname","Secret"],["udf1","someid"],
     ].forEach(([k,v]) => fd.append(k,v));
 

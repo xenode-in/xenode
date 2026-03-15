@@ -73,7 +73,7 @@ export async function createPayment(overrides: Partial<{
     currency: "INR",
     status: overrides.status ?? "success",
     txnid: overrides.txnid ?? makeTxnid(),
-    planName: overrides.planName ?? "100GB Model",
+    planName: overrides.planName ?? "Basic",
     payuResponse: { status: "success", txnid: overrides.txnid ?? "test" },
   });
 }
@@ -91,9 +91,11 @@ export async function createPendingTxn(overrides: Partial<{
   return PendingTransaction.create({
     txnid,
     userId: overrides.userId ?? makeUserId(),
-    planName: overrides.planName ?? "100GB Model",
+    planName: overrides.planName ?? "Basic",
     storageLimitBytes: overrides.storageLimitBytes ?? PRO_100_BYTES,
     planPriceINR: overrides.planPriceINR ?? 149,
     expiresAt: overrides.expiresAt ?? new Date(Date.now() + 3600_000),
   });
 }
+
+

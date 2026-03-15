@@ -14,7 +14,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
   const { userId } = await params;
   const { plan, expiresAt } = await req.json();
 
-  if (!["free", "pro", "enterprise"].includes(plan))
+  if (!["free", "basic", "pro", "plus", "max", "enterprise"].includes(plan))
     return NextResponse.json({ error: "Invalid plan" }, { status: 400 });
 
   await dbConnect();

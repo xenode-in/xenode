@@ -18,7 +18,7 @@ export interface IUsage extends Document {
   totalBuckets: number;
   storageLimitBytes: number | null; // null = unlimited (pro/enterprise)
   egressLimitBytes: number;
-  plan: "free" | "pro" | "enterprise";
+  plan: "free" | "basic" | "pro" | "plus" | "max" | "enterprise";
   planActivatedAt: Date | null;
   planExpiresAt: Date | null;
   planPriceINR: number;
@@ -48,7 +48,7 @@ const UsageSchema = new Schema<IUsage>(
     egressLimitBytes:  { type: Number, default: 536870912000 },
     plan: {
       type: String,
-      enum: ["free", "pro", "enterprise"],
+      enum: ["free", "basic", "pro", "plus", "max", "enterprise"],
       default: "free",
       index: true,
     },

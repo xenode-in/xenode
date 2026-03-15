@@ -9,8 +9,10 @@ import Usage from "@/models/Usage";
  */
 const DOWNGRADE_PLANS: Record<string, { storageLimitBytes: number; label: string }> = {
   free:    { storageLimitBytes: 10  * 1024 * 1024 * 1024, label: "Free (10 GB)" },
-  pro100:  { storageLimitBytes: 100 * 1024 * 1024 * 1024, label: "100 GB" },
-  pro500:  { storageLimitBytes: 500 * 1024 * 1024 * 1024, label: "500 GB" },
+  basic:   { storageLimitBytes: 100 * 1024 * 1024 * 1024, label: "100 GB" },
+  pro:     { storageLimitBytes: 500 * 1024 * 1024 * 1024, label: "500 GB" },
+  plus:    { storageLimitBytes: 1024 * 1024 * 1024 * 1024, label: "1 TB" },
+  max:     { storageLimitBytes: 2 * 1024 * 1024 * 1024 * 1024, label: "2 TB" },
 };
 
 export async function POST(req: Request) {
@@ -35,7 +37,10 @@ export async function POST(req: Request) {
     }
 
     // Prevent downgrade to a higher or equal plan
-    if (target.storageLimitBytes >= usage.storageLimitBytes) {
+    if (
+      usage.storageLimitBytes !== null &&
+      target.storageLimitBytes >= usage.storageLimitBytes
+    ) {
       return NextResponse.json(
         { error: "Target plan is not a downgrade from current plan" },
         { status: 400 },
