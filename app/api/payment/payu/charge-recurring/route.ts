@@ -154,6 +154,17 @@ export async function POST(req: Request) {
         },
       });
 
+      // Find the last payment to determine the correct cycle length
+      const lastPayment = await Payment.findOne({ userId: usage.userId, status: "success" })
+        .sort({ createdAt: -1 })
+        .select("billingCycle");
+      const cycle = lastPayment?.billingCycle || "monthly";
+      
+      let nextExpiryDate = new Date();
+      if (cycle === "yearly") nextExpiryDate.setFullYear(nextExpiryDate.getFullYear() + 1);
+      else if (cycle === "quarterly") nextExpiryDate.setMonth(nextExpiryDate.getMonth() + 3);
+      else nextExpiryDate.setMonth(nextExpiryDate.getMonth() + 1);
+
       // If PayU immediately confirms captured (rare for UPI) — extend plan now
       // Otherwise extension happens via webhook
       if (txnStatus === "captured") {
@@ -162,7 +173,7 @@ export async function POST(req: Request) {
           {
             $set: {
               planActivatedAt: new Date(),
-              planExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+              planExpiresAt: nextExpiryDate,
               lastRenewalTxnid: txnid,
               planPriceINR: newPlanPriceINR,
               campaignType: newCampaignType,
