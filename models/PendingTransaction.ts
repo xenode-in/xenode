@@ -17,8 +17,14 @@ export interface IPendingTransaction extends Document {
   storageLimitBytes: number;
   /** Base plan price for the selected cycle (before coupon/proration deductions) */
   planPriceINR: number;
+  /** Original un-discounted base price for the cycle */
+  basePlanPriceINR: number;
   /** Billing cycle the user selected (monthly, yearly, etc.) */
   billingCycle: BillingCycle;
+  /** Campaign duration type applied */
+  campaignType?: "forever" | "limited" | null;
+  /** Number of discounted billing cycles remaining (if limited) */
+  campaignCyclesLeft?: number | null;
   couponId?: string;
   couponCode?: string;
   couponDiscount?: number;
@@ -36,11 +42,14 @@ const PendingTransactionSchema = new Schema<IPendingTransaction>(
     planSlug: { type: String, default: "" },
     storageLimitBytes: { type: Number, required: true },
     planPriceINR: { type: Number, required: true },
+    basePlanPriceINR: { type: Number, default: 0 },
     billingCycle: {
       type: String,
       enum: ["monthly", "yearly", "quarterly", "lifetime"],
       default: "monthly",
     },
+    campaignType: { type: String, enum: ["forever", "limited", null], default: null },
+    campaignCyclesLeft: { type: Number, default: null },
     couponId: { type: String, default: null },
     couponCode: { type: String, default: null },
     couponDiscount: { type: Number, default: 0 },

@@ -82,8 +82,28 @@ export async function POST(req: Request) {
         continue;
       }
 
+      // Handle limited campaigns: Revert to base price if cycles run out
+      let chargeAmount = usage.planPriceINR;
+      let newCampaignCyclesLeft = usage.campaignCyclesLeft;
+      let newPlanPriceINR = usage.planPriceINR;
+      let newCampaignType = usage.campaignType;
+
+      if (usage.campaignType === "limited") {
+        if (usage.campaignCyclesLeft != null && usage.campaignCyclesLeft > 0) {
+          // Still have cycles left
+          chargeAmount = usage.planPriceINR;
+          newCampaignCyclesLeft = usage.campaignCyclesLeft - 1;
+        } else {
+          // Cycles are up, revert to base price
+          chargeAmount = usage.basePlanPriceINR || usage.planPriceINR;
+          newPlanPriceINR = usage.basePlanPriceINR || usage.planPriceINR;
+          newCampaignType = null;
+          newCampaignCyclesLeft = null;
+        }
+      }
+
       const txnid = "REC" + Date.now() + crypto.randomBytes(6).toString("hex");
-      const amount = usage.planPriceINR.toFixed(2);
+      const amount = chargeAmount.toFixed(2);
 
       const var1Obj = {
         authpayuid: usage.autopayMandateId,
@@ -144,6 +164,9 @@ export async function POST(req: Request) {
               planActivatedAt: new Date(),
               planExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
               lastRenewalTxnid: txnid,
+              planPriceINR: newPlanPriceINR,
+              campaignType: newCampaignType,
+              campaignCyclesLeft: newCampaignCyclesLeft,
             },
           },
         );
@@ -157,7 +180,14 @@ export async function POST(req: Request) {
         // Pending — store txnid, webhook will handle the rest
         await Usage.updateOne(
           { userId: usage.userId },
-          { $set: { lastRenewalTxnid: txnid } },
+          { 
+            $set: { 
+              lastRenewalTxnid: txnid,
+              planPriceINR: newPlanPriceINR,
+              campaignType: newCampaignType,
+              campaignCyclesLeft: newCampaignCyclesLeft,
+            } 
+          },
         );
       }
 

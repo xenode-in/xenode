@@ -18,6 +18,7 @@ import dbConnect from "@/lib/mongodb";
 import { PricingConfig, IPlan, ICampaign } from "@/models/PricingConfig";
 import {
   getEffectivePriceForCycle,
+  getBasePriceForCycle,
   resolveActiveCampaign,
 } from "@/lib/pricing/pricingService";
 import type { BillingCycle } from "@/types/pricing";
@@ -141,19 +142,26 @@ export async function getPlanBySlugFromDB(
  */
 export async function getPlanConfigFromDB(
   cycle: BillingCycle = "monthly"
-): Promise<Record<string, { storageLimitBytes: number; priceINR: number }>> {
+): Promise<Record<string, { storageLimitBytes: number; priceINR: number; basePriceINR: number; campaignType: "forever" | "limited" | null; campaignCyclesLeft: number | null }>> {
   const { plans, campaign } = await getPricingConfig();
 
   const activeCampaign = resolveActiveCampaign(campaign);
 
   return Object.fromEntries(
     plans.map((p) => {
+      const basePrice = getBasePriceForCycle(p.pricing, cycle);
       const price = getEffectivePriceForCycle(
         p.pricing,
         cycle,
         activeCampaign?.discountPercent
       );
-      return [p.name, { storageLimitBytes: p.storageLimitBytes, priceINR: price }];
+      return [p.name, { 
+        storageLimitBytes: p.storageLimitBytes, 
+        priceINR: price, 
+        basePriceINR: basePrice,
+        campaignType: activeCampaign ? activeCampaign.discountDuration : null,
+        campaignCyclesLeft: activeCampaign && activeCampaign.discountDuration === "limited" ? activeCampaign.discountCycles : null,
+      }];
     })
   );
 }

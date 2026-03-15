@@ -125,6 +125,8 @@ export interface ActiveCampaign {
   name: string;
   discountPercent: number;
   badge: string;
+  discountDuration: "forever" | "limited";
+  discountCycles: number | null;
 }
 
 /**
@@ -139,6 +141,8 @@ export function resolveActiveCampaign(
     discountPercent: number;
     name: string;
     badge: string;
+    discountDuration?: "forever" | "limited";
+    discountCycles?: number | null;
   } | null,
   now: Date = new Date()
 ): ActiveCampaign | null {
@@ -148,5 +152,7 @@ export function resolveActiveCampaign(
     name: campaign.name,
     discountPercent: campaign.discountPercent,
     badge: campaign.badge,
+    discountDuration: campaign.discountDuration || "forever",
+    discountCycles: campaign.discountCycles ?? null,
   };
 }
