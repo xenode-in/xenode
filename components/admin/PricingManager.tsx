@@ -84,6 +84,7 @@ export function PricingManager({ initialConfig }: Props) {
     badge: "🎉 Sale",
     discountDuration: "forever" as "forever" | "limited",
     discountCycles: 1 as number | null,
+    targetAudience: "all" as "all" | "free_only",
   });
 
   const [saving, setSaving] = useState(false);
@@ -412,6 +413,7 @@ export function PricingManager({ initialConfig }: Props) {
                         endDate: formatDate(campaign.endDate),
                         discountDuration: campaign.discountDuration || "forever",
                         discountCycles: campaign.discountCycles || 1,
+                        targetAudience: campaign.targetAudience || "all",
                       });
                       setEditingCampaign(true);
                     }}
@@ -528,6 +530,22 @@ export function PricingManager({ initialConfig }: Props) {
                         />
                       </div>
                     )}
+                    <div>
+                      <Label className="text-xs text-zinc-400">Target Audience</Label>
+                      <select
+                        value={campDraft.targetAudience}
+                        onChange={(e) =>
+                          setCampDraft({
+                            ...campDraft,
+                            targetAudience: e.target.value as "all" | "free_only",
+                          })
+                        }
+                        className="mt-1 flex h-10 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white"
+                      >
+                        <option value="all">All Users</option>
+                        <option value="free_only">Free Users Only (Upgrades)</option>
+                      </select>
+                    </div>
                     <div>
                       <Label className="text-xs text-zinc-400">Start Date</Label>
                       <Input
