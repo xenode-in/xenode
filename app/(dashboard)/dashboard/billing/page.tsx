@@ -65,6 +65,24 @@ export default async function BillingPage() {
   const planActivatedDate = formatDate(usage?.planActivatedAt);
   const planExpiryDate = formatDate(usage?.planExpiresAt);
 
+  const getDaysUntilDowngrade = () => {
+    if (!usage?.planExpiresAt) return 0;
+    
+    // If they are in a grace period, the downgrade happens at gracePeriodEndsAt
+    if (usage.isGracePeriod && usage.gracePeriodEndsAt) {
+      const ms = new Date(usage.gracePeriodEndsAt).getTime() - Date.now();
+      return Math.max(0, Math.ceil(ms / (1000 * 60 * 60 * 24)));
+    }
+    
+    // If they just naturally expired and are waiting for the midnight cron job sweep
+    // (meaning their planExpiresAt is in the past)
+    const ms = new Date(usage.planExpiresAt).getTime() - Date.now();
+    // If negative, it means they are currently expired and will be swept tonight (0 days left)
+    return Math.max(0, Math.ceil(ms / (1000 * 60 * 60 * 24)));
+  };
+
+  const daysLeft = getDaysUntilDowngrade();
+
   return (
     <div className="space-y-8">
       {/* ── Header ── */}
@@ -82,13 +100,18 @@ export default async function BillingPage() {
       </div>
 
       {/* ── Grace Period Banner ── */}
-      {usage?.isGracePeriod && usage?.gracePeriodEndsAt && (
+      {((usage?.isGracePeriod && usage?.gracePeriodEndsAt) || (isPaidPlan && usage?.planExpiresAt && new Date(usage.planExpiresAt).getTime() < Date.now())) && (
         <Alert variant="destructive" className="bg-destructive/10 border-destructive/20 text-destructive">
           <AlertTriangle className="h-4 w-4" />
-          <AlertTitle className="font-semibold">Action Required: Payment Failed</AlertTitle>
+          <AlertTitle className="font-semibold">
+            {usage?.isGracePeriod ? "Action Required: Payment Failed" : "Action Required: Plan Expired"}
+          </AlertTitle>
           <AlertDescription className="mt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <span>
-              Your latest recurring payment failed. To prevent your plan from downgrading to the Free Tier, please renew your subscription before <strong className="font-semibold">{formatDate(usage.gracePeriodEndsAt)}</strong>.
+              {usage?.isGracePeriod 
+                ? <>Your latest recurring payment failed. To prevent your plan from downgrading to the Free Tier, please renew your subscription before <strong className="font-semibold">{formatDate(usage.gracePeriodEndsAt)}</strong> ({daysLeft} {daysLeft === 1 ? "day" : "days"} left).</>
+                : <>Your subscription has expired. Please renew your plan immediately to avoid service interruption or downgrade to the Free Tier ({daysLeft} {daysLeft === 1 ? "day" : "days"} left).</>
+              }
             </span>
             <Button asChild size="sm" variant="destructive" className="shrink-0">
               <Link href="/plans">Renew Now</Link>
@@ -132,9 +155,9 @@ export default async function BillingPage() {
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">
-                  {usage.autopayActive ? "Renews On" : "Expires On"}
+                  {usage.autopayActive ? "Renews On" : "Expired On"}
                 </span>
-                <span className={usage.isGracePeriod ? "text-destructive font-medium" : "text-foreground"}>
+                <span className={(usage.isGracePeriod || new Date(usage.planExpiresAt).getTime() < Date.now()) ? "text-destructive font-medium" : "text-foreground"}>
                   {planExpiryDate}
                 </span>
               </div>
