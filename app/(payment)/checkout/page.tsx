@@ -92,7 +92,9 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
     currentUsage.plan !== "free" &&
     currentUsage.planExpiresAt &&
     new Date(currentUsage.planExpiresAt).getTime() > Date.now() &&
-    currentUsage.planPriceINR > 0
+    currentUsage.planPriceINR > 0 &&
+    !currentUsage.isGracePeriod &&
+    planSlug !== currentUsage.plan
   ) {
     const msRemaining =
       new Date(currentUsage.planExpiresAt).getTime() - Date.now();

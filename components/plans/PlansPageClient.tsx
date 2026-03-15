@@ -171,7 +171,9 @@ export default function PlansPageClient() {
           <p className="mt-20 text-center text-muted-foreground">No plans available.</p>
         ) : (
           <div className="mt-10 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-center">
-            {plans.map((plan) => {
+            {plans
+              .filter(plan => (PLAN_WEIGHTS[plan.slug] ?? 0) >= (PLAN_WEIGHTS[currentPlan] ?? 0))
+              .map((plan) => {
               const basePrice = getEffectivePriceForCycle(plan.pricing, cycle);
               const finalPrice = getEffectivePriceForCycle(
                 plan.pricing,
@@ -265,15 +267,12 @@ export default function PlansPageClient() {
                   {/* CTA */}
                   <Button
                     onClick={() => handleSelect(plan.slug)}
-                    disabled={(PLAN_WEIGHTS[plan.slug] ?? 0) < (PLAN_WEIGHTS[currentPlan] ?? 0)}
                     variant={pop ? "default" : "outline"}
-                    className={cn("w-full h-11 font-semibold", pop && "shadow-md", (PLAN_WEIGHTS[plan.slug] ?? 0) < (PLAN_WEIGHTS[currentPlan] ?? 0) && "opacity-50 cursor-not-allowed")}
+                    className={cn("w-full h-11 font-semibold", pop && "shadow-md")}
                   >
-                    {(PLAN_WEIGHTS[plan.slug] ?? 0) < (PLAN_WEIGHTS[currentPlan] ?? 0) 
-                      ? "Downgrade Unavailable" 
-                      : plan.slug === currentPlan 
-                        ? ((isGracePeriod || isPlanExpired) ? "Renew Plan" : "Current Plan") 
-                        : pop ? "Upgrade" : `Get ${plan.name}`}
+                    {plan.slug === currentPlan 
+                      ? ((isGracePeriod || isPlanExpired) ? "Renew Plan" : "Current Plan") 
+                      : pop ? "Upgrade" : `Get ${plan.name}`}
                   </Button>
                 </div>
               );
