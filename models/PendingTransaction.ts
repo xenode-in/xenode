@@ -25,6 +25,7 @@ export interface IPendingTransaction extends Document {
   expiresAt: Date;
   paymentMethod: "autopay" | "direct";
   billingAddress?: object | null;
+  expectedAmount?: number;
 }
 
 const PendingTransactionSchema = new Schema<IPendingTransaction>(
@@ -50,6 +51,7 @@ const PendingTransactionSchema = new Schema<IPendingTransaction>(
       required: true,
     },
     billingAddress: { type: Schema.Types.Mixed, default: null },
+    expectedAmount: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

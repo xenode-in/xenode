@@ -53,14 +53,12 @@ export default function RefundButton({ paymentId, amount }: Props) {
 
   return (
     <AlertDialog>
-      <AlertDialogTrigger asChild>
-        <button
-          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors ml-3"
-          disabled={loading}
-        >
-          <RotateCcw className="h-3 w-3" />
-          Request Refund
-        </button>
+      <AlertDialogTrigger
+        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors ml-3"
+        disabled={loading}
+      >
+        <RotateCcw className="h-3 w-3" />
+        Request Refund
       </AlertDialogTrigger>
       <AlertDialogContent>
         <AlertDialogHeader>

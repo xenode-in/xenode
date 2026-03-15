@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import dbConnect from "@/lib/mongodb";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
+import Subscription from "@/models/Subscription";
 
 /**
  * Cron endpoint — runs daily at midnight UTC.
@@ -38,6 +39,19 @@ export async function GET(req: NextRequest) {
       },
     );
     expiredCount = expireResult.modifiedCount;
+
+    // --- Step 2: Update Subscriptions ---
+    await Subscription.updateMany(
+      {
+        status: "active",
+        endDate: { $lt: now },
+      },
+      {
+        $set: {
+          status: "expired"
+        }
+      }
+    );
 
     return NextResponse.json({
       success: true,

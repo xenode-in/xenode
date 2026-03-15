@@ -105,7 +105,7 @@ describe("CVE-5 — Quota Enforcement at Presign", () => {
     // Quota is 1GB + 100MB < 10GB — should succeed after inline downgrade
     expect(res.status).toBe(200);
 
-    const { Usage } = await import("@/models/Usage");
+    const { default: Usage } = await import("@/models/Usage");
     const usage = await Usage.findOne({ userId });
     expect(usage?.plan).toBe("free");
     expect(usage?.storageLimitBytes).toBe(FREE_TIER_BYTES);

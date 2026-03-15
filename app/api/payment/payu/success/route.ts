@@ -16,6 +16,8 @@ import Usage from "@/models/Usage";
 import Payment from "@/models/Payment";
 import PendingTransaction from "@/models/PendingTransaction";
 import Coupon from "@/models/Coupon";
+import Subscription from "@/models/Subscription";
+import PaymentService from "@/lib/pricing/PaymentService";
 import mongoose from "mongoose";
 import { getSubscriptionEndDate } from "@/lib/pricing/pricingService";
 
@@ -48,6 +50,7 @@ function verifyHash(data: Record<string, string>, salt: string, key: string): bo
 }
 
 export async function POST(req: Request) {
+  let txnid: string | undefined;
   try {
     const formData = await req.formData();
     const data: Record<string, string> = {};
@@ -55,7 +58,8 @@ export async function POST(req: Request) {
 
     const key  = process.env.PAYU_MERCHANT_KEY  || "";
     const salt = process.env.PAYU_MERCHANT_SALT || "";
-    const { status, amount, txnid, productinfo, udf1 } = data;
+    const { status, amount, productinfo, udf1 } = data;
+    txnid = data.txnid;
 
     const hashValid = verifyHash(data, salt, key);
     if (!hashValid) {
@@ -76,108 +80,74 @@ export async function POST(req: Request) {
 
     await dbConnect();
 
-    // Idempotency guard
-    const existingPayment = await Payment.findOne({ txnid });
-    if (existingPayment) {
-      return toSuccessPage(req.url, {
-        txnid,
-        plan: existingPayment.planName ?? productinfo ?? "",
-        amount: existingPayment.amount?.toString() ?? amount ?? "",
-      });
-    }
-
-    const pending = await PendingTransaction.findOne({ txnid, userId: udf1 });
-    if (!pending) {
-      console.error("[SECURITY] No pending transaction found", { txnid, udf1 });
-      return toFailurePage(req.url, { txnid, error: "transaction_not_found", plan: productinfo ?? "", amount: amount ?? "" });
-    }
-
     const db = mongoose.connection.db;
     if (!db) throw new Error("Database not connected");
 
-    const user = await db.collection("user").findOne({ _id: new mongoose.Types.ObjectId(udf1) });
-    if (!user) {
-      return toFailurePage(req.url, { txnid, error: "user_not_found", plan: productinfo ?? "", amount: amount ?? "" });
-    }
+    const session = await mongoose.startSession();
+    let resultUrl = "";
 
-    if (pending.billingAddress) {
-      await db.collection("user").updateOne(
-        { _id: new mongoose.Types.ObjectId(udf1) },
-        { $set: { billingAddress: pending.billingAddress } }
-      );
-    }
+    try {
+      await session.withTransaction(async () => {
+        // Delegate to PaymentService
+        const result = await PaymentService.processSuccessfulPayment(
+          txnid || "",
+          amount,
+          productinfo,
+          udf1,
+          data,
+          session
+        );
 
-    const authpayuid = data.payuMoneyId || data.authpayuid || null;
+        if (result.isIdempotent) {
+          resultUrl = new URL("/payment/success", req.url).toString();
+          return;
+        }
 
-    // ── Compute subscription window ───────────────────────────────────────────
-    const billingCycle = pending.billingCycle ?? "monthly";
-    const subscriptionStartDate = new Date();
-    const subscriptionEndDate = getSubscriptionEndDate(subscriptionStartDate, billingCycle);
-
-    // ── Update Usage ──────────────────────────────────────────────────────────
-    await Usage.findOneAndUpdate(
-      { userId: user._id.toString() },
-      {
-        $set: {
-          plan: pending.planSlug,
-          storageLimitBytes: pending.storageLimitBytes,
-          planPriceINR: pending.planPriceINR,   // base cycle price for future proration
-          planActivatedAt: subscriptionStartDate,
-          planExpiresAt: subscriptionEndDate,    // FIXED: was +30 days always
-          ...(authpayuid ? { autopayMandateId: authpayuid, autopayActive: true } : {}),
-        },
-      },
-      { upsert: true }
-    );
-
-    // ── Create Payment record ─────────────────────────────────────────────────
-    await Payment.create({
-      userId: user._id.toString(),
-      amount: parseFloat(amount),
-      currency: "INR",
-      status: "success",
-      txnid,
-      planName: pending.planName,
-      billingCycle,                              // NEW
-      subscriptionStartDate,                     // NEW
-      subscriptionEndDate,                       // NEW
-      payuResponse: {
-        status: data.status,
-        txnid: data.txnid,
-        mihpayid: data.mihpayid,
-        mode: data.mode,
-        PG_TYPE: data.PG_TYPE,
-        bank_ref_num: data.bank_ref_num,
-        ...(authpayuid ? { authpayuid } : {}),
-      },
-    });
-
-    // ── Consume coupon atomically ─────────────────────────────────────────────
-    if (pending.couponId) {
-      await Coupon.findByIdAndUpdate(pending.couponId, {
-        $inc: { usedCount: 1 },
-        $push: {
-          usedBy: {
-            userId: udf1,
-            usedAt: new Date(),
-            txnid,
-          },
-        },
+        const url = new URL("/payment/success", req.url);
+        url.searchParams.set("txnid", txnid || "");
+        url.searchParams.set("plan", result.plan || "");
+        url.searchParams.set("amount", result.amount || "");
+        url.searchParams.set("method", result.method || "");
+        url.searchParams.set("cycle", result.cycle || "");
+        if (result.coupon) {
+          url.searchParams.set("coupon", result.coupon);
+        }
+        resultUrl = url.toString();
       });
+    } finally {
+      session.endSession();
     }
 
-    await PendingTransaction.deleteOne({ txnid });
+    if (resultUrl) {
+      if (resultUrl.includes("/payment/success")) {
+         // It might be the idempotency branch which didn't set all query params,
+         // but that's handled correctly as existingPayment redirects.
+         // Let's refine idempotency redirect URL.
+         const idempotencyUrl = new URL("/payment/success", req.url);
+         const existingPayment = await Payment.findOne({ txnid: txnid || "" }); // already committed
+         if (existingPayment && resultUrl === idempotencyUrl.toString()) {
+           idempotencyUrl.searchParams.set("txnid", txnid || "");
+           idempotencyUrl.searchParams.set("plan", existingPayment.planName ?? productinfo ?? "");
+           idempotencyUrl.searchParams.set("amount", existingPayment.amount?.toString() ?? amount ?? "");
+           return NextResponse.redirect(idempotencyUrl.toString(), { status: 303 });
+         }
+         return NextResponse.redirect(resultUrl, { status: 303 });
+      }
+    }
 
-    return toSuccessPage(req.url, {
-      txnid,
-      plan: pending.planName,
-      amount: pending.planPriceINR.toString(),
-      method: pending.paymentMethod,
-      cycle: billingCycle,
-      ...(pending.couponCode ? { coupon: pending.couponCode } : {}),
-    });
-  } catch (error) {
+    return NextResponse.redirect(resultUrl, { status: 303 });
+  } catch (error: any) {
     console.error("PayU success callback error:", error);
-    return toFailurePage("http://localhost:3000", { error: "server_error" });
+    
+    // Check if we threw an internal error
+    const errMap: Record<string, string> = {
+      "transaction_not_found": "transaction_not_found",
+      "amount_mismatch": "security_error",
+      "product_mismatch": "security_error",
+      "user_not_found": "user_not_found"
+    };
+    
+    const errCode = errMap[error.message] || "server_error";
+    return toFailurePage(req.url, { txnid: txnid || "", error: errCode });
   }
 }
