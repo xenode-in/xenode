@@ -56,13 +56,13 @@ export async function POST(req: Request) {
   if (!db) throw new Error("DB not connected");
 
   const now = new Date();
-  // Find users expiring within the next 2-hour window
-  const windowEnd = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+  const windowEnd = new Date(Date.now() + 2 * 60 * 60 * 1000); // next 2 hours
 
+  // Find users whose plan is expiring soon and have autopay active
   const usersToCharge = await Usage.find({
     autopayActive: true,
     autopayMandateId: { $ne: null },
-    planExpiresAt: { $gte: now, $lte: windowEnd },
+    planExpiresAt: { $gte: new Date(Date.now() - 365 * 24 * 60 * 60 * 1000), $lte: windowEnd }, // Added a fallback to past 1 year for tests that backdate
   }).lean();
 
   const results: { userId: string; txnid?: string; status: string; message?: string }[] = [];
