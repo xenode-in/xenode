@@ -82,6 +82,8 @@ export function PricingManager({ initialConfig }: Props) {
     endDate: formatDate(new Date(Date.now() + 7 * 86400000)),
     isActive: true,
     badge: "🎉 Sale",
+    discountDuration: "forever" as "forever" | "limited",
+    discountCycles: 1 as number | null,
   });
 
   const [saving, setSaving] = useState(false);
@@ -408,6 +410,8 @@ export function PricingManager({ initialConfig }: Props) {
                         ...campaign,
                         startDate: formatDate(campaign.startDate),
                         endDate: formatDate(campaign.endDate),
+                        discountDuration: campaign.discountDuration || "forever",
+                        discountCycles: campaign.discountCycles || 1,
                       });
                       setEditingCampaign(true);
                     }}
@@ -491,6 +495,39 @@ export function PricingManager({ initialConfig }: Props) {
                       />
                       <Label className="text-xs text-zinc-400">Active on save</Label>
                     </div>
+                    <div>
+                      <Label className="text-xs text-zinc-400">Duration</Label>
+                      <select
+                        value={campDraft.discountDuration}
+                        onChange={(e) =>
+                          setCampDraft({
+                            ...campDraft,
+                            discountDuration: e.target.value as "forever" | "limited",
+                          })
+                        }
+                        className="mt-1 flex h-10 w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white"
+                      >
+                        <option value="forever">Forever (Lifetime lock-in)</option>
+                        <option value="limited">Limited Billing Cycles</option>
+                      </select>
+                    </div>
+                    {campDraft.discountDuration === "limited" && (
+                      <div>
+                        <Label className="text-xs text-zinc-400">Cycles to apply discount</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={campDraft.discountCycles || 1}
+                          onChange={(e) =>
+                            setCampDraft({
+                              ...campDraft,
+                              discountCycles: Number(e.target.value),
+                            })
+                          }
+                          className="mt-1 bg-zinc-800 border-zinc-700 text-white"
+                        />
+                      </div>
+                    )}
                     <div>
                       <Label className="text-xs text-zinc-400">Start Date</Label>
                       <Input
