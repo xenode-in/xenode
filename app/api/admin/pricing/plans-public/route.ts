@@ -22,6 +22,7 @@ export async function GET() {
   const usage = await Usage.findOne({ userId: session.user.id }).lean();
   const currentPlan = usage?.plan || "free";
   const isGracePeriod = usage?.isGracePeriod || false;
+  const isPlanExpired = !!(usage?.planExpiresAt && new Date(usage.planExpiresAt).getTime() < Date.now());
 
   const { plans, campaign } = await getPricingConfig();
 
@@ -35,5 +36,5 @@ export async function GET() {
       ? campaign
       : null;
 
-  return NextResponse.json({ plans, campaign: activeCampaign, currentPlan, isGracePeriod });
+  return NextResponse.json({ plans, campaign: activeCampaign, currentPlan, isGracePeriod, isPlanExpired });
 }

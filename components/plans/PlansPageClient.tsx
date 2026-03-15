@@ -59,6 +59,7 @@ export default function PlansPageClient() {
   const [campaign, setCampaign] = useState<ICampaign | null>(null);
   const [currentPlan, setCurrentPlan] = useState<string>("free");
   const [isGracePeriod, setIsGracePeriod] = useState<boolean>(false);
+  const [isPlanExpired, setIsPlanExpired] = useState<boolean>(false);
   const [loading, setLoading] = useState(true);
   const [cycle, setCycle] = useState<BillingCycle>("monthly");
 
@@ -70,6 +71,7 @@ export default function PlansPageClient() {
         setCampaign(data.campaign ?? null);
         if (data.currentPlan) setCurrentPlan(data.currentPlan);
         if (data.isGracePeriod) setIsGracePeriod(data.isGracePeriod);
+        if (data.isPlanExpired) setIsPlanExpired(data.isPlanExpired);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -270,7 +272,7 @@ export default function PlansPageClient() {
                     {(PLAN_WEIGHTS[plan.slug] ?? 0) < (PLAN_WEIGHTS[currentPlan] ?? 0) 
                       ? "Downgrade Unavailable" 
                       : plan.slug === currentPlan 
-                        ? (isGracePeriod ? "Renew Plan" : "Current Plan") 
+                        ? ((isGracePeriod || isPlanExpired) ? "Renew Plan" : "Current Plan") 
                         : pop ? "Upgrade" : `Get ${plan.name}`}
                   </Button>
                 </div>
