@@ -34,6 +34,10 @@ export interface ICampaign {
   endDate: Date;
   isActive: boolean;
   badge: string;
+  /** "forever" (lifetime lock-in) or "limited" (X billing cycles) */
+  discountDuration: "forever" | "limited";
+  /** If limited, how many billing cycles the discount lasts */
+  discountCycles: number | null;
 }
 
 export interface IPricingConfig extends Document {
@@ -83,6 +87,8 @@ const CampaignSchema = new Schema<ICampaign>({
   endDate: Date,
   isActive: { type: Boolean, default: true },
   badge: { type: String, default: "" },
+  discountDuration: { type: String, enum: ["forever", "limited"], default: "forever" },
+  discountCycles: { type: Number, default: null },
 });
 
 // ─── Root schema ─────────────────────────────────────────────────────────────

@@ -22,6 +22,9 @@ export interface IUsage extends Document {
   planActivatedAt: Date | null;
   planExpiresAt: Date | null;
   planPriceINR: number;
+  basePlanPriceINR: number;
+  campaignType: "forever" | "limited" | null;
+  campaignCyclesLeft: number | null;
   uploadCount: number;
   downloadCount: number;
   lastActiveAt: Date | null;
@@ -52,6 +55,9 @@ const UsageSchema = new Schema<IUsage>(
     planActivatedAt:  { type: Date, default: null },
     planExpiresAt:    { type: Date, default: null },
     planPriceINR:     { type: Number, default: 0 },
+    basePlanPriceINR: { type: Number, default: 0 },
+    campaignType:     { type: String, enum: ["forever", "limited", null], default: null },
+    campaignCyclesLeft: { type: Number, default: null },
     uploadCount:      { type: Number, default: 0, min: 0 },
     downloadCount:    { type: Number, default: 0, min: 0 },
     lastActiveAt:     { type: Date, default: null, index: true },
