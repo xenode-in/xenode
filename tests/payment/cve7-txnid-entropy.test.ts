@@ -25,7 +25,7 @@ describe("CVE-7 — CSPRNG txnid", () => {
     const { POST } = await import("@/app/api/payment/payu/route");
     const makeReq = () => new Request("http://localhost/api/payment/payu", {
       method: "POST",
-      body: JSON.stringify({ planName: "100GB Model" }),
+      body: JSON.stringify({ planName: "Basic" }),
       headers: { "Content-Type": "application/json" },
     });
 
@@ -43,7 +43,7 @@ describe("CVE-7 — CSPRNG txnid", () => {
     const { POST } = await import("@/app/api/payment/payu/route");
     const res = await POST(new Request("http://localhost/api/payment/payu", {
       method: "POST",
-      body: JSON.stringify({ planName: "100GB Model" }),
+      body: JSON.stringify({ planName: "Basic" }),
       headers: { "Content-Type": "application/json" },
     }) as any);
     const body = await res.json();
@@ -55,7 +55,7 @@ describe("CVE-7 — CSPRNG txnid", () => {
     const { POST } = await import("@/app/api/payment/payu/route");
     const makeReq = () => new Request("http://localhost/api/payment/payu", {
       method: "POST",
-      body: JSON.stringify({ planName: "100GB Model" }),
+      body: JSON.stringify({ planName: "Basic" }),
       headers: { "Content-Type": "application/json" },
     });
 

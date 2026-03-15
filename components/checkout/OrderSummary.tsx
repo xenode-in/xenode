@@ -1,88 +1,122 @@
-import { Zap } from "lucide-react";
+/**
+ * OrderSummary.tsx
+ *
+ * CHANGES (multi-cycle refactor):
+ *  - Reads billingCycle from plan prop.
+ *  - Shows billing cycle label (Monthly / Yearly) in the summary.
+ *  - For yearly: shows per-month equivalent and total savings vs monthly × 12.
+ */
+import { ShieldCheck, Lock } from "lucide-react";
+import { Separator } from "@/components/ui/separator";
 import type { CheckoutPlan, CouponResult } from "./CheckoutPage";
-import PriceBreakdown from "./PriceBreakdown";
-import TrustBadges from "./TrustBadges";
+import { getYearlySavingsPercent, getMonthlyEquivalentForYearly } from "@/lib/pricing/pricingService";
 
-interface OrderSummaryProps {
+interface Props {
   plan: CheckoutPlan;
   prorationCredit: number;
   finalAmount: number;
   appliedCoupon: CouponResult | null;
 }
 
+const CYCLE_LABEL: Record<string, string> = {
+  monthly: "Monthly",
+  yearly: "Yearly",
+  quarterly: "Quarterly",
+  lifetime: "Lifetime",
+};
+
 export default function OrderSummary({
   plan,
   prorationCredit,
   finalAmount,
   appliedCoupon,
-}: OrderSummaryProps) {
-  const discountedPrice = plan.originalPrice - plan.campaignDiscount;
-  const hasCampaign = plan.campaignDiscount > 0;
+}: Props) {
+  const campaignPrice = plan.originalPrice - plan.campaignDiscount;
+  const couponDiscount = appliedCoupon?.discountAmount ?? 0;
+
+  const isYearly = plan.billingCycle === "yearly";
+  const monthlyEquiv = isYearly ? getMonthlyEquivalentForYearly(plan.pricing) : null;
+  const yearlySavings = isYearly ? getYearlySavingsPercent(plan.pricing) : null;
 
   return (
-    <div className="space-y-4">
-      <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-        Order Summary
-      </p>
+    <div className="rounded-2xl border border-border bg-card p-6 space-y-4">
+      <h2 className="text-base font-semibold text-foreground">Order Summary</h2>
 
-      {/* Plan card */}
-      <div className="rounded-xl border border-border bg-card p-6 space-y-4">
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              {plan.storage} Plan
+      {/* Plan info */}
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-medium text-foreground">{plan.name}</p>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {plan.storage} · {CYCLE_LABEL[plan.billingCycle] ?? plan.billingCycle} Billing
+          </p>
+          {monthlyEquiv && (
+            <p className="text-xs text-muted-foreground">
+              ₹{monthlyEquiv}/mo equivalent
             </p>
-            <div className="mt-1.5 flex items-baseline gap-2">
-              {hasCampaign && (
-                <span className="text-sm text-muted-foreground line-through">
-                  ₹{plan.originalPrice}
-                </span>
-              )}
-              <span className="text-2xl font-bold text-foreground">
-                ₹{discountedPrice}
-              </span>
-              <span className="text-xs text-muted-foreground">/mo</span>
-            </div>
-            {hasCampaign && plan.campaignBadge && (
-              <div className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5">
-                <span className="text-xs font-semibold text-primary">
-                  {plan.campaignBadge} · {plan.campaignDiscountPercent}% off
-                </span>
-              </div>
-            )}
-          </div>
-          {plan.isPopular && (
-            <span className="rounded-full bg-primary/15 px-2.5 py-0.5 text-xs font-semibold text-primary border border-primary/20">
-              Popular
-            </span>
           )}
         </div>
-
-        {/* Features */}
-        <ul className="space-y-1.5 border-t border-border pt-4">
-          {plan.features.map((f) => (
-            <li
-              key={f}
-              className="flex items-center gap-2 text-xs text-muted-foreground"
-            >
-              <span className="text-primary">✓</span>
-              {f}
-            </li>
-          ))}
-        </ul>
+        <span className="font-semibold text-foreground shrink-0">
+          ₹{plan.originalPrice}
+        </span>
       </div>
 
-      <PriceBreakdown
-        planPrice={plan.originalPrice}
-        campaignDiscount={plan.campaignDiscount}
-        campaignBadge={plan.campaignBadge}
-        couponDiscount={appliedCoupon?.discountAmount ?? 0}
-        couponCode={appliedCoupon?.code ?? null}
-        prorationCredit={prorationCredit}
-        finalAmount={finalAmount}
-      />
+      <Separator />
 
-      <TrustBadges />
+      {/* Yearly savings callout */}
+      {isYearly && yearlySavings && yearlySavings > 0 && (
+        <div className="flex justify-between text-sm">
+          <span className="text-primary font-medium">🎉 Yearly saving</span>
+          <span className="text-primary font-semibold">−{yearlySavings}%</span>
+        </div>
+      )}
+
+      {/* Campaign discount */}
+      {plan.campaignDiscount > 0 && (
+        <div className="flex justify-between text-sm">
+          <span className="text-muted-foreground">
+            {plan.campaignBadge ?? "Campaign"} ({plan.campaignDiscountPercent}% off)
+          </span>
+          <span className="text-green-500 font-medium">−₹{plan.campaignDiscount}</span>
+        </div>
+      )}
+
+      {/* Coupon discount */}
+      {appliedCoupon && (
+        <div className="flex justify-between text-sm">
+          <span className="text-muted-foreground">
+            Coupon ({appliedCoupon.code})
+          </span>
+          <span className="text-green-500 font-medium">−₹{appliedCoupon.discountAmount}</span>
+        </div>
+      )}
+
+      {/* Proration credit */}
+      {prorationCredit > 0 && (
+        <div className="flex justify-between text-sm">
+          <span className="text-muted-foreground">Proration credit</span>
+          <span className="text-green-500 font-medium">−₹{prorationCredit}</span>
+        </div>
+      )}
+
+      <Separator />
+
+      {/* Total */}
+      <div className="flex justify-between font-bold text-base">
+        <span className="text-foreground">Total due today</span>
+        <span className="text-foreground">₹{finalAmount}</span>
+      </div>
+
+      {/* Trust signals */}
+      <div className="flex flex-col gap-1.5 pt-1">
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <ShieldCheck className="w-3.5 h-3.5 text-primary" />
+          End-to-End Encrypted Storage
+        </div>
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Lock className="w-3.5 h-3.5 text-primary" />
+          Secure Payment via PayU
+        </div>
+      </div>
     </div>
   );
 }

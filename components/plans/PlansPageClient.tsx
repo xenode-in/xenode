@@ -10,6 +10,12 @@ import { useSession } from "@/lib/auth/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { IPlan, ICampaign } from "@/models/PricingConfig";
+import type { BillingCycle } from "@/types/pricing";
+import {
+  getEffectivePriceForCycle,
+  getYearlySavingsPercent,
+  getMonthlyEquivalentForYearly,
+} from "@/lib/pricing/pricingService";
 
 function PlanSkeletons() {
   return (
@@ -43,6 +49,7 @@ export default function PlansPageClient() {
   const [plans, setPlans] = useState<IPlan[]>([]);
   const [campaign, setCampaign] = useState<ICampaign | null>(null);
   const [loading, setLoading] = useState(true);
+  const [cycle, setCycle] = useState<BillingCycle>("monthly");
 
   useEffect(() => {
     fetch("/api/admin/pricing/plans-public")
@@ -55,17 +62,18 @@ export default function PlansPageClient() {
       .finally(() => setLoading(false));
   }, []);
 
-  const discountedPrice = (price: number) =>
-    campaign ? Math.round(price * (1 - campaign.discountPercent / 100)) : price;
-
   const handleSelect = (slug: string) => {
     if (!session) {
       toast.error("Please sign in first.");
       router.push("/sign-in");
       return;
     }
-    router.push(`/checkout?plan=${slug}`);
+    router.push(`/checkout?plan=${slug}&cycle=${cycle}`);
   };
+
+  // Savings % for toggle badge (use first paid plan as reference)
+  const toggleSavings =
+    plans.length > 0 ? getYearlySavingsPercent(plans[0].pricing) : null;
 
   return (
     <div className="min-h-screen bg-background">
@@ -96,6 +104,39 @@ export default function PlansPageClient() {
           </p>
         </div>
 
+        {/* ── Billing Cycle Toggle ─────────────────────────── */}
+        <div className="flex justify-center mt-8 mb-4">
+          <div className="inline-flex items-center gap-1 rounded-xl bg-muted p-1 border border-border">
+            <button
+              onClick={() => setCycle("monthly")}
+              className={cn(
+                "px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200",
+                cycle === "monthly"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              Monthly
+            </button>
+            <button
+              onClick={() => setCycle("yearly")}
+              className={cn(
+                "flex items-center gap-2 px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200",
+                cycle === "yearly"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              Yearly
+              {toggleSavings && toggleSavings > 0 && (
+                <span className="bg-primary/15 text-primary text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                  Save {toggleSavings}%
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+
         {/* Campaign banner */}
         {campaign && (
           <div className="mx-auto mb-10 flex max-w-lg items-center justify-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-5 py-2">
@@ -114,38 +155,35 @@ export default function PlansPageClient() {
         ) : plans.length === 0 ? (
           <p className="mt-20 text-center text-muted-foreground">No plans available.</p>
         ) : (
-          /*
-           * Layout trick for the "elevated popular" effect:
-           * - All cards are in a flex row aligned to their BOTTOM edge (items-end)
-           * - The popular card has extra top/bottom padding so it appears taller
-           *   and naturally "pops out" above the others
-           * - Non-popular cards get a slight opacity/scale-down to push them back
-           */
           <div className="mt-10 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-center">
             {plans.map((plan) => {
-              const finalPrice = discountedPrice(plan.priceINR);
-              const isDiscounted = finalPrice !== plan.priceINR;
+              const basePrice = getEffectivePriceForCycle(plan.pricing, cycle);
+              const finalPrice = getEffectivePriceForCycle(
+                plan.pricing,
+                cycle,
+                campaign?.discountPercent
+              );
+              const isDiscounted = finalPrice !== basePrice;
+              const monthlyEquiv =
+                cycle === "yearly"
+                  ? getMonthlyEquivalentForYearly(plan.pricing)
+                  : null;
               const pop = plan.isPopular;
 
               return (
                 <div
                   key={plan.name}
                   className={cn(
-                    // base
                     "relative flex flex-col rounded-2xl border bg-card transition-all duration-200",
-                    // sizing
                     "w-full sm:flex-1 sm:max-w-[280px]",
-                    // popular gets more vertical breathing room
                     pop ? "px-6 py-10 sm:-my-4" : "px-6 py-8",
-                    // popular border + glow
                     pop
                       ? "border-primary shadow-[0_0_0_1px_hsl(var(--primary)/0.4),0_12px_48px_hsl(var(--primary)/0.18)] z-10"
                       : "border-border hover:border-primary/30 opacity-95 hover:opacity-100",
-                    // hover lift
                     "hover:-translate-y-1 hover:shadow-xl",
                   )}
                 >
-                  {/* Popular badge — sits above the card top edge */}
+                  {/* Popular badge */}
                   {pop && (
                     <div className="absolute -top-4 left-1/2 -translate-x-1/2">
                       <Badge className="bg-primary text-primary-foreground text-[11px] font-bold uppercase tracking-widest px-4 py-1 rounded-full shadow">
@@ -155,20 +193,32 @@ export default function PlansPageClient() {
                   )}
 
                   {/* Price */}
-                  <div className="mb-3">
+                  <div className="mb-1">
                     {isDiscounted && (
                       <span className="text-sm text-muted-foreground line-through mr-1.5">
-                        ₹{plan.priceINR}
+                        ₹{basePrice}
                       </span>
                     )}
-                    <span className={cn(
-                      "text-4xl font-extrabold tracking-tight",
-                      pop ? "text-primary" : "text-foreground"
-                    )}>
+                    <span
+                      className={cn(
+                        "text-4xl font-extrabold tracking-tight",
+                        pop ? "text-primary" : "text-foreground"
+                      )}
+                    >
                       ₹{finalPrice}
                     </span>
-                    <span className="ml-1.5 text-sm text-muted-foreground">/month</span>
+                    <span className="ml-1.5 text-sm text-muted-foreground">
+                      /{cycle === "yearly" ? "yr" : "month"}
+                    </span>
                   </div>
+
+                  {/* Yearly per-month equivalent */}
+                  {monthlyEquiv && (
+                    <p className="mb-3 text-xs text-muted-foreground">
+                      ₹{monthlyEquiv}/mo · billed annually
+                    </p>
+                  )}
+                  {!monthlyEquiv && <div className="mb-3" />}
 
                   {/* Plan name */}
                   <h3 className="mb-2 text-xl font-bold text-foreground">{plan.name}</h3>
@@ -180,15 +230,19 @@ export default function PlansPageClient() {
                   <ul className="mb-8 flex-1 space-y-2.5">
                     {plan.features.map((f, i) => (
                       <li key={i} className="flex items-start gap-2.5 text-sm">
-                        <span className={cn(
-                          "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full",
-                          pop
-                            ? "bg-primary/15 text-primary"
-                            : "bg-muted text-muted-foreground"
-                        )}>
+                        <span
+                          className={cn(
+                            "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full",
+                            pop
+                              ? "bg-primary/15 text-primary"
+                              : "bg-muted text-muted-foreground"
+                          )}
+                        >
                           <Check className="h-2.5 w-2.5" />
                         </span>
-                        <span className={pop ? "text-foreground" : "text-muted-foreground"}>{f}</span>
+                        <span className={pop ? "text-foreground" : "text-muted-foreground"}>
+                          {f}
+                        </span>
                       </li>
                     ))}
                   </ul>
@@ -197,10 +251,7 @@ export default function PlansPageClient() {
                   <Button
                     onClick={() => handleSelect(plan.slug)}
                     variant={pop ? "default" : "outline"}
-                    className={cn(
-                      "w-full h-11 font-semibold",
-                      pop && "shadow-md"
-                    )}
+                    className={cn("w-full h-11 font-semibold", pop && "shadow-md")}
                   >
                     {pop ? "Upgrade" : `Get ${plan.name}`}
                   </Button>

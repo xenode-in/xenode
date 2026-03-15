@@ -13,9 +13,20 @@ function formatBytes(bytes: number) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
+const PLAN_DISPLAY_NAMES: Record<string, string> = {
+  free: "Free Tier",
+  basic: "Basic Plan",
+  pro: "Pro Plan",
+  plus: "Plus Plan",
+  max: "Max Plan",
+  enterprise: "Enterprise",
+};
+
 export default async function BillingPage() {
   const session = await getServerSession();
-  let usage = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let usage: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let payments: any[] = [];
 
   if (session?.user?.id) {
@@ -26,9 +37,9 @@ export default async function BillingPage() {
     ]);
   }
 
-  const isPro = usage?.plan === "pro" || usage?.plan === "enterprise";
+  const isPaidPlan = usage?.plan && usage.plan !== "free";
   const planName = usage?.plan
-    ? usage.plan.charAt(0).toUpperCase() + usage.plan.slice(1) + " Plan"
+    ? PLAN_DISPLAY_NAMES[usage.plan] || usage.plan.charAt(0).toUpperCase() + usage.plan.slice(1) + " Plan"
     : "Free Tier";
 
   const storageLimit = usage?.storageLimitBytes
@@ -37,6 +48,18 @@ export default async function BillingPage() {
   const egressLimit = usage?.egressLimitBytes
     ? formatBytes(usage.egressLimitBytes)
     : "500 GB";
+
+  const formatDate = (date: Date | null | undefined) => {
+    if (!date) return null;
+    return new Date(date).toLocaleDateString(undefined, {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
+  };
+
+  const planActivatedDate = formatDate(usage?.planActivatedAt);
+  const planExpiryDate = formatDate(usage?.planExpiresAt);
 
   return (
     <div className="space-y-8">
@@ -60,7 +83,7 @@ export default async function BillingPage() {
           <h3 className="text-sm font-medium text-foreground">Current Plan</h3>
           <span
             className={`text-xs font-medium px-3 py-1 rounded-full border ${
-              isPro
+              isPaidPlan
                 ? "bg-primary/10 text-primary border-primary/20"
                 : "bg-muted text-muted-foreground border-border"
             }`}
@@ -81,6 +104,18 @@ export default async function BillingPage() {
             <span className="text-muted-foreground">API Requests</span>
             <span className="text-foreground">Unlimited</span>
           </div>
+          {isPaidPlan && planActivatedDate && (
+            <>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Plan Started</span>
+                <span className="text-foreground">{planActivatedDate}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Renews On</span>
+                <span className="text-foreground">{planExpiryDate}</span>
+              </div>
+            </>
+          )}
         </div>
       </div>
 

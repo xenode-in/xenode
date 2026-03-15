@@ -1,36 +1,39 @@
 /**
- * plans.ts — Single source of truth for all Xenode plan definitions.
+ * plans.ts — Static fallback / reference for plan definitions.
  *
- * Used by:
- *  - app/api/payment/payu/route.ts  (server-authoritative pricing)
- *  - app/components/checkout/*      (UI display)
- *  - app/components/PricingComparison.tsx
+ * ⚠️  DEPRECATED for runtime use.
+ * The live source of truth is now lib/config/getPricingConfig.ts (DB-backed).
  *
- * NEVER derive plan prices or limits from client input.
+ * This file is kept ONLY as:
+ *  1. A reference for the canonical plan shape.
+ *  2. A fallback for unit tests that don't need a DB.
+ *
+ * DO NOT import PLANS or PLAN_CONFIG in API routes.
+ * Use getPlanConfigFromDB() and getPlanBySlugFromDB() instead.
  */
 
+import type { BillingCycle, IPlanPricing } from "@/types/pricing";
+
 export interface PlanConfig {
-  /** Internal name sent to PayU as productinfo */
   name: string;
-  /** URL-safe slug used in /checkout?plan= */
   slug: string;
-  /** Human-readable storage label */
   storage: string;
   storageLimitBytes: number;
-  /** Monthly price in INR */
-  priceINR: number;
-  /** Displayed features on pricing/checkout UI */
+  pricing: IPlanPricing[];
   features: string[];
   isPopular?: boolean;
 }
 
 export const PLANS: PlanConfig[] = [
   {
-    name: "100GB Model",
+    name: "Basic",
     slug: "basic",
     storage: "100 GB",
     storageLimitBytes: 100 * 1024 * 1024 * 1024,
-    priceINR: 149,
+    pricing: [
+      { cycle: "monthly", priceINR: 149 },
+      { cycle: "yearly", priceINR: 1490, discountPercent: 17 },
+    ],
     features: [
       "100 GB E2EE Storage",
       "End-to-End Encryption",
@@ -39,11 +42,14 @@ export const PLANS: PlanConfig[] = [
     ],
   },
   {
-    name: "500GB Model",
+    name: "Pro",
     slug: "pro",
     storage: "500 GB",
     storageLimitBytes: 500 * 1024 * 1024 * 1024,
-    priceINR: 399,
+    pricing: [
+      { cycle: "monthly", priceINR: 399 },
+      { cycle: "yearly", priceINR: 3990, discountPercent: 17 },
+    ],
     features: [
       "500 GB E2EE Storage",
       "End-to-End Encryption",
@@ -52,11 +58,14 @@ export const PLANS: PlanConfig[] = [
     ],
   },
   {
-    name: "1TB Model",
+    name: "Plus",
     slug: "plus",
     storage: "1 TB",
     storageLimitBytes: 1024 * 1024 * 1024 * 1024,
-    priceINR: 699,
+    pricing: [
+      { cycle: "monthly", priceINR: 699 },
+      { cycle: "yearly", priceINR: 6990, discountPercent: 17 },
+    ],
     isPopular: true,
     features: [
       "1 TB E2EE Storage",
@@ -66,11 +75,14 @@ export const PLANS: PlanConfig[] = [
     ],
   },
   {
-    name: "2TB Model",
+    name: "Max",
     slug: "max",
     storage: "2 TB",
     storageLimitBytes: 2 * 1024 * 1024 * 1024 * 1024,
-    priceINR: 999,
+    pricing: [
+      { cycle: "monthly", priceINR: 999 },
+      { cycle: "yearly", priceINR: 9990, discountPercent: 17 },
+    ],
     features: [
       "2 TB E2EE Storage",
       "End-to-End Encryption",
@@ -80,16 +92,28 @@ export const PLANS: PlanConfig[] = [
   },
 ];
 
-/** Look up plan by slug (URL param) */
+/** Look up plan by slug */
 export function getPlanBySlug(slug: string): PlanConfig | undefined {
   return PLANS.find((p) => p.slug === slug);
 }
 
-/** Look up plan by internal name (PayU productinfo) */
+/** Look up plan by internal name */
 export function getPlanByName(name: string): PlanConfig | undefined {
   return PLANS.find((p) => p.name === name);
 }
 
-/** Server-authoritative map for API routes */
+/**
+ * @deprecated Use getPlanConfigFromDB(cycle) from lib/config/getPricingConfig.ts
+ * Kept for unit test compatibility only.
+ */
 export const PLAN_CONFIG: Record<string, { storageLimitBytes: number; priceINR: number }> =
-  Object.fromEntries(PLANS.map((p) => [p.name, { storageLimitBytes: p.storageLimitBytes, priceINR: p.priceINR }]));
+  Object.fromEntries(
+    PLANS.map((p) => [
+      p.name,
+      {
+        storageLimitBytes: p.storageLimitBytes,
+        // Falls back to monthly price for the legacy scalar shape
+        priceINR: p.pricing.find((x) => x.cycle === "monthly")?.priceINR ?? 0,
+      },
+    ])
+  );

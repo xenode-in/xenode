@@ -35,7 +35,7 @@ describe("CVE-6 — Proration from Stored Price", () => {
 
     const req = new Request("http://localhost/api/payment/payu", {
       method: "POST",
-      body: JSON.stringify({ planName: "1TB Model" }),
+      body: JSON.stringify({ planName: "Plus" }),
       headers: { "Content-Type": "application/json" },
     });
 
@@ -56,7 +56,7 @@ describe("CVE-6 — Proration from Stored Price", () => {
 
     const req = new Request("http://localhost/api/payment/payu", {
       method: "POST",
-      body: JSON.stringify({ planName: "100GB Model" }),
+      body: JSON.stringify({ planName: "Basic" }),
       headers: { "Content-Type": "application/json" },
     });
 
