@@ -41,11 +41,13 @@ export async function GET(req: NextRequest) {
       account.accessToken as string
     );
 
-    // Fetch root folders
-    const result = await adapter.listFiles("root");
-    const foldersOnly = result.files.filter(f => f.isFolder);
+    const folderId = searchParams.get("folderId") || "root";
 
-    return NextResponse.json(foldersOnly);
+    // Fetch items
+    const result = await adapter.listFiles(folderId);
+
+    // Return all files and folders
+    return NextResponse.json(result.files);
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Failed to fetch folders" }, { status: 500 });
   }
