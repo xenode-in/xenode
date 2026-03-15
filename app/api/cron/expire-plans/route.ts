@@ -27,6 +27,8 @@ export async function GET(req: NextRequest) {
     const gracePeriodDays = 7;
     const graceMs = gracePeriodDays * 24 * 60 * 60 * 1000;
 
+    const newDate = new Date(now.getTime() + graceMs);
+
     // --- Step 1a: Grant Grace Period to recently expired non-autopay users ---
     // If a user's plan just expired naturally (autopay was off or manual payment)
     // and they aren't already in a grace period, grant them 7 days.
@@ -36,15 +38,13 @@ export async function GET(req: NextRequest) {
         planExpiresAt: { $lt: now },
         isGracePeriod: false,
       },
-      [
-        {
-          $set: {
-            isGracePeriod: true,
-            gracePeriodEndsAt: { $add: [now, graceMs] },
-            planExpiresAt: { $add: [now, graceMs] },
-          }
+      {
+        $set: {
+          isGracePeriod: true,
+          gracePeriodEndsAt: newDate,
+          planExpiresAt: newDate,
         }
-      ]
+      }
     );
 
     // --- Step 1b: Expire lapsed plans (Grace period ended) ---
