@@ -2,7 +2,7 @@ import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
 import Bucket from "@/models/Bucket";
-import { bytesToGB, formatBytes } from "@/lib/metering/usage";
+import { bytesToGB, formatBytes } from "@/lib/utils/format";
 import { HardDrive, FolderOpen, FileText, ArrowUpFromLine } from "lucide-react";
 
 async function getDashboardData(userId: string) {

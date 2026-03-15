@@ -30,6 +30,9 @@ function createAuth() {
         enabled: !!(
           process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
         ),
+        scope: ["https://www.googleapis.com/auth/drive.readonly", "profile", "email"],
+        accessType: "offline",
+        prompt: "consent"
       },
       github: {
         clientId: process.env.GITHUB_CLIENT_ID || "",
