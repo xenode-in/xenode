@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import dbConnect from "@/lib/mongodb";
-import Usage from "@/models/Usage";
-
-const FREE_TIER_BYTES = 10 * 1024 * 1024 * 1024; // 10 GB
+import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 
 /**
  * Cron endpoint — runs daily at midnight UTC.
@@ -24,68 +22,26 @@ export async function GET(req: NextRequest) {
     await dbConnect();
     const now = new Date();
     let expiredCount = 0;
-    let downgradedCount = 0;
-    let downgradeBlockedCount = 0;
 
     // --- Step 1: Expire unpaid/lapsed plans ---
     const expireResult = await Usage.updateMany(
       {
         plan: { $ne: "free" },
         planExpiresAt: { $lt: now },
-        scheduledDowngradePlan: null, // don't double-process scheduled downgrades
       },
       {
         $set: {
           plan: "free",
-          storageLimitBytes: FREE_TIER_BYTES,
+          storageLimitBytes: FREE_TIER_LIMIT_BYTES,
           planPriceINR: 0,
         },
       },
     );
     expiredCount = expireResult.modifiedCount;
 
-    // --- Step 2: Process scheduled downgrades that are due ---
-    const toDowngrade = await Usage.find({
-      scheduledDowngradePlan: { $ne: null },
-      scheduledDowngradeAt: { $lte: now },
-    });
-
-    for (const record of toDowngrade) {
-      if (
-        record.scheduledDowngradeLimitBytes !== null &&
-        record.totalStorageBytes <= record.scheduledDowngradeLimitBytes
-      ) {
-        // Safe to downgrade
-        await Usage.updateOne(
-          { _id: record._id },
-          {
-            $set: {
-              plan: record.scheduledDowngradePlan,
-              storageLimitBytes: record.scheduledDowngradeLimitBytes,
-              planPriceINR: 0,
-              scheduledDowngradePlan: null,
-              scheduledDowngradeLimitBytes: null,
-              scheduledDowngradeAt: null,
-            },
-          },
-        );
-        downgradedCount++;
-      } else {
-        // User exceeded quota since scheduling — block downgrade, log for notification
-        // TODO: integrate email/notification service to alert the user
-        console.warn(
-          `[Cron] Downgrade blocked for userId=${record.userId}: ` +
-          `usage=${record.totalStorageBytes} > limit=${record.scheduledDowngradeLimitBytes}`,
-        );
-        downgradeBlockedCount++;
-      }
-    }
-
     return NextResponse.json({
       success: true,
       expiredCount,
-      downgradedCount,
-      downgradeBlockedCount,
       processedAt: now.toISOString(),
     });
   } catch (error) {

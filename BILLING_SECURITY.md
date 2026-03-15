@@ -37,13 +37,15 @@ PII fields (email, phone, name, udf1) are stripped before persistence.
 
 The billing system interacts with `Usage.totalStorageBytes` and `Usage.storageLimitBytes` **only**. It never inspects individual `StorageObject` records for quota enforcement. File count (`totalObjects`) is a secondary metric.
 
-### 5. Downgrade policy for encrypted files
+### 5. Refund & Expiry policy
 
-When a plan is downgraded and `totalStorageBytes > storageLimitBytes`:
-- **New uploads are blocked** (HTTP 402)
-- **Reads and deletes are always allowed** — the user must be able to reclaim space
-- **Auto-deletion of encrypted files is strictly forbidden** — the server does not hold decryption keys
-- A grace notification must be sent (email integration: PENDING)
+Xenode offers a **30-day refund policy** for all paid plans.
+
+When a plan expires or a subscription is cancelled:
+- **New uploads are blocked** (HTTP 402) if usage exceeds the free tier limit.
+- **Reads and deletes are always allowed** — the user must be able to reclaim space.
+- **Auto-deletion of encrypted files is strictly forbidden** — the server does not hold decryption keys.
+- A grace notification must be sent (email integration: PENDING).
 
 ### 6. PendingTransaction TTL
 
@@ -71,7 +73,7 @@ Next.js API Layer
 
 | Route | Schedule | Purpose |
 |-------|----------|---------|
-| `/api/cron/expire-plans` | `0 0 * * *` (daily midnight UTC) | Expire lapsed plans; apply scheduled downgrades |
+| `/api/cron/expire-plans` | `0 0 * * *` (daily midnight UTC) | Expire lapsed plans and reset to free tier |
 
 All cron routes require `Authorization: Bearer {CRON_SECRET}` header.
 

@@ -1,8 +1,7 @@
 /**
  * GAP-1: Plan Expiry Cron
  *
- * Tests that the daily cron correctly expires lapsed plans,
- * applies scheduled downgrades, and blocks over-quota downgrades.
+ * Tests that the daily cron correctly expires lapsed plans.
  */
 import { describe, it, expect, beforeEach } from "vitest";
 import Usage from "@/models/Usage";
@@ -71,55 +70,11 @@ describe("GAP-1 — Plan Expiry Cron", () => {
     expect(usage?.plan).toBe("pro");
   });
 
-  it("applies a scheduled downgrade when usage is under new limit", async () => {
-    const userId = makeUserId();
-    await createUsage({
-      userId, plan: "pro",
-      storageLimitBytes: PRO_500_BYTES,
-      planExpiresAt: new Date(Date.now() + 86400000),
-      totalStorageBytes: 50 * 1024 * 1024 * 1024, // 50GB
-      scheduledDowngradePlan: "pro100",
-      scheduledDowngradeLimitBytes: PRO_100_BYTES,
-      scheduledDowngradeAt: new Date(Date.now() - 1000), // due now
-    });
-
-    const { GET } = await import("@/app/api/cron/expire-plans/route");
-    const res = await GET(makeCronReq() as any);
-    const body = await res.json();
-
-    expect(body.downgradedCount).toBe(1);
-    const usage = await Usage.findOne({ userId });
-    expect(usage?.storageLimitBytes).toBe(PRO_100_BYTES);
-    expect(usage?.scheduledDowngradePlan).toBeNull();
-  });
-
-  it("blocks a scheduled downgrade when usage exceeds new limit at cron time", async () => {
-    const userId = makeUserId();
-    await createUsage({
-      userId, plan: "pro",
-      storageLimitBytes: PRO_500_BYTES,
-      totalStorageBytes: 200 * 1024 * 1024 * 1024, // 200GB — over 100GB limit
-      scheduledDowngradePlan: "pro100",
-      scheduledDowngradeLimitBytes: PRO_100_BYTES,
-      scheduledDowngradeAt: new Date(Date.now() - 1000),
-    });
-
-    const { GET } = await import("@/app/api/cron/expire-plans/route");
-    const res = await GET(makeCronReq() as any);
-    const body = await res.json();
-
-    expect(body.downgradeBlockedCount).toBe(1);
-    const usage = await Usage.findOne({ userId });
-    // Plan must NOT be downgraded
-    expect(usage?.storageLimitBytes).toBe(PRO_500_BYTES);
-    expect(usage?.scheduledDowngradePlan).toBe("pro100");
-  });
-
-  it("returns correct counts for a mixed batch", async () => {
+  it("returns correct counts for a batch of expired plans", async () => {
     const [u1, u2, u3] = [makeUserId(), makeUserId(), makeUserId()];
     await Promise.all([
       createUsage({ userId: u1, plan: "pro", storageLimitBytes: PRO_100_BYTES, planExpiresAt: new Date(Date.now() - 1) }),
-      createUsage({ userId: u2, plan: "pro", storageLimitBytes: PRO_500_BYTES, totalStorageBytes: 50*1024**3, scheduledDowngradePlan: "pro100", scheduledDowngradeLimitBytes: PRO_100_BYTES, scheduledDowngradeAt: new Date(Date.now() - 1) }),
+      createUsage({ userId: u2, plan: "pro", storageLimitBytes: PRO_500_BYTES, planExpiresAt: new Date(Date.now() - 1000) }),
       createUsage({ userId: u3, plan: "free", storageLimitBytes: FREE_TIER_BYTES }),
     ]);
 
@@ -127,8 +82,6 @@ describe("GAP-1 — Plan Expiry Cron", () => {
     const res = await GET(makeCronReq() as any);
     const body = await res.json();
 
-    expect(body.expiredCount).toBe(1);
-    expect(body.downgradedCount).toBe(1);
-    expect(body.downgradeBlockedCount).toBe(0);
+    expect(body.expiredCount).toBe(2);
   });
 });
