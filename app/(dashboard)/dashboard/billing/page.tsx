@@ -1,4 +1,5 @@
 import UpgradePlanModal from "@/components/dashboard/UpgradePlanModal";
+import RefundButton from "@/components/dashboard/RefundButton";
 import { FileText } from "lucide-react";
 import { getServerSession } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
@@ -178,6 +179,14 @@ export default async function BillingPage() {
                           <span className="inline-flex items-center rounded-full bg-primary/10 border border-primary/20 px-2.5 py-0.5 text-xs font-medium text-primary">
                             Completed
                           </span>
+                        ) : payment.status === "refunded" ? (
+                          <span className="inline-flex items-center rounded-full bg-orange-500/10 border border-orange-500/20 px-2.5 py-0.5 text-xs font-medium text-orange-600 dark:text-orange-400">
+                            Refunded
+                          </span>
+                        ) : payment.status === "refund_pending" ? (
+                          <span className="inline-flex items-center rounded-full bg-yellow-500/10 border border-yellow-500/20 px-2.5 py-0.5 text-xs font-medium text-yellow-600 dark:text-yellow-400">
+                            Refund Pending
+                          </span>
                         ) : payment.status === "failed" ? (
                           <span className="inline-flex items-center rounded-full bg-destructive/10 border border-destructive/20 px-2.5 py-0.5 text-xs font-medium text-destructive">
                             Failed
@@ -192,11 +201,20 @@ export default async function BillingPage() {
                         {payment.planName}
                       </td>
                       <td className="px-5 py-4 text-right">
-                        {payment.status === "success" ? (
+                        {payment.status === "success" && (
                           <button className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
                             <FileText className="h-3.5 w-3.5" /> PDF
                           </button>
-                        ) : (
+                        )}
+                        {payment.status === "success" &&
+                          Date.now() - new Date(payment.createdAt).getTime() <=
+                            30 * 24 * 60 * 60 * 1000 && (
+                            <RefundButton
+                              paymentId={payment._id.toString()}
+                              amount={payment.amount}
+                            />
+                          )}
+                        {payment.status !== "success" && (
                           <span className="text-muted-foreground">-</span>
                         )}
                       </td>

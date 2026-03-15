@@ -263,7 +263,7 @@ export default function PlansPageClient() {
 
         {/* Footer note */}
         <p className="mt-12 text-center text-xs text-muted-foreground">
-          All plans include End-to-End Encryption. You can cancel anytime from your billing page.
+          All plans include End-to-End Encryption and a 30-day refund policy. You can cancel anytime from your billing page.
         </p>
       </main>
     </div>
