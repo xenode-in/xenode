@@ -18,7 +18,7 @@ describe("CVE-4 — udf1 Strict Validation", () => {
   it("rejects callback when udf1 is missing entirely", async () => {
     const fd = new FormData();
     [["status","success"],["txnid",makeTxnid()],["amount","149.00"],
-     ["productinfo","100GB Model"],["email","t@x.app"],["firstname","T"],["hash","x"]]
+     ["productinfo","Basic"],["email","t@x.app"],["firstname","T"],["hash","x"]]
       .forEach(([k,v]) => fd.append(k,v));
     // udf1 intentionally omitted
 
@@ -35,7 +35,7 @@ describe("CVE-4 — udf1 Strict Validation", () => {
   it("rejects callback when udf1 is not a valid ObjectId", async () => {
     const fd = new FormData();
     [["status","success"],["txnid",makeTxnid()],["amount","149.00"],
-     ["productinfo","100GB Model"],["email","t@x.app"],["firstname","T"],
+     ["productinfo","Basic"],["email","t@x.app"],["firstname","T"],
      ["udf1","not-an-objectid"],["hash","x"]]
       .forEach(([k,v]) => fd.append(k,v));
 
@@ -55,7 +55,7 @@ describe("CVE-4 — udf1 Strict Validation", () => {
     // Attacker sends victim email + invalid udf1 hoping for email fallback
     const fd = new FormData();
     [["status","success"],["txnid",makeTxnid()],["amount","149.00"],
-     ["productinfo","100GB Model"],["email","victim@xenode.app"],["firstname","V"],
+     ["productinfo","Basic"],["email","victim@xenode.app"],["firstname","V"],
      ["udf1","00000000000"],["hash","x"]] // invalid udf1
       .forEach(([k,v]) => fd.append(k,v));
 

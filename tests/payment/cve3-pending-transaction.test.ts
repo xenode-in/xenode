@@ -24,11 +24,11 @@ describe("CVE-3 — Plan from PendingTransaction", () => {
     const txnid  = makeTxnid();
     await createUsage({ userId });
     // PendingTransaction says 100GB
-    await createPendingTxn({ txnid, userId, storageLimitBytes: PRO_100_BYTES, planName: "100GB Model" });
+    await createPendingTxn({ txnid, userId, storageLimitBytes: PRO_100_BYTES, planName: "Basic" });
 
     const fd = new FormData();
-    // productinfo says "2TB Model" — should be ignored
-    [["status","success"],["txnid",txnid],["amount","149.00"],["productinfo","2TB Model"],
+    // productinfo says "Max" — should be ignored
+    [["status","success"],["txnid",txnid],["amount","149.00"],["productinfo","Max"],
      ["email","t@x.app"],["firstname","T"],["udf1",userId],["hash","ignored"]]
       .forEach(([k,v]) => fd.append(k,v));
 
@@ -51,7 +51,7 @@ describe("CVE-3 — Plan from PendingTransaction", () => {
     // NO PendingTransaction seeded
 
     const fd = new FormData();
-    [["status","success"],["txnid",txnid],["amount","149.00"],["productinfo","100GB Model"],
+    [["status","success"],["txnid",txnid],["amount","149.00"],["productinfo","Basic"],
      ["email","t@x.app"],["firstname","T"],["udf1",userId],["hash","ignored"]]
       .forEach(([k,v]) => fd.append(k,v));
 
@@ -79,7 +79,7 @@ describe("CVE-3 — Plan from PendingTransaction", () => {
 
     const fd = new FormData();
     // Attacker supplies otherUserId as udf1
-    [["status","success"],["txnid",txnid],["amount","149.00"],["productinfo","100GB Model"],
+    [["status","success"],["txnid",txnid],["amount","149.00"],["productinfo","Basic"],
      ["email","atk@x.app"],["firstname","A"],["udf1",otherUserId],["hash","ignored"]]
       .forEach(([k,v]) => fd.append(k,v));
 
@@ -104,7 +104,7 @@ describe("CVE-3 — Plan from PendingTransaction", () => {
     await createPendingTxn({ txnid, userId, storageLimitBytes: PRO_100_BYTES });
 
     const fd = new FormData();
-    [["status","success"],["txnid",txnid],["amount","149.00"],["productinfo","100GB Model"],
+    [["status","success"],["txnid",txnid],["amount","149.00"],["productinfo","Basic"],
      ["email","t@x.app"],["firstname","T"],["udf1",userId],["hash","ignored"]]
       .forEach(([k,v]) => fd.append(k,v));
 
