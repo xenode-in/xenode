@@ -176,18 +176,22 @@ export async function POST(req: Request) {
         );
       }
 
-      const msRemaining = currentUsage.planExpiresAt.getTime() - Date.now();
-      
-      // Determine the cycle length of the current active plan
-      const lastPayment = await Payment.findOne(
-        { userId: session.user.id, status: "success" }
-      ).sort({ createdAt: -1 }).select("billingCycle");
-      
-      const oldCycle = lastPayment?.billingCycle || "monthly";
-      const cycleDays = oldCycle === "yearly" ? 365 : (oldCycle === "quarterly" ? 90 : 30);
-      const cycleMs = cycleDays * 24 * 60 * 60 * 1000;
-      
-      prorationCredit = currentUsage.planPriceINR * (msRemaining / cycleMs);
+      // Only apply proration if this is a genuine UPGRADE and the user is NOT in a grace period
+      if (!currentUsage.isGracePeriod && planSlug !== currentUsage.plan) {
+        const msRemaining = currentUsage.planExpiresAt.getTime() - Date.now();
+        
+        // Determine the cycle length of the current active plan
+        const lastPayment = await Payment.findOne(
+          { userId: session.user.id, status: "success" }
+        ).sort({ createdAt: -1 }).select("billingCycle");
+        
+        const oldCycle = lastPayment?.billingCycle || "monthly";
+        const cycleDays = oldCycle === "yearly" ? 365 : (oldCycle === "quarterly" ? 90 : 30);
+        const cycleMs = cycleDays * 24 * 60 * 60 * 1000;
+        
+        prorationCredit = currentUsage.planPriceINR * (msRemaining / cycleMs);
+      }
+
       finalAmount = Math.max(1, finalAmount - prorationCredit);
     } else {
       finalAmount = Math.max(1, finalAmount);
