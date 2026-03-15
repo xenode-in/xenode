@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
           { _id: record._id },
           {
             $set: {
-              plan: record.scheduledDowngradePlan === "free" ? "free" : "pro",
+              plan: record.scheduledDowngradePlan,
               storageLimitBytes: record.scheduledDowngradeLimitBytes,
               planPriceINR: 0,
               scheduledDowngradePlan: null,

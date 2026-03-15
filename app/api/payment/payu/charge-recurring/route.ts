@@ -5,6 +5,15 @@ import Usage from "@/models/Usage";
 import Payment from "@/models/Payment";
 import mongoose from "mongoose";
 
+const PLAN_DISPLAY_NAMES: Record<string, string> = {
+  free: "Free Tier",
+  basic: "Basic Plan",
+  pro: "Pro Plan",
+  plus: "Plus Plan",
+  max: "Max Plan",
+  enterprise: "Enterprise",
+};
+
 /**
  * POST /api/payment/payu/charge-recurring
  *
@@ -116,7 +125,7 @@ export async function POST(req: Request) {
         currency: "INR",
         status: txnStatus === "captured" ? "success" : "pending",
         txnid,
-        planName: usage.plan,
+        planName: PLAN_DISPLAY_NAMES[usage.plan] || usage.plan,
         payuResponse: {
           status: txnStatus,
           payuid: detail?.payuid ?? "",

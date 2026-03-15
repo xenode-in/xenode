@@ -17,7 +17,7 @@ function makeSuccessFormData(fields: {
   txnid: string; userId: string; amount?: string;
   productinfo?: string; email?: string; firstname?: string;
 }): FormData {
-  const { txnid, userId, amount = "149.00", productinfo = "100GB Model",
+  const { txnid, userId, amount = "149.00", productinfo = "Basic",
     email = "test@xenode.app", firstname = "Test" } = fields;
   const hash = computePayuHash({
     salt: PAYU_SALT, status: "success", udf1: userId,

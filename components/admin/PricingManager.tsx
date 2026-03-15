@@ -1,3 +1,12 @@
+/**
+ * PricingManager.tsx — Admin panel component for managing pricing.
+ *
+ * CHANGES (multi-cycle refactor):
+ *  - Replaced single `priceINR` input with separate Monthly Price + Yearly Price inputs.
+ *  - Display view shows both monthly and yearly prices per plan card.
+ *  - Uses pricing[] array shape from the refactored IPlan interface.
+ *  - All price logic (savings %, etc.) imported from pricingService.
+ */
 "use client";
 
 import { useState } from "react";
@@ -17,6 +26,7 @@ import { Separator } from "@/components/ui/separator";
 import { Tag, Pencil, Save, X, Megaphone, Plus } from "lucide-react";
 import { toast } from "sonner";
 import type { IPlan, ICampaign } from "@/models/PricingConfig";
+import { getYearlySavingsPercent } from "@/lib/pricing/pricingService";
 
 type Campaign = ICampaign | null;
 
@@ -24,11 +34,9 @@ interface Props {
   initialConfig: { plans: IPlan[]; campaign: Campaign };
 }
 
-// Safely converts any date value (Date object or ISO string) to YYYY-MM-DD
 const formatDate = (d: string | Date) =>
   new Date(d).toISOString().slice(0, 10);
 
-// Normalizes a raw campaign from the API response (dates may be strings)
 function normalizeCampaign(raw: Campaign): Campaign {
   if (!raw) return null;
   return {
@@ -36,6 +44,26 @@ function normalizeCampaign(raw: Campaign): Campaign {
     startDate: new Date(raw.startDate),
     endDate: new Date(raw.endDate),
   };
+}
+
+/** Safely read a specific cycle's price from a plan's pricing array */
+function getPriceForCycle(plan: IPlan, cycle: "monthly" | "yearly"): number {
+  return plan.pricing?.find((p) => p.cycle === cycle)?.priceINR ?? 0;
+}
+
+/** Return a new pricing[] with a specific cycle's price updated */
+function setPriceForCycle(
+  pricing: IPlan["pricing"],
+  cycle: "monthly" | "yearly",
+  newPrice: number
+): IPlan["pricing"] {
+  const exists = pricing.some((p) => p.cycle === cycle);
+  if (exists) {
+    return pricing.map((p) =>
+      p.cycle === cycle ? { ...p, priceINR: newPrice } : p
+    );
+  }
+  return [...pricing, { cycle, priceINR: newPrice }];
 }
 
 export function PricingManager({ initialConfig }: Props) {
@@ -62,7 +90,7 @@ export function PricingManager({ initialConfig }: Props) {
 
   function startEditPlan(p: IPlan) {
     setEditingPlan(p.slug);
-    setPlanDraft({ ...p });
+    setPlanDraft({ ...p, pricing: [...p.pricing] });
   }
 
   function cancelEditPlan() {
@@ -84,9 +112,7 @@ export function PricingManager({ initialConfig }: Props) {
     setSaving(false);
     if (res.ok) {
       const json = await res.json();
-      // Use API response as source of truth to stay in sync with DB
       setPlans(json.config.plans ?? updated);
-      // Also sync campaign in case server normalized something
       setCampaign(normalizeCampaign(json.config.campaign ?? null));
       cancelEditPlan();
       toast.success(`${planDraft.name} updated`);
@@ -107,9 +133,7 @@ export function PricingManager({ initialConfig }: Props) {
     setSaving(false);
     if (res.ok) {
       const json = await res.json();
-      // Normalize dates from API response before storing in state
       setCampaign(normalizeCampaign(json.config.campaign ?? null));
-      // Also sync plans in case server normalized something
       setPlans(json.config.plans ?? plans);
       setEditingCampaign(false);
       toast.success(data ? "Campaign saved" : "Campaign removed");
@@ -139,151 +163,205 @@ export function PricingManager({ initialConfig }: Props) {
           <Tag className="w-4 h-4 text-zinc-400" /> Plan Prices
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-          {plans.map((plan) => (
-            <Card key={plan.slug} className="bg-zinc-900 border-zinc-800">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-white text-sm font-semibold">
-                    {plan.name}
-                  </CardTitle>
-                  {editingPlan !== plan.slug && (
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-7 w-7 text-zinc-400 hover:text-white"
-                      onClick={() => startEditPlan(plan)}
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </Button>
-                  )}
-                </div>
-                <CardDescription className="text-zinc-600 text-xs">
-                  slug: {plan.slug} · {plan.storage}
-                </CardDescription>
-              </CardHeader>
+          {plans.map((plan) => {
+            const monthlyPrice = getPriceForCycle(plan, "monthly");
+            const yearlyPrice = getPriceForCycle(plan, "yearly");
+            const savings = getYearlySavingsPercent(plan.pricing);
 
-              <CardContent className="space-y-3">
-                {editingPlan === plan.slug && planDraft ? (
-                  <>
-                    <div className="space-y-2">
-                      <div>
-                        <Label className="text-xs text-zinc-400">Plan Label</Label>
-                        <Input
-                          value={planDraft.name}
-                          onChange={(e) =>
-                            setPlanDraft({ ...planDraft, name: e.target.value })
-                          }
-                          className="h-8 text-sm bg-zinc-800 border-zinc-700 text-white mt-1"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs text-zinc-400">Storage Label</Label>
-                        <Input
-                          value={planDraft.storage}
-                          onChange={(e) =>
-                            setPlanDraft({ ...planDraft, storage: e.target.value })
-                          }
-                          className="h-8 text-sm bg-zinc-800 border-zinc-700 text-white mt-1"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs text-zinc-400">Storage Limit (GB)</Label>
-                        <Input
-                          type="number"
-                          value={Math.round(planDraft.storageLimitBytes / (1024 ** 3))}
-                          onChange={(e) =>
-                            setPlanDraft({
-                              ...planDraft,
-                              storageLimitBytes: Number(e.target.value) * 1024 ** 3,
-                            })
-                          }
-                          className="h-8 text-sm bg-zinc-800 border-zinc-700 text-white mt-1"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs text-zinc-400">Price / month (₹)</Label>
-                        <Input
-                          type="number"
-                          value={planDraft.priceINR}
-                          onChange={(e) =>
-                            setPlanDraft({ ...planDraft, priceINR: Number(e.target.value) })
-                          }
-                          className="h-8 text-sm bg-zinc-800 border-zinc-700 text-white mt-1"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs text-zinc-400">Features (one per line)</Label>
-                        <textarea
-                          rows={4}
-                          value={planDraft.features.join("\n")}
-                          onChange={(e) =>
-                            setPlanDraft({
-                              ...planDraft,
-                              features: e.target.value
-                                .split("\n")
-                                .map((f) => f.trim())
-                                .filter(Boolean),
-                            })
-                          }
-                          className="w-full mt-1 rounded-md bg-zinc-800 border border-zinc-700 text-white text-sm px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-zinc-500"
-                        />
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          checked={!!planDraft.isPopular}
-                          onCheckedChange={(v) =>
-                            setPlanDraft({ ...planDraft, isPopular: v })
-                          }
-                        />
-                        <Label className="text-xs text-zinc-400">Mark as Popular</Label>
-                      </div>
-                    </div>
-                    <div className="flex gap-2 pt-1">
+            return (
+              <Card key={plan.slug} className="bg-zinc-900 border-zinc-800">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-white text-sm font-semibold">
+                      {plan.name}
+                    </CardTitle>
+                    {editingPlan !== plan.slug && (
                       <Button
-                        size="sm"
-                        className="h-7 text-xs flex-1"
-                        onClick={savePlan}
-                        disabled={saving}
-                      >
-                        <Save className="w-3 h-3 mr-1" />
-                        {saving ? "Saving…" : "Save"}
-                      </Button>
-                      <Button
-                        size="sm"
+                        size="icon"
                         variant="ghost"
-                        className="h-7 text-xs text-zinc-400"
-                        onClick={cancelEditPlan}
+                        className="h-7 w-7 text-zinc-400 hover:text-white"
+                        onClick={() => startEditPlan(plan)}
                       >
-                        <X className="w-3 h-3" />
+                        <Pencil className="w-3.5 h-3.5" />
                       </Button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="space-y-1.5 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-zinc-500">Price</span>
-                      <span className="text-white font-semibold">₹{plan.priceINR}/mo</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-zinc-500">Storage</span>
-                      <span className="text-zinc-300">{plan.storage}</span>
-                    </div>
-                    <Separator className="bg-zinc-800 my-1" />
-                    <ul className="space-y-1">
-                      {plan.features.map((f, i) => (
-                        <li key={i} className="text-xs text-zinc-500 flex items-start gap-1">
-                          <span className="text-zinc-600 shrink-0">·</span> {f}
-                        </li>
-                      ))}
-                    </ul>
-                    {plan.isPopular && (
-                      <Badge variant="secondary" className="text-xs mt-1">Most Popular</Badge>
                     )}
                   </div>
-                )}
-              </CardContent>
-            </Card>
-          ))}
+                  <CardDescription className="text-zinc-600 text-xs">
+                    slug: {plan.slug} · {plan.storage}
+                  </CardDescription>
+                </CardHeader>
+
+                <CardContent className="space-y-3">
+                  {editingPlan === plan.slug && planDraft ? (
+                    // ── EDIT MODE ──────────────────────────────
+                    <>
+                      <div className="space-y-2">
+                        <div>
+                          <Label className="text-xs text-zinc-400">Plan Label</Label>
+                          <Input
+                            value={planDraft.name}
+                            onChange={(e) =>
+                              setPlanDraft({ ...planDraft, name: e.target.value })
+                            }
+                            className="h-8 text-sm bg-zinc-800 border-zinc-700 text-white mt-1"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs text-zinc-400">Storage Label</Label>
+                          <Input
+                            value={planDraft.storage}
+                            onChange={(e) =>
+                              setPlanDraft({ ...planDraft, storage: e.target.value })
+                            }
+                            className="h-8 text-sm bg-zinc-800 border-zinc-700 text-white mt-1"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs text-zinc-400">Storage Limit (GB)</Label>
+                          <Input
+                            type="number"
+                            value={Math.round(planDraft.storageLimitBytes / (1024 ** 3))}
+                            onChange={(e) =>
+                              setPlanDraft({
+                                ...planDraft,
+                                storageLimitBytes: Number(e.target.value) * 1024 ** 3,
+                              })
+                            }
+                            className="h-8 text-sm bg-zinc-800 border-zinc-700 text-white mt-1"
+                          />
+                        </div>
+
+                        {/* ── Monthly price ── */}
+                        <div>
+                          <Label className="text-xs text-zinc-400">Monthly Price (₹/mo)</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            value={getPriceForCycle(planDraft, "monthly")}
+                            onChange={(e) =>
+                              setPlanDraft({
+                                ...planDraft,
+                                pricing: setPriceForCycle(
+                                  planDraft.pricing,
+                                  "monthly",
+                                  Number(e.target.value)
+                                ),
+                              })
+                            }
+                            className="h-8 text-sm bg-zinc-800 border-zinc-700 text-white mt-1"
+                          />
+                        </div>
+
+                        {/* ── Yearly price ── */}
+                        <div>
+                          <Label className="text-xs text-zinc-400">Yearly Price (₹/yr)</Label>
+                          <Input
+                            type="number"
+                            min={0}
+                            value={getPriceForCycle(planDraft, "yearly")}
+                            onChange={(e) =>
+                              setPlanDraft({
+                                ...planDraft,
+                                pricing: setPriceForCycle(
+                                  planDraft.pricing,
+                                  "yearly",
+                                  Number(e.target.value)
+                                ),
+                              })
+                            }
+                            className="h-8 text-sm bg-zinc-800 border-zinc-700 text-white mt-1"
+                          />
+                          <p className="text-[10px] text-zinc-600 mt-1">
+                            Tip: set to monthly × 10 for ~17% saving
+                          </p>
+                        </div>
+
+                        <div>
+                          <Label className="text-xs text-zinc-400">Features (one per line)</Label>
+                          <textarea
+                            rows={4}
+                            value={planDraft.features.join("\n")}
+                            onChange={(e) =>
+                              setPlanDraft({
+                                ...planDraft,
+                                features: e.target.value
+                                  .split("\n")
+                                  .map((f) => f.trim())
+                                  .filter(Boolean),
+                              })
+                            }
+                            className="w-full mt-1 rounded-md bg-zinc-800 border border-zinc-700 text-white text-sm px-3 py-2 resize-none focus:outline-none focus:ring-1 focus:ring-zinc-500"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={!!planDraft.isPopular}
+                            onCheckedChange={(v) =>
+                              setPlanDraft({ ...planDraft, isPopular: v })
+                            }
+                          />
+                          <Label className="text-xs text-zinc-400">Mark as Popular</Label>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 pt-1">
+                        <Button
+                          size="sm"
+                          className="h-7 text-xs flex-1"
+                          onClick={savePlan}
+                          disabled={saving}
+                        >
+                          <Save className="w-3 h-3 mr-1" />
+                          {saving ? "Saving…" : "Save"}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-xs text-zinc-400"
+                          onClick={cancelEditPlan}
+                        >
+                          <X className="w-3 h-3" />
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    // ── VIEW MODE ──────────────────────────────
+                    <div className="space-y-1.5 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">Monthly</span>
+                        <span className="text-white font-semibold">₹{monthlyPrice}/mo</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">Yearly</span>
+                        <span className="text-white font-semibold">
+                          ₹{yearlyPrice}/yr
+                          {savings && savings > 0 && (
+                            <span className="ml-1.5 text-[10px] text-primary font-normal">
+                              saves {savings}%
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-zinc-500">Storage</span>
+                        <span className="text-zinc-300">{plan.storage}</span>
+                      </div>
+                      <Separator className="bg-zinc-800 my-1" />
+                      <ul className="space-y-1">
+                        {plan.features.map((f, i) => (
+                          <li key={i} className="text-xs text-zinc-500 flex items-start gap-1">
+                            <span className="text-zinc-600 shrink-0">·</span> {f}
+                          </li>
+                        ))}
+                      </ul>
+                      {plan.isPopular && (
+                        <Badge variant="secondary" className="text-xs mt-1">Most Popular</Badge>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       </section>
 

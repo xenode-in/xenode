@@ -95,7 +95,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
   const update: Record<string, unknown> = {};
 
   if (body.plan !== undefined) {
-    if (!["free", "pro", "enterprise"].includes(body.plan))
+    if (!["free", "basic", "pro", "plus", "max", "enterprise"].includes(body.plan))
       return NextResponse.json(
         { error: "Invalid plan value" },
         { status: 400 },

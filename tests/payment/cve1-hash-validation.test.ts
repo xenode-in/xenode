@@ -21,7 +21,7 @@ describe("CVE-1 — Hash Validation", () => {
   const userId = makeUserId();
   const txnid  = makeTxnid();
   const amount = "149.00";
-  const productinfo = "100GB Model";
+  const productinfo = "Basic";
   const email = "test@xenode.app";
   const firstname = "Test";
 

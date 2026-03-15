@@ -1,11 +1,10 @@
-import dbConnect from "@/lib/mongodb";
-import { PricingConfig, IPlan, ICampaign } from "@/models/PricingConfig";
-
 /**
  * getPricingConfig.ts — DB-backed source of truth for all Xenode plan definitions.
  *
- * Replaces the static lib/config/plans.ts.
- * On first call, seeds the DB with the original hardcoded values.
+ * REFACTORED (multi-cycle):
+ *   - Default seeds now include monthly + yearly pricing per plan.
+ *   - getPlanConfigFromDB() accepts a BillingCycle param.
+ *   - All price math delegated to lib/pricing/pricingService.ts.
  *
  * Used by:
  *  - app/api/payment/payu/route.ts  (server-authoritative pricing)
@@ -15,13 +14,27 @@ import { PricingConfig, IPlan, ICampaign } from "@/models/PricingConfig";
  * NEVER derive plan prices or limits from client input.
  */
 
+import dbConnect from "@/lib/mongodb";
+import { PricingConfig, IPlan, ICampaign } from "@/models/PricingConfig";
+import {
+  getEffectivePriceForCycle,
+  resolveActiveCampaign,
+} from "@/lib/pricing/pricingService";
+import type { BillingCycle } from "@/types/pricing";
+
+// ─── Default seed data ───────────────────────────────────────────────────────
+// Yearly price = monthly × 10 (≈ 2 months free, ~17% saving)
+
 const DEFAULT_PLANS: IPlan[] = [
   {
-    name: "100GB Model",
+    name: "Basic",
     slug: "basic",
     storage: "100 GB",
     storageLimitBytes: 100 * 1024 * 1024 * 1024,
-    priceINR: 149,
+    pricing: [
+      { cycle: "monthly", priceINR: 149 },
+      { cycle: "yearly", priceINR: 1490, discountPercent: 17 },
+    ],
     features: [
       "100 GB E2EE Storage",
       "End-to-End Encryption",
@@ -30,11 +43,14 @@ const DEFAULT_PLANS: IPlan[] = [
     ],
   },
   {
-    name: "500GB Model",
+    name: "Pro",
     slug: "pro",
     storage: "500 GB",
     storageLimitBytes: 500 * 1024 * 1024 * 1024,
-    priceINR: 399,
+    pricing: [
+      { cycle: "monthly", priceINR: 399 },
+      { cycle: "yearly", priceINR: 3990, discountPercent: 17 },
+    ],
     features: [
       "500 GB E2EE Storage",
       "End-to-End Encryption",
@@ -43,11 +59,14 @@ const DEFAULT_PLANS: IPlan[] = [
     ],
   },
   {
-    name: "1TB Model",
+    name: "Plus",
     slug: "plus",
     storage: "1 TB",
     storageLimitBytes: 1024 * 1024 * 1024 * 1024,
-    priceINR: 699,
+    pricing: [
+      { cycle: "monthly", priceINR: 699 },
+      { cycle: "yearly", priceINR: 6990, discountPercent: 17 },
+    ],
     isPopular: true,
     features: [
       "1 TB E2EE Storage",
@@ -57,11 +76,14 @@ const DEFAULT_PLANS: IPlan[] = [
     ],
   },
   {
-    name: "2TB Model",
+    name: "Max",
     slug: "max",
     storage: "2 TB",
     storageLimitBytes: 2 * 1024 * 1024 * 1024 * 1024,
-    priceINR: 999,
+    pricing: [
+      { cycle: "monthly", priceINR: 999 },
+      { cycle: "yearly", priceINR: 9990, discountPercent: 17 },
+    ],
     features: [
       "2 TB E2EE Storage",
       "End-to-End Encryption",
@@ -71,10 +93,14 @@ const DEFAULT_PLANS: IPlan[] = [
   },
 ];
 
+// ─── Types ───────────────────────────────────────────────────────────────────
+
 export interface PricingData {
   plans: IPlan[];
   campaign: ICampaign | null;
 }
+
+// ─── Core fetcher ─────────────────────────────────────────────────────────────
 
 /** Server-only. Fetches from DB, seeds defaults on first call. */
 export async function getPricingConfig(): Promise<PricingData> {
@@ -96,6 +122,8 @@ export async function getPricingConfig(): Promise<PricingData> {
   };
 }
 
+// ─── Lookups ──────────────────────────────────────────────────────────────────
+
 /** Returns plan by slug. Used in checkout pages. */
 export async function getPlanBySlugFromDB(
   slug: string
@@ -105,27 +133,26 @@ export async function getPlanBySlugFromDB(
 }
 
 /**
- * Server-authoritative map — replaces PLAN_CONFIG from plans.ts.
- * Campaign discount is applied here so PayU hash always uses real charged price.
+ * Server-authoritative price map.
+ * Accepts a billing cycle (default: monthly) and applies active campaign discount.
+ *
+ * Replaces the old PLAN_CONFIG from plans.ts.
+ * Used by PayU route to set the authoritative charge amount.
  */
-export async function getPlanConfigFromDB(): Promise<
-  Record<string, { storageLimitBytes: number; priceINR: number }>
-> {
+export async function getPlanConfigFromDB(
+  cycle: BillingCycle = "monthly"
+): Promise<Record<string, { storageLimitBytes: number; priceINR: number }>> {
   const { plans, campaign } = await getPricingConfig();
 
-  const now = new Date();
-  const activeCampaign =
-    campaign?.isActive &&
-    now >= new Date(campaign.startDate) &&
-    now <= new Date(campaign.endDate)
-      ? campaign
-      : null;
+  const activeCampaign = resolveActiveCampaign(campaign);
 
   return Object.fromEntries(
     plans.map((p) => {
-      const price = activeCampaign
-        ? Math.round(p.priceINR * (1 - activeCampaign.discountPercent / 100))
-        : p.priceINR;
+      const price = getEffectivePriceForCycle(
+        p.pricing,
+        cycle,
+        activeCampaign?.discountPercent
+      );
       return [p.name, { storageLimitBytes: p.storageLimitBytes, priceINR: price }];
     })
   );
