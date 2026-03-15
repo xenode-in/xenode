@@ -58,6 +58,7 @@ export default function PlansPageClient() {
   const [plans, setPlans] = useState<IPlan[]>([]);
   const [campaign, setCampaign] = useState<ICampaign | null>(null);
   const [currentPlan, setCurrentPlan] = useState<string>("free");
+  const [currentCycle, setCurrentCycle] = useState<BillingCycle>("monthly");
   const [isGracePeriod, setIsGracePeriod] = useState<boolean>(false);
   const [isPlanExpired, setIsPlanExpired] = useState<boolean>(false);
   const [loading, setLoading] = useState(true);
@@ -70,6 +71,10 @@ export default function PlansPageClient() {
         if (data.plans) setPlans(data.plans);
         setCampaign(data.campaign ?? null);
         if (data.currentPlan) setCurrentPlan(data.currentPlan);
+        if (data.currentCycle) {
+          setCurrentCycle(data.currentCycle);
+          setCycle(data.currentCycle); // default view to their current cycle
+        }
         if (data.isGracePeriod) setIsGracePeriod(data.isGracePeriod);
         if (data.isPlanExpired) setIsPlanExpired(data.isPlanExpired);
       })
@@ -267,12 +272,19 @@ export default function PlansPageClient() {
                   {/* CTA */}
                   <Button
                     onClick={() => handleSelect(plan.slug)}
+                    disabled={plan.slug === currentPlan && cycle === currentCycle && !isGracePeriod && !isPlanExpired}
                     variant={pop ? "default" : "outline"}
-                    className={cn("w-full h-11 font-semibold", pop && "shadow-md")}
+                    className={cn(
+                      "w-full h-11 font-semibold", 
+                      pop && "shadow-md",
+                      (plan.slug === currentPlan && cycle === currentCycle && !isGracePeriod && !isPlanExpired) && "opacity-50 cursor-not-allowed"
+                    )}
                   >
-                    {plan.slug === currentPlan 
+                    {plan.slug === currentPlan && cycle === currentCycle
                       ? ((isGracePeriod || isPlanExpired) ? "Renew Plan" : "Current Plan") 
-                      : pop ? "Upgrade" : `Get ${plan.name}`}
+                      : plan.slug === currentPlan && cycle !== currentCycle
+                        ? `Switch to ${cycle === "yearly" ? "Yearly" : "Monthly"}`
+                        : pop ? "Upgrade" : `Get ${plan.name}`}
                   </Button>
                 </div>
               );

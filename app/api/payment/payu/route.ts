@@ -176,16 +176,23 @@ export async function POST(req: Request) {
         );
       }
 
+      // Determine the cycle length of the current active plan
+      const lastPayment = await Payment.findOne(
+        { userId: session.user.id, status: "success" }
+      ).sort({ createdAt: -1 }).select("billingCycle");
+      const oldCycle = lastPayment?.billingCycle || "monthly";
+
+      if (planSlug === currentUsage.plan && billingCycle === oldCycle && !currentUsage.isGracePeriod && new Date(currentUsage.planExpiresAt).getTime() > Date.now()) {
+        return NextResponse.json(
+          { error: "You are already on this exact plan and cycle. Please wait for it to expire before renewing manually." },
+          { status: 400 }
+        );
+      }
+
       // Only apply proration if this is a genuine UPGRADE and the user is NOT in a grace period
       if (!currentUsage.isGracePeriod && planSlug !== currentUsage.plan) {
         const msRemaining = currentUsage.planExpiresAt.getTime() - Date.now();
         
-        // Determine the cycle length of the current active plan
-        const lastPayment = await Payment.findOne(
-          { userId: session.user.id, status: "success" }
-        ).sort({ createdAt: -1 }).select("billingCycle");
-        
-        const oldCycle = lastPayment?.billingCycle || "monthly";
         const cycleDays = oldCycle === "yearly" ? 365 : (oldCycle === "quarterly" ? 90 : 30);
         const cycleMs = cycleDays * 24 * 60 * 60 * 1000;
         

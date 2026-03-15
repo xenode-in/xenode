@@ -10,6 +10,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "@/lib/auth/session";
 import { getPricingConfig } from "@/lib/config/getPricingConfig";
 import Usage from "@/models/Usage";
+import Payment from "@/models/Payment";
 import dbConnect from "@/lib/mongodb";
 
 export async function GET() {
@@ -24,6 +25,12 @@ export async function GET() {
   const isGracePeriod = usage?.isGracePeriod || false;
   const isPlanExpired = !!(usage?.planExpiresAt && new Date(usage.planExpiresAt).getTime() < Date.now());
 
+  const lastPayment = await Payment.findOne({ userId: session.user.id, status: "success" })
+    .sort({ createdAt: -1 })
+    .select("billingCycle")
+    .lean();
+  const currentCycle = lastPayment?.billingCycle || "monthly";
+
   const { plans, campaign } = await getPricingConfig();
 
   // Only surface the campaign if it's actually active and within date range
@@ -36,5 +43,5 @@ export async function GET() {
       ? campaign
       : null;
 
-  return NextResponse.json({ plans, campaign: activeCampaign, currentPlan, isGracePeriod, isPlanExpired });
+  return NextResponse.json({ plans, campaign: activeCampaign, currentPlan, currentCycle, isGracePeriod, isPlanExpired });
 }
