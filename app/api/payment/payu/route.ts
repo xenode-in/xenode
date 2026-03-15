@@ -160,6 +160,22 @@ export async function POST(req: Request) {
       currentUsage.planExpiresAt.getTime() > Date.now() &&
       currentUsage.planPriceINR > 0
     ) {
+      const PLAN_WEIGHTS: Record<string, number> = {
+        free: 0,
+        basic: 1,
+        pro: 2,
+        plus: 3,
+        max: 4,
+        enterprise: 5,
+      };
+
+      if ((PLAN_WEIGHTS[planSlug ?? ""] ?? 0) < (PLAN_WEIGHTS[currentUsage.plan] ?? 0)) {
+        return NextResponse.json(
+          { error: "Downgrading to a lower tier plan is not supported. Please wait for your current plan to expire." },
+          { status: 400 }
+        );
+      }
+
       const msRemaining = currentUsage.planExpiresAt.getTime() - Date.now();
       
       // Determine the cycle length of the current active plan

@@ -9,12 +9,18 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "@/lib/auth/session";
 import { getPricingConfig } from "@/lib/config/getPricingConfig";
+import Usage from "@/models/Usage";
+import dbConnect from "@/lib/mongodb";
 
 export async function GET() {
   const session = await getServerSession();
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  await dbConnect();
+  const usage = await Usage.findOne({ userId: session.user.id }).lean();
+  const currentPlan = usage?.plan || "free";
 
   const { plans, campaign } = await getPricingConfig();
 
@@ -23,9 +29,10 @@ export async function GET() {
   const activeCampaign =
     campaign?.isActive &&
     now >= new Date(campaign.startDate) &&
-    now <= new Date(campaign.endDate)
+    now <= new Date(campaign.endDate) &&
+    (campaign.targetAudience === "all" || (campaign.targetAudience === "free_only" && currentPlan === "free"))
       ? campaign
       : null;
 
-  return NextResponse.json({ plans, campaign: activeCampaign });
+  return NextResponse.json({ plans, campaign: activeCampaign, currentPlan });
 }
