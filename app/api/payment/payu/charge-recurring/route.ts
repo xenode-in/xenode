@@ -182,11 +182,30 @@ export async function POST(req: Request) {
           },
         );
       } else if (txnStatus === "failed" || txnStatus === "error") {
-        // Mandate failed — deactivate autopay, let plan expire naturally
-        await Usage.updateOne(
-          { userId: usage.userId },
-          { $set: { autopayActive: false, lastRenewalTxnid: txnid } },
-        );
+        // Mandate failed
+        if (!usage.isGracePeriod) {
+          // Grant a 7-day grace period
+          const graceEnds = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+          await Usage.updateOne(
+            { userId: usage.userId },
+            { 
+              $set: { 
+                autopayActive: false, // Turn off auto-pay to prevent endless retries
+                lastRenewalTxnid: txnid,
+                isGracePeriod: true,
+                gracePeriodEndsAt: graceEnds,
+                planExpiresAt: graceEnds // Keep their plan active for 7 more days
+              } 
+            },
+          );
+        } else {
+          // Already in grace period and it failed again (unlikely since we set autopayActive=false, 
+          // but just in case), just deactivate
+          await Usage.updateOne(
+            { userId: usage.userId },
+            { $set: { autopayActive: false, lastRenewalTxnid: txnid } },
+          );
+        }
       } else {
         // Pending — store txnid, webhook will handle the rest
         await Usage.updateOne(

@@ -34,6 +34,9 @@ export interface IUsage extends Document {
   autopayMandateId: string | null;
   autopayActive: boolean;
   lastRenewalTxnid: string | null;
+  // Grace Period
+  isGracePeriod: boolean;
+  gracePeriodEndsAt: Date | null;
 }
 
 const UsageSchema = new Schema<IUsage>(
@@ -65,6 +68,9 @@ const UsageSchema = new Schema<IUsage>(
     autopayMandateId:   { type: String,  default: null },
     autopayActive:      { type: Boolean, default: false },
     lastRenewalTxnid:   { type: String,  default: null },
+    // Grace Period
+    isGracePeriod:      { type: Boolean, default: false },
+    gracePeriodEndsAt:  { type: Date,    default: null },
   },
   { timestamps: true },
 );

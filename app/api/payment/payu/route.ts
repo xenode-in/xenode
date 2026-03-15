@@ -80,9 +80,26 @@ export async function POST(req: Request) {
     const billingCycle: BillingCycle =
       rawCycle && VALID_CYCLES.includes(rawCycle) ? rawCycle : "monthly";
 
+    await dbConnect();
+
+    const db = mongoose.connection.db;
+    if (!db) throw new Error("Database not connected");
+
+    const userDoc = await db
+      .collection("user")
+      .findOne(
+        { _id: new mongoose.Types.ObjectId(session.user.id) },
+        { projection: { name: 1, email: 1 } }
+      );
+    if (!userDoc) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    const currentUsage = await Usage.findOne({ userId: session.user.id });
+
     // Fetch server-authoritative plan config for the selected cycle
     // This is the ONLY place that should determine the charge amount.
-    const PLAN_CONFIG = await getPlanConfigFromDB(billingCycle);
+    const PLAN_CONFIG = await getPlanConfigFromDB(billingCycle, currentUsage?.plan || "free");
     const plan = PLAN_CONFIG[planName];
     if (!plan) {
       return NextResponse.json({ error: "Invalid plan selection" }, { status: 400 });
@@ -98,21 +115,6 @@ export async function POST(req: Request) {
         { error: "Invalid phone number. Enter a 10-digit Indian mobile number." },
         { status: 400 }
       );
-    }
-
-    await dbConnect();
-
-    const db = mongoose.connection.db;
-    if (!db) throw new Error("Database not connected");
-
-    const userDoc = await db
-      .collection("user")
-      .findOne(
-        { _id: new mongoose.Types.ObjectId(session.user.id) },
-        { projection: { name: 1, email: 1 } }
-      );
-    if (!userDoc) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
     // ── Server-side coupon validation ────────────────────────────────────────
@@ -151,7 +153,6 @@ export async function POST(req: Request) {
     let finalAmount = plan.priceINR - couponDiscount;
     let prorationCredit = 0;
 
-    const currentUsage = await Usage.findOne({ userId: session.user.id });
     if (
       currentUsage &&
       currentUsage.plan !== "free" &&

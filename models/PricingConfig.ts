@@ -38,6 +38,8 @@ export interface ICampaign {
   discountDuration: "forever" | "limited";
   /** If limited, how many billing cycles the discount lasts */
   discountCycles: number | null;
+  /** Restrict campaigns to certain users */
+  targetAudience: "all" | "free_only";
 }
 
 export interface IPricingConfig extends Document {
@@ -89,6 +91,7 @@ const CampaignSchema = new Schema<ICampaign>({
   badge: { type: String, default: "" },
   discountDuration: { type: String, enum: ["forever", "limited"], default: "forever" },
   discountCycles: { type: Number, default: null },
+  targetAudience: { type: String, enum: ["all", "free_only"], default: "all" },
 });
 
 // ─── Root schema ─────────────────────────────────────────────────────────────

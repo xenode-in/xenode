@@ -141,11 +141,12 @@ export async function getPlanBySlugFromDB(
  * Used by PayU route to set the authoritative charge amount.
  */
 export async function getPlanConfigFromDB(
-  cycle: BillingCycle = "monthly"
+  cycle: BillingCycle = "monthly",
+  userPlan?: string
 ): Promise<Record<string, { storageLimitBytes: number; priceINR: number; basePriceINR: number; campaignType: "forever" | "limited" | null; campaignCyclesLeft: number | null }>> {
   const { plans, campaign } = await getPricingConfig();
 
-  const activeCampaign = resolveActiveCampaign(campaign);
+  const activeCampaign = resolveActiveCampaign(campaign, userPlan);
 
   return Object.fromEntries(
     plans.map((p) => {
