@@ -35,6 +35,12 @@ export async function GET(req: NextRequest) {
           plan: "free",
           storageLimitBytes: FREE_TIER_LIMIT_BYTES,
           planPriceINR: 0,
+          basePlanPriceINR: 0,
+          campaignType: null,
+          campaignCyclesLeft: null,
+          isGracePeriod: false,
+          gracePeriodEndsAt: null,
+          autopayActive: false,
         },
       },
     );

@@ -1,10 +1,13 @@
 import UpgradePlanModal from "@/components/dashboard/UpgradePlanModal";
 import RefundButton from "@/components/dashboard/RefundButton";
-import { FileText } from "lucide-react";
+import { FileText, AlertTriangle } from "lucide-react";
 import { getServerSession } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
 import Payment from "@/models/Payment";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import Link from "next/link";
 
 function formatBytes(bytes: number) {
   if (bytes === 0) return "0 B";
@@ -78,6 +81,22 @@ export default async function BillingPage() {
         </div>
       </div>
 
+      {/* ── Grace Period Banner ── */}
+      {usage?.isGracePeriod && usage?.gracePeriodEndsAt && (
+        <Alert variant="destructive" className="bg-destructive/10 border-destructive/20 text-destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle className="font-semibold">Action Required: Payment Failed</AlertTitle>
+          <AlertDescription className="mt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <span>
+              Your latest recurring payment failed. To prevent your plan from downgrading to the Free Tier, please renew your subscription before <strong className="font-semibold">{formatDate(usage.gracePeriodEndsAt)}</strong>.
+            </span>
+            <Button asChild size="sm" variant="destructive" className="shrink-0">
+              <Link href="/plans">Renew Now</Link>
+            </Button>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* ── Current Plan ── */}
       <div className="rounded-xl border border-border bg-card p-6">
         <div className="flex items-center justify-between mb-4">
@@ -112,8 +131,12 @@ export default async function BillingPage() {
                 <span className="text-foreground">{planActivatedDate}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">Renews On</span>
-                <span className="text-foreground">{planExpiryDate}</span>
+                <span className="text-muted-foreground">
+                  {usage.autopayActive ? "Renews On" : "Expires On"}
+                </span>
+                <span className={usage.isGracePeriod ? "text-destructive font-medium" : "text-foreground"}>
+                  {planExpiryDate}
+                </span>
               </div>
             </>
           )}

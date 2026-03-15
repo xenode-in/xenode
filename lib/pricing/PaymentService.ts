@@ -86,6 +86,8 @@ export default class PaymentService {
           campaignCyclesLeft: campaignCyclesLeft,
           planActivatedAt: subscriptionStartDate,
           planExpiresAt: subscriptionEndDate,
+          isGracePeriod: false,
+          gracePeriodEndsAt: null,
           ...(authpayuid ? { autopayMandateId: authpayuid, autopayActive: true } : {}),
         },
       },
