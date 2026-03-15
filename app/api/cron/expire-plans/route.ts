@@ -24,11 +24,37 @@ export async function GET(req: NextRequest) {
     const now = new Date();
     let expiredCount = 0;
 
-    // --- Step 1: Expire unpaid/lapsed plans ---
-    const expireResult = await Usage.updateMany(
+    const gracePeriodDays = 7;
+    const graceMs = gracePeriodDays * 24 * 60 * 60 * 1000;
+
+    // --- Step 1a: Grant Grace Period to recently expired non-autopay users ---
+    // If a user's plan just expired naturally (autopay was off or manual payment)
+    // and they aren't already in a grace period, grant them 7 days.
+    const graceResult = await Usage.updateMany(
       {
         plan: { $ne: "free" },
         planExpiresAt: { $lt: now },
+        isGracePeriod: false,
+      },
+      [
+        {
+          $set: {
+            isGracePeriod: true,
+            gracePeriodEndsAt: { $add: [now, graceMs] },
+            planExpiresAt: { $add: [now, graceMs] },
+          }
+        }
+      ]
+    );
+
+    // --- Step 1b: Expire lapsed plans (Grace period ended) ---
+    // If they were already in a grace period and that period has now expired,
+    // downgrade them to the free tier completely.
+    const expireResult = await Usage.updateMany(
+      {
+        plan: { $ne: "free" },
+        isGracePeriod: true,
+        gracePeriodEndsAt: { $lt: now },
       },
       {
         $set: {
@@ -61,6 +87,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      grantedGraceCount: graceResult.modifiedCount,
       expiredCount,
       processedAt: now.toISOString(),
     });
