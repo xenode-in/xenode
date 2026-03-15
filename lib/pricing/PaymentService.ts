@@ -70,6 +70,10 @@ export default class PaymentService {
     const subscriptionEndDate = getSubscriptionEndDate(baseDateForEnd, billingCycle);
 
     // ── Update Usage ──
+    const campaignCyclesLeft = pending.campaignCyclesLeft != null
+      ? Math.max(0, pending.campaignCyclesLeft - 1) 
+      : null;
+
     await Usage.findOneAndUpdate(
       { userId: user._id.toString() },
       {
@@ -77,6 +81,9 @@ export default class PaymentService {
           plan: pending.planSlug,
           storageLimitBytes: pending.storageLimitBytes,
           planPriceINR: pending.planPriceINR,
+          basePlanPriceINR: pending.basePlanPriceINR,
+          campaignType: pending.campaignType,
+          campaignCyclesLeft: campaignCyclesLeft,
           planActivatedAt: subscriptionStartDate,
           planExpiresAt: subscriptionEndDate,
           ...(authpayuid ? { autopayMandateId: authpayuid, autopayActive: true } : {}),

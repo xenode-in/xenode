@@ -82,8 +82,28 @@ export async function POST(req: Request) {
         continue;
       }
 
+      // Handle limited campaigns: Revert to base price if cycles run out
+      let chargeAmount = usage.planPriceINR;
+      let newCampaignCyclesLeft = usage.campaignCyclesLeft;
+      let newPlanPriceINR = usage.planPriceINR;
+      let newCampaignType = usage.campaignType;
+
+      if (usage.campaignType === "limited") {
+        if (usage.campaignCyclesLeft != null && usage.campaignCyclesLeft > 0) {
+          // Still have cycles left
+          chargeAmount = usage.planPriceINR;
+          newCampaignCyclesLeft = usage.campaignCyclesLeft - 1;
+        } else {
+          // Cycles are up, revert to base price
+          chargeAmount = usage.basePlanPriceINR || usage.planPriceINR;
+          newPlanPriceINR = usage.basePlanPriceINR || usage.planPriceINR;
+          newCampaignType = null;
+          newCampaignCyclesLeft = null;
+        }
+      }
+
       const txnid = "REC" + Date.now() + crypto.randomBytes(6).toString("hex");
-      const amount = usage.planPriceINR.toFixed(2);
+      const amount = chargeAmount.toFixed(2);
 
       const var1Obj = {
         authpayuid: usage.autopayMandateId,
@@ -134,6 +154,17 @@ export async function POST(req: Request) {
         },
       });
 
+      // Find the last payment to determine the correct cycle length
+      const lastPayment = await Payment.findOne({ userId: usage.userId, status: "success" })
+        .sort({ createdAt: -1 })
+        .select("billingCycle");
+      const cycle = lastPayment?.billingCycle || "monthly";
+      
+      let nextExpiryDate = new Date();
+      if (cycle === "yearly") nextExpiryDate.setFullYear(nextExpiryDate.getFullYear() + 1);
+      else if (cycle === "quarterly") nextExpiryDate.setMonth(nextExpiryDate.getMonth() + 3);
+      else nextExpiryDate.setMonth(nextExpiryDate.getMonth() + 1);
+
       // If PayU immediately confirms captured (rare for UPI) — extend plan now
       // Otherwise extension happens via webhook
       if (txnStatus === "captured") {
@@ -142,8 +173,11 @@ export async function POST(req: Request) {
           {
             $set: {
               planActivatedAt: new Date(),
-              planExpiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+              planExpiresAt: nextExpiryDate,
               lastRenewalTxnid: txnid,
+              planPriceINR: newPlanPriceINR,
+              campaignType: newCampaignType,
+              campaignCyclesLeft: newCampaignCyclesLeft,
             },
           },
         );
@@ -157,7 +191,14 @@ export async function POST(req: Request) {
         // Pending — store txnid, webhook will handle the rest
         await Usage.updateOne(
           { userId: usage.userId },
-          { $set: { lastRenewalTxnid: txnid } },
+          { 
+            $set: { 
+              lastRenewalTxnid: txnid,
+              planPriceINR: newPlanPriceINR,
+              campaignType: newCampaignType,
+              campaignCyclesLeft: newCampaignCyclesLeft,
+            } 
+          },
         );
       }
 

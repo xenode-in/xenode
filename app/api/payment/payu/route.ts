@@ -198,6 +198,9 @@ export async function POST(req: Request) {
       existingPending.planName = planName;
       existingPending.storageLimitBytes = plan.storageLimitBytes;
       existingPending.planPriceINR = plan.priceINR;
+      existingPending.basePlanPriceINR = plan.basePriceINR;
+      existingPending.campaignType = plan.campaignType;
+      existingPending.campaignCyclesLeft = plan.campaignCyclesLeft;
       existingPending.couponId = couponId ?? undefined;
       existingPending.couponCode = validatedCouponCode ?? undefined;
       existingPending.couponDiscount = couponDiscount;
@@ -217,6 +220,9 @@ export async function POST(req: Request) {
         planSlug: planSlug ?? "",
         storageLimitBytes: plan.storageLimitBytes,
         planPriceINR: plan.priceINR, // base for this cycle, campaign applied
+        basePlanPriceINR: plan.basePriceINR,
+        campaignType: plan.campaignType,
+        campaignCyclesLeft: plan.campaignCyclesLeft,
         billingCycle,               // NEW — needed by success webhook
         ...(couponId ? { couponId } : {}),
         ...(validatedCouponCode ? { couponCode: validatedCouponCode } : {}),
