@@ -16,7 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Folder } from "lucide-react";
+import { Loader2, Folder, FileIcon, ChevronLeft } from "lucide-react";
 
 interface StartMigrationDialogProps {
   open: boolean;
@@ -55,6 +55,11 @@ export function StartMigrationDialog({
     }
   };
 
+  const [currentFolderId, setCurrentFolderId] = useState<string>("root");
+  const [folderHistory, setFolderHistory] = useState<
+    { id: string; name: string }[]
+  >([]);
+
   useEffect(() => {
     if (open) {
       fetchConfig();
@@ -62,6 +67,8 @@ export function StartMigrationDialog({
     } else {
       setSelectedFolders([]);
       setAvailableFolders([]);
+      setCurrentFolderId("root");
+      setFolderHistory([]);
       setError(null);
     }
   }, [open]);
@@ -73,17 +80,31 @@ export function StartMigrationDialog({
 
   useEffect(() => {
     if (googleAccountId && open) {
-      fetchDriveFolders(googleAccountId);
+      fetchDriveFolders(googleAccountId, currentFolderId);
     }
-  }, [googleAccountId, open]);
+  }, [googleAccountId, open, currentFolderId]);
 
-  const fetchDriveFolders = async (accountId: string) => {
+  const fetchDriveFolders = async (accountId: string, folderId: string) => {
     setIsLoadingFolders(true);
+
     try {
-      const res = await fetch(`/api/migrations/providers/google/folders?accountId=${accountId}`);
+      const res = await fetch(
+        `/api/migrations/providers/google/folders?accountId=${accountId}&folderId=${folderId}`,
+      );
       if (res.ok) {
         const data = await res.json();
-        setAvailableFolders(data || []);
+        const folders = data || [];
+        setAvailableFolders(folders);
+        
+        // Auto-select all items when entering a folder (or root) for the first time
+        // if they aren't already explicitly selected/deselected
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const folderIds = folders.map((f: any) => f.id);
+        setSelectedFolders((prev) => {
+          // Combine existing selections with the new folder items
+          const newSelection = new Set([...prev, ...folderIds]);
+          return Array.from(newSelection);
+        });
       }
     } catch (err) {
       console.error(err);
@@ -107,12 +128,45 @@ export function StartMigrationDialog({
     }
   };
 
+  const navigateToFolder = (folderId: string, folderName: string) => {
+    setFolderHistory((prev) => [...prev, { id: folderId, name: folderName }]);
+    setCurrentFolderId(folderId);
+  };
+
+  const navigateUp = () => {
+    setFolderHistory((prev) => {
+      const newHistory = [...prev];
+      newHistory.pop();
+      const lastFolder =
+        newHistory.length > 0 ? newHistory[newHistory.length - 1].id : "root";
+      setCurrentFolderId(lastFolder);
+      return newHistory;
+    });
+  };
+
   const toggleFolder = (folderId: string) => {
-    setSelectedFolders((prev) => 
-      prev.includes(folderId) 
+    setSelectedFolders((prev) =>
+      prev.includes(folderId)
         ? prev.filter((id) => id !== folderId)
-        : [...prev, folderId]
+        : [...prev, folderId],
     );
+  };
+  // However, "Select All" should toggle all items IN THE CURRENT VIEW.
+  const allIds = availableFolders.map((f) => f.id);
+  const areAllSelected =
+    availableFolders.length > 0 && allIds.every((id) => selectedFolders.includes(id));
+
+  const selectAllFolders = () => {
+    if (areAllSelected) {
+      // Deselect all current view
+      setSelectedFolders((prev) => prev.filter((id) => !allIds.includes(id)));
+    } else {
+      // Select all current view
+      setSelectedFolders((prev) => {
+        const newSelection = new Set([...prev, ...allIds]);
+        return Array.from(newSelection);
+      });
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -132,6 +186,12 @@ export function StartMigrationDialog({
       return;
     }
 
+    if (selectedFolders.length === 0) {
+      setError("Please select at least one item to migrate.");
+      setIsLoading(false);
+      return;
+    }
+
     try {
       const res = await fetch("/api/migrations", {
         method: "POST",
@@ -143,7 +203,8 @@ export function StartMigrationDialog({
           destinationPath: destinationPath
             ? `${destinationPath}migrations/`
             : "migrations/",
-          sourceFolderId: selectedFolders.length > 0 ? selectedFolders.join(",") : "root",
+          sourceFolderId:
+            selectedFolders.length > 0 ? selectedFolders.join(",") : "none",
         }),
       });
 
@@ -208,44 +269,87 @@ export function StartMigrationDialog({
           {hasGoogleAccount && (
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <label className="text-sm font-medium">Select Folders</label>
+                <label className="text-sm font-medium">Select Items</label>
                 <span className="text-xs text-muted-foreground">
-                  {selectedFolders.length === 0 ? "Everything" : `${selectedFolders.length} selected`}
+                  {selectedFolders.length} selected
                 </span>
               </div>
-              <div className="h-48 overflow-y-auto border border-border rounded-md bg-secondary/50">
-                {isLoadingFolders ? (
-                  <div className="flex items-center justify-center h-full text-muted-foreground">
-                    <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                    <span className="text-sm">Loading folders...</span>
-                  </div>
-                ) : availableFolders.length > 0 ? (
-                  <div className="p-2 space-y-1">
-                    {availableFolders.map((folder) => (
-                      <div
-                        key={folder.id}
-                        className="flex items-center gap-3 p-2 rounded-md hover:bg-secondary transition-colors cursor-pointer"
-                        onClick={() => toggleFolder(folder.id)}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedFolders.includes(folder.id)}
-                          readOnly
-                          className="w-4 h-4 pointer-events-none accent-primary"
-                        />
-                        <Folder className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-sm flex-1 truncate">{folder.name}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-                    No folders found in your drive.
-                  </div>
-                )}
+              <div className="flex flex-col border border-border rounded-md bg-secondary/50">
+                {/* Navigation Header */}
+                <div className="flex items-center gap-2 p-2 border-b border-border bg-muted/20">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 shrink-0"
+                    disabled={currentFolderId === "root"}
+                    onClick={navigateUp}
+                    type="button"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="text-xs font-medium truncate flex-1">
+                    {currentFolderId === "root"
+                      ? "My Drive"
+                      : folderHistory[folderHistory.length - 1]?.name}
+                  </span>
+                  {availableFolders.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 text-xs px-2 cursor-pointer"
+                      onClick={selectAllFolders}
+                      type="button"
+                    >
+                      {areAllSelected ? "Deselect All" : "Select All"}
+                    </Button>
+                  )}
+                </div>
+
+                <div className="h-48 overflow-y-auto p-2">
+                  {isLoadingFolders ? (
+                    <div className="flex items-center justify-center h-full text-muted-foreground">
+                      <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                      <span className="text-sm">Loading files...</span>
+                    </div>
+                  ) : availableFolders.length > 0 ? (
+                    <div className="space-y-1">
+                      {availableFolders.map((folder) => (
+                        <div
+                          key={folder.id}
+                          className="flex items-center gap-3 p-2 rounded-md hover:bg-secondary transition-colors cursor-pointer"
+                          onDoubleClick={() => {
+                            if (folder.isFolder) {
+                              navigateToFolder(folder.id, folder.name);
+                            }
+                          }}
+                          onClick={() => toggleFolder(folder.id)}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedFolders.includes(folder.id)}
+                            readOnly
+                            className="w-4 h-4 pointer-events-none accent-primary"
+                          />
+                          {folder.isFolder ? (
+                            <Folder className="w-4 h-4 text-muted-foreground shrink-0 fill-primary/20 text-primary" />
+                          ) : (
+                            <FileIcon className="w-4 h-4 text-muted-foreground shrink-0" />
+                          )}
+                          <span className="text-sm flex-1 truncate">
+                            {folder.name}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+                      This folder is empty.
+                    </div>
+                  )}
+                </div>
               </div>
               <p className="text-xs text-muted-foreground">
-                If no folders are selected, your entire drive will be migrated.
+                Only the items checked above will be imported.
               </p>
             </div>
           )}

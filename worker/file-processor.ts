@@ -7,14 +7,14 @@ import { ProviderFactory } from "../lib/migrations/providers/ProviderFactory";
 import { ConcurrencyLock } from "./concurrency-lock";
 import { uploadStreamToB2 } from "../lib/migrations/utils/stream-upload";
 import { MongoClient, ObjectId } from "mongodb";
-import mongoose from "mongoose";
 import Bucket from "../models/Bucket";
 import StorageObject from "../models/StorageObject";
-import { ProviderType } from "../models/MigrationJob";
-import { createEncryptedStream } from "../lib/crypto/serverEncryption";
 import UserKeyVault from "../models/UserKeyVault";
-import * as crypto from "crypto";
+import { ProviderType } from "../models/MigrationJob";
 import { Readable } from "stream";
+import { createEncryptedStream } from "../lib/crypto/serverEncryption";
+import { incrementStorage, updateBucketStats } from "../lib/metering/usage";
+import * as crypto from "crypto";
 
 const redis = getRedisClient();
 const WORKER_ID = `worker-${Math.random().toString(36).substr(2, 9)}`;
@@ -164,31 +164,59 @@ export const createFileWorker = () => {
         );
 
         // 8. Save to Xenode DB
-        const storageObj = new StorageObject({
-          bucketId: bucket._id,
-          userId: migration.userId,
-          key: s3ObjectKey, // This allows the dashboard to render the folder hierarchy
-          size: isEncrypted
+        const finalSize = isEncrypted
             ? migrationFile.fileSize + 16
-            : migrationFile.fileSize, // WebCrypto AES-GCM appends 16-byte auth tag
-          contentType: migrationFile.mimeType,
-          b2FileId: uploadResult.b2FileId, // Native VersionId from Backblaze
-          isEncrypted,
-          encryptedDEK,
-          iv,
-          encryptedName,
+            : migrationFile.fileSize; // WebCrypto AES-GCM appends 16-byte auth tag
+            
+        const existingObj = await StorageObject.findOne({
+          bucketId: bucket._id,
+          key: s3ObjectKey,
         });
-        await storageObj.save();
 
-        // Update bucket stats
-        await Bucket.updateOne(
-          { _id: bucket._id },
-          { $inc: { objectCount: 1, totalSizeBytes: migrationFile.fileSize } },
-        );
+        let storageObjId;
 
-        // 8. Mark Complete
+        if (existingObj) {
+          const sizeDiff = finalSize - existingObj.size;
+          
+          existingObj.size = finalSize;
+          existingObj.contentType = migrationFile.mimeType;
+          existingObj.b2FileId = uploadResult.b2FileId;
+          existingObj.isEncrypted = isEncrypted;
+          existingObj.encryptedDEK = encryptedDEK;
+          existingObj.iv = iv;
+          existingObj.encryptedName = encryptedName;
+          
+          await existingObj.save();
+          storageObjId = existingObj._id;
+
+          if (sizeDiff !== 0) {
+            await incrementStorage(migration.userId, sizeDiff);
+            await updateBucketStats(bucket._id.toString(), 0, sizeDiff);
+          }
+        } else {
+          const storageObj = new StorageObject({
+            bucketId: bucket._id,
+            userId: migration.userId,
+            key: s3ObjectKey, // This allows the dashboard to render the folder hierarchy
+            size: finalSize,
+            contentType: migrationFile.mimeType,
+            b2FileId: uploadResult.b2FileId, // Native VersionId from Backblaze
+            isEncrypted,
+            encryptedDEK,
+            iv,
+            encryptedName,
+          });
+          await storageObj.save();
+          storageObjId = storageObj._id;
+
+          // Update bucket stats
+          await incrementStorage(migration.userId, finalSize, { contentType: migrationFile.mimeType, bucketId: bucket._id.toString(), isEncrypted });
+          await updateBucketStats(bucket._id.toString(), 1, finalSize);
+        }
+
+        // 9. Mark Complete
         migrationFile.status = MigrationFileStatus.COMPLETED;
-        migrationFile.uploadedFileId = storageObj._id;
+        migrationFile.uploadedFileId = storageObjId;
         await migrationFile.save();
 
         await MigrationJob.updateOne(
