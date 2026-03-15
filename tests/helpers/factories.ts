@@ -95,6 +95,8 @@ export async function createPendingTxn(overrides: Partial<{
     storageLimitBytes: overrides.storageLimitBytes ?? PRO_100_BYTES,
     planPriceINR: overrides.planPriceINR ?? 149,
     expiresAt: overrides.expiresAt ?? new Date(Date.now() + 3600_000),
+    paymentMethod: "direct",
+    expectedAmount: overrides.planPriceINR ?? 149,
   });
 }
 

@@ -58,8 +58,8 @@ import { toast } from "sonner";
 
 const onboardingSchema = z.object({
   theme: z.enum(["light", "dark", "system"]),
-  encryptByDefault: z.boolean().default(false),
-  selectedPlan: z.string().default("free"),
+  encryptByDefault: z.boolean(),
+  selectedPlan: z.string(),
 });
 
 type OnboardingValues = z.infer<typeof onboardingSchema>;
@@ -557,7 +557,7 @@ export function OnboardingForm() {
                                             )}
                                           </div>
                                           <div className="text-xl font-bold">
-                                            ₹{plan.priceINR}
+                                            ₹{plan.pricing.find(p => p.cycle === "monthly")?.priceINR ?? 0}
                                             <span className="text-xs font-normal text-muted-foreground">
                                               /mo
                                             </span>
@@ -783,7 +783,7 @@ export function OnboardingForm() {
                       ? "Redirecting…"
                       : "Setting up..."
                     : isPaidPlan
-                      ? `Continue to Checkout → ₹${chosenPlanConfig?.priceINR}/mo`
+                      ? `Continue to Checkout → ₹${chosenPlanConfig?.pricing.find(p => p.cycle === "monthly")?.priceINR ?? 0}/mo`
                       : "Go to Dashboard"}
                   {!isPending && <ArrowRight className="ml-2 h-4 w-4" />}
                 </Button>

@@ -14,6 +14,7 @@ import crypto from "crypto";
 import { getServerSession } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
+import Payment from "@/models/Payment";
 import PendingTransaction from "@/models/PendingTransaction";
 import Coupon from "@/models/Coupon";
 import mongoose from "mongoose";
@@ -159,8 +160,17 @@ export async function POST(req: Request) {
       currentUsage.planPriceINR > 0
     ) {
       const msRemaining = currentUsage.planExpiresAt.getTime() - Date.now();
-      const daysRemaining = msRemaining / (1000 * 60 * 60 * 24);
-      prorationCredit = (currentUsage.planPriceINR / 30) * daysRemaining;
+      
+      // Determine the cycle length of the current active plan
+      const lastPayment = await Payment.findOne(
+        { userId: session.user.id, status: "success" }
+      ).sort({ createdAt: -1 }).select("billingCycle");
+      
+      const oldCycle = lastPayment?.billingCycle || "monthly";
+      const cycleDays = oldCycle === "yearly" ? 365 : (oldCycle === "quarterly" ? 90 : 30);
+      const cycleMs = cycleDays * 24 * 60 * 60 * 1000;
+      
+      prorationCredit = currentUsage.planPriceINR * (msRemaining / cycleMs);
       finalAmount = Math.max(1, finalAmount - prorationCredit);
     } else {
       finalAmount = Math.max(1, finalAmount);
@@ -174,7 +184,50 @@ export async function POST(req: Request) {
       ? "https://test.payu.in/_payment"
       : "https://secure.payu.in/_payment";
 
-    const txnid = "TXN" + Date.now() + crypto.randomBytes(8).toString("hex");
+    // Check if an existing one exists for: userId + plan + billingCycle
+    const existingPending = await PendingTransaction.findOne({
+      userId: session.user.id,
+      planSlug: planSlug ?? "",
+      billingCycle,
+    });
+
+    let txnid: string;
+    if (existingPending) {
+      txnid = existingPending.txnid;
+      // Update the existing record with new details
+      existingPending.planName = planName;
+      existingPending.storageLimitBytes = plan.storageLimitBytes;
+      existingPending.planPriceINR = plan.priceINR;
+      existingPending.couponId = couponId ?? undefined;
+      existingPending.couponCode = validatedCouponCode ?? undefined;
+      existingPending.couponDiscount = couponDiscount;
+      existingPending.expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+      existingPending.paymentMethod = paymentMethod;
+      existingPending.billingAddress = billingAddress ?? null;
+      existingPending.expectedAmount = parseFloat(formattedAmount);
+      await existingPending.save();
+    } else {
+      txnid = "TXN" + Date.now() + crypto.randomBytes(8).toString("hex");
+      // Store BASE price (plan.priceINR — already campaign-adjusted) so the
+      // success webhook can use it to compute subscription end date correctly.
+      await PendingTransaction.create({
+        txnid,
+        userId: session.user.id,
+        planName,
+        planSlug: planSlug ?? "",
+        storageLimitBytes: plan.storageLimitBytes,
+        planPriceINR: plan.priceINR, // base for this cycle, campaign applied
+        billingCycle,               // NEW — needed by success webhook
+        ...(couponId ? { couponId } : {}),
+        ...(validatedCouponCode ? { couponCode: validatedCouponCode } : {}),
+        couponDiscount,
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        paymentMethod,
+        billingAddress: billingAddress ?? null,
+        expectedAmount: parseFloat(formattedAmount),
+      });
+    }
+
     const productinfo = planName;
     const firstname = userDoc.name || session.user.name || "User";
     const email = session.user.email;
@@ -210,24 +263,7 @@ export async function POST(req: Request) {
       params = { key, txnid, amount: formattedAmount, productinfo, firstname, email, phone, udf1, surl, furl, hash };
     }
 
-    // Store BASE price (plan.priceINR — already campaign-adjusted) so the
-    // success webhook can use it to compute subscription end date correctly.
-    await PendingTransaction.create({
-      txnid,
-      userId: session.user.id,
-      planName,
-      planSlug: planSlug ?? "",
-      storageLimitBytes: plan.storageLimitBytes,
-      planPriceINR: plan.priceINR, // base for this cycle, campaign applied
-      billingCycle,               // NEW — needed by success webhook
-      ...(couponId ? { couponId } : {}),
-      ...(validatedCouponCode ? { couponCode: validatedCouponCode } : {}),
-      couponDiscount,
-      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
-      paymentMethod,
-      billingAddress: billingAddress ?? null,
-    });
-
+    // Done handling PendingTransaction
     return NextResponse.json({
       action: payuAction,
       params,

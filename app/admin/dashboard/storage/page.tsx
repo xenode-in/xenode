@@ -73,7 +73,7 @@ export default async function StoragePage() {
               {topUsage.map((u, i) => {
                 const user = userMap.get(u.userId);
                 const pct =
-                  u.storageLimitBytes > 0
+                  u.storageLimitBytes !== null && u.storageLimitBytes > 0
                     ? Number(
                         (
                           (u.totalStorageBytes / u.storageLimitBytes) *
