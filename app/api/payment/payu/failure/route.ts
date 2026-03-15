@@ -64,9 +64,11 @@ export async function POST(req: Request) {
       plan: productinfo ?? "",
       amount: amount ?? "",
     });
-
   } catch (error) {
     console.error("PayU failure callback error:", error);
-    return toFailurePage("http://localhost:3000", { error: "server_error" });
+    return toFailurePage(
+      process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+      { error: "server_error" },
+    );
   }
 }
