@@ -9,7 +9,9 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "cron:expire": "curl -s -X GET \"http://localhost:3000/api/cron/expire-plans\" -H \"Authorization: Bearer development_secret_123\"",
+    "cron:charge": "curl -s -X POST \"http://localhost:3000/api/payment/payu/charge-recurring\" -H \"Authorization: Bearer development_secret_123\""
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.988.0",
