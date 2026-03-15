@@ -22,12 +22,14 @@ import mongoose from "mongoose";
 import { getSubscriptionEndDate } from "@/lib/pricing/pricingService";
 
 function toSuccessPage(baseUrl: string, params: Record<string, string>) {
-  const url = new URL("/payment/success", baseUrl);
+  const base = process.env.NEXT_PUBLIC_APP_URL || baseUrl;
+  const url = new URL("/payment/success", base);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   return NextResponse.redirect(url.toString(), { status: 303 });
 }
 function toFailurePage(baseUrl: string, params: Record<string, string>) {
-  const url = new URL("/payment/failure", baseUrl);
+  const base = process.env.NEXT_PUBLIC_APP_URL || baseUrl;
+  const url = new URL("/payment/failure", base);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   return NextResponse.redirect(url.toString(), { status: 303 });
 }
@@ -99,11 +101,11 @@ export async function POST(req: Request) {
         );
 
         if (result.isIdempotent) {
-          resultUrl = new URL("/payment/success", req.url).toString();
+          resultUrl = new URL("/payment/success", process.env.NEXT_PUBLIC_APP_URL || req.url).toString();
           return;
         }
 
-        const url = new URL("/payment/success", req.url);
+        const url = new URL("/payment/success", process.env.NEXT_PUBLIC_APP_URL || req.url);
         url.searchParams.set("txnid", txnid || "");
         url.searchParams.set("plan", result.plan || "");
         url.searchParams.set("amount", result.amount || "");
@@ -123,7 +125,7 @@ export async function POST(req: Request) {
          // It might be the idempotency branch which didn't set all query params,
          // but that's handled correctly as existingPayment redirects.
          // Let's refine idempotency redirect URL.
-         const idempotencyUrl = new URL("/payment/success", req.url);
+         const idempotencyUrl = new URL("/payment/success", process.env.NEXT_PUBLIC_APP_URL || req.url);
          const existingPayment = await Payment.findOne({ txnid: txnid || "" }); // already committed
          if (existingPayment && resultUrl === idempotencyUrl.toString()) {
            idempotencyUrl.searchParams.set("txnid", txnid || "");

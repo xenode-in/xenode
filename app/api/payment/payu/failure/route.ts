@@ -6,7 +6,8 @@ import crypto from "crypto";
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 function toFailurePage(baseUrl: string, params: Record<string, string>) {
-  const url = new URL("/payment/failure", baseUrl);
+  const base = process.env.NEXT_PUBLIC_APP_URL || baseUrl;
+  const url = new URL("/payment/failure", base);
   Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   return NextResponse.redirect(url.toString(), { status: 303 });
 }
