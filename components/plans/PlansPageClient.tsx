@@ -43,11 +43,21 @@ function PlanSkeletons() {
   );
 }
 
+const PLAN_WEIGHTS: Record<string, number> = {
+  free: 0,
+  basic: 1,
+  pro: 2,
+  plus: 3,
+  max: 4,
+  enterprise: 5,
+};
+
 export default function PlansPageClient() {
   const router = useRouter();
   const { data: session } = useSession();
   const [plans, setPlans] = useState<IPlan[]>([]);
   const [campaign, setCampaign] = useState<ICampaign | null>(null);
+  const [currentPlan, setCurrentPlan] = useState<string>("free");
   const [loading, setLoading] = useState(true);
   const [cycle, setCycle] = useState<BillingCycle>("monthly");
 
@@ -57,6 +67,7 @@ export default function PlansPageClient() {
       .then((data) => {
         if (data.plans) setPlans(data.plans);
         setCampaign(data.campaign ?? null);
+        if (data.currentPlan) setCurrentPlan(data.currentPlan);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -250,10 +261,15 @@ export default function PlansPageClient() {
                   {/* CTA */}
                   <Button
                     onClick={() => handleSelect(plan.slug)}
+                    disabled={(PLAN_WEIGHTS[plan.slug] ?? 0) < (PLAN_WEIGHTS[currentPlan] ?? 0)}
                     variant={pop ? "default" : "outline"}
-                    className={cn("w-full h-11 font-semibold", pop && "shadow-md")}
+                    className={cn("w-full h-11 font-semibold", pop && "shadow-md", (PLAN_WEIGHTS[plan.slug] ?? 0) < (PLAN_WEIGHTS[currentPlan] ?? 0) && "opacity-50 cursor-not-allowed")}
                   >
-                    {pop ? "Upgrade" : `Get ${plan.name}`}
+                    {(PLAN_WEIGHTS[plan.slug] ?? 0) < (PLAN_WEIGHTS[currentPlan] ?? 0) 
+                      ? "Downgrade Unavailable" 
+                      : plan.slug === currentPlan 
+                        ? "Current Plan" 
+                        : pop ? "Upgrade" : `Get ${plan.name}`}
                   </Button>
                 </div>
               );
