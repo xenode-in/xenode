@@ -80,9 +80,26 @@ export async function POST(req: Request) {
     const billingCycle: BillingCycle =
       rawCycle && VALID_CYCLES.includes(rawCycle) ? rawCycle : "monthly";
 
+    await dbConnect();
+
+    const db = mongoose.connection.db;
+    if (!db) throw new Error("Database not connected");
+
+    const userDoc = await db
+      .collection("user")
+      .findOne(
+        { _id: new mongoose.Types.ObjectId(session.user.id) },
+        { projection: { name: 1, email: 1 } }
+      );
+    if (!userDoc) {
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
+    }
+
+    const currentUsage = await Usage.findOne({ userId: session.user.id });
+
     // Fetch server-authoritative plan config for the selected cycle
     // This is the ONLY place that should determine the charge amount.
-    const PLAN_CONFIG = await getPlanConfigFromDB(billingCycle);
+    const PLAN_CONFIG = await getPlanConfigFromDB(billingCycle, currentUsage?.plan || "free");
     const plan = PLAN_CONFIG[planName];
     if (!plan) {
       return NextResponse.json({ error: "Invalid plan selection" }, { status: 400 });
@@ -98,21 +115,6 @@ export async function POST(req: Request) {
         { error: "Invalid phone number. Enter a 10-digit Indian mobile number." },
         { status: 400 }
       );
-    }
-
-    await dbConnect();
-
-    const db = mongoose.connection.db;
-    if (!db) throw new Error("Database not connected");
-
-    const userDoc = await db
-      .collection("user")
-      .findOne(
-        { _id: new mongoose.Types.ObjectId(session.user.id) },
-        { projection: { name: 1, email: 1 } }
-      );
-    if (!userDoc) {
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
     // ── Server-side coupon validation ────────────────────────────────────────
@@ -151,7 +153,6 @@ export async function POST(req: Request) {
     let finalAmount = plan.priceINR - couponDiscount;
     let prorationCredit = 0;
 
-    const currentUsage = await Usage.findOne({ userId: session.user.id });
     if (
       currentUsage &&
       currentUsage.plan !== "free" &&
@@ -159,18 +160,45 @@ export async function POST(req: Request) {
       currentUsage.planExpiresAt.getTime() > Date.now() &&
       currentUsage.planPriceINR > 0
     ) {
-      const msRemaining = currentUsage.planExpiresAt.getTime() - Date.now();
-      
+      const PLAN_WEIGHTS: Record<string, number> = {
+        free: 0,
+        basic: 1,
+        pro: 2,
+        plus: 3,
+        max: 4,
+        enterprise: 5,
+      };
+
+      if ((PLAN_WEIGHTS[planSlug ?? ""] ?? 0) < (PLAN_WEIGHTS[currentUsage.plan] ?? 0)) {
+        return NextResponse.json(
+          { error: "Downgrading to a lower tier plan is not supported. Please wait for your current plan to expire." },
+          { status: 400 }
+        );
+      }
+
       // Determine the cycle length of the current active plan
       const lastPayment = await Payment.findOne(
         { userId: session.user.id, status: "success" }
       ).sort({ createdAt: -1 }).select("billingCycle");
-      
       const oldCycle = lastPayment?.billingCycle || "monthly";
-      const cycleDays = oldCycle === "yearly" ? 365 : (oldCycle === "quarterly" ? 90 : 30);
-      const cycleMs = cycleDays * 24 * 60 * 60 * 1000;
-      
-      prorationCredit = currentUsage.planPriceINR * (msRemaining / cycleMs);
+
+      if (planSlug === currentUsage.plan && billingCycle === oldCycle && !currentUsage.isGracePeriod && new Date(currentUsage.planExpiresAt).getTime() > Date.now()) {
+        return NextResponse.json(
+          { error: "You are already on this exact plan and cycle. Please wait for it to expire before renewing manually." },
+          { status: 400 }
+        );
+      }
+
+      // Only apply proration if this is a genuine UPGRADE and the user is NOT in a grace period
+      if (!currentUsage.isGracePeriod && planSlug !== currentUsage.plan) {
+        const msRemaining = currentUsage.planExpiresAt.getTime() - Date.now();
+        
+        const cycleDays = oldCycle === "yearly" ? 365 : (oldCycle === "quarterly" ? 90 : 30);
+        const cycleMs = cycleDays * 24 * 60 * 60 * 1000;
+        
+        prorationCredit = currentUsage.planPriceINR * (msRemaining / cycleMs);
+      }
+
       finalAmount = Math.max(1, finalAmount - prorationCredit);
     } else {
       finalAmount = Math.max(1, finalAmount);

@@ -13,6 +13,7 @@ import {
   Layers,
   DollarSign,
   Ticket,
+  Activity,
 } from "lucide-react";
 
 interface AdminSidebarProps {
@@ -61,6 +62,12 @@ const navItems = [
     href: "/admin/dashboard/coupons",
     label: "Coupons",
     icon: Ticket,
+    roles: ["super_admin"],
+  },
+  {
+    href: "/admin/dashboard/simulator",
+    label: "Billing Simulator",
+    icon: Activity,
     roles: ["super_admin"],
   },
 ];

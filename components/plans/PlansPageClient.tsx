@@ -43,11 +43,24 @@ function PlanSkeletons() {
   );
 }
 
+const PLAN_WEIGHTS: Record<string, number> = {
+  free: 0,
+  basic: 1,
+  pro: 2,
+  plus: 3,
+  max: 4,
+  enterprise: 5,
+};
+
 export default function PlansPageClient() {
   const router = useRouter();
   const { data: session } = useSession();
   const [plans, setPlans] = useState<IPlan[]>([]);
   const [campaign, setCampaign] = useState<ICampaign | null>(null);
+  const [currentPlan, setCurrentPlan] = useState<string>("free");
+  const [currentCycle, setCurrentCycle] = useState<BillingCycle>("monthly");
+  const [isGracePeriod, setIsGracePeriod] = useState<boolean>(false);
+  const [isPlanExpired, setIsPlanExpired] = useState<boolean>(false);
   const [loading, setLoading] = useState(true);
   const [cycle, setCycle] = useState<BillingCycle>("monthly");
 
@@ -57,6 +70,13 @@ export default function PlansPageClient() {
       .then((data) => {
         if (data.plans) setPlans(data.plans);
         setCampaign(data.campaign ?? null);
+        if (data.currentPlan) setCurrentPlan(data.currentPlan);
+        if (data.currentCycle) {
+          setCurrentCycle(data.currentCycle);
+          setCycle(data.currentCycle); // default view to their current cycle
+        }
+        if (data.isGracePeriod) setIsGracePeriod(data.isGracePeriod);
+        if (data.isPlanExpired) setIsPlanExpired(data.isPlanExpired);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -156,7 +176,9 @@ export default function PlansPageClient() {
           <p className="mt-20 text-center text-muted-foreground">No plans available.</p>
         ) : (
           <div className="mt-10 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-center">
-            {plans.map((plan) => {
+            {plans
+              .filter(plan => (PLAN_WEIGHTS[plan.slug] ?? 0) >= (PLAN_WEIGHTS[currentPlan] ?? 0))
+              .map((plan) => {
               const basePrice = getEffectivePriceForCycle(plan.pricing, cycle);
               const finalPrice = getEffectivePriceForCycle(
                 plan.pricing,
@@ -250,10 +272,19 @@ export default function PlansPageClient() {
                   {/* CTA */}
                   <Button
                     onClick={() => handleSelect(plan.slug)}
+                    disabled={plan.slug === currentPlan && cycle === currentCycle && !isGracePeriod && !isPlanExpired}
                     variant={pop ? "default" : "outline"}
-                    className={cn("w-full h-11 font-semibold", pop && "shadow-md")}
+                    className={cn(
+                      "w-full h-11 font-semibold", 
+                      pop && "shadow-md",
+                      (plan.slug === currentPlan && cycle === currentCycle && !isGracePeriod && !isPlanExpired) && "opacity-50 cursor-not-allowed"
+                    )}
                   >
-                    {pop ? "Upgrade" : `Get ${plan.name}`}
+                    {plan.slug === currentPlan && cycle === currentCycle
+                      ? ((isGracePeriod || isPlanExpired) ? "Renew Plan" : "Current Plan") 
+                      : plan.slug === currentPlan && cycle !== currentCycle
+                        ? `Switch to ${cycle === "yearly" ? "Yearly" : "Monthly"}`
+                        : pop ? "Upgrade" : `Get ${plan.name}`}
                   </Button>
                 </div>
               );

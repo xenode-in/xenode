@@ -127,6 +127,7 @@ export interface ActiveCampaign {
   badge: string;
   discountDuration: "forever" | "limited";
   discountCycles: number | null;
+  targetAudience: "all" | "free_only";
 }
 
 /**
@@ -143,16 +144,26 @@ export function resolveActiveCampaign(
     badge: string;
     discountDuration?: "forever" | "limited";
     discountCycles?: number | null;
+    targetAudience?: "all" | "free_only";
   } | null,
+  userPlan?: string,
   now: Date = new Date()
 ): ActiveCampaign | null {
   if (!campaign || !campaign.isActive) return null;
   if (now < new Date(campaign.startDate) || now > new Date(campaign.endDate)) return null;
+  
+  // Handle targeted campaigns
+  const audience = campaign.targetAudience || "all";
+  if (audience === "free_only" && userPlan && userPlan !== "free") {
+    return null;
+  }
+
   return {
     name: campaign.name,
     discountPercent: campaign.discountPercent,
     badge: campaign.badge,
     discountDuration: campaign.discountDuration || "forever",
     discountCycles: campaign.discountCycles ?? null,
+    targetAudience: audience,
   };
 }
