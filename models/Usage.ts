@@ -27,9 +27,6 @@ export interface IUsage extends Document {
   lastActiveAt: Date | null;
   updatedAt: Date;
   createdAt: Date;
-  scheduledDowngradePlan: string | null;
-  scheduledDowngradeLimitBytes: number | null;
-  scheduledDowngradeAt: Date | null;
   // UPI Autopay mandate fields
   autopayMandateId: string | null;
   autopayActive: boolean;
@@ -58,9 +55,6 @@ const UsageSchema = new Schema<IUsage>(
     uploadCount:      { type: Number, default: 0, min: 0 },
     downloadCount:    { type: Number, default: 0, min: 0 },
     lastActiveAt:     { type: Date, default: null, index: true },
-    scheduledDowngradePlan:        { type: String,  default: null },
-    scheduledDowngradeLimitBytes:  { type: Number,  default: null },
-    scheduledDowngradeAt:          { type: Date,    default: null },
     // UPI Autopay
     autopayMandateId:   { type: String,  default: null },
     autopayActive:      { type: Boolean, default: false },

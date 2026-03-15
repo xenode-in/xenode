@@ -124,9 +124,6 @@ export async function POST(req: Request) {
           planPriceINR: pending.planPriceINR,   // base cycle price for future proration
           planActivatedAt: subscriptionStartDate,
           planExpiresAt: subscriptionEndDate,    // FIXED: was +30 days always
-          scheduledDowngradePlan: null,
-          scheduledDowngradeLimitBytes: null,
-          scheduledDowngradeAt: null,
           ...(authpayuid ? { autopayMandateId: authpayuid, autopayActive: true } : {}),
         },
       },
@@ -145,8 +142,12 @@ export async function POST(req: Request) {
       subscriptionStartDate,                     // NEW
       subscriptionEndDate,                       // NEW
       payuResponse: {
-        status: data.status, txnid: data.txnid, mode: data.mode,
-        PG_TYPE: data.PG_TYPE, bank_ref_num: data.bank_ref_num,
+        status: data.status,
+        txnid: data.txnid,
+        mihpayid: data.mihpayid,
+        mode: data.mode,
+        PG_TYPE: data.PG_TYPE,
+        bank_ref_num: data.bank_ref_num,
         ...(authpayuid ? { authpayuid } : {}),
       },
     });

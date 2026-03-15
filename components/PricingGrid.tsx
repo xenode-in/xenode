@@ -233,6 +233,14 @@ export default function PricingGrid({
             );
           })}
         </div>
+
+        {/* ── Footer Note ────────────────────────────────────────── */}
+        {!compact && (
+          <p className="mt-12 text-center text-xs text-muted-foreground">
+            All plans include End-to-End Encryption and a 30-day refund policy.
+            You can cancel anytime from your billing page.
+          </p>
+        )}
       </div>
     </section>
   );

@@ -17,7 +17,7 @@ export interface IPayment extends Document {
   userId: string;
   amount: number;
   currency: string;
-  status: "success" | "pending" | "failed";
+  status: "success" | "pending" | "failed" | "refunded" | "refund_pending";
   txnid: string;
   planName: string;
   /** Billing cycle selected at checkout — defaults to monthly for old records */
@@ -48,7 +48,7 @@ const PaymentSchema = new Schema<IPayment>(
     },
     status: {
       type: String,
-      enum: ["success", "pending", "failed"],
+      enum: ["success", "pending", "failed", "refunded", "refund_pending"],
       default: "pending",
       index: true,
     },
