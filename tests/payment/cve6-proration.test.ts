@@ -35,14 +35,15 @@ describe("CVE-6 — Proration from Stored Price", () => {
 
     const req = new Request("http://localhost/api/payment/payu", {
       method: "POST",
-      body: JSON.stringify({ planName: "Plus" }),
+      body: JSON.stringify({ planName: "Plus", phone: "9876543210" }),
       headers: { "Content-Type": "application/json" },
     });
 
     const { POST } = await import("@/app/api/payment/payu/route");
     const res = await POST(req as any);
-    expect(res.status).toBe(200);
     const body = await res.json();
+    if (res.status !== 200) console.error("TEST FAILED:", body);
+    expect(res.status).toBe(200);
 
     const finalAmount = parseFloat(body.params.amount);
     // 1TB = ₹699; prorated credit ≈ (399/30)*15 ≈ ₹199.50
@@ -56,7 +57,7 @@ describe("CVE-6 — Proration from Stored Price", () => {
 
     const req = new Request("http://localhost/api/payment/payu", {
       method: "POST",
-      body: JSON.stringify({ planName: "Basic" }),
+      body: JSON.stringify({ planName: "Basic", phone: "9876543210" }),
       headers: { "Content-Type": "application/json" },
     });
 
@@ -71,7 +72,7 @@ describe("CVE-6 — Proration from Stored Price", () => {
 
     const req = new Request("http://localhost/api/payment/payu", {
       method: "POST",
-      body: JSON.stringify({ planName: "UltraMegaInfiniteGB" }),
+      body: JSON.stringify({ planName: "UltraMegaInfiniteGB", phone: "9876543210" }),
       headers: { "Content-Type": "application/json" },
     });
 

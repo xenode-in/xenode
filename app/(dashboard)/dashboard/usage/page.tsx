@@ -26,7 +26,7 @@ export default async function UsagePage() {
   };
 
   const storageUsedGB = bytesToGB(u.totalStorageBytes);
-  const storageLimitGB = bytesToGB(u.storageLimitBytes);
+  const storageLimitGB = u.storageLimitBytes === null ? "Unlimited" : bytesToGB(u.storageLimitBytes);
   const egressUsedGB = bytesToGB(u.totalEgressBytes);
   const egressLimitGB = bytesToGB(u.egressLimitBytes);
 
@@ -103,7 +103,11 @@ export default async function UsagePage() {
             <div
               className="h-full rounded-full transition-all duration-500"
               style={{
-                width: `${Math.min((storageUsedGB / storageLimitGB) * 100, 100)}%`,
+                width: `${
+                  storageLimitGB === "Unlimited" 
+                    ? 0 
+                    : Math.min((storageUsedGB / (storageLimitGB as number)) * 100, 100)
+                }%`,
                 background: "hsl(var(--primary))",
               }}
             />
