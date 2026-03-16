@@ -12,6 +12,7 @@ import {
   unlockVault,
   regenerateVault,
   recoverAndResetVault,
+  updateVaultPassword,
 } from "@/lib/crypto/keySetup";
 import {
   cacheKeys,
@@ -34,6 +35,11 @@ interface CryptoContextType {
   regenerate: (
     newMasterPassword: string,
     newRecoveryWords: string,
+  ) => Promise<void>;
+  /** Called from Settings: re-encrypts the vault when the account password is changed */
+  updatePassword: (
+    currentPassword: string,
+    newMasterPassword: string,
   ) => Promise<void>;
   /** Called from Unlock Vault: uses ONLY recovery kit to recover existing files and set a new master password */
   recover: (recoveryWords: string, newMasterPassword: string) => Promise<void>;
@@ -143,6 +149,18 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
+  const updatePassword = useCallback(
+    async (currentPassword: string, newMasterPassword: string) => {
+      const keys = await updateVaultPassword(currentPassword, newMasterPassword);
+      setPrivateKey(keys.privateKey);
+      setPublicKey(keys.publicKey);
+      setIsUnlocked(true);
+      setNeedsSetup(false);
+      await cacheKeys(keys.privateKey, keys.publicKey);
+    },
+    [],
+  );
+
   const recover = useCallback(
     async (recoveryWords: string, newMasterPassword: string) => {
       const keys = await recoverAndResetVault(recoveryWords, newMasterPassword);
@@ -173,6 +191,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
         setup,
         unlock,
         regenerate,
+        updatePassword,
         recover,
         lock,
         isModalOpen,

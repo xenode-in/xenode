@@ -17,12 +17,15 @@ import { authClient } from "@/lib/auth/client";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
+import { useCrypto } from "@/contexts/CryptoContext";
+
 export function PasswordSettingsSection() {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const { isUnlocked, updatePassword } = useCrypto();
 
   const handleOpenChange = (newOpen: boolean) => {
     setOpen(newOpen);
@@ -50,6 +53,19 @@ export function PasswordSettingsSection() {
     setLoading(true);
 
     try {
+      if (isUnlocked) {
+        // Vault is set up and unlocked - update the vault encryption first
+        try {
+          await updatePassword(currentPassword, newPassword);
+        } catch (e: any) {
+          if (e.message === "WRONG_PASSWORD") {
+            toast.error("Incorrect current password.");
+            return;
+          }
+          throw e; // re-throw to be caught by the outer catch
+        }
+      }
+
       const { error } = await authClient.changePassword({
         newPassword,
         currentPassword,

@@ -7,16 +7,13 @@ import { SocialProofBar } from "@/components/landing/SocialProofBar";
 import { FAQSection } from "@/components/landing/FAQSection";
 import { LandingFooter } from "@/components/landing/LandingFooter";
 import { SmoothScrollWrapper } from "@/components/SmoothScrollWrapper";
+import { ThemeGradientBackground } from "@/components/ThemeGradientBackground";
 
 export default function Home() {
   return (
     <SmoothScrollWrapper>
-      <div
-        className="relative min-h-[150vh] flex flex-col text-[#e8e4d9] font-sans"
-        style={{
-          background: "linear-gradient(268deg, #295d32 4.2%, #273f2c 98.63%)",
-        }}
-      >
+      <div className="relative min-h-[150vh] flex flex-col font-sans bg-background text-foreground transition-colors duration-300">
+        <ThemeGradientBackground />
         {/* Grid Lines Overlay */}
         <div className="fixed inset-0 pointer-events-none z-60 flex justify-center px-6 md:px-8">
           <div className="w-full max-w-[1200px] border-x border-white/10 h-full" />
