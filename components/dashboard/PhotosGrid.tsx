@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "use memo";
+import { useEffect, useState, useCallback } from "react";
 import { usePreview } from "@/contexts/PreviewContext";
 import { Loader2, ImageOff, LayoutGrid, Grid3x3, Rows3 } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
@@ -44,12 +44,17 @@ function groupByDate(photos: ObjectData[]) {
   return groups;
 }
 
-function BentoGrid({ photos, onPhotoClick }: { photos: ObjectData[]; onPhotoClick: (p: ObjectData) => void }) {
-  // Bento pattern: first item spans 2 cols + 2 rows, then normal
+function BentoGrid({
+  photos,
+  onPhotoClick,
+}: {
+  photos: ObjectData[];
+  onPhotoClick: (p: ObjectData) => void;
+}) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 auto-rows-[160px] gap-2">
       {photos.map((photo, i) => {
-        const isFeatured = i % 7 === 0; // every 7th is featured (large)
+        const isFeatured = i % 7 === 0;
         return (
           <div
             key={photo.id}
@@ -70,7 +75,6 @@ function BentoGrid({ photos, onPhotoClick }: { photos: ObjectData[]; onPhotoClic
                 <ImageOff className="w-6 h-6 text-muted-foreground/20" />
               </div>
             )}
-            {/* Hover overlay */}
             <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-2">
               <p className="text-white text-xs font-medium truncate">
                 {getFileName(photo.key)}
@@ -84,7 +88,15 @@ function BentoGrid({ photos, onPhotoClick }: { photos: ObjectData[]; onPhotoClic
   );
 }
 
-function UniformGrid({ photos, density, onPhotoClick }: { photos: ObjectData[]; density: GridDensity; onPhotoClick: (p: ObjectData) => void }) {
+function UniformGrid({
+  photos,
+  density,
+  onPhotoClick,
+}: {
+  photos: ObjectData[];
+  density: GridDensity;
+  onPhotoClick: (p: ObjectData) => void;
+}) {
   return (
     <div className={`grid ${DENSITY_COLS[density]} gap-2 auto-rows-[140px]`}>
       {photos.map((photo) => (
@@ -129,49 +141,54 @@ export function PhotosGrid() {
 
   const { openPreview } = usePreview();
 
-  const fetchPhotos = useCallback(async (pageNum = 1, append = false) => {
-    try {
-      if (pageNum === 1) setLoading(true);
-      else setLoadingMore(true);
+  const fetchPhotos = useCallback(
+    async (pageNum = 1, append = false) => {
+      try {
+        if (pageNum === 1) setLoading(true);
+        else setLoadingMore(true);
 
-      const configRes = await fetch("/api/drive/config");
-      const configData = await configRes.json();
+        const configRes = await fetch("/api/drive/config");
+        const configData = await configRes.json();
 
-      if (!configData.bucket) {
-        setError("Could not access storage.");
-        return;
+        if (!configData.bucket) {
+          setError("Could not access storage.");
+          return;
+        }
+
+        const bucketId = configData.bucket._id;
+        const res = await fetch(
+          `/api/objects?bucketId=${bucketId}&contentType=image&limit=50&page=${pageNum}`
+        );
+        const data = await res.json();
+
+        if (!res.ok) {
+          setError(data.error || "Failed to load photos");
+          return;
+        }
+
+        const mapped = (data.objects || []).map((o: Record<string, unknown>) => ({
+          ...o,
+          id: (o._id as string) || (o.id as string),
+        }));
+
+        if (append) {
+          setPhotos((prev) => [...prev, ...mapped]);
+        } else {
+          setPhotos(mapped);
+        }
+
+        setHasMore(
+          (data.pagination as { hasNextPage?: boolean })?.hasNextPage || false
+        );
+      } catch {
+        setError("Failed to load photos.");
+      } finally {
+        setLoading(false);
+        setLoadingMore(false);
       }
-
-      const bucketId = configData.bucket._id;
-      const res = await fetch(
-        `/api/objects?bucketId=${bucketId}&contentType=image&limit=50&page=${pageNum}`
-      );
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error || "Failed to load photos");
-        return;
-      }
-
-      const mapped = (data.objects || []).map((o: any) => ({
-        ...o,
-        id: o._id || o.id,
-      }));
-
-      if (append) {
-        setPhotos((prev) => [...prev, ...mapped]);
-      } else {
-        setPhotos(mapped);
-      }
-
-      setHasMore(data.pagination?.hasNextPage || false);
-    } catch {
-      setError("Failed to load photos.");
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
-    }
-  }, []);
+    },
+    []
+  );
 
   useEffect(() => {
     fetchPhotos(1);
@@ -207,7 +224,8 @@ export function PhotosGrid() {
         <div>
           <h1 className="text-2xl font-semibold text-foreground">Photos</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {filteredPhotos.length} image{filteredPhotos.length !== 1 ? "s" : ""}
+            {filteredPhotos.length} image
+            {filteredPhotos.length !== 1 ? "s" : ""}
           </p>
         </div>
 
@@ -227,7 +245,12 @@ export function PhotosGrid() {
               viewBox="0 0 24 24"
               stroke="currentColor"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+              />
             </svg>
           </div>
 
@@ -277,7 +300,10 @@ export function PhotosGrid() {
           {!search && (
             <p className="text-xs text-muted-foreground/50 mt-1">
               Upload images in{" "}
-              <a href="/dashboard/files" className="text-primary hover:underline">
+              <a
+                href="/dashboard/files"
+                className="text-primary hover:underline"
+              >
                 My Files
               </a>{" "}
               to see them here.
@@ -290,12 +316,17 @@ export function PhotosGrid() {
       {groupEntries.map(([dateLabel, groupPhotos]) => (
         <div key={dateLabel}>
           <p className="text-sm font-medium text-muted-foreground mb-2">
-            {dateLabel} &middot; {groupPhotos.length} image{groupPhotos.length !== 1 ? "s" : ""}
+            {dateLabel} &middot; {groupPhotos.length} image
+            {groupPhotos.length !== 1 ? "s" : ""}
           </p>
           {gridMode === "bento" ? (
             <BentoGrid photos={groupPhotos} onPhotoClick={openPreview} />
           ) : (
-            <UniformGrid photos={groupPhotos} density={gridMode} onPhotoClick={openPreview} />
+            <UniformGrid
+              photos={groupPhotos}
+              density={gridMode}
+              onPhotoClick={openPreview}
+            />
           )}
         </div>
       ))}
