@@ -74,18 +74,15 @@ export function OnboardingForm() {
   const [isPending, startTransition] = useTransition();
   const [mounted, setMounted] = useState(false);
 
-  // Steps: 1=Welcome 2=Vault PW 3=Recovery Kit 4=Preferences 5=Well Done
-  const totalSteps = 5;
+  // Steps: 1=Welcome 2=Recovery Kit 3=Preferences 4=Well Done
+  const totalSteps = 4;
   const [step, setStep] = useState(1);
 
-  // Step 2: vault password
+  // Vault password (read from session storage invisibly)
   const [kit] = useState(() => generateRecoveryKit());
   const [vaultPassword, setVaultPassword] = useState("");
-  const [vaultConfirm, setVaultConfirm] = useState("");
-  const [showPw, setShowPw] = useState(false);
-  const [pwError, setPwError] = useState("");
 
-  // Step 3: recovery kit
+  // Step 2: recovery kit
   const [kitSaved, setKitSaved] = useState(false);
 
   // Plans fetched from DB
@@ -94,6 +91,11 @@ export function OnboardingForm() {
 
   useEffect(() => {
     setMounted(true);
+    // Pre-fill vault password from sessionStorage if available
+    const pw = sessionStorage.getItem("xenode-vault-pw");
+    if (pw) {
+      setVaultPassword(pw);
+    }
   }, []);
 
   // Fetch live plans from DB when component mounts
@@ -144,19 +146,6 @@ export function OnboardingForm() {
     toast.success("Recovery kit downloaded");
   }, [kit, session]);
 
-  function handlePasswordNext() {
-    setPwError("");
-    if (vaultPassword.length < 8) {
-      setPwError("Password must be at least 8 characters.");
-      return;
-    }
-    if (vaultPassword !== vaultConfirm) {
-      setPwError("Passwords don't match.");
-      return;
-    }
-    setStep(3);
-  }
-
   const nextStep = () => {
     if (step < totalSteps) setStep(step + 1);
   };
@@ -177,6 +166,7 @@ export function OnboardingForm() {
 
         // 2. Setup vault
         await setup(vaultPassword, kit.passphrase);
+        sessionStorage.removeItem("xenode-vault-pw");
 
         // 3. Mark onboarded + save preferences
         const result = await authClient.updateUser({
@@ -281,93 +271,10 @@ export function OnboardingForm() {
                   </motion.div>
                 )}
 
-                {/* ───── STEP 2: Vault Master Password ───── */}
+                {/* ───── STEP 2: Recovery Kit ───── */}
                 {step === 2 && (
                   <motion.div
                     key="step2"
-                    variants={slideVariants}
-                    initial="hidden"
-                    animate="visible"
-                    exit="exit"
-                    className="space-y-5"
-                  >
-                    <div className="flex flex-col items-center text-center space-y-2">
-                      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
-                        <KeyRound className="h-7 w-7 text-primary" />
-                      </div>
-                      <h2 className="text-2xl font-bold">
-                        Create your master password
-                      </h2>
-                      <p className="text-muted-foreground text-sm max-w-sm">
-                        This password encrypts your files. It never leaves your
-                        device. Choose something strong — you'll need it on
-                        every new device.
-                      </p>
-                    </div>
-                    <div className="space-y-4 max-w-sm mx-auto">
-                      <div className="space-y-2">
-                        <Label htmlFor="ob-vault-pw">Master password</Label>
-                        <div className="relative">
-                          <Input
-                            id="ob-vault-pw"
-                            type={showPw ? "text" : "password"}
-                            value={vaultPassword}
-                            onChange={(e) => setVaultPassword(e.target.value)}
-                            placeholder="At least 8 characters"
-                            autoComplete="new-password"
-                            className="pr-10"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowPw((v) => !v)}
-                            className="absolute inset-y-0 right-3 flex items-center text-muted-foreground hover:text-foreground"
-                            tabIndex={-1}
-                          >
-                            {showPw ? (
-                              <EyeOff className="h-4 w-4" />
-                            ) : (
-                              <Eye className="h-4 w-4" />
-                            )}
-                          </button>
-                        </div>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="ob-vault-confirm">
-                          Confirm password
-                        </Label>
-                        <Input
-                          id="ob-vault-confirm"
-                          type={showPw ? "text" : "password"}
-                          value={vaultConfirm}
-                          onChange={(e) => setVaultConfirm(e.target.value)}
-                          placeholder="Repeat your password"
-                          autoComplete="new-password"
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") handlePasswordNext();
-                          }}
-                        />
-                      </div>
-                      {pwError && (
-                        <p className="text-sm text-destructive">{pwError}</p>
-                      )}
-                      <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-xs text-muted-foreground space-y-1">
-                        <p className="font-medium text-foreground text-sm">
-                          Why a separate password?
-                        </p>
-                        <p>
-                          Your login (Google, GitHub, or email) is separate from
-                          your vault. This ensures even Xenode can't read your
-                          files.
-                        </p>
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-
-                {/* ───── STEP 3: Recovery Kit ───── */}
-                {step === 3 && (
-                  <motion.div
-                    key="step3"
                     variants={slideVariants}
                     initial="hidden"
                     animate="visible"
@@ -445,10 +352,10 @@ export function OnboardingForm() {
                   </motion.div>
                 )}
 
-                {/* ───── STEP 4: Preferences ───── */}
-                {step === 4 && (
+                {/* ───── STEP 3: Preferences ───── */}
+                {step === 3 && (
                   <motion.div
-                    key="step4"
+                    key="step3"
                     variants={slideVariants}
                     initial="hidden"
                     animate="visible"
@@ -712,10 +619,10 @@ export function OnboardingForm() {
                   </motion.div>
                 )}
 
-                {/* ───── STEP 5: Well Done ───── */}
-                {step === 5 && (
+                {/* ───── STEP 4: Well Done ───── */}
+                {step === 4 && (
                   <motion.div
-                    key="step5"
+                    key="step4"
                     variants={slideVariants}
                     initial="hidden"
                     animate="visible"
@@ -743,17 +650,6 @@ export function OnboardingForm() {
                 <Button
                   type="button"
                   size="lg"
-                  onClick={handlePasswordNext}
-                  disabled={!vaultPassword || !vaultConfirm}
-                  className="w-full sm:w-auto min-w-[120px]"
-                >
-                  Continue <ArrowRight className="ml-2 h-4 w-4" />
-                </Button>
-              )}
-              {step === 3 && (
-                <Button
-                  type="button"
-                  size="lg"
                   onClick={nextStep}
                   disabled={!kitSaved}
                   className="w-full sm:w-auto min-w-[120px]"
@@ -761,7 +657,7 @@ export function OnboardingForm() {
                   Continue <ArrowRight className="ml-2 h-4 w-4" />
                 </Button>
               )}
-              {step !== 2 && step !== 3 && step < totalSteps && (
+              {step !== 2 && step < totalSteps && (
                 <Button
                   type="button"
                   size="lg"

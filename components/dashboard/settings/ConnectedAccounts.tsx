@@ -5,13 +5,42 @@ import { Button } from "@/components/ui/button";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 import { authClient } from "@/lib/auth/client";
 
+import { useSearchParams, useRouter } from "next/navigation";
+import { toast } from "sonner";
+
 export function ConnectedAccounts() {
   const [accounts, setAccounts] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const searchParams = useSearchParams();
+  const router = useRouter();
 
   useEffect(() => {
     fetchAccounts();
   }, []);
+
+  useEffect(() => {
+    const error = searchParams.get("error");
+    if (error) {
+      if (
+        error === "email_doesn't_match" ||
+        error === "account_already_linked_to_different_user" ||
+        error === "signup_disabled" ||
+        error === "signup disabled"
+      ) {
+        toast.error("Cannot link account", {
+          description: "The Google account email must exactly match your Xenode login email.",
+          duration: 5000,
+        });
+      } else {
+        toast.error("Failed to link account", {
+          description: "Something went wrong while connecting your Google account.",
+          duration: 5000,
+        });
+      }
+      // Clean up the URL to remove the error param
+      router.replace("/dashboard/settings");
+    }
+  }, [searchParams, router]);
 
   const fetchAccounts = async () => {
     try {
@@ -28,9 +57,10 @@ export function ConnectedAccounts() {
   };
 
   const handleConnectGoogle = async () => {
-    await authClient.signIn.social({
+    await authClient.linkSocial({
       provider: "google",
-      callbackURL: "/dashboard/settings"
+      callbackURL: "/dashboard/settings",
+      errorCallbackURL: "/dashboard/settings"
     });
   };
 

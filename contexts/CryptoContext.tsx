@@ -78,6 +78,28 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
           setIsUnlocked(true);
           return;
         }
+
+        const storedPw = sessionStorage.getItem("xenode-vault-pw");
+        if (storedPw) {
+          try {
+            const keys = await unlockVault(storedPw);
+            setPrivateKey(keys.privateKey);
+            setPublicKey(keys.publicKey);
+            setIsUnlocked(true);
+            await cacheKeys(keys.privateKey, keys.publicKey);
+            sessionStorage.removeItem("xenode-vault-pw");
+            return;
+          } catch (e: any) {
+            // Unlocking failed
+            if (e.message === "NO_VAULT") {
+              setNeedsSetup(true);
+              setIsInitializing(false);
+              return;
+            }
+            console.error("Auto-unlock failed", e);
+          }
+        }
+
         const res = await fetch("/api/keys/vault");
         if (res.status === 404) setNeedsSetup(true);
       } catch {
