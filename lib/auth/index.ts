@@ -40,7 +40,6 @@ function createAuth() {
         accessType: "offline",
         prompt: "consent",
         disableSignUp: true,
-        // Prevent Google from overwriting the current user's profile details if they link a different account
         overrideUserInfoOnSignIn: false,
       },
     },
@@ -54,9 +53,12 @@ function createAuth() {
     },
     trustedOrigins: [
       process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
-      "exp://*",
+      "xenode://",
       "xenode://*",
       "http://localhost:8081",
+      ...(process.env.NODE_ENV === "development"
+        ? ["exp://", "exp://**", "exp://192.168.*.*:*/**"]
+        : []),
     ],
     account: {
       accountLinking: {
@@ -82,7 +84,6 @@ function createAuth() {
   });
 }
 
-// Lazy singleton pattern to avoid initialization during build
 let _auth: ReturnType<typeof createAuth> | null = null;
 
 export function getAuth() {

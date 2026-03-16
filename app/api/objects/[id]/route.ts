@@ -6,10 +6,7 @@ export const dynamic = "force-dynamic";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
-import {
-  deleteObject as deleteB2Object,
-  getDownloadUrl,
-} from "@/lib/b2/objects";
+import { deleteObject as deleteB2Object, getDownloadUrl } from "@/lib/b2/objects";
 import { decrementStorage, updateBucketStats } from "@/lib/metering/usage";
 import ShareLink from "@/models/ShareLink";
 
@@ -17,9 +14,7 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-/**
- * GET /api/objects/[id] - Get download URL for an object
- */
+/** GET /api/objects/[id] - Get download URL for an object */
 export async function GET(request: NextRequest, { params }: RouteParams) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -27,14 +22,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth();
+    const session = await requireAuth(request);
     userId = session.user.id;
     const { id } = await params;
 
     await dbConnect();
 
-    // .lean() returns a plain JS object — faster than a Mongoose Document
-    // since we only need to read the data (no save/update needed here).
     const object = await StorageObject.findOne({ _id: id, userId }).lean();
     if (!object) {
       statusCode = 404;
@@ -42,7 +35,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    // Only select the field we actually use from the bucket document
     const bucket = await Bucket.findOne({
       _id: object.bucketId,
       $or: [{ userId }, { userId: "system" }],
@@ -56,8 +48,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    const b2BucketName = bucket.b2BucketId;
-    const url = await getDownloadUrl(b2BucketName, object.key);
+    const url = await getDownloadUrl(bucket.b2BucketId, object.key);
 
     return NextResponse.json({
       url,
@@ -77,8 +68,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
     statusCode = 500;
-    errorMessage =
-      error instanceof Error ? error.message : "Internal server error";
+    errorMessage = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
     logRequest({
@@ -94,9 +84,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-/**
- * DELETE /api/objects/[id] - Delete an object
- */
+/** DELETE /api/objects/[id] - Delete an object */
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -104,13 +92,12 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth();
+    const session = await requireAuth(request);
     userId = session.user.id;
     const { id } = await params;
 
     await dbConnect();
 
-    // .lean() — we only need to read fields, no mutations on the object itself
     const object = await StorageObject.findOne({ _id: id, userId }).lean();
     if (!object) {
       statusCode = 404;
@@ -118,7 +105,6 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    // Only select the fields needed for the B2 delete call and stats update
     const bucket = await Bucket.findOne({
       _id: object.bucketId,
       $or: [{ userId }, { userId: "system" }],
@@ -132,20 +118,14 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    const b2BucketName = bucket.b2BucketId;
-
-    // Delete from B2
     try {
-      await deleteB2Object(b2BucketName, object.key);
+      await deleteB2Object(bucket.b2BucketId, object.key);
     } catch {
       // Continue even if B2 delete fails
     }
 
-    // Delete from MongoDB
     await StorageObject.findByIdAndDelete(object._id);
     await ShareLink.deleteMany({ objectId: object._id });
-
-    // Update usage
     await decrementStorage(userId, object.size);
     await updateBucketStats(bucket._id.toString(), -1, -object.size);
 
@@ -157,8 +137,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
     statusCode = 500;
-    errorMessage =
-      error instanceof Error ? error.message : "Internal server error";
+    errorMessage = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
     logRequest({
@@ -174,9 +153,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-/**
- * PATCH /api/objects/[id] - Update object metadata (tags, position)
- */
+/** PATCH /api/objects/[id] - Update object metadata (tags, position) */
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -184,11 +161,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth();
+    const session = await requireAuth(request);
     userId = session.user.id;
     const { id } = await params;
 
-    // Parse body safely
     let body;
     try {
       body = await request.json();
@@ -202,19 +178,15 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     await dbConnect();
 
-    // Note: cannot use .lean() here — we need the Mongoose Document to call .save()
     const object = await StorageObject.findOne({ _id: id, userId });
-
     if (!object) {
       statusCode = 404;
       errorMessage = "Object not found";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    // Update fields if provided
     if (tags !== undefined) object.tags = tags;
     if (position !== undefined) object.position = position;
-
     await object.save();
 
     return NextResponse.json({ object });
@@ -225,8 +197,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
     statusCode = 500;
-    errorMessage =
-      error instanceof Error ? error.message : "Internal server error";
+    errorMessage = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
     logRequest({

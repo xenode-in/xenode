@@ -14,9 +14,7 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-/**
- * GET /api/buckets/[id] - Get bucket details
- */
+/** GET /api/buckets/[id] - Get bucket details */
 export async function GET(request: NextRequest, { params }: RouteParams) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -24,13 +22,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth();
+    const session = await requireAuth(request);
     userId = session.user.id;
     const { id } = await params;
 
     await dbConnect();
 
-    // Check for user ownership OR system bucket
     const bucket = await Bucket.findOne({
       _id: id,
       $or: [{ userId }, { userId: "system" }],
@@ -50,8 +47,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
     statusCode = 500;
-    errorMessage =
-      error instanceof Error ? error.message : "Internal server error";
+    errorMessage = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
     logRequest({
@@ -67,9 +63,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-/**
- * DELETE /api/buckets/[id] - Delete a bucket and all its objects
- */
+/** DELETE /api/buckets/[id] - Delete a bucket and all its objects */
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -77,7 +71,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth();
+    const session = await requireAuth(request);
     userId = session.user.id;
     const { id } = await params;
 
@@ -90,7 +84,6 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    // Delete all objects in the bucket from B2 first
     const objects = await StorageObject.find({ bucketId: bucket._id });
     const b2BucketName = `xn-${userId.slice(0, 8)}-${bucket.name}`;
 
@@ -98,31 +91,22 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       try {
         await deleteB2Object(b2BucketName, obj.key);
       } catch {
-        // Continue even if B2 delete fails — object may already be gone
+        // Continue even if B2 delete fails
       }
     }
 
-    // Calculate total size for usage update
     const totalSize = objects.reduce((sum, obj) => sum + obj.size, 0);
-
-    // Delete objects from MongoDB
     await StorageObject.deleteMany({ bucketId: bucket._id });
 
-    // Delete bucket from B2
     try {
       await deleteB2Bucket(b2BucketName);
     } catch {
       // B2 bucket might already be deleted
     }
 
-    // Delete bucket from MongoDB
     await Bucket.findByIdAndDelete(bucket._id);
-
-    // Update usage
     await decrementBucketCount(userId);
-    if (totalSize > 0) {
-      await decrementStorage(userId, totalSize);
-    }
+    if (totalSize > 0) await decrementStorage(userId, totalSize);
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
@@ -132,8 +116,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
     statusCode = 500;
-    errorMessage =
-      error instanceof Error ? error.message : "Internal server error";
+    errorMessage = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
     logRequest({

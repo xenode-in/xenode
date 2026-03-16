@@ -17,18 +17,12 @@ export async function POST(req: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth();
+    const session = await requireAuth(req);
     userId = session.user.id;
 
     const {
-      objectId,
-      expiresIn,
-      maxDownloads,
-      password,
-      accessType = "download",
-      shareEncryptedDEK,
-      shareKeyIv,
-      sharedWith = [],
+      objectId, expiresIn, maxDownloads, password,
+      accessType = "download", shareEncryptedDEK, shareKeyIv, sharedWith = [],
     } = await req.json();
 
     if (!objectId) {
@@ -62,19 +56,12 @@ export async function POST(req: NextRequest) {
     };
 
     if (password) shareData.passwordHash = await bcrypt.hash(password, 12);
-    if (expiresIn)
-      shareData.expiresAt = new Date(
-        Date.now() + Number(expiresIn) * 3_600_000,
-      );
+    if (expiresIn) shareData.expiresAt = new Date(Date.now() + Number(expiresIn) * 3_600_000);
     if (maxDownloads) shareData.maxDownloads = Number(maxDownloads);
-    if (shareEncryptedDEK) {
-      shareData.shareEncryptedDEK = shareEncryptedDEK;
-      shareData.shareKeyIv = shareKeyIv;
-    }
+    if (shareEncryptedDEK) { shareData.shareEncryptedDEK = shareEncryptedDEK; shareData.shareKeyIv = shareKeyIv; }
 
     const link = await ShareLink.create(shareData);
 
-    // Fire analytics event (non-blocking)
     captureEvent(userId, "share_link_created", {
       accessType,
       isPasswordProtected: !!password,
@@ -95,8 +82,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
     statusCode = 500;
-    errorMessage =
-      error instanceof Error ? error.message : "Internal server error";
+    errorMessage = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
     logRequest({
@@ -120,14 +106,11 @@ export async function GET(req: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth();
+    const session = await requireAuth(req);
     userId = session.user.id;
     await dbConnect();
 
-    const links = await ShareLink.find({
-      createdBy: userId,
-      isRevoked: false,
-    })
+    const links = await ShareLink.find({ createdBy: userId, isRevoked: false })
       .populate("objectId", "key size contentType isEncrypted encryptedName")
       .sort({ createdAt: -1 })
       .lean();

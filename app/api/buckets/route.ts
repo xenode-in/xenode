@@ -10,7 +10,6 @@ import { createB2Bucket } from "@/lib/b2/buckets";
 import { incrementBucketCount } from "@/lib/metering/usage";
 import { captureEvent } from "@/lib/posthog";
 
-// Rate limiting - simple in-memory store
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
 function checkRateLimit(
@@ -34,9 +33,7 @@ function checkRateLimit(
   return true;
 }
 
-/**
- * POST /api/buckets - Create a new bucket
- */
+/** POST /api/buckets - Create a new bucket */
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -44,19 +41,13 @@ export async function POST(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth();
+    const session = await requireAuth(request);
     userId = session.user.id;
 
     if (!checkRateLimit(userId, 5, 60000)) {
       statusCode = 429;
-      errorMessage =
-        "Too many requests. Please wait before creating another bucket.";
-      return NextResponse.json(
-        {
-          error: errorMessage,
-        },
-        { status: statusCode },
-      );
+      errorMessage = "Too many requests. Please wait before creating another bucket.";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
     const body = await request.json();
@@ -69,7 +60,6 @@ export async function POST(request: NextRequest) {
     }
 
     const { name } = validation.data;
-
     const b2BucketName = `xn-${userId.slice(0, 8)}-${name}`;
 
     await dbConnect();
@@ -86,10 +76,7 @@ export async function POST(request: NextRequest) {
       b2BucketId = await createB2Bucket(b2BucketName);
     } catch (err: unknown) {
       statusCode = 502;
-      errorMessage =
-        err instanceof Error
-          ? err.message
-          : "Failed to create bucket in storage backend";
+      errorMessage = err instanceof Error ? err.message : "Failed to create bucket in storage backend";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
@@ -100,8 +87,6 @@ export async function POST(request: NextRequest) {
     });
 
     await incrementBucketCount(userId);
-
-    // Fire analytics event (non-blocking)
     captureEvent(userId, "bucket_created", { bucketName: name });
 
     statusCode = 201;
@@ -113,8 +98,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
     statusCode = 500;
-    errorMessage =
-      error instanceof Error ? error.message : "Internal server error";
+    errorMessage = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
     logRequest({
@@ -130,9 +114,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/**
- * GET /api/buckets - List user's buckets
- */
+/** GET /api/buckets - List user's buckets */
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -140,14 +122,12 @@ export async function GET(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth();
+    const session = await requireAuth(request);
     userId = session.user.id;
 
     await dbConnect();
 
-    const buckets = await Bucket.find({ userId })
-      .sort({ createdAt: -1 })
-      .lean();
+    const buckets = await Bucket.find({ userId }).sort({ createdAt: -1 }).lean();
 
     return NextResponse.json({ buckets });
   } catch (error: unknown) {
@@ -157,8 +137,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
     statusCode = 500;
-    errorMessage =
-      error instanceof Error ? error.message : "Internal server error";
+    errorMessage = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
     logRequest({

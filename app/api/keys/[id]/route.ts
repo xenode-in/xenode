@@ -9,12 +9,10 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-/**
- * DELETE /api/keys/[id] - Delete an API key
- */
-export async function DELETE(_request: NextRequest, { params }: RouteParams) {
+/** DELETE /api/keys/[id] - Delete an API key */
+export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth();
+    const session = await requireAuth(request);
     const userId = session.user.id;
     const { id } = await params;
 
@@ -32,8 +30,7 @@ export async function DELETE(_request: NextRequest, { params }: RouteParams) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const message =
-      error instanceof Error ? error.message : "Internal server error";
+    const message = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
