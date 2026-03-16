@@ -1,217 +1,132 @@
 import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
-import Usage from "@/models/Usage";
+import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
-import { bytesToGB, formatBytes } from "@/lib/utils/format";
-import { HardDrive, FolderOpen, FileText, ArrowUpFromLine } from "lucide-react";
+import { QuickAccessBar } from "@/components/dashboard/QuickAccessBar";
+import { PreviewSection } from "@/components/dashboard/PreviewSection";
+import { RecentFilesTable } from "@/components/dashboard/RecentFilesTable";
+
+const LIST_PROJECTION = "key size contentType thumbnail createdAt isEncrypted";
+
+interface ObjectDoc {
+  _id: unknown;
+  key: string;
+  size: number;
+  contentType: string;
+  createdAt: Date;
+  thumbnail?: string;
+  isEncrypted?: boolean;
+}
 
 async function getDashboardData(userId: string) {
   await dbConnect();
 
-  const [usage, recentBuckets] = await Promise.all([
-    Usage.findOne({ userId }).lean(),
-    Bucket.find({ userId }).sort({ createdAt: -1 }).limit(5).lean(),
+  // Find the user's drive bucket
+  const systemBucket = await Bucket.findOne({ userId: "system" })
+    .select("_id")
+    .lean();
+
+  const userBucket = await Bucket.findOne({ userId })
+    .select("_id")
+    .lean();
+
+  const bucket = userBucket || systemBucket;
+  if (!bucket) {
+    return { videos: [], images: [], audios: [], recentFiles: [] };
+  }
+
+  const bucketId = bucket._id;
+  const prefix = `users/${userId}/`;
+  const baseQuery = systemBucket && !userBucket
+    ? { bucketId, key: { $gte: prefix, $lt: prefix + "\uffff" } }
+    : { bucketId };
+
+  const [videos, images, audios, recentFiles] = await Promise.all([
+    StorageObject.find({ ...baseQuery, contentType: { $regex: /^video\//i } })
+      .select(LIST_PROJECTION)
+      .sort({ createdAt: -1 })
+      .limit(1)
+      .lean(),
+    StorageObject.find({ ...baseQuery, contentType: { $regex: /^image\//i } })
+      .select(LIST_PROJECTION)
+      .sort({ createdAt: -1 })
+      .limit(4)
+      .lean(),
+    StorageObject.find({ ...baseQuery, contentType: { $regex: /^audio\//i } })
+      .select(LIST_PROJECTION)
+      .sort({ createdAt: -1 })
+      .limit(1)
+      .lean(),
+    StorageObject.find(baseQuery)
+      .select(LIST_PROJECTION)
+      .sort({ createdAt: -1 })
+      .limit(8)
+      .lean(),
   ]);
 
+  function toPlain(docs: ObjectDoc[]) {
+    return docs.map((d) => ({
+      id: String(d._id),
+      key: d.key,
+      size: d.size,
+      contentType: d.contentType,
+      createdAt: d.createdAt instanceof Date ? d.createdAt.toISOString() : String(d.createdAt),
+      thumbnail: d.thumbnail,
+      isEncrypted: d.isEncrypted,
+    }));
+  }
+
   return {
-    usage: usage || {
-      totalStorageBytes: 0,
-      totalEgressBytes: 0,
-      totalObjects: 0,
-      totalBuckets: 0,
-      storageLimitBytes: 1099511627776,
-      egressLimitBytes: 536870912000,
-    },
-    recentBuckets,
+    videos: toPlain(videos as ObjectDoc[]),
+    images: toPlain(images as ObjectDoc[]),
+    audios: toPlain(audios as ObjectDoc[]),
+    recentFiles: toPlain(recentFiles as ObjectDoc[]),
   };
 }
 
 export default async function DashboardPage() {
   const session = await requireAuth();
-  const { usage, recentBuckets } = await getDashboardData(session.user.id);
+  const { videos, images, audios, recentFiles } = await getDashboardData(
+    session.user.id
+  );
 
-  const storageUsedGB = bytesToGB(usage.totalStorageBytes);
-  const storageLimitGB = bytesToGB(usage.storageLimitBytes || 0);
-  const storagePercent =
-    storageLimitGB > 0
-      ? Math.min((storageUsedGB / storageLimitGB) * 100, 100)
-      : 0;
-
-  const egressUsedGB = bytesToGB(usage.totalEgressBytes);
-  const egressLimitGB = bytesToGB(usage.egressLimitBytes);
-  const egressPercent =
-    egressLimitGB > 0 ? Math.min((egressUsedGB / egressLimitGB) * 100, 100) : 0;
-
-  const stats = [
-    {
-      label: "Total Storage",
-      value: formatBytes(usage.totalStorageBytes),
-      limit: `of ${storageLimitGB} GB`,
-      icon: HardDrive,
-      color: "#7cb686",
-    },
-    {
-      label: "Buckets",
-      value: String(usage.totalBuckets),
-      limit: null,
-      icon: FolderOpen,
-      color: "#7cb686",
-    },
-    {
-      label: "Total Objects",
-      value: String(usage.totalObjects),
-      limit: null,
-      icon: FileText,
-      color: "#7cb686",
-    },
-    {
-      label: "Egress Used",
-      value: formatBytes(usage.totalEgressBytes),
-      limit: `of ${egressLimitGB} GB`,
-      icon: ArrowUpFromLine,
-      color: "#7cb686",
-    },
-  ];
+  const hasPreview = videos.length > 0 || images.length > 0 || audios.length > 0;
 
   return (
     <div className="space-y-8">
-      {/* Page header */}
-      <div>
-        <h1 className="text-2xl font-semibold text-foreground">
-          Welcome back
-          {session.user.name ? `, ${session.user.name.split(" ")[0]}` : ""}
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Here&apos;s an overview of your storage usage
-        </p>
-      </div>
+      {/* Quick Access */}
+      <QuickAccessBar />
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {stats.map((stat) => {
-          const Icon = stat.icon;
-          return (
-            <div
-              key={stat.label}
-              className="bg-card border border-border rounded-xl p-5 hover:border-border/50 transition-colors"
-            >
-              <div className="flex items-center gap-3 mb-3">
-                <div className="p-2 rounded-lg bg-primary/10">
-                  <Icon className="w-4 h-4 text-primary" />
-                </div>
-                <span className="text-sm text-muted-foreground">
-                  {stat.label}
-                </span>
-              </div>
-              <p className="text-2xl font-semibold text-foreground">
-                {stat.value}
-              </p>
-              {stat.limit && (
-                <p className="text-xs text-muted-foreground/50 mt-1">
-                  {stat.limit}
-                </p>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      {/* Preview */}
+      {hasPreview && (
+        <PreviewSection
+          videos={videos}
+          images={images}
+          audios={audios}
+        />
+      )}
 
-      {/* Usage Bars */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Storage Progress */}
-        <div className="bg-card border border-border rounded-xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium text-foreground">
-              Storage Usage
-            </h3>
-            <span className="text-xs text-muted-foreground">
-              {storageUsedGB} / {storageLimitGB} GB
-            </span>
+      {/* Recent Files */}
+      <RecentFilesTable files={recentFiles} />
+
+      {/* Empty state */}
+      {recentFiles.length === 0 && !hasPreview && (
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-primary/5 border border-border flex items-center justify-center mb-4">
+            <svg className="w-8 h-8 text-muted-foreground/20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+            </svg>
           </div>
-          <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{
-                width: `${storagePercent}%`,
-                background:
-                  storagePercent > 90
-                    ? "hsl(var(--destructive))"
-                    : storagePercent > 70
-                      ? "#eab308"
-                      : "hsl(var(--primary))",
-              }}
-            />
-          </div>
-          <p className="text-xs text-muted-foreground/50 mt-2">
-            {storagePercent.toFixed(1)}% used
+          <p className="text-sm text-muted-foreground mb-1">No files yet</p>
+          <p className="text-xs text-muted-foreground/50">
+            Upload files in{" "}
+            <a href="/dashboard/files" className="text-primary hover:underline">
+              My Files
+            </a>{" "}
+            to see them here.
           </p>
         </div>
-
-        {/* Egress Progress */}
-        <div className="bg-card border border-border rounded-xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium text-foreground">
-              Egress Usage
-            </h3>
-            <span className="text-xs text-muted-foreground">
-              {egressUsedGB} / {egressLimitGB} GB
-            </span>
-          </div>
-          <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full transition-all duration-500"
-              style={{
-                width: `${egressPercent}%`,
-                background:
-                  egressPercent > 90
-                    ? "hsl(var(--destructive))"
-                    : egressPercent > 70
-                      ? "#eab308"
-                      : "hsl(var(--primary))",
-              }}
-            />
-          </div>
-          <p className="text-xs text-muted-foreground/50 mt-2">
-            {egressPercent.toFixed(1)}% used
-          </p>
-        </div>
-      </div>
-
-      {/* Recent Buckets */}
-      <div className="bg-card border border-border rounded-xl">
-        <div className="px-6 py-4 border-b border-border">
-          <h3 className="text-sm font-medium text-foreground">
-            Recent Buckets
-          </h3>
-        </div>
-        {recentBuckets.length > 0 ? (
-          <div className="divide-y divide-border">
-            {recentBuckets.map((bucket) => (
-              <a
-                key={String(bucket._id)}
-                href={`/dashboard/buckets/${String(bucket._id)}`}
-                className="flex items-center justify-between px-6 py-3 hover:bg-secondary/50 transition-colors"
-              >
-                <div className="flex items-center gap-3">
-                  <FolderOpen className="w-4 h-4 text-primary/60" />
-                  <span className="text-sm text-foreground">{bucket.name}</span>
-                </div>
-                <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                  <span>{bucket.objectCount} objects</span>
-                  <span>{formatBytes(bucket.totalSizeBytes)}</span>
-                </div>
-              </a>
-            ))}
-          </div>
-        ) : (
-          <div className="px-6 py-12 text-center">
-            <FolderOpen className="w-8 h-8 text-muted-foreground/50 mx-auto mb-3" />
-            <p className="text-sm text-muted-foreground">
-              No buckets yet. Create your first bucket to get started.
-            </p>
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 }
