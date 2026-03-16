@@ -48,11 +48,11 @@ interface DashboardShellProps {
 const sidebarItems = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { label: "My Files", href: "/dashboard/files", icon: FolderOpen },
-  { label: "Migrations", href: "/dashboard/migrations", icon: CloudDownload },
+  // { label: "Migrations", href: "/dashboard/migrations", icon: CloudDownload },
   { label: "Shared", href: "/dashboard/shared", icon: Share2 },
   { label: "Shared with me", href: "/dashboard/shared-with-me", icon: Users },
   { label: "Usage", href: "/dashboard/usage", icon: BarChart3 },
-  { label: "API Keys", href: "/dashboard/keys", icon: Key },
+  // { label: "API Keys", href: "/dashboard/keys", icon: Key },
   { label: "Billing", href: "/dashboard/billing", icon: CreditCard },
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];

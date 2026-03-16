@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { Navbar } from "@/components/Navbar";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import { ThemeGradientBackground } from "@/components/ThemeGradientBackground";
 
 interface ChangelogEntryMeta {
   slug: string;
@@ -97,7 +98,7 @@ function ChangelogEntry({
       <div className="md:ml-8">
         {/* Date + Tag row */}
         <div className="flex items-center gap-3 mb-2">
-          <span className="text-sm text-[#e8e4d9]/40 font-mono tracking-tight">
+          <span className="text-sm text-muted-foreground font-mono tracking-tight">
             {formattedDate}
           </span>
           <span
@@ -112,18 +113,18 @@ function ChangelogEntry({
         </div>
 
         {/* Title */}
-        <h3 className="text-xl md:text-2xl font-semibold text-[#e8e4d9] mb-2 leading-tight">
+        <h3 className="text-xl md:text-2xl font-semibold text-foreground mb-2 leading-tight">
           {entry.title}
         </h3>
 
         {/* Summary */}
-        <p className="text-[15px] leading-relaxed text-[#e8e4d9]/60 mb-3 max-w-[600px]">
+        <p className="text-[15px] leading-relaxed text-muted-foreground mb-3 max-w-[600px]">
           {entry.summary}
         </p>
 
         {/* Hero image */}
         {entry.image && (
-          <div className="mb-4 rounded-xl overflow-hidden border border-white/10 shadow-lg max-w-[640px]">
+          <div className="mb-4 rounded-xl overflow-hidden border border-border shadow-lg max-w-[640px]">
             <img
               src={entry.image}
               alt={entry.title}
@@ -194,12 +195,9 @@ export default function ChangelogPage() {
   );
 
   return (
-    <div
-      className="relative min-h-screen flex flex-col text-[#e8e4d9] font-sans force-dark"
-      style={{
-        background: "linear-gradient(268deg, #295d32 4.2%, #273f2c 98.63%)",
-      }}
-    >
+    <div className="relative min-h-screen flex flex-col font-sans bg-background text-foreground transition-colors duration-300">
+      <ThemeGradientBackground />
+      
       {/* Grain overlay */}
       <div
         className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat"
@@ -219,12 +217,12 @@ export default function ChangelogPage() {
               isLoaded ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
             }`}
           >
-            <h1 className="text-4xl md:text-5xl lg:text-6xl font-semibold tracking-tight mb-4">
+            <h1 className="text-4xl md:text-5xl lg:text-6xl font-semibold tracking-tight mb-4 text-foreground">
               Changelog
             </h1>
-            <p className="text-lg md:text-xl text-[#e8e4d9]/60 max-w-[520px] leading-relaxed">
+            <p className="text-lg md:text-xl text-muted-foreground max-w-[520px] leading-relaxed">
               New updates and improvements to{" "}
-              <span className="font-brand italic text-[#e8e4d9]/80">
+              <span className="font-brand italic text-foreground">
                 Xenode
               </span>
               . Follow along as we build.
@@ -233,7 +231,7 @@ export default function ChangelogPage() {
 
           {/* Subtle divider */}
           <div
-            className={`mt-10 h-px bg-linear-to-r from-[#e8e4d9]/20 via-[#e8e4d9]/10 to-transparent transition-all duration-1000 delay-300 ${
+            className={`mt-10 h-px bg-gradient-to-r from-border/80 via-border/40 to-transparent transition-all duration-1000 delay-300 ${
               isLoaded ? "opacity-100 scale-x-100" : "opacity-0 scale-x-0"
             } origin-left`}
           />

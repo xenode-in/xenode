@@ -2,14 +2,16 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ArrowLeft, Menu, X } from "lucide-react";
-import { useState } from "react";
-import { motion } from "framer-motion";
+import { ArrowLeft, Menu, X, User } from "lucide-react";
+import { useState, useEffect } from "react";
 import { AnimatedLink } from "@/components/AnimatedLink";
+import { MinimalThemeSelector } from "@/components/settings/minimal-theme-selector";
+import { useSession } from "@/lib/auth/client";
 
 export function Navbar() {
   const pathname = usePathname();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const { data: session, isPending } = useSession();
 
   const isHome = pathname === "/";
   const isBlog = pathname === "/blog";
@@ -28,14 +30,14 @@ export function Navbar() {
           <AnimatedLink
             href="/changelog"
             onClick={closeMenu}
-            className="text-sm font-medium opacity-70"
+            className="text-sm font-medium text-foreground/70 hover:text-foreground"
           >
             Changelog
           </AnimatedLink>
           <AnimatedLink
             href="/blog"
             onClick={closeMenu}
-            className="text-sm font-medium opacity-70"
+            className="text-sm font-medium text-foreground/70 hover:text-foreground"
           >
             Blog
           </AnimatedLink>
@@ -43,18 +45,36 @@ export function Navbar() {
           <AnimatedLink
             href="/pricing"
             onClick={closeMenu}
-            className="text-sm font-medium opacity-70"
+            className="text-sm font-medium text-foreground/70 hover:text-foreground"
           >
             Pricing
           </AnimatedLink>
 
-          <Link
-            href="/login"
-            onClick={closeMenu}
-            className="text-sm text-[#2a5d33] font-medium px-5 py-2 rounded-sm border border-[#2a5d33]/20 bg-[#e4eac8] hover:bg-[#d4d9b8] hover:border-[#2a5d33]/40 transition-all duration-300 drop-shadow-sm flex items-center justify-center"
-          >
-            Login
-          </Link>
+          <div className="flex items-center gap-4 border-l border-border/50 pl-4 ml-2">
+            <div className="hidden md:block">
+              <MinimalThemeSelector />
+            </div>
+
+            {!isPending &&
+              (session ? (
+                <Link
+                  href="/dashboard"
+                  onClick={closeMenu}
+                  className="text-sm text-primary-foreground font-medium px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 transition-all duration-300 drop-shadow-sm flex items-center gap-2 w-full"
+                >
+                  <User className="w-4 h-4" />
+                  Dashboard
+                </Link>
+              ) : (
+                <Link
+                  href="/login"
+                  onClick={closeMenu}
+                  className="text-sm text-primary-foreground font-medium px-5 py-2 rounded-lg bg-primary hover:bg-primary/90 transition-all duration-300 drop-shadow-sm flex items-center justify-center"
+                >
+                  Login
+                </Link>
+              ))}
+          </div>
         </>
       )}
 
@@ -62,7 +82,7 @@ export function Navbar() {
         <AnimatedLink
           href="/blog"
           onClick={closeMenu}
-          className="flex items-center gap-2 text-sm opacity-70"
+          className="flex items-center gap-2 text-sm text-foreground/70 hover:text-foreground"
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Blog
@@ -75,7 +95,7 @@ export function Navbar() {
             <AnimatedLink
               href="/pricing"
               onClick={closeMenu}
-              className="text-sm font-medium opacity-70"
+              className="text-sm font-medium text-foreground/70 hover:text-foreground"
             >
               Pricing
             </AnimatedLink>
@@ -84,7 +104,7 @@ export function Navbar() {
             <AnimatedLink
               href="/changelog"
               onClick={closeMenu}
-              className="text-sm font-medium opacity-70"
+              className="text-sm font-medium text-foreground/70 hover:text-foreground"
             >
               Changelog
             </AnimatedLink>
@@ -93,7 +113,7 @@ export function Navbar() {
             <AnimatedLink
               href="/blog"
               onClick={closeMenu}
-              className="text-sm font-medium opacity-70"
+              className="text-sm font-medium text-foreground/70 hover:text-foreground"
             >
               Blog
             </AnimatedLink>
@@ -101,23 +121,51 @@ export function Navbar() {
           <AnimatedLink
             href="/"
             onClick={closeMenu}
-            className="flex items-center gap-2 text-sm opacity-70"
+            className="flex items-center gap-2 text-sm text-foreground/70 hover:text-foreground"
           >
             <ArrowLeft className="w-4 h-4" />
             {isPricing ? "Back to Home" : "Home"}
           </AnimatedLink>
+
+          <div className="flex items-center gap-4 border-l border-border/50 md:pl-4 md:ml-2">
+            <div className="hidden md:block">
+              <MinimalThemeSelector />
+            </div>
+            {!isPending &&
+              (session ? (
+                <Link
+                  href="/dashboard"
+                  onClick={closeMenu}
+                  className="text-sm text-primary-foreground font-medium px-4 py-2 rounded-lg bg-primary hover:bg-primary/90 transition-all duration-300 drop-shadow-sm flex items-center gap-2"
+                >
+                  <User className="w-4 h-4" />
+                  Dashboard
+                </Link>
+              ) : (
+                <Link
+                  href="/login"
+                  onClick={closeMenu}
+                  className="text-sm text-primary-foreground font-medium px-5 py-2 rounded-lg bg-primary hover:bg-primary/90 transition-all duration-300 drop-shadow-sm flex items-center justify-center"
+                >
+                  Login
+                </Link>
+              ))}
+          </div>
         </>
       )}
     </div>
   );
 
   return (
-    <nav className="backdrop-blur-md border-b border-white/10 z-50 sticky top-0 px-6 md:px-8 flex justify-center">
-      <div className="w-full max-w-[1200px] flex justify-between items-stretch px-6 md:px-8">
+    <nav className="backdrop-blur-md border-b border-border z-50 sticky top-0 px-6 md:px-8 flex justify-center">
+      <div className="w-full max-w-[1200px] flex justify-between items-stretch px-4">
         <div className="flex items-center py-4 md:py-6">
           {isHome ? (
             <div className="flex items-center gap-3">
-              <Link href="/" className="text-2xl md:text-3xl font-brand italic">
+              <Link
+                href="/"
+                className="text-2xl md:text-3xl font-brand italic text-foreground"
+              >
                 Xenode
               </Link>
             </div>
@@ -125,7 +173,7 @@ export function Navbar() {
             <Link
               href="/"
               onClick={closeMenu}
-              className="flex items-center gap-3 hover:opacity-80 transition-opacity"
+              className="flex items-center gap-3 hover:opacity-80 transition-opacity text-foreground"
             >
               <span className="text-2xl md:text-3xl font-brand italic">
                 Xenode
@@ -135,14 +183,15 @@ export function Navbar() {
         </div>
 
         {/* Desktop Menu */}
-        <div className="hidden md:flex items-center pl-6 border-l border-white/10">
+        <div className="hidden md:flex items-center pl-6">
           <NavLinks className="hidden md:flex items-center gap-6" />
         </div>
 
         {/* Mobile Menu Toggle */}
-        <div className="md:hidden flex items-center justify-end">
+        <div className="md:hidden flex items-center gap-4 justify-end py-4">
+          <MinimalThemeSelector />
           <button
-            className="p-1 opacity-70 hover:opacity-100 transition-opacity"
+            className="p-1 text-foreground/70 hover:text-foreground transition-colors"
             onClick={toggleMenu}
             aria-label="Toggle menu"
           >
@@ -157,9 +206,9 @@ export function Navbar() {
 
       {/* Mobile Menu Overlay */}
       {isMenuOpen && (
-        <div className="absolute top-full left-0 right-0 border-b border-white/10 shadow-2xl md:hidden p-6 animate-in slide-in-from-top-2 bg-[#2a5d33]">
+        <div className="absolute top-full left-0 right-0 border-b border-border shadow-2xl md:hidden p-6 animate-in slide-in-from-top-2 bg-background">
           <div className="flex flex-col gap-4">
-            <NavLinks className="flex flex-col gap-4" />
+            <NavLinks className="flex flex-col gap-6" />
           </div>
         </div>
       )}

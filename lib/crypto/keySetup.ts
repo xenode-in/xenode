@@ -236,6 +236,71 @@ export async function regenerateVault(
 }
 
 /**
+ * updateVaultPassword
+ * Re-encrypts the user's existing vault with a new master password, keeping the
+ * same keypair and same recovery words.
+ * Used during account password change.
+ */
+export async function updateVaultPassword(
+  currentPassword: string,
+  newMasterPassword: string,
+): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey }> {
+  const res = await fetch("/api/keys/vault");
+  if (res.status === 404) throw new Error("NO_VAULT");
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to fetch vault");
+  }
+
+  const {
+    publicKey: publicKeyB64,
+    encryptedPrivateKey,
+    pbkdf2Salt,
+    iv,
+    encryptedRecoveryWords,
+    recoveryIv,
+    recoverySalt,
+  } = await res.json();
+
+  // 1. Decrypt the stored recovery words using the CURRENT password
+  const recoveryKey = await deriveKey(currentPassword, fromB64(recoverySalt));
+  let recoveryWordsBuf: ArrayBuffer;
+  try {
+    recoveryWordsBuf = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: fromB64(recoveryIv) },
+      recoveryKey,
+      fromB64(encryptedRecoveryWords),
+    );
+  } catch {
+    throw new Error("WRONG_PASSWORD");
+  }
+  const recoveryWords = new TextDecoder().decode(recoveryWordsBuf);
+
+  // 2. Decrypt the private key using the CURRENT password + recovery words
+  const passphrase = buildVaultPassphrase(currentPassword, recoveryWords);
+  const masterKey = await deriveKey(passphrase, fromB64(pbkdf2Salt));
+
+  let privateKeyBuf: ArrayBuffer;
+  try {
+    privateKeyBuf = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: fromB64(iv) },
+      masterKey,
+      fromB64(encryptedPrivateKey),
+    );
+  } catch {
+    throw new Error("WRONG_PASSWORD");
+  }
+
+  // 3. Re-encrypt with the NEW password via setupUserKeyVault
+  const publicKeyBuf = fromB64(publicKeyB64).buffer;
+
+  return setupUserKeyVault(newMasterPassword, recoveryWords, {
+    privateKeyBuf,
+    publicKeyBuf,
+  });
+}
+
+/**
  * recoverAndResetVault
  * Decrypts the existing vault using ONLY the recovery words, then re-encrypts
  * it with a new master password, keeping the original encrypted files accessible.

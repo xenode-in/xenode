@@ -16,5 +16,10 @@ export default async function PricingComparison() {
   const { plans, campaign } = await getPricingConfig();
   const activeCampaign = resolveActiveCampaign(campaign);
 
-  return <PricingGrid plans={plans} campaign={activeCampaign} />;
+  // Convert Mongoose documents (which contain complex objects like _id: ObjectId) 
+  // into plain JS objects so they can be passed safely to a Client Component
+  const serializedPlans = JSON.parse(JSON.stringify(plans));
+  const serializedCampaign = activeCampaign ? JSON.parse(JSON.stringify(activeCampaign)) : null;
+
+  return <PricingGrid plans={serializedPlans} campaign={serializedCampaign} />;
 }
