@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Navbar } from "@/components/Navbar";
 import { getAllPosts } from "@/lib/blog";
 import { Calendar, Clock, User } from "lucide-react";
+import { ThemeGradientBackground } from "@/components/ThemeGradientBackground";
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
@@ -60,12 +61,8 @@ export default function BlogPage() {
   };
 
   return (
-    <div
-      className="relative min-h-screen flex flex-col text-[#e8e4d9] font-sans force-dark"
-      style={{
-        background: "linear-gradient(268deg, #295d32 4.2%, #273f2c 98.63%)",
-      }}
-    >
+    <div className="relative min-h-screen flex flex-col font-sans bg-background text-foreground transition-colors duration-300">
+      <ThemeGradientBackground />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{
@@ -87,15 +84,15 @@ export default function BlogPage() {
       {/* Main Content */}
       <main className="flex-1 relative z-10 px-8 py-12">
         <div className="max-w-[800px] mx-auto">
-          <h1 className="text-4xl md:text-5xl font-semibold mb-4">Blog</h1>
-          <p className="text-lg opacity-70 mb-12">
+          <h1 className="text-4xl md:text-5xl font-semibold mb-4 text-foreground">Blog</h1>
+          <p className="text-lg text-muted-foreground mb-12">
             Insights, updates, and technical deep-dives from the{" "}
-            <span className="font-brand italic">Xenode</span> team.
+            <span className="font-brand italic text-foreground">Xenode</span> team.
           </p>
 
           {posts.length === 0 ? (
-            <div className="text-center py-16 bg-white/5 rounded-xl border border-white/10">
-              <p className="text-lg opacity-70">
+            <div className="text-center py-16 bg-card rounded-xl border border-border">
+              <p className="text-lg text-muted-foreground">
                 No posts yet. Check back soon!
               </p>
             </div>
@@ -105,25 +102,25 @@ export default function BlogPage() {
                 <Link
                   key={post.slug}
                   href={`/blog/${post.slug}`}
-                  className="block p-6 bg-white/5 rounded-xl border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all group"
+                  className="block p-6 bg-card rounded-xl border border-border hover:bg-muted/30 hover:border-border/80 transition-all group"
                 >
                   <div className="flex flex-wrap gap-2 mb-3">
                     {post.tags.map((tag) => (
                       <span
                         key={tag}
-                        className="text-xs px-2 py-1 bg-[#7cb686]/20 text-[#7cb686] rounded-full"
+                        className="text-xs px-2 py-1 bg-primary/10 text-primary rounded-full"
                       >
                         {tag}
                       </span>
                     ))}
                   </div>
-                  <h2 className="text-2xl font-semibold mb-2 group-hover:text-[#7cb686] transition-colors">
+                  <h2 className="text-2xl font-semibold mb-2 group-hover:text-primary transition-colors text-foreground">
                     {post.title}
                   </h2>
-                  <p className="text-base opacity-70 mb-4">
+                  <p className="text-base text-muted-foreground mb-4">
                     {post.description}
                   </p>
-                  <div className="flex flex-wrap items-center gap-4 text-sm opacity-60">
+                  <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground">
                     <span className="flex items-center gap-1">
                       <User className="w-4 h-4" />
                       {post.author}
