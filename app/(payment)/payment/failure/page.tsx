@@ -12,7 +12,7 @@ interface FailurePageProps {
 }
 
 export const metadata = {
-  title: "Payment Failed — Xenode",
+  title: "Payment Failed | Xenode",
   robots: "noindex",
 };
 

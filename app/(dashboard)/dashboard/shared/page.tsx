@@ -23,6 +23,8 @@ import {
   Lock,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useCrypto } from "@/contexts/CryptoContext";
+import { decryptFileName } from "@/lib/crypto/fileEncryption";
 
 interface RawShareLink {
   _id: string;
@@ -49,6 +51,9 @@ export default function SharedPage() {
   const [error, setError] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
 
+  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({});
+  const { isUnlocked } = useCrypto();
+
   const fetchLinks = async () => {
     try {
       const res = await fetch("/api/share");
@@ -65,6 +70,30 @@ export default function SharedPage() {
   useEffect(() => {
     fetchLinks();
   }, []);
+
+  useEffect(() => {
+    if (!isUnlocked) {
+      setDecryptedNames({});
+      return;
+    }
+
+    const decryptNames = async () => {
+      const newNames: Record<string, string> = {};
+      for (const link of links) {
+        if (link.objectId.isEncrypted && link.objectId.encryptedName) {
+          try {
+            const name = await decryptFileName(link.objectId.encryptedName);
+            newNames[link._id] = name;
+          } catch (e) {
+            console.error("Failed to decrypt name", e);
+          }
+        }
+      }
+      setDecryptedNames((prev) => ({ ...prev, ...newNames }));
+    };
+
+    decryptNames();
+  }, [links, isUnlocked]);
 
   const revokeLink = async (token: string, id: string) => {
     if (
@@ -152,6 +181,7 @@ export default function SharedPage() {
                 const isExpired =
                   link.expiresAt && new Date(link.expiresAt) < new Date();
                 const displayName =
+                  decryptedNames[link._id] ||
                   link.objectId.encryptedName ||
                   link.objectId.key.split("/").pop() ||
                   link.objectId.key;

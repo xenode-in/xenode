@@ -18,7 +18,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     url: `${BASE_URL}/pricing`,
-    title: "Pricing — Xenode",
+    title: "Pricing | Xenode",
     description:
       "Simple, transparent pricing for encrypted cloud storage. No hidden fees, no compromises on your privacy.",
     images: [
@@ -32,7 +32,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Pricing — Xenode",
+    title: "Pricing | Xenode",
     description:
       "Simple, transparent pricing for end-to-end encrypted cloud storage.",
     images: [`${BASE_URL}/og-image.png`],
