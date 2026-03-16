@@ -1,5 +1,7 @@
+import { Suspense } from "react";
 import { requireAuth } from "@/lib/auth/session";
 import { Shield, User, Mail, Calendar, Palette, HardDrive } from "lucide-react";
+import { ConnectedAccounts } from "@/components/dashboard/settings/ConnectedAccounts";
 import { ThemeSelector } from "@/components/settings/theme-selector";
 import { EncryptionSettingsSection } from "@/components/settings/EncryptionSettingsSection";
 import { PreviewCacheSection } from "@/components/settings/PreviewCacheSection";
@@ -84,13 +86,9 @@ export default async function SettingsPage() {
             </div>
             <span className="text-xs text-muted-foreground bg-secondary px-3 py-1.5 rounded-lg">Coming Soon</span>
           </div>
-          <div className="flex items-center justify-between py-3">
-            <div>
-              <p className="text-sm text-foreground">Connected Accounts</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Manage linked OAuth providers</p>
-            </div>
-            <span className="text-xs text-muted-foreground bg-secondary px-3 py-1.5 rounded-lg">Coming Soon</span>
-          </div>
+          <Suspense fallback={<div className="h-14 animate-pulse bg-muted rounded-lg w-full"></div>}>
+            <ConnectedAccounts />
+          </Suspense>
         </div>
       </div>
 
