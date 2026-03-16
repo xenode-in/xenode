@@ -32,14 +32,10 @@ function createAuth() {
         ),
         scope: ["https://www.googleapis.com/auth/drive.readonly", "profile", "email"],
         accessType: "offline",
-        prompt: "consent"
-      },
-      github: {
-        clientId: process.env.GITHUB_CLIENT_ID || "",
-        clientSecret: process.env.GITHUB_CLIENT_SECRET || "",
-        enabled: !!(
-          process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET
-        ),
+        prompt: "consent",
+        disableSignUp: true,
+        // Prevent Google from overwriting the current user's profile details if they link a different account
+        overrideUserInfoOnSignIn: false,
       },
     },
     session: {
@@ -53,6 +49,13 @@ function createAuth() {
     trustedOrigins: [
       process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
     ],
+    account: {
+      accountLinking: {
+        enabled: true,
+        trustedProviders: ["google"],
+        allowDifferentEmails: false,
+      },
+    },
     user: {
       additionalFields: {
         onboarded: {

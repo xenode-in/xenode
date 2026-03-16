@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { requireAuth } from "@/lib/auth/session";
 import { Shield, User, Mail, Calendar, Palette, HardDrive } from "lucide-react";
 import { ConnectedAccounts } from "@/components/dashboard/settings/ConnectedAccounts";
@@ -85,7 +86,9 @@ export default async function SettingsPage() {
             </div>
             <span className="text-xs text-muted-foreground bg-secondary px-3 py-1.5 rounded-lg">Coming Soon</span>
           </div>
-          <ConnectedAccounts />
+          <Suspense fallback={<div className="h-14 animate-pulse bg-muted rounded-lg w-full"></div>}>
+            <ConnectedAccounts />
+          </Suspense>
         </div>
       </div>
 
