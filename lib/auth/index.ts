@@ -56,6 +56,7 @@ function createAuth() {
       process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
       "exp://*",
       "xenode://*",
+      "http://localhost:8081",
     ],
     account: {
       accountLinking: {
