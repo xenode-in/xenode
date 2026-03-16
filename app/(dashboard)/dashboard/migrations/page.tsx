@@ -1,7 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { CloudDownload, Plus, HardDrive, RefreshCw, Trash2 } from "lucide-react";
+import {
+  CloudDownload,
+  Plus,
+  HardDrive,
+  RefreshCw,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatBytes } from "@/lib/utils/format";
 
@@ -83,7 +89,9 @@ export default function MigrationsPage() {
   const handleFlushRedis = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch("/api/migrations/debug/flush-redis", { method: "POST" });
+      const res = await fetch("/api/migrations/debug/flush-redis", {
+        method: "POST",
+      });
       if (res.ok) {
         alert("Cache and databases flushed successfully!");
         fetchMigrations(); // Reload the empty list
@@ -108,10 +116,10 @@ export default function MigrationsPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Button onClick={handleFlushRedis} variant="destructive" className="gap-2" disabled={isLoading}>
+          {/* <Button onClick={handleFlushRedis} variant="destructive" className="gap-2" disabled={isLoading}>
             <Trash2 className="w-4 h-4" />
             Clear All
-          </Button>
+          </Button> */}
           <Button onClick={() => setIsDialogOpen(true)} className="gap-2">
             <Plus className="w-4 h-4" />
             New Migration
