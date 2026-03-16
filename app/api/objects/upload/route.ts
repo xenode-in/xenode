@@ -10,13 +10,6 @@ import StorageObject from "@/models/StorageObject";
 import { uploadObject } from "@/lib/b2/objects";
 import { incrementStorage, updateBucketStats } from "@/lib/metering/usage";
 
-/**
- * POST /api/objects/upload - Direct (non-presigned) file upload.
- *
- * GAP-4: Object key is generated server-side as an opaque random hex string.
- * The original filename NEVER appears in the B2 storage path or MongoDB key field.
- * Display name must be stored exclusively in StorageObject.encryptedName.
- */
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -24,13 +17,12 @@ export async function POST(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth();
+    const session = await requireAuth(request);
     userId = session.user.id;
 
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     const bucketId = formData.get("bucketId") as string | null;
-    // encryptedName is the AES-GCM encrypted display name from the client
     const encryptedName = formData.get("encryptedName") as string | null;
     const isEncrypted = formData.get("isEncrypted") === "true";
 
@@ -59,16 +51,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    if (bucket.userId === "system") {
-      // System bucket — ownership validated above, opaque key will be scoped to userId
-    }
-
-    /**
-     * GAP-4: Opaque key — never use file.name as the storage key.
-     * Format: users/{userId}/{randomHex32}
-     */
     const opaqueKey = `users/${userId}/${randomBytes(16).toString("hex")}`;
-
     const buffer = Buffer.from(await file.arrayBuffer());
     const size = buffer.length;
     const contentType = file.type || "application/octet-stream";
@@ -76,21 +59,13 @@ export async function POST(request: NextRequest) {
 
     let uploadResult: { etag: string; b2FileId: string };
     try {
-      uploadResult = await uploadObject(
-        b2BucketName,
-        opaqueKey, // opaque key — not filename
-        buffer,
-        contentType,
-        size,
-      );
+      uploadResult = await uploadObject(b2BucketName, opaqueKey, buffer, contentType, size);
     } catch (err: unknown) {
       statusCode = 502;
-      errorMessage =
-        err instanceof Error ? err.message : "Failed to upload file";
+      errorMessage = err instanceof Error ? err.message : "Failed to upload file";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    // Create object record — key is opaque, display name is in encryptedName
     const storageObject = await StorageObject.create({
       bucketId: bucket._id,
       userId,
@@ -119,8 +94,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
     statusCode = 500;
-    errorMessage =
-      error instanceof Error ? error.message : "Internal server error";
+    errorMessage = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
     logRequest({

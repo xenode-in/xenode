@@ -6,7 +6,7 @@ import StorageObject from "@/models/StorageObject";
 
 export async function PATCH(request: NextRequest) {
   try {
-    const session = await requireAuth();
+    const session = await requireAuth(request);
     const userId = session.user.id;
     const body = await request.json();
     const { bucketId, items } = body;
@@ -17,7 +17,6 @@ export async function PATCH(request: NextRequest) {
 
     await dbConnect();
 
-    // Verify bucket
     const bucket = await Bucket.findOne({
       _id: bucketId,
       $or: [{ userId }, { userId: "system" }],
@@ -27,11 +26,9 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
 
-    // Process updates
-    // We could use bulkWrite for efficiency
     const operations = items.map((item: { id: string; position: number }) => ({
       updateOne: {
-        filter: { _id: item.id, bucketId: bucket._id }, // Ensure ownership via bucketId
+        filter: { _id: item.id, bucketId: bucket._id },
         update: { $set: { position: item.position } },
       },
     }));
@@ -42,13 +39,9 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error: any) {
-    console.error("Reorder error:", error);
     if (error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    return NextResponse.json(
-      { error: "Failed to reorder items" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Failed to reorder items" }, { status: 500 });
   }
 }

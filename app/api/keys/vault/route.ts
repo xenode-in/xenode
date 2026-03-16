@@ -5,13 +5,10 @@ import UserKeyVault from "@/models/UserKeyVault";
 
 export const dynamic = "force-dynamic";
 
-/**
- * GET /api/keys/vault
- * Returns the full vault including encrypted recovery words.
- */
-export async function GET() {
+/** GET /api/keys/vault */
+export async function GET(request: NextRequest) {
   try {
-    const session = await requireAuth();
+    const session = await requireAuth(request);
     const userId = session.user.id;
     await dbConnect();
 
@@ -36,79 +33,39 @@ export async function GET() {
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
 
-/**
- * POST /api/keys/vault
- * Create or replace the vault.
- * Body: { publicKey, encryptedPrivateKey, pbkdf2Salt, iv, encryptedRecoveryWords, recoveryIv, recoverySalt }
- */
+/** POST /api/keys/vault - Create or replace the vault */
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireAuth();
+    const session = await requireAuth(request);
     const userId = session.user.id;
 
     const {
-      publicKey,
-      encryptedPrivateKey,
-      pbkdf2Salt,
-      iv,
-      encryptedRecoveryWords,
-      recoveryIv,
-      recoverySalt,
-      encryptedPrivateKeyRecovery,
-      recoveryWordSalt,
-      recoveryWordIv,
+      publicKey, encryptedPrivateKey, pbkdf2Salt, iv,
+      encryptedRecoveryWords, recoveryIv, recoverySalt,
+      encryptedPrivateKeyRecovery, recoveryWordSalt, recoveryWordIv,
     } = await request.json();
 
-    if (
-      !publicKey ||
-      !encryptedPrivateKey ||
-      !pbkdf2Salt ||
-      !iv ||
-      !encryptedRecoveryWords ||
-      !recoveryIv ||
-      !recoverySalt
-    ) {
-      return NextResponse.json(
-        { error: "Missing required vault fields" },
-        { status: 400 },
-      );
+    if (!publicKey || !encryptedPrivateKey || !pbkdf2Salt || !iv || !encryptedRecoveryWords || !recoveryIv || !recoverySalt) {
+      return NextResponse.json({ error: "Missing required vault fields" }, { status: 400 });
     }
 
     await dbConnect();
 
     await UserKeyVault.findOneAndUpdate(
       { userId },
-      {
-        userId,
-        publicKey,
-        encryptedPrivateKey,
-        pbkdf2Salt,
-        iv,
-        encryptedRecoveryWords,
-        recoveryIv,
-        recoverySalt,
-        encryptedPrivateKeyRecovery,
-        recoveryWordSalt,
-        recoveryWordIv,
-      },
+      { userId, publicKey, encryptedPrivateKey, pbkdf2Salt, iv, encryptedRecoveryWords, recoveryIv, recoverySalt, encryptedPrivateKeyRecovery, recoveryWordSalt, recoveryWordIv },
       { upsert: true, new: true },
     );
 
-    return NextResponse.json({ success: true }, { status: 200 });
+    return NextResponse.json({ success: true });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

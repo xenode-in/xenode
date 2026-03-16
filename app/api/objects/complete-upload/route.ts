@@ -11,15 +11,10 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireAuth();
+    const session = await requireAuth(request);
     const userId = session.user.id;
 
     const {
-      /**
-       * GAP-4: objectKey is now the OPAQUE key returned by presign-upload.
-       * It has the form: users/{userId}/{randomHex32}
-       * The client MUST pass back the exact key it received — never reconstruct from filename.
-       */
       objectKey,
       bucketId,
       size,
@@ -28,25 +23,18 @@ export async function POST(request: NextRequest) {
       encryptedDEK,
       iv,
       isEncrypted,
-      encryptedName, // AES-GCM encrypted original display name — only display metadata
+      encryptedName,
       chunkSize,
       chunkCount,
       chunkIvs,
     } = await request.json();
 
     if (!objectKey || !bucketId || !size) {
-      return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 },
-      );
+      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    // Validate opaque key format — must start with users/{userId}/
     if (!objectKey.startsWith(`users/${userId}/`)) {
-      return NextResponse.json(
-        { error: "Invalid object key" },
-        { status: 403 },
-      );
+      return NextResponse.json({ error: "Invalid object key" }, { status: 403 });
     }
 
     await dbConnect();
@@ -60,28 +48,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
 
-    // Retrieve B2 File ID from storage
     let b2FileId = "";
     try {
-      const command = new HeadObjectCommand({
-        Bucket: bucket.b2BucketId,
-        Key: objectKey,
-      });
+      const command = new HeadObjectCommand({ Bucket: bucket.b2BucketId, Key: objectKey });
       const s3Response = await getS3Client().send(command);
       b2FileId = s3Response.VersionId || `${bucket.b2BucketId}/${objectKey}`;
     } catch (err) {
       console.error("Failed to head object from B2:", err);
-      return NextResponse.json(
-        { error: "File not found in storage" },
-        { status: 404 },
-      );
+      return NextResponse.json({ error: "File not found in storage" }, { status: 404 });
     }
 
-    // Overwrite scenario — key is opaque so this handles the same file re-uploaded
-    const existingObject = await StorageObject.findOne({
-      bucketId,
-      key: objectKey,
-    });
+    const existingObject = await StorageObject.findOne({ bucketId, key: objectKey });
 
     if (existingObject) {
       const sizeDiff = size - existingObject.size;
@@ -99,20 +76,17 @@ export async function POST(request: NextRequest) {
         if (chunkIvs) existingObject.chunkIvs = chunkIvs;
       }
       await existingObject.save();
-
       if (sizeDiff !== 0) {
         await incrementStorage(userId, sizeDiff);
         await updateBucketStats(bucketId, 0, sizeDiff);
       }
-
       return NextResponse.json({ object: existingObject });
     }
 
-    // Create new object record
     const storageObject = await StorageObject.create({
       bucketId,
       userId,
-      key: objectKey,       // opaque — no filename semantics
+      key: objectKey,
       size,
       contentType,
       b2FileId,
@@ -120,7 +94,7 @@ export async function POST(request: NextRequest) {
       isEncrypted: isEncrypted ?? false,
       encryptedDEK: encryptedDEK ?? undefined,
       iv: iv ?? undefined,
-      encryptedName: encryptedName ?? undefined, // only display name, always encrypted
+      encryptedName: encryptedName ?? undefined,
       chunkSize: chunkSize ?? undefined,
       chunkCount: chunkCount ?? undefined,
       chunkIvs: chunkIvs ?? undefined,
@@ -131,15 +105,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ object: storageObject }, { status: 201 });
   } catch (error) {
-    console.error("Upload completion error:", error);
     if (error instanceof Error && error.message === "QUOTA_EXCEEDED") {
-      return NextResponse.json(
-        { error: "Storage quota exceeded" },
-        { status: 402 },
-      );
+      return NextResponse.json({ error: "Storage quota exceeded" }, { status: 402 });
     }
-    const message =
-      error instanceof Error ? error.message : "Internal server error";
+    const message = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
