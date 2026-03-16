@@ -6,6 +6,7 @@ import { ThemeSelector } from "@/components/settings/theme-selector";
 import { EncryptionSettingsSection } from "@/components/settings/EncryptionSettingsSection";
 import { PreviewCacheSection } from "@/components/settings/PreviewCacheSection";
 import { VaultRecoverySection } from "@/components/settings/VaultRecoverySection";
+import { PasswordSettingsSection } from "@/components/settings/PasswordSettingsSection";
 
 export default async function SettingsPage() {
   const session = await requireAuth();
@@ -72,13 +73,7 @@ export default async function SettingsPage() {
         <div className="space-y-4">
           <VaultRecoverySection />
           <EncryptionSettingsSection />
-          <div className="flex items-center justify-between py-3 border-b border-border">
-            <div>
-              <p className="text-sm text-foreground">Password</p>
-              <p className="text-xs text-muted-foreground mt-0.5">Change your account password</p>
-            </div>
-            <span className="text-xs text-muted-foreground bg-secondary px-3 py-1.5 rounded-lg">Coming Soon</span>
-          </div>
+          <PasswordSettingsSection />
           <div className="flex items-center justify-between py-3 border-b border-border">
             <div>
               <p className="text-sm text-foreground">Two-Factor Authentication</p>

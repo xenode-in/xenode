@@ -1,25 +1,48 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense, lazy, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signIn, signUp } from "@/lib/auth/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Mail, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { GradualSpacing } from "@/components/ui/gradual-spacing";
+
+const Dithering = lazy(() =>
+  import("@paper-design/shaders-react").then((mod) => ({
+    default: mod.Dithering,
+  })),
+);
 
 export default function LoginPage() {
   const router = useRouter();
   const [isLogin, setIsLogin] = useState(true);
+  const [isHovered, setIsHovered] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     email: "",
     password: "",
     confirmPassword: "",
   });
+
+  const taglines = [
+    "Your personal secure storage hub.",
+    "End-to-end encrypted file sharing.",
+    "Decentralized secure backups.",
+  ];
+  const [taglineIndex, setTaglineIndex] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTaglineIndex((prev) => (prev + 1) % taglines.length);
+    }, 10000);
+    return () => clearInterval(interval);
+  }, [taglines.length]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,10 +76,8 @@ export default function LoginPage() {
           return;
         }
       }
-      
-      // Save password temporarily for automatic vault unlock/setup
+
       sessionStorage.setItem("xenode-vault-pw", formData.password);
-      
       router.push("/dashboard");
     } catch {
       setError("Something went wrong. Please try again.");
@@ -66,133 +87,202 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex items-center justify-center p-8">
-      <div className="w-full max-w-[420px]">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <Link href="/" className="inline-block mb-6">
-            <span className="text-3xl font-brand italic">Xenode</span>
+    <div className="flex h-screen w-full bg-background overflow-hidden">
+      {/* Left panel - Dithering Animation */}
+      <div
+        className="hidden lg:flex lg:w-1/2 relative flex-col justify-between overflow-hidden border-r border-border bg-card"
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+      >
+        <Suspense fallback={<div className="absolute inset-0 bg-muted" />}>
+          <div className="absolute inset-0 z-0 opacity-80 dark:opacity-60 mix-blend-multiply dark:mix-blend-screen pointer-events-none">
+            <Dithering
+              colorBack="#00000000" // Transparent background
+              colorFront="#7cb686" // Xenode green accent
+              shape="warp"
+              type="4x4"
+              speed={isHovered ? 0.6 : 0.2}
+              className="w-full h-full"
+              minPixelRatio={1}
+            />
+          </div>
+        </Suspense>
+
+        <div className="relative z-10 p-12 h-full flex flex-col justify-between text-foreground">
+          {/* Logo */}
+          <Link href="/" className="inline-block">
+            <span className="text-4xl font-brand italic text-foreground tracking-tight drop-shadow-sm">
+              Xenode
+            </span>
           </Link>
-          <h1 className="text-2xl font-semibold mb-2">
-            {isLogin ? "Welcome back" : "Create your account"}
-          </h1>
-          <p className="text-sm opacity-70">
-            {isLogin
-              ? "Sign in to your Xenode Storage account"
-              : "Get started with Xenode Storage"}
+
+          {/* Bottom tagline */}
+          <div className="backdrop-blur-md bg-background/40 p-8 rounded-3xl border border-border/50 max-w-lg min-h-[140px] flex flex-col justify-center">
+            <p className="text-base text-foreground/80 mb-3 font-medium tracking-wide uppercase">
+              Clarity and productivity
+            </p>
+            <div className="min-h-[4rem] flex items-center justify-start overflow-hidden">
+              {/* Force re-render of GradualSpacing to restart animation on index change */}
+              <GradualSpacing
+                key={taglineIndex}
+                text={taglines[taglineIndex]}
+                className="text-3xl font-semibold leading-tight text-foreground text-left break-words"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Right form panel */}
+      <div className="flex-1 flex flex-col justify-center px-8 sm:px-16 md:px-24 lg:px-32 xl:px-40 py-12 overflow-y-auto">
+        <div className="w-full max-w-md mx-auto space-y-8">
+          {/* Mobile logo */}
+          <div className="lg:hidden mb-10 text-center">
+            <Link href="/">
+              <span className="text-4xl font-brand italic text-foreground">
+                Xenode
+              </span>
+            </Link>
+          </div>
+
+          <div className="space-y-2">
+            <h1 className="text-4xl font-semibold tracking-tight text-foreground">
+              {isLogin ? "Welcome back" : "Create an account"}
+            </h1>
+            <p className="text-base text-muted-foreground">
+              {isLogin
+                ? "Enter your details below to sign in to your account"
+                : "Enter your details below to create your account"}
+            </p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            {!isLogin && (
+              <div className="space-y-3">
+                <Label htmlFor="name" className="text-sm font-medium">
+                  Full Name
+                </Label>
+                <Input
+                  id="name"
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) =>
+                    setFormData({ ...formData, name: e.target.value })
+                  }
+                  placeholder="John Doe"
+                  className="h-12 bg-background border-input focus-visible:ring-primary/20 text-base"
+                  required={!isLogin}
+                />
+              </div>
+            )}
+
+            <div className="space-y-3">
+              <Label htmlFor="email" className="text-sm font-medium">
+                Email
+              </Label>
+              <Input
+                id="email"
+                type="email"
+                value={formData.email}
+                onChange={(e) =>
+                  setFormData({ ...formData, email: e.target.value })
+                }
+                placeholder="name@example.com"
+                className="h-12 bg-background border-input focus-visible:ring-primary/20 text-base"
+                required
+              />
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password" className="text-sm font-medium">
+                  Password
+                </Label>
+              </div>
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  value={formData.password}
+                  onChange={(e) =>
+                    setFormData({ ...formData, password: e.target.value })
+                  }
+                  placeholder="••••••••"
+                  className="h-12 bg-background border-input focus-visible:ring-primary/20 pr-12 text-base"
+                  required
+                  minLength={8}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                  tabIndex={-1}
+                >
+                  {showPassword ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {!isLogin && (
+              <div className="space-y-3">
+                <Label
+                  htmlFor="confirmPassword"
+                  className="text-sm font-medium"
+                >
+                  Confirm Password
+                </Label>
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  value={formData.confirmPassword}
+                  onChange={(e) =>
+                    setFormData({
+                      ...formData,
+                      confirmPassword: e.target.value,
+                    })
+                  }
+                  placeholder="••••••••"
+                  className="h-12 bg-background border-input focus-visible:ring-primary/20 text-base"
+                  required={!isLogin}
+                  minLength={8}
+                />
+              </div>
+            )}
+
+            {error && (
+              <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3 font-medium">
+                {error}
+              </div>
+            )}
+
+            <Button
+              type="submit"
+              disabled={isLoading}
+              className="w-full h-12 text-base font-medium transition-all hover:-translate-y-0.5 mt-2"
+            >
+              {isLoading && <Loader2 className="w-5 h-5 animate-spin mr-2" />}
+              {isLogin ? "Sign In" : "Create Account"}
+            </Button>
+          </form>
+
+          <p className="text-center text-base mt-8 text-muted-foreground">
+            {isLogin ? "Don't have an account?" : "Already have an account?"}{" "}
+            <button
+              type="button"
+              onClick={() => {
+                setIsLogin(!isLogin);
+                setError("");
+              }}
+              className="text-primary hover:underline font-semibold"
+            >
+              {isLogin ? "Sign up" : "Sign in"}
+            </button>
           </p>
         </div>
-
-        {/* Email/Password Form */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {!isLogin && (
-            <div className="space-y-2">
-              <Label htmlFor="name" className="text-sm text-[#e8e4d9]/80">
-                Full Name
-              </Label>
-              <Input
-                id="name"
-                type="text"
-                value={formData.name}
-                onChange={(e) =>
-                  setFormData({ ...formData, name: e.target.value })
-                }
-                placeholder="Your name"
-                className="h-11 bg-white/10 border-white/20 text-[#e8e4d9] placeholder:text-[#e8e4d9]/40 focus-visible:ring-[#7cb686]/50"
-                required={!isLogin}
-              />
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <Label htmlFor="email" className="text-sm text-[#e8e4d9]/80">
-              Email
-            </Label>
-            <Input
-              id="email"
-              type="email"
-              value={formData.email}
-              onChange={(e) =>
-                setFormData({ ...formData, email: e.target.value })
-              }
-              placeholder="you@example.com"
-              className="h-11 bg-white/10 border-white/20 text-[#e8e4d9] placeholder:text-[#e8e4d9]/40 focus-visible:ring-[#7cb686]/50"
-              required
-            />
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="password" className="text-sm text-[#e8e4d9]/80">
-              Password
-            </Label>
-            <Input
-              id="password"
-              type="password"
-              value={formData.password}
-              onChange={(e) =>
-                setFormData({ ...formData, password: e.target.value })
-              }
-              placeholder="••••••••"
-              className="h-11 bg-white/10 border-white/20 text-[#e8e4d9] placeholder:text-[#e8e4d9]/40 focus-visible:ring-[#7cb686]/50"
-              required
-              minLength={8}
-            />
-          </div>
-
-          {!isLogin && (
-            <div className="space-y-2">
-              <Label htmlFor="confirmPassword" className="text-sm text-[#e8e4d9]/80">
-                Confirm Password
-              </Label>
-              <Input
-                id="confirmPassword"
-                type="password"
-                value={formData.confirmPassword}
-                onChange={(e) =>
-                  setFormData({ ...formData, confirmPassword: e.target.value })
-                }
-                placeholder="••••••••"
-                className="h-11 bg-white/10 border-white/20 text-[#e8e4d9] placeholder:text-[#e8e4d9]/40 focus-visible:ring-[#7cb686]/50"
-                required={!isLogin}
-                minLength={8}
-              />
-            </div>
-          )}
-
-          {error && (
-            <div className="text-sm text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-4 py-2">
-              {error}
-            </div>
-          )}
-
-          <Button
-            type="submit"
-            disabled={isLoading}
-            className="w-full h-11 bg-[#e8e4d9] text-[#273f2c] hover:bg-white font-semibold transition-all duration-200 hover:-translate-y-0.5"
-          >
-            {isLoading ? (
-              <Loader2 className="w-4 h-4 animate-spin mr-2" />
-            ) : (
-              <Mail className="w-4 h-4 mr-2" />
-            )}
-            {isLogin ? "Sign In" : "Create Account"}
-          </Button>
-        </form>
-
-        {/* Toggle */}
-        <p className="text-center text-sm mt-6 opacity-70">
-          {isLogin ? "Don't have an account?" : "Already have an account?"}{" "}
-          <button
-            type="button"
-            onClick={() => {
-              setIsLogin(!isLogin);
-              setError("");
-            }}
-            className="text-[#7cb686] hover:underline font-medium"
-          >
-            {isLogin ? "Sign up" : "Sign in"}
-          </button>
-        </p>
       </div>
     </div>
   );
