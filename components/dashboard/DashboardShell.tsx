@@ -15,6 +15,7 @@ import {
   Share2,
   Users,
   CloudDownload,
+  Image,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -48,6 +49,7 @@ interface DashboardShellProps {
 const sidebarItems = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { label: "My Files", href: "/dashboard/files", icon: FolderOpen },
+  { label: "Photos", href: "/dashboard/photos", icon: Image },
   // { label: "Migrations", href: "/dashboard/migrations", icon: CloudDownload },
   { label: "Shared", href: "/dashboard/shared", icon: Share2 },
   { label: "Shared with me", href: "/dashboard/shared-with-me", icon: Users },

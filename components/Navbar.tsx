@@ -118,14 +118,6 @@ export function Navbar() {
               Blog
             </AnimatedLink>
           )}
-          <AnimatedLink
-            href="/"
-            onClick={closeMenu}
-            className="flex items-center gap-2 text-sm text-foreground/70 hover:text-foreground"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            {isPricing ? "Back to Home" : "Home"}
-          </AnimatedLink>
 
           <div className="flex items-center gap-4 border-l border-border/50 md:pl-4 md:ml-2">
             <div className="hidden md:block">

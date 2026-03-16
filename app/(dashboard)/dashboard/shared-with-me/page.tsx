@@ -20,6 +20,8 @@ import {
   ExternalLink,
   Lock,
 } from "lucide-react";
+import { useCrypto } from "@/contexts/CryptoContext";
+import { decryptFileName } from "@/lib/crypto/fileEncryption";
 
 interface RawShareLink {
   _id: string;
@@ -45,6 +47,8 @@ export default function SharedWithMePage() {
   const [links, setLinks] = useState<RawShareLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({});
+  const { isUnlocked } = useCrypto();
 
   const fetchLinks = async () => {
     try {
@@ -62,6 +66,30 @@ export default function SharedWithMePage() {
   useEffect(() => {
     fetchLinks();
   }, []);
+
+  useEffect(() => {
+    if (!isUnlocked) {
+      setDecryptedNames({});
+      return;
+    }
+
+    const decryptNames = async () => {
+      const newNames: Record<string, string> = {};
+      for (const link of links) {
+        if (link.objectId.isEncrypted && link.objectId.encryptedName) {
+          try {
+            const name = await decryptFileName(link.objectId.encryptedName);
+            newNames[link._id] = name;
+          } catch (e) {
+            console.error("Failed to decrypt name", e);
+          }
+        }
+      }
+      setDecryptedNames((prev) => ({ ...prev, ...newNames }));
+    };
+
+    decryptNames();
+  }, [links, isUnlocked]);
 
   if (loading) {
     return (
@@ -117,6 +145,7 @@ export default function SharedWithMePage() {
                 const isExpired =
                   link.expiresAt && new Date(link.expiresAt) < new Date();
                 const displayName =
+                  decryptedNames[link._id] ||
                   link.objectId.encryptedName ||
                   link.objectId.key.split("/").pop() ||
                   link.objectId.key;
