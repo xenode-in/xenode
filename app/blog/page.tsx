@@ -17,7 +17,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     url: `${BASE_URL}/blog`,
-    title: "Blog — Xenode",
+    title: "Blog | Xenode",
     description:
       "Insights, security deep-dives, and product updates from the Xenode team.",
     images: [
@@ -31,7 +31,7 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Blog — Xenode",
+    title: "Blog | Xenode",
     description:
       "Insights, security deep-dives, and product updates from the Xenode team.",
     images: [`${BASE_URL}/og-image.png`],
@@ -84,10 +84,13 @@ export default function BlogPage() {
       {/* Main Content */}
       <main className="flex-1 relative z-10 px-8 py-12">
         <div className="max-w-[800px] mx-auto">
-          <h1 className="text-4xl md:text-5xl font-semibold mb-4 text-foreground">Blog</h1>
+          <h1 className="text-4xl md:text-5xl font-semibold mb-4 text-foreground">
+            Blog
+          </h1>
           <p className="text-lg text-muted-foreground mb-12">
             Insights, updates, and technical deep-dives from the{" "}
-            <span className="font-brand italic text-foreground">Xenode</span> team.
+            <span className="font-brand italic text-foreground">Xenode</span>{" "}
+            team.
           </p>
 
           {posts.length === 0 ? (

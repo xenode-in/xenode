@@ -1,6 +1,7 @@
 import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import { MongoClient } from "mongodb";
+import { expo } from "@better-auth/expo";
 
 function createAuth() {
   const MONGODB_URI = process.env.MONGODB_URI;
@@ -17,6 +18,7 @@ function createAuth() {
       usePlural: false,
       transaction: false,
     }),
+    plugins: [expo()],
     secret: process.env.BETTER_AUTH_SECRET,
     baseURL: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
     emailAndPassword: {
@@ -30,7 +32,11 @@ function createAuth() {
         enabled: !!(
           process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET
         ),
-        scope: ["https://www.googleapis.com/auth/drive.readonly", "profile", "email"],
+        scope: [
+          "https://www.googleapis.com/auth/drive.readonly",
+          "profile",
+          "email",
+        ],
         accessType: "offline",
         prompt: "consent",
         disableSignUp: true,
@@ -48,6 +54,9 @@ function createAuth() {
     },
     trustedOrigins: [
       process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+      "exp://*",
+      "xenode://*",
+      "http://localhost:8081",
     ],
     account: {
       accountLinking: {

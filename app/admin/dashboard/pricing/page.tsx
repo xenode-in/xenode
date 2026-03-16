@@ -4,7 +4,7 @@ import { PricingManager } from "@/components/admin/PricingManager";
 import { getPricingConfig } from "@/lib/config/getPricingConfig";
 
 export const metadata = {
-  title: "Pricing & Campaigns — Xenode Admin",
+  title: "Pricing & Campaigns | Xenode Admin",
 };
 
 export default async function PricingPage() {
@@ -16,7 +16,9 @@ export default async function PricingPage() {
   return (
     <div>
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-white">Pricing &amp; Campaigns</h1>
+        <h1 className="text-2xl font-bold text-white">
+          Pricing &amp; Campaigns
+        </h1>
         <p className="text-zinc-400 text-sm mt-1">
           Manage tier prices and run promotional campaigns. Changes are live
           immediately — no redeploy needed.
