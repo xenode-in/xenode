@@ -12,7 +12,7 @@ interface SuccessPageProps {
 }
 
 export const metadata = {
-  title: "Payment Successful — Xenode",
+  title: "Payment Successful | Xenode",
   robots: "noindex",
 };
 

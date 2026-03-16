@@ -3,6 +3,9 @@
 import Link from "next/link";
 import { Play, Music2 } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
+import { useCrypto } from "@/contexts/CryptoContext";
+import { decryptFileName } from "@/lib/crypto/fileEncryption";
+import { useState, useEffect } from "react";
 
 interface ObjectData {
   id: string;
@@ -12,6 +15,7 @@ interface ObjectData {
   createdAt: string;
   thumbnail?: string;
   isEncrypted?: boolean;
+  encryptedName?: string;
 }
 
 interface PreviewSectionProps {
@@ -31,6 +35,37 @@ function formatDuration(seconds: number) {
 }
 
 export function PreviewSection({ videos, images, audios }: PreviewSectionProps) {
+  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({});
+  const { isUnlocked } = useCrypto();
+
+  const allItems = [...videos, ...images, ...audios];
+
+  useEffect(() => {
+    if (!isUnlocked || !allItems.length) {
+      setDecryptedNames({});
+      return;
+    }
+
+    const decryptNames = async () => {
+      const newNames: Record<string, string> = {};
+      for (const item of allItems) {
+        if (item.isEncrypted && item.encryptedName && !decryptedNames[item.id]) {
+          try {
+            const name = await decryptFileName(item.encryptedName);
+            newNames[item.id] = name;
+          } catch (e) {
+            console.error("Failed to decrypt name", e);
+          }
+        }
+      }
+      if (Object.keys(newNames).length > 0) {
+        setDecryptedNames((prev) => ({ ...prev, ...newNames }));
+      }
+    };
+
+    decryptNames();
+  }, [allItems, isUnlocked]);
+
   const hasContent = videos.length > 0 || images.length > 0 || audios.length > 0;
 
   if (!hasContent) return null;
@@ -81,7 +116,9 @@ export function PreviewSection({ videos, images, audios }: PreviewSectionProps) 
             {/* File name */}
             <div className="absolute bottom-3 left-3 right-3">
               <p className="text-white text-sm font-medium truncate">
-                {getFileName(featuredVideo.key)}
+                {decryptedNames[featuredVideo.id] ||
+                  featuredVideo.encryptedName ||
+                  getFileName(featuredVideo.key)}
               </p>
               <p className="text-white/60 text-xs">{formatBytes(featuredVideo.size)}</p>
             </div>
@@ -110,7 +147,7 @@ export function PreviewSection({ videos, images, audios }: PreviewSectionProps) 
                   )}
                   <div className="absolute bottom-1 left-2 right-2">
                     <p className="text-white text-xs font-medium truncate drop-shadow">
-                      {getFileName(img.key)}
+                      {decryptedNames[img.id] || img.encryptedName || getFileName(img.key)}
                     </p>
                     <p className="text-white/60 text-[10px]">{formatBytes(img.size)}</p>
                   </div>

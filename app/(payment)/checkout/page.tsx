@@ -26,11 +26,16 @@ import CheckoutPage from "@/components/checkout/CheckoutPage";
 import type { BillingCycle } from "@/types/pricing";
 
 export const metadata = {
-  title: "Checkout — Xenode",
+  title: "Checkout | Xenode",
   robots: "noindex",
 };
 
-const VALID_CYCLES: BillingCycle[] = ["monthly", "yearly", "quarterly", "lifetime"];
+const VALID_CYCLES: BillingCycle[] = [
+  "monthly",
+  "yearly",
+  "quarterly",
+  "lifetime",
+];
 
 interface CheckoutPageProps {
   searchParams: Promise<{ plan?: string; cycle?: string }>;
@@ -71,7 +76,8 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
 
   // ── Auth ───────────────────────────────────────────────────────────────────
   const session = await getServerSession();
-  if (!session?.user) redirect(`/sign-in?next=/checkout?plan=${planSlug}&cycle=${billingCycle}`);
+  if (!session?.user)
+    redirect(`/sign-in?next=/checkout?plan=${planSlug}&cycle=${billingCycle}`);
 
   await dbConnect();
   const db = mongoose.connection.db;
@@ -81,7 +87,7 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
     .collection("user")
     .findOne(
       { _id: new mongoose.Types.ObjectId(session.user.id) },
-      { projection: { phone: 1, billingAddress: 1 } }
+      { projection: { phone: 1, billingAddress: 1 } },
     );
 
   // ── Proration credit ───────────────────────────────────────────────────────
@@ -106,7 +112,10 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
   const finalAmount = Math.max(1, campaignPrice - prorationCredit);
 
   // Strip Mongoose-specific fields before passing across server→client boundary
-  const { _id, __v, ...plainPlan } = plan as typeof plan & { _id?: unknown; __v?: unknown };
+  const { _id, __v, ...plainPlan } = plan as typeof plan & {
+    _id?: unknown;
+    __v?: unknown;
+  };
   void _id;
   void __v;
 

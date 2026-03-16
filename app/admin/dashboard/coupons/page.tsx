@@ -4,7 +4,7 @@ import dbConnect from "@/lib/mongodb";
 import Coupon from "@/models/Coupon";
 import { CouponManager } from "@/components/admin/CouponManager";
 
-export const metadata = { title: "Coupons — Xenode Admin" };
+export const metadata = { title: "Coupons | Xenode Admin" };
 
 export default async function CouponsPage() {
   const session = await getAdminSession();

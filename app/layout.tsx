@@ -19,14 +19,13 @@ const libreBaskerville = Libre_Baskerville({
   display: "swap",
 });
 
-const BASE_URL =
-  process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
 export const metadata: Metadata = {
   metadataBase: new URL(BASE_URL),
   title: {
     default: "Xenode — Store Files. Share Securely. Stay Private.",
-    template: "%s — Xenode",
+    template: "%s | Xenode",
   },
   description:
     "Xenode is end-to-end encrypted cloud storage built for people who value their privacy. No one, not even us, can read your files.",
@@ -85,11 +84,31 @@ export const metadata: Metadata = {
       { url: "/icons/apple-icon-60x60.png", sizes: "60x60", type: "image/png" },
       { url: "/icons/apple-icon-72x72.png", sizes: "72x72", type: "image/png" },
       { url: "/icons/apple-icon-76x76.png", sizes: "76x76", type: "image/png" },
-      { url: "/icons/apple-icon-114x114.png", sizes: "114x114", type: "image/png" },
-      { url: "/icons/apple-icon-120x120.png", sizes: "120x120", type: "image/png" },
-      { url: "/icons/apple-icon-144x144.png", sizes: "144x144", type: "image/png" },
-      { url: "/icons/apple-icon-152x152.png", sizes: "152x152", type: "image/png" },
-      { url: "/icons/apple-icon-180x180.png", sizes: "180x180", type: "image/png" },
+      {
+        url: "/icons/apple-icon-114x114.png",
+        sizes: "114x114",
+        type: "image/png",
+      },
+      {
+        url: "/icons/apple-icon-120x120.png",
+        sizes: "120x120",
+        type: "image/png",
+      },
+      {
+        url: "/icons/apple-icon-144x144.png",
+        sizes: "144x144",
+        type: "image/png",
+      },
+      {
+        url: "/icons/apple-icon-152x152.png",
+        sizes: "152x152",
+        type: "image/png",
+      },
+      {
+        url: "/icons/apple-icon-180x180.png",
+        sizes: "180x180",
+        type: "image/png",
+      },
     ],
     other: [
       {
