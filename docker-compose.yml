@@ -11,6 +11,7 @@ services:
     environment:
       - MONGODB_URI=mongodb://mongo:27017/Xenode
       - MONGODB_LOGS_URI=mongodb://mongo-logs:27017/Xenode-logs
+      - REDIS_URL=redis://redis:6379
       - NEXT_TELEMETRY_DISABLED=1
       # Optional: PostHog
       - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY}
@@ -19,6 +20,27 @@ services:
     depends_on:
       - mongo
       - mongo-logs
+      - redis
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: always
+    environment:
+      - MONGODB_URI=mongodb://mongo:27017/Xenode
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - mongo
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - 6379:6379
+    volumes:
+      - redis-data:/data
 
   mongo:
     image: mongo
@@ -39,3 +61,4 @@ services:
 volumes:
   mongo-data:
   mongo-logs-data:
+  redis-data:

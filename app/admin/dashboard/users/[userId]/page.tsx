@@ -5,7 +5,7 @@ import Usage from "@/models/Usage";
 import ShareLink from "@/models/ShareLink";
 import ApiKey from "@/models/ApiKey";
 import Bucket from "@/models/Bucket";
-import { formatBytes, bytesToGB } from "@/lib/metering/usage";
+import { formatBytes, bytesToGB } from "@/lib/utils/format";
 import mongoose from "mongoose";
 import {
   HardDrive,

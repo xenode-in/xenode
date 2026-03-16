@@ -2,7 +2,7 @@ import { getAdminSession } from "@/lib/admin/session";
 import { redirect } from "next/navigation";
 import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
-import { formatBytes } from "@/lib/metering/usage";
+import { formatBytes } from "@/lib/utils/format";
 import mongoose from "mongoose";
 
 export const dynamic = "force-dynamic";

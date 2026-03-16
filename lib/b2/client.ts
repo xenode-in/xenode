@@ -1,9 +1,5 @@
 import { S3Client } from "@aws-sdk/client-s3";
 
-const B2_ENDPOINT =
-  process.env.B2_ENDPOINT || "https://s3.us-west-004.backblazeb2.com";
-const B2_REGION = process.env.B2_REGION || "us-west-004";
-
 let _client: S3Client | null = null;
 
 /**
@@ -12,6 +8,9 @@ let _client: S3Client | null = null;
  */
 export function getS3Client(): S3Client {
   if (!_client) {
+    const B2_ENDPOINT =
+      process.env.B2_ENDPOINT || "https://s3.us-west-004.backblazeb2.com";
+    const B2_REGION = process.env.B2_REGION || "us-west-004";
     const B2_KEY_ID = process.env.B2_KEY_ID;
     const B2_APPLICATION_KEY = process.env.B2_APPLICATION_KEY;
 
@@ -44,4 +43,5 @@ export function getS3Client(): S3Client {
   return _client;
 }
 
-export { B2_REGION, B2_ENDPOINT };
+export const getB2Region = () => process.env.B2_REGION || "us-west-004";
+export const getB2Endpoint = () => process.env.B2_ENDPOINT || "https://s3.us-west-004.backblazeb2.com";
