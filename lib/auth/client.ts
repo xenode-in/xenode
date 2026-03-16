@@ -1,19 +1,12 @@
 import { createAuthClient } from "better-auth/react";
-import { expoClient } from "@better-auth/expo/client";
-import * as SecureStore from "expo-secure-store";
+import { expo } from "@better-auth/expo";
 
 export const authClient = createAuthClient({
   baseURL:
     process.env.EXPO_PUBLIC_APP_URL ||
     process.env.NEXT_PUBLIC_APP_URL ||
     "http://localhost:3000",
-  plugins: [
-    expoClient({
-      scheme: "xenode",
-      storagePrefix: "xenode",
-      storage: SecureStore,
-    }),
-  ],
+  plugins: [expo()],
 });
 
 export const { signIn, signUp, signOut, useSession } = authClient;
