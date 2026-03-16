@@ -20,7 +20,7 @@ const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
 
 /**
- * GET /api/objects?bucketId=xxx&page=1&limit=50 - List objects in a bucket
+ * GET /api/objects?bucketId=xxx&page=1&limit=50&contentType=image - List objects in a bucket
  */
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
@@ -51,6 +51,9 @@ export async function GET(request: NextRequest) {
     );
     const skip = (page - 1) * limit;
 
+    // Optional contentType filter (e.g. "image", "video", "audio")
+    const contentTypeFilter = searchParams.get("contentType");
+
     await dbConnect();
 
     // Verify bucket ownership — only fetch the two fields we actually use
@@ -67,16 +70,19 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    // Build query — replace $regex with a range query for system-bucket prefix
-    // scans so MongoDB can satisfy both the filter and the createdAt sort with
-    // the compound index { key:1, bucketId:1 } without an in-memory sort step.
+    // Build query
     const query: Record<string, unknown> = { bucketId };
     if (bucket.userId === "system") {
       const prefix = `users/${userId}/`;
       query.key = { $gte: prefix, $lt: prefix + "\uffff" };
     }
 
-    // Fire count + page fetch in parallel — saves one full RTT vs sequential
+    // Apply optional contentType filter
+    if (contentTypeFilter) {
+      query.contentType = { $regex: `^${contentTypeFilter}/`, $options: "i" };
+    }
+
+    // Fire count + page fetch in parallel
     const [total, objects] = await Promise.all([
       StorageObject.countDocuments(query),
       StorageObject.find(query)
