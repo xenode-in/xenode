@@ -70,14 +70,24 @@ export function useVideoStream(
       if (!isActive) return;
       
       try {
-        const sourceBuffer = mediaSource.addSourceBuffer(
-          MediaSource.isTypeSupported(mimeType) ? mimeType : 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"'
-        );
+        const typeToUse = MediaSource.isTypeSupported(mimeType) 
+          ? mimeType 
+          : MediaSource.isTypeSupported('video/webm; codecs="vp8, vorbis"') 
+            ? 'video/webm; codecs="vp8, vorbis"' 
+            : 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+
+        if (!MediaSource.isTypeSupported(typeToUse)) {
+          setError("Video format not supported by browser");
+          return;
+        }
+
+        const sourceBuffer = mediaSource.addSourceBuffer(typeToUse);
         sourceBufferRef.current = sourceBuffer;
 
         sourceBuffer.addEventListener("updateend", () => {
           isAppendingRef.current = false;
           processQueue();
+          checkBufferAndFetch();
         });
 
         // Initial buffer
@@ -88,7 +98,7 @@ export function useVideoStream(
     });
 
     const processQueue = () => {
-      if (!isActive || !sourceBufferRef.current || sourceBufferRef.current.updating || activeBufferQueue.current.length === 0) {
+      if (!isActive || !sourceBufferRef.current || sourceBufferRef.current.updating || activeBufferQueue.current.length === 0 || isAppendingRef.current) {
         return;
       }
 
@@ -97,8 +107,26 @@ export function useVideoStream(
       try {
         sourceBufferRef.current.appendBuffer(buffer);
       } catch (e: any) {
+        isAppendingRef.current = false;
         console.error("AppendBuffer error:", e);
         setError(e.message || "Failed to append buffer");
+      }
+    };
+
+    const checkBufferAndFetch = () => {
+      if (!isActive || isFetchingRef.current || !videoElement || !sourceBufferRef.current) return;
+      
+      const buffered = sourceBufferRef.current.buffered;
+      let bufferedEnd = 0;
+      if (buffered.length > 0) {
+        bufferedEnd = buffered.end(buffered.length - 1);
+      }
+
+      const currentTime = videoElement.currentTime;
+      if (bufferedEnd - currentTime < 15 && currentChunkIndexRef.current < chunkCount) {
+        fetchNextChunk();
+      } else if (currentChunkIndexRef.current >= chunkCount && mediaSource.readyState === "open" && !sourceBufferRef.current.updating) {
+        mediaSource.endOfStream();
       }
     };
 
@@ -133,24 +161,6 @@ export function useVideoStream(
           // Recursively fetch if we need more buffering
           checkBufferAndFetch();
         }
-      }
-    };
-
-    const checkBufferAndFetch = () => {
-      if (!isActive || isFetchingRef.current || !videoElement || !sourceBufferRef.current) return;
-      
-      const buffered = sourceBufferRef.current.buffered;
-      let bufferedEnd = 0;
-      if (buffered.length > 0) {
-        bufferedEnd = buffered.end(buffered.length - 1);
-      }
-
-      // If less than 15 seconds of video is buffered ahead of current time, fetch next
-      const currentTime = videoElement.currentTime;
-      if (bufferedEnd - currentTime < 15 && currentChunkIndexRef.current < chunkCount) {
-        fetchNextChunk();
-      } else if (currentChunkIndexRef.current >= chunkCount && mediaSource.readyState === "open" && !sourceBufferRef.current.updating) {
-        mediaSource.endOfStream();
       }
     };
 
