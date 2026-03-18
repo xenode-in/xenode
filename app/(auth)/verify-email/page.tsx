@@ -73,14 +73,17 @@ export default function VerifyEmailPage() {
   }
 
   // If there's no session, user shouldn't be here
-  if (!session) {
-    router.push("/login");
-    return null;
-  }
+  useEffect(() => {
+    if (!isPending) {
+      if (!session) {
+        router.push("/login");
+      } else if (session.user.emailVerified) {
+        router.push((session.user as any).onboarded ? "/dashboard" : "/onboarding");
+      }
+    }
+  }, [session, isPending, router]);
 
-  // If already verified, they shouldn't be here
-  if (session.user.emailVerified) {
-    router.push((session.user as any).onboarded ? "/dashboard" : "/onboarding");
+  if (!session || session.user.emailVerified) {
     return null;
   }
 
