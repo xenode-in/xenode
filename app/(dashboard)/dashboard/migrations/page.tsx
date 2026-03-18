@@ -191,6 +191,7 @@ export default function MigrationsPage() {
         onSuccess={handleMigrationCreated}
         hasGoogleAccount={hasGoogleAccount}
         googleAccountId={accounts.find(acc => acc.providerId === "google")?.accountId}
+        onReconnect={handleConnectGoogle}
       />
 
       <div className="bg-card border border-border rounded-xl overflow-hidden">

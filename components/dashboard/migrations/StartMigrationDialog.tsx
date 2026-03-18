@@ -24,6 +24,7 @@ interface StartMigrationDialogProps {
   onSuccess: () => void;
   hasGoogleAccount: boolean;
   googleAccountId?: string;
+  onReconnect?: () => void;
 }
 
 export function StartMigrationDialog({
@@ -32,6 +33,7 @@ export function StartMigrationDialog({
   onSuccess,
   hasGoogleAccount,
   googleAccountId,
+  onReconnect,
 }: StartMigrationDialogProps) {
   const [provider, setProvider] = useState<string>("GOOGLE_DRIVE");
   const [destinationBucketId, setDestinationBucketId] = useState<string>("");
@@ -82,9 +84,14 @@ export function StartMigrationDialog({
           const newSelection = new Set([...prev, ...folderIds]);
           return Array.from(newSelection);
         });
+      } else if (res.status === 401 || res.status === 500) {
+        setError("Google session expired. Please reconnect your account. (Important: Login with same email id)");
+      } else {
+        setError("Failed to fetch folders. Please try again.");
       }
     } catch (err) {
       console.error(err);
+      setError("An unexpected error occurred while fetching folders.");
     } finally {
       setIsLoadingFolders(false);
     }
@@ -307,8 +314,19 @@ export function StartMigrationDialog({
 
           {/* Error */}
           {error && (
-            <div className="text-red-500 text-sm bg-red-100 p-2 rounded">
-              {error}
+            <div className="text-red-500 text-sm bg-red-100 p-3 rounded flex flex-col gap-2">
+              <span>{error}</span>
+              {error.includes("session expired") && onReconnect && (
+                <Button 
+                  type="button" 
+                  variant="destructive" 
+                  size="sm" 
+                  onClick={onReconnect}
+                  className="w-fit"
+                >
+                  Reconnect Google
+                </Button>
+              )}
             </div>
           )}
 
