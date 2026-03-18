@@ -379,7 +379,7 @@ export default function SharedFilePage() {
                           fileId: token,
                           rawDEK,
                           chunkSize: data.chunkSize || (2 * 1024 * 1024),
-                          chunkCount: data.chunkCount || data.chunkUrls!.length,
+                          chunkCount: data.chunkCount || (data.chunkUrls ? data.chunkUrls.length : 0),
                           chunkIvs: chunkIvsArr,
                           urls: data.chunkUrls,
                           contentType: data.contentType,
@@ -393,7 +393,7 @@ export default function SharedFilePage() {
                       fileId: token,
                       rawDEK,
                       chunkSize: data.chunkSize || (2 * 1024 * 1024),
-                      chunkCount: data.chunkCount || data.chunkUrls!.length,
+                      chunkCount: data.chunkCount || (data.chunkUrls ? data.chunkUrls.length : 0),
                       chunkIvs: chunkIvsArr,
                       urls: data.chunkUrls,
                       contentType: data.contentType,
@@ -512,24 +512,60 @@ export default function SharedFilePage() {
         // Chunked file: download chunks separately and decrypt
         if (data.chunkUrls && data.chunkUrls.length > 0 && data.chunkSize && data.chunkCount && data.chunkIvs) {
           const chunkIvsArr: string[] = JSON.parse(data.chunkIvs);
-          const plaintextChunks: ArrayBuffer[] = [];
+          const plaintextChunks: ArrayBuffer[] = new Array(data.chunkCount);
           const { decryptChunk } = await import("@/lib/crypto/fileEncryption");
           
           let received = 0;
-          for (let i = 0; i < data.chunkCount; i++) {
-            const chunkRes = await fetch(data.chunkUrls[i]);
-            if (!chunkRes.ok) throw new Error(`Failed to fetch chunk ${i}`);
-            const chunkBuf = await chunkRes.arrayBuffer();
-            received += chunkBuf.byteLength;
-            setDownloadReceived(received);
-            
-            // Approximation for chunked download
-            const expectedTotal = data.chunkCount * (data.chunkSize + 16);
-            setDownloadProgress(Math.round((received / expectedTotal) * 100));
+          let currentIndex = 0;
+          const concurrency = 4;
 
-            const plain = await decryptChunk(chunkBuf, dek, chunkIvsArr[i]);
-            plaintextChunks.push(plain);
-          }
+          const downloadWorker = async () => {
+            while (currentIndex < (data.chunkCount || data.chunkUrls!.length)) {
+              const i = currentIndex++;
+              const chunkRes = await fetch(data.chunkUrls![i]);
+              if (!chunkRes.ok) throw new Error(`Failed to fetch chunk ${i}`);
+              
+              // Read via stream for smoother progress updates
+              const reader = chunkRes.body!.getReader();
+              const chunks: Uint8Array[] = [];
+              let chunkReceived = 0;
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                received += value.byteLength;
+                chunkReceived += value.byteLength;
+                
+                // Update UI smoothly
+                if (chunkReceived > 250 * 1024) {
+                   setDownloadReceived(received);
+                   const expectedTotal = (data.chunkCount || data.chunkUrls!.length) * ((data.chunkSize || 0) + 16);
+                   setDownloadProgress(Math.round((received / expectedTotal) * 100));
+                   chunkReceived = 0;
+                }
+              }
+              
+              setDownloadReceived(received);
+              const expectedTotal = (data.chunkCount || data.chunkUrls!.length) * ((data.chunkSize || 0) + 16);
+              setDownloadProgress(Math.round((received / expectedTotal) * 100));
+
+              // Combine chunk bytes
+              const chunkBuf = new Uint8Array(chunks.reduce((acc, c) => acc + c.byteLength, 0));
+              let offset = 0;
+              for (const c of chunks) {
+                chunkBuf.set(c, offset);
+                offset += c.byteLength;
+              }
+
+              // Decrypt concurrently
+              const plain = await decryptChunk(chunkBuf.buffer, dek, chunkIvsArr[i]);
+              plaintextChunks[i] = plain;
+            }
+          };
+
+          const workers = Array.from({ length: Math.min(concurrency, data.chunkCount || data.chunkUrls!.length) }, () => downloadWorker());
+          await Promise.all(workers);
+
           setDownloadProgress(100);
           setDownloadReceived(meta.size);
           blob = new Blob(plaintextChunks, { type: data.contentType });
@@ -555,19 +591,54 @@ export default function SharedFilePage() {
       } else {
         // Not encrypted
         if (data.chunkUrls && data.chunkUrls.length > 0) {
-          const chunks: BlobPart[] = [];
+          const chunks: BlobPart[] = new Array(data.chunkCount || data.chunkUrls.length);
           let received = 0;
-          for (const chunkUrl of data.chunkUrls) {
-            const chunkRes = await fetch(chunkUrl);
-            if (!chunkRes.ok) throw new Error("Failed to fetch chunk");
-            const chunkBuf = await chunkRes.arrayBuffer();
-            received += chunkBuf.byteLength;
-            setDownloadReceived(received);
-            
-            const expectedTotal = data.chunkCount ? data.chunkCount * (data.chunkSize || meta.size) : meta.size;
-            setDownloadProgress(Math.round((received / expectedTotal) * 100));
-            chunks.push(chunkBuf);
-          }
+          let currentIndex = 0;
+          const concurrency = 4;
+          
+          const downloadWorker = async () => {
+            while (currentIndex < data.chunkUrls!.length) {
+              const i = currentIndex++;
+              const chunkUrl = data.chunkUrls![i];
+              const chunkRes = await fetch(chunkUrl);
+              if (!chunkRes.ok) throw new Error("Failed to fetch chunk");
+              
+              // Read via stream for smoother progress updates
+              const reader = chunkRes.body!.getReader();
+              const chunkArrays: Uint8Array[] = [];
+              let chunkReceived = 0;
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunkArrays.push(value);
+                received += value.byteLength;
+                chunkReceived += value.byteLength;
+                
+                if (chunkReceived > 250 * 1024) {
+                   setDownloadReceived(received);
+                   const expectedTotal = data.chunkCount ? data.chunkCount * (data.chunkSize || meta.size) : meta.size;
+                   setDownloadProgress(Math.round((received / expectedTotal) * 100));
+                   chunkReceived = 0;
+                }
+              }
+              
+              setDownloadReceived(received);
+              const expectedTotal = data.chunkCount ? data.chunkCount * (data.chunkSize || meta.size) : meta.size;
+              setDownloadProgress(Math.round((received / expectedTotal) * 100));
+
+              const chunkBuf = new Uint8Array(chunkArrays.reduce((acc, c) => acc + c.byteLength, 0));
+              let offset = 0;
+              for (const c of chunkArrays) {
+                chunkBuf.set(c, offset);
+                offset += c.byteLength;
+              }
+              chunks[i] = chunkBuf.buffer;
+            }
+          };
+
+          const workers = Array.from({ length: Math.min(concurrency, data.chunkUrls.length) }, () => downloadWorker());
+          await Promise.all(workers);
+
           setDownloadProgress(100);
           setDownloadReceived(meta.size);
           blob = new Blob(chunks, { type: data.contentType });

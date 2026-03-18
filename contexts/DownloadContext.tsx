@@ -17,6 +17,8 @@ import {
   appendChunk,
   clearCache,
   getCachedIds,
+  truncateCache,
+  getNextChunkIndex,
 } from "@/lib/downloadCache";
 
 export interface DownloadTask {
@@ -210,10 +212,12 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
             : obj.size;
           const reader = ciphertextRes.body.getReader();
 
+          let legacyChunkIndex = await getNextChunkIndex(obj.id); // Continue safely from cache
+
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            await appendChunk(obj.id, value);
+            await appendChunk(obj.id, value, legacyChunkIndex++);
             receivedLength += value.length;
             updateTask(obj.id, {
               receivedBytes: receivedLength, // ADDED
@@ -228,41 +232,123 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
           const totalCipherSize =
             (data.chunkCount - 1) * cipherChunkSize +
             (obj.size - (data.chunkCount - 1) * data.chunkSize + 16);
-          const startChunkIndex = Math.floor(resumeFrom / cipherChunkSize);
-          const chunkOffset = resumeFrom % cipherChunkSize;
+            
+          // Always resume from a complete-chunk boundary
+          const resumeFromAligned = Math.floor(resumeFrom / cipherChunkSize) * cipherChunkSize;
+          const startChunkIndex = resumeFromAligned / cipherChunkSize;
+          const chunkOffset = 0; // Discard partial offsets
 
-          for (let i = startChunkIndex; i < data.chunkCount; i++) {
-            if (controller.signal.aborted) break;
-
-            const chunkUrl = data.chunkUrls[i];
-            const fetchHeaders: Record<string, string> = {};
-
-            if (i === startChunkIndex && chunkOffset > 0) {
-              fetchHeaders["Range"] = `bytes=${chunkOffset}-`;
-            }
-
-            const chunkRes = await fetch(chunkUrl, {
-              headers: fetchHeaders,
-              signal: controller.signal,
+          if (resumeFrom > resumeFromAligned) {
+            await truncateCache(obj.id, resumeFromAligned);
+            receivedLength = resumeFromAligned;
+            
+            // Update UI state immediately to reflect truncated bytes
+            updateTask(obj.id, {
+              receivedBytes: receivedLength,
+              resumeFrom: receivedLength,
+              progress: totalCipherSize ? Math.round((receivedLength / totalCipherSize) * 100) : 0,
             });
-            if ((!chunkRes.ok && chunkRes.status !== 206) || !chunkRes.body) {
-              throw new Error(`Failed to download chunk ${i}`);
-            }
-
-            const reader = chunkRes.body.getReader();
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              await appendChunk(obj.id, value);
-              receivedLength += value.length;
-              updateTask(obj.id, {
-                receivedBytes: receivedLength, // ADDED
-                progress: totalCipherSize
-                  ? Math.round((receivedLength / totalCipherSize) * 100)
-                  : 0,
-              });
-            }
           }
+
+          // Process chunks concurrently
+          const concurrency = 4;
+          let currentIndex = startChunkIndex;
+
+          // Queue for ordered appending
+          const downloadedChunks = new Map<number, Uint8Array[]>();
+          let nextIndexToAppend = startChunkIndex;
+          let appendPromise = Promise.resolve(); // Shared promise chain
+
+          const downloadWorker = async () => {
+            while (currentIndex < data.chunkCount) {
+              if (controller.signal.aborted) break;
+
+              const i = currentIndex++;
+              const chunkUrl = data.chunkUrls[i];
+              const fetchHeaders: Record<string, string> = {};
+
+              // chunkOffset is always 0 now, so this check could be removed, but kept for logic clarity
+              if (i === startChunkIndex && chunkOffset > 0) {
+                fetchHeaders["Range"] = `bytes=${chunkOffset}-`;
+              }
+
+              try {
+                const chunkRes = await fetch(chunkUrl, {
+                  headers: fetchHeaders,
+                  signal: controller.signal,
+                });
+                if (
+                  (!chunkRes.ok && chunkRes.status !== 206) ||
+                  !chunkRes.body
+                ) {
+                  throw new Error(`Failed to download chunk ${i}`);
+                }
+
+                const reader = chunkRes.body.getReader();
+                const chunks: Uint8Array[] = [];
+                let chunkReceived = 0;
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  chunks.push(value);
+                  chunkReceived += value.length;
+                  receivedLength += value.length;
+
+                  // Only update UI every 250kb or at the end to prevent overwhelming React state
+                  if (chunkReceived > 250 * 1024) {
+                    updateTask(obj.id, {
+                      receivedBytes: receivedLength,
+                      progress: totalCipherSize
+                        ? Math.round((receivedLength / totalCipherSize) * 100)
+                        : 0,
+                    });
+                    chunkReceived = 0;
+                  }
+                }
+
+                // Final UI update for this chunk
+                updateTask(obj.id, {
+                  receivedBytes: receivedLength,
+                  progress: totalCipherSize
+                    ? Math.round((receivedLength / totalCipherSize) * 100)
+                    : 0,
+                });
+
+                const chunkBuf = new Uint8Array(chunks.reduce((acc, c) => acc + c.byteLength, 0));
+                let offset = 0;
+                for (const c of chunks) {
+                  chunkBuf.set(c, offset);
+                  offset += c.byteLength;
+                }
+                downloadedChunks.set(i, [chunkBuf]);
+
+                // Chain the append — only ONE append sequence runs at a time
+                appendPromise = appendPromise.then(async () => {
+                  while (downloadedChunks.has(nextIndexToAppend)) {
+                    const orderedChunks =
+                      downloadedChunks.get(nextIndexToAppend)!;
+                    for (const c of orderedChunks) {
+                      await appendChunk(obj.id, c, nextIndexToAppend);
+                    }
+                    downloadedChunks.delete(nextIndexToAppend);
+                    nextIndexToAppend++;
+                  }
+                });
+              } catch (e) {
+                if (controller.signal.aborted) return;
+                throw e;
+              }
+            }
+          };
+
+          const workers = Array.from(
+            {
+              length: Math.min(concurrency, data.chunkCount - startChunkIndex),
+            },
+            () => downloadWorker(),
+          );
+          await Promise.all(workers);
+          await appendPromise; // CRITICAL: wait for all pending appends to finish
         }
 
         if (controller.signal.aborted) return;
@@ -298,13 +384,16 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         const a = document.createElement("a");
         a.href = objectUrl;
         a.download = name;
+        document.body.appendChild(a); // Added: must append to DOM for click to work in some browsers
         a.click();
+        document.body.removeChild(a); // Added: clean up
         URL.revokeObjectURL(objectUrl);
 
         updateTask(obj.id, { status: "completed" });
         abortControllers.delete(obj.id);
       } catch (err: unknown) {
         if (err instanceof Error && err.name === "AbortError") return;
+        console.log("Download error:", err);
         updateTask(obj.id, {
           status: "failed",
           error: err instanceof Error ? err.message : "Unknown error",
