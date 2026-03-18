@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -94,6 +94,7 @@ interface BucketData {
 
 export default function FilesPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
 
@@ -141,7 +142,12 @@ export default function FilesPage() {
         if (data.bucket) {
           setBucketId(data.bucket._id);
           if (data.rootPrefix) {
-            setCurrentPrefix(data.rootPrefix);
+            const folderParam = searchParams.get("folder");
+            if (folderParam) {
+              setCurrentPrefix(data.rootPrefix + folderParam);
+            } else {
+              setCurrentPrefix(data.rootPrefix);
+            }
             setRootPrefix(data.rootPrefix);
           }
         } else {
@@ -158,6 +164,26 @@ export default function FilesPage() {
 
   // Navigation State
   const [currentPrefix, setCurrentPrefix] = useState("");
+
+  const handleNavigation = useCallback((newPrefix: string) => {
+    setCurrentPrefix(newPrefix);
+    if (newPrefix === rootPrefix) {
+      router.push('/dashboard/files');
+    } else {
+      const relative = newPrefix.slice(rootPrefix.length);
+      router.push(`/dashboard/files?folder=${encodeURIComponent(relative)}`);
+    }
+  }, [rootPrefix, router]);
+
+  // Sync URL changes to currentPrefix when user uses back/forward buttons
+  useEffect(() => {
+    if (!rootPrefix) return;
+    const folderParam = searchParams.get("folder");
+    const expectedPrefix = folderParam ? `${rootPrefix}${folderParam}` : rootPrefix;
+    if (currentPrefix !== expectedPrefix) {
+      setCurrentPrefix(expectedPrefix);
+    }
+  }, [searchParams, rootPrefix]);
   const viewObjects = useMemo(() => {
     const folderMap = new Map<string, ObjectData>();
     const files: ObjectData[] = [];
@@ -991,7 +1017,7 @@ export default function FilesPage() {
   };
 
   const navigateToFolder = (folderName: string) => {
-    setCurrentPrefix((prev) => `${prev}${folderName}/`);
+    handleNavigation(`${currentPrefix}${folderName}/`);
   };
 
   const navigateUp = () => {
@@ -1001,9 +1027,9 @@ export default function FilesPage() {
     const newPath = parts.length > 0 ? `${parts.join("/")}/` : "";
     // Ensure we don't go below rootPrefix
     if (newPath.length < rootPrefix.length) {
-      setCurrentPrefix(rootPrefix);
+      handleNavigation(rootPrefix);
     } else {
-      setCurrentPrefix(newPath);
+      handleNavigation(newPath);
     }
   };
 
@@ -1012,7 +1038,7 @@ export default function FilesPage() {
     const relativePrefix = currentPrefix.slice(rootPrefix.length);
     const parts = relativePrefix.split("/").filter(Boolean);
     const newRelativePath = parts.slice(0, index + 1).join("/");
-    setCurrentPrefix(`${rootPrefix}${newRelativePath}/`);
+    handleNavigation(`${rootPrefix}${newRelativePath}/`);
   };
 
   if (loading) {
@@ -1093,7 +1119,7 @@ export default function FilesPage() {
           {/* Breadcrumbs */}
           <div className="flex items-center gap-2 ml-3 lg:ml-7 mt-3 text-sm overflow-x-auto scrollbar-hide">
             <button
-              onClick={() => setCurrentPrefix(rootPrefix)}
+              onClick={() => handleNavigation(rootPrefix)}
               className={`flex items-center hover:text-primary transition-colors shrink-0 ${
                 currentPrefix === rootPrefix
                   ? "text-foreground"
