@@ -34,22 +34,35 @@ function formatDuration(seconds: number) {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export function PreviewSection({ videos, images, audios }: PreviewSectionProps) {
-  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({});
+export function PreviewSection({
+  videos,
+  images,
+  audios,
+}: PreviewSectionProps) {
+  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>(
+    {},
+  );
   const { isUnlocked } = useCrypto();
 
-  const allItems = useMemo(() => [...videos, ...images, ...audios], [videos, images, audios]);
+  const allItems = useMemo(
+    () => [...videos, ...images, ...audios],
+    [videos, images, audios],
+  );
 
   useEffect(() => {
     if (!isUnlocked || !allItems.length) {
-      setDecryptedNames((prev) => Object.keys(prev).length ? {} : prev);
+      setDecryptedNames((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
 
     const decryptNames = async () => {
       const newNames: Record<string, string> = {};
       for (const item of allItems) {
-        if (item.isEncrypted && item.encryptedName && !decryptedNames[item.id]) {
+        if (
+          item.isEncrypted &&
+          item.encryptedName &&
+          !decryptedNames[item.id]
+        ) {
           try {
             const name = await decryptFileName(item.encryptedName);
             newNames[item.id] = name;
@@ -66,7 +79,8 @@ export function PreviewSection({ videos, images, audios }: PreviewSectionProps) 
     decryptNames();
   }, [allItems, isUnlocked]);
 
-  const hasContent = videos.length > 0 || images.length > 0 || audios.length > 0;
+  const hasContent =
+    videos.length > 0 || images.length > 0 || audios.length > 0;
 
   if (!hasContent) return null;
 
@@ -120,7 +134,9 @@ export function PreviewSection({ videos, images, audios }: PreviewSectionProps) 
                   featuredVideo.encryptedName ||
                   getFileName(featuredVideo.key)}
               </p>
-              <p className="text-white/60 text-xs">{formatBytes(featuredVideo.size)}</p>
+              <p className="text-white/60 text-xs">
+                {formatBytes(featuredVideo.size)}
+              </p>
             </div>
           </div>
         )}
@@ -147,9 +163,13 @@ export function PreviewSection({ videos, images, audios }: PreviewSectionProps) 
                   )}
                   <div className="absolute bottom-1 left-2 right-2">
                     <p className="text-white text-xs font-medium truncate drop-shadow">
-                      {decryptedNames[img.id] || img.encryptedName || getFileName(img.key)}
+                      {decryptedNames[img.id] ||
+                        img.encryptedName ||
+                        getFileName(img.key)}
                     </p>
-                    <p className="text-white/60 text-[10px]">{formatBytes(img.size)}</p>
+                    <p className="text-white/60 text-[10px]">
+                      {formatBytes(img.size)}
+                    </p>
                   </div>
                 </Link>
               ))}
@@ -169,7 +189,7 @@ export function PreviewSection({ videos, images, audios }: PreviewSectionProps) 
                     key={i}
                     className="flex-1 rounded-full bg-primary/40"
                     style={{
-                      height: `${20 + Math.sin(i * 0.8) * 12 + Math.cos(i * 1.3) * 8}px`,
+                      height: `${Math.round(20 + Math.sin(i * 0.8) * 12 + Math.cos(i * 1.3) * 8)}px`,
                       minWidth: "2px",
                     }}
                   />
