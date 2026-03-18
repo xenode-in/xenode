@@ -10,7 +10,7 @@
  * Cache size is approximated via the `x-content-length` header stored on write.
  */
 
-const CACHE_NAME = "xenode-preview-v1";
+const CACHE_NAME = "xenode-dl-cache-v2";
 const TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 export const MAX_CACHE_BYTES = 500 * 1024 * 1024; // 500 MB — files above this are not cached
 
