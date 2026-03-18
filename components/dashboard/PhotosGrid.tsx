@@ -147,7 +147,7 @@ export function PhotosGrid() {
 
   useEffect(() => {
     if (!isUnlocked || !photos.length) {
-      setDecryptedNames({});
+      setDecryptedNames((prev) => Object.keys(prev).length ? {} : prev);
       return;
     }
 
