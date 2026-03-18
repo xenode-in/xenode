@@ -3,7 +3,7 @@
 import { useState, Suspense, lazy, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { signIn, signUp } from "@/lib/auth/client";
+import { signIn, signUp, authClient } from "@/lib/auth/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -70,6 +70,7 @@ export default function LoginPage() {
           name: formData.name,
           email: formData.email,
           password: formData.password,
+          callbackURL: `${window.location.origin}/onboarding`, // Optional redirect after verification
         });
         if (result.error) {
           setError(result.error.message || "Failed to create account");
@@ -78,7 +79,18 @@ export default function LoginPage() {
       }
 
       sessionStorage.setItem("xenode-vault-pw", formData.password);
-      router.push("/dashboard");
+      
+      // If logging in, check if verified. Otherwise, newly signed up users go to verify-email
+      if (isLogin) {
+        const { data } = await authClient.getSession();
+        if (data?.user?.emailVerified === false) {
+          router.push("/verify-email");
+        } else {
+          router.push("/dashboard");
+        }
+      } else {
+        router.push("/verify-email");
+      }
     } catch {
       setError("Something went wrong. Please try again.");
     } finally {
