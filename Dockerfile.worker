@@ -1,22 +1,68 @@
-FROM node:20-alpine AS base
-
-FROM base AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-# We use tsx to run the worker, no compilation needed for now,
-# but in a real prod env you might tsc compile it.
-
-FROM base AS runner
+# Stage 1: Build a single JavaScript bundle using esbuild
+FROM node:20-alpine AS builder
 WORKDIR /app
 
+# Instead of installing the massive Next.js monorepo dependencies,
+# we only install exactly what the worker and its imports need to compile.
+RUN npm init -y && npm install \
+  esbuild \
+  typescript \
+  mongoose \
+  mongodb \
+  bullmq \
+  ioredis \
+  dotenv \
+  posthog-node \
+  @aws-sdk/client-s3 \
+  @aws-sdk/lib-storage \
+  googleapis \
+  bcryptjs
+
+# Copy the specific directories needed for the worker
+COPY worker ./worker
+COPY lib ./lib
+COPY models ./models
+COPY tsconfig.json ./
+
+# Bundle the worker entrypoint into a single file `dist/worker.js`
+# Externalize the dependencies we just installed so they aren't bundled twice
+# (Native modules like mongoose MUST be externalized)
+RUN npx esbuild worker/index.ts \
+  --bundle \
+  --platform=node \
+  --target=node20 \
+  --outfile=dist/worker.js \
+  --external:mongoose \
+  --external:mongodb \
+  --external:bullmq \
+  --external:ioredis \
+  --external:bcryptjs \
+  --external:dotenv \
+  --external:posthog-node \
+  --external:@aws-sdk/client-s3 \
+  --external:@aws-sdk/lib-storage \
+  --external:googleapis
+
+# Stage 2: The minimal production runner
+FROM node:20-alpine AS runner
+WORKDIR /app
 ENV NODE_ENV=production
 
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/package.json ./
-COPY --from=builder /app/worker ./worker
-COPY --from=builder /app/lib ./lib
-COPY --from=builder /app/models ./models
+# Install ONLY the production dependencies the worker needs at runtime
+RUN npm init -y && npm install \
+  mongoose \
+  mongodb \
+  bullmq \
+  ioredis \
+  dotenv \
+  posthog-node \
+  @aws-sdk/client-s3 \
+  @aws-sdk/lib-storage \
+  googleapis \
+  bcryptjs
 
-CMD ["npx", "tsx", "worker/index.ts"]
+# Copy the bundled worker script from the builder stage
+COPY --from=builder /app/dist/worker.js ./worker.js
+
+# Expose no ports, as this is a background worker
+CMD ["node", "worker.js"]
