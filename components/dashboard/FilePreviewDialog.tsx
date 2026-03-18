@@ -30,7 +30,9 @@ import {
   decryptFile,
   decryptFileChunkedCombined,
 } from "@/lib/crypto/fileEncryption";
+import { fromB64 } from "@/lib/crypto/utils";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
+import { useVideoStream, VideoStreamOptions } from "@/hooks/useVideoStream";
 
 interface ObjectData {
   id: string;
@@ -46,6 +48,65 @@ interface FilePreviewDialogProps {
   isOpen: boolean;
   onClose: () => void;
 }
+
+const ChunkedStreamPlayer = ({
+  opts,
+  type,
+  onUrlChange,
+}: {
+  opts: VideoStreamOptions;
+  type: string;
+  onUrlChange: (url: string | null) => void;
+}) => {
+  const isAudio = type.startsWith("audio/");
+  const [videoElement, setVideoElement] = useState<HTMLMediaElement | null>(null);
+
+  const { blobUrl, error, isBuffering } = useVideoStream(opts, videoElement);
+
+  useEffect(() => {
+    onUrlChange(blobUrl);
+    return () => onUrlChange(null);
+  }, [blobUrl, onUrlChange]);
+
+  if (error) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center p-4 text-center">
+        <AlertCircle className="mb-2 h-8 w-8 text-destructive" />
+        <p className="text-sm text-destructive">{error}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn("relative flex h-full items-center justify-center", isAudio ? "w-full p-4" : "w-full bg-black")}>
+      {isBuffering && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 backdrop-blur-sm pointer-events-none">
+          <Loader2 className="h-8 w-8 animate-spin text-white" />
+        </div>
+      )}
+      
+      {/* We use a native video element directly for MediaSource stability */}
+      {isAudio ? (
+        <audio
+          ref={(node) => setVideoElement(node)}
+          controls
+          autoPlay
+          className="w-full"
+          src={blobUrl || ""}
+        />
+      ) : (
+        <video
+          ref={(node) => setVideoElement(node)}
+          controls
+          autoPlay
+          playsInline
+          className="max-h-full max-w-full"
+          src={blobUrl || ""}
+        />
+      )}
+    </div>
+  );
+};
 
 const MediaPlayer = ({ url, type }: { url: string; type: string }) => {
   const isAudio = type.startsWith("audio/");
@@ -146,6 +207,7 @@ export function FilePreviewDialog({
   const [error, setError] = useState("");
   const [isEncrypted, setIsEncrypted] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
+  const [streamOpts, setStreamOpts] = useState<VideoStreamOptions | null>(null);
 
   // Track object URLs we created so we can revoke them on close
   const objectUrlRef = useRef<string | null>(null);
@@ -173,6 +235,7 @@ export function FilePreviewDialog({
       setError("");
       setIsEncrypted(false);
       setIsMinimized(false);
+      setStreamOpts(null);
     }
   }, [isOpen]);
 
@@ -186,24 +249,42 @@ export function FilePreviewDialog({
       setLoading(true);
       setError("");
       setUrl(null);
+      setStreamOpts(null);
 
       try {
         // 1. Fetch metadata + signed URL from our API
         const res = await fetch(`/api/objects/${file.id}`);
         if (!res.ok) throw new Error("Failed to get URL");
         const data = await res.json();
-        if (!data?.url) throw new Error("No URL returned");
+        if (!data?.url && (!data?.chunkUrls || data.chunkUrls.length === 0)) throw new Error("No URL returned");
 
         const encrypted: boolean = data.isEncrypted ?? false;
 
         if (!encrypted) {
-          // Legacy plaintext file — use the signed URL directly
-          if (!cancelled) {
-            setUrl(data.url);
-            setIsEncrypted(false);
+          if (data.chunkUrls && data.chunkUrls.length > 0) {
+            if (!cancelled) {
+              // Not encrypted but chunked. We should just set streamOpts with null dek 
+              // and handle it in useVideoStream.
+              setStreamOpts({
+                urls: data.chunkUrls,
+                dek: null,
+                chunkSize: data.chunkSize || (2 * 1024 * 1024),
+                chunkCount: data.chunkCount || data.chunkUrls.length,
+                chunkIvs: [],
+                contentType: data.contentType ?? file.contentType,
+              });
+              setLoading(false);
+            }
+          } else {
+            // Legacy plaintext file — use the signed URL directly
+            if (!cancelled) {
+              setUrl(data.url || "");
+              setIsEncrypted(false);
+            }
           }
           return;
         }
+
 
         // 2. Encrypted file — need private key to decrypt
         setIsEncrypted(true);
@@ -215,10 +296,101 @@ export function FilePreviewDialog({
           );
         }
 
-        // 3. Fetch raw ciphertext via same-origin proxy to avoid CDN CORS block
+        if (data.chunkUrls && data.chunkUrls.length > 0) {
+          // 3a. New Multi-object streaming
+          if (!data.encryptedDEK) {
+            throw new Error("Missing encrypted DEK for chunked file.");
+          }
+          
+          if (!cancelled) {
+            const rawDEK = await crypto.subtle.decrypt(
+              { name: "RSA-OAEP" },
+              privateKey,
+              fromB64(data.encryptedDEK)
+            );
+          
+            if ("serviceWorker" in navigator) {
+              try {
+                const registration = await navigator.serviceWorker.register("/sw.js");
+                await navigator.serviceWorker.ready;
+                
+                let sw = navigator.serviceWorker.controller || registration.active;
+                
+                if (sw) {
+                  await new Promise<void>((resolve, reject) => {
+                    const channel = new MessageChannel();
+                    channel.port1.onmessage = (event) => {
+                      if (event.data.success) resolve();
+                      else reject(new Error("Failed to register stream with SW"));
+                    };
+                    // Ensure state is activated
+                    if (sw?.state !== 'activated') {
+                       sw?.addEventListener('statechange', () => {
+                          if (sw?.state === 'activated') {
+                             sw?.postMessage({
+                              type: 'REGISTER_STREAM',
+                              fileId: file.id,
+                              rawDEK,
+                              chunkSize: data.chunkSize || (2 * 1024 * 1024),
+                              chunkCount: data.chunkCount || data.chunkUrls.length,
+                              chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
+                              urls: data.chunkUrls,
+                              contentType: data.contentType ?? file.contentType,
+                              size: file.size
+                            }, [channel.port2]);
+                          }
+                       })
+                    } else {
+                        sw.postMessage({
+                          type: 'REGISTER_STREAM',
+                          fileId: file.id,
+                          rawDEK,
+                          chunkSize: data.chunkSize || (2 * 1024 * 1024),
+                          chunkCount: data.chunkCount || data.chunkUrls.length,
+                          chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
+                          urls: data.chunkUrls,
+                          contentType: data.contentType ?? file.contentType,
+                          size: file.size
+                        }, [channel.port2]);
+                    }
+                  });
+
+                  if (!cancelled) {
+                    setUrl(`/sw/objects/${file.id}`);
+                    setLoading(false);
+                    return; // Don't fall back to MSE
+                  }
+                }
+              } catch (err) {
+                console.error("SW streaming failed, falling back to MSE", err);
+              }
+            }
+
+            const dek = await crypto.subtle.importKey(
+              "raw",
+              rawDEK,
+              { name: "AES-GCM", length: 256 },
+              false,
+              ["decrypt"]
+            );
+
+            setStreamOpts({
+              urls: data.chunkUrls,
+              dek,
+              chunkSize: data.chunkSize || (2 * 1024 * 1024),
+              chunkCount: data.chunkCount || data.chunkUrls.length,
+              chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
+              contentType: data.contentType ?? file.contentType,
+            });
+            setLoading(false);
+          }
+          return;
+        }
+
+        // 3. Fetch raw ciphertext directly from CDN
         // Added Cache Storage check (fetchWithProgress) so previously decrypted files load instantly
         const ciphertextBuf = await fetchWithProgress(
-          `/api/objects/${file.id}/content`,
+          data.url, // Directly fetch from CDN URL instead of via /content proxy
           (pct) => {
             // Optional: You could expose progress to UI if you added a fetchProgress state
           },
@@ -335,6 +507,19 @@ export function FilePreviewDialog({
       );
     }
 
+    // Stream rendering
+    if (streamOpts) {
+      return (
+        <ChunkedStreamPlayer
+          opts={streamOpts}
+          type={type}
+          onUrlChange={(newUrl) => {
+            if (newUrl !== url) setUrl(newUrl);
+          }}
+        />
+      );
+    }
+
     if (!url) return null;
 
     // Image
@@ -442,7 +627,7 @@ export function FilePreviewDialog({
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
-              {url && !isMinimized && (
+              {url && !isMinimized && !streamOpts && (
                 <Button
                   variant="outline"
                   size="sm"

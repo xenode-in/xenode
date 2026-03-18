@@ -1,5 +1,5 @@
 "use client";
-
+"use client";
 import React, {
   createContext,
   useContext,
@@ -7,7 +7,10 @@ import React, {
   useCallback,
   useEffect,
 } from "react";
-import { decryptFile } from "@/lib/crypto/fileEncryption";
+import {
+  decryptFile,
+  decryptFileChunkedCombined,
+} from "@/lib/crypto/fileEncryption";
 import {
   getCachedSize,
   getCachedBytes,
@@ -21,11 +24,10 @@ export interface DownloadTask {
   name: string;
   size: number;
   progress: number;
-  /** How many bytes are already cached from a previous attempt */
+  receivedBytes: number; // ADDED
   resumeFrom: number;
   status: "downloading" | "decrypting" | "paused" | "completed" | "failed";
   error?: string;
-  /** Call this to abort an in-progress download (saves cache for next resume) */
   abort?: () => void;
 }
 
@@ -53,22 +55,18 @@ interface DownloadContextType {
 const DownloadContext = createContext<DownloadContextType | undefined>(
   undefined,
 );
-
-// Keep AbortControllers outside React state (no re-renders)
 const abortControllers = new Map<string, AbortController>();
 
 export function DownloadProvider({ children }: { children: React.ReactNode }) {
   const [tasks, setTasks] = useState<DownloadTask[]>([]);
   const [pendingResumes, setPendingResumes] = useState<PendingResume[]>([]);
 
-  // On mount: scan IndexedDB for any interrupted downloads from a previous session
   useEffect(() => {
     getCachedIds().then(async (ids) => {
       if (ids.length === 0) return;
       const resumes: PendingResume[] = await Promise.all(
         ids.map(async (id) => {
           const cachedBytes = await getCachedSize(id);
-          // Try to get the file name from the API metadata
           let name = id;
           try {
             const res = await fetch(`/api/objects/${id}`);
@@ -76,9 +74,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
               const data = await res.json();
               name = (data.key as string)?.split("/").pop() ?? id;
             }
-          } catch {
-            // Use ID as fallback name
-          }
+          } catch {}
           return { id, name, cachedBytes };
         }),
       );
@@ -112,14 +108,9 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const deleteDownload = useCallback(async (id: string) => {
-    // Abort if active
     abortControllers.get(id)?.abort();
     abortControllers.delete(id);
-
-    // Wipe any persisted chunks
     await clearCache(id);
-
-    // Remove from UI state
     setTasks((prev) => prev.filter((t) => t.id !== id));
     setPendingResumes((prev) => prev.filter((r) => r.id !== id));
   }, []);
@@ -128,7 +119,6 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
     (id: string) => {
       abortControllers.get(id)?.abort();
       abortControllers.delete(id);
-      // Leave cache in place — status → "paused" so Resume button appears
       updateTask(id, { status: "paused" });
     },
     [updateTask],
@@ -141,11 +131,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
       privateKey?: CryptoKey | null,
     ) => {
       const name = obj.key.split("/").pop() || "download";
-
-      // Check IndexedDB for previously saved bytes
       const resumeFrom = isEncrypted ? await getCachedSize(obj.id) : 0;
-
-      // Register the task (or replace an existing one)
       const controller = new AbortController();
       abortControllers.set(obj.id, controller);
 
@@ -156,6 +142,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
           name,
           size: obj.size,
           resumeFrom,
+          receivedBytes: resumeFrom, // ADDED
           progress:
             resumeFrom && obj.size
               ? Math.round((resumeFrom / obj.size) * 100)
@@ -165,85 +152,148 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
       ]);
 
       try {
-        // ── Metadata ──────────────────────────────────────────────────────
         const res = await fetch(`/api/objects/${obj.id}`, {
           signal: controller.signal,
         });
         const data = await res.json();
-
         if (!res.ok) throw new Error(data.error || "Failed to get metadata");
 
-        // ── Plaintext shortcut ────────────────────────────────────────────
         if (!isEncrypted) {
-          if (data.url) window.open(data.url, "_blank");
+          if (data.chunkUrls && data.chunkUrls.length > 0) {
+            // If non-encrypted but chunked, we have to stitch it... but xenode only chunks encrypted files.
+            throw new Error(
+              "Plaintext chunked files are not supported for download directly yet.",
+            );
+          } else if (data.url) {
+            window.open(data.url, "_blank");
+          }
           updateTask(obj.id, { status: "completed", progress: 100 });
           abortControllers.delete(obj.id);
           return;
         }
 
-        // ── Encrypted download ────────────────────────────────────────────
         if (!privateKey) throw new Error("Vault locked. Please unlock first.");
 
-        // Build request headers — send Range if we have cached bytes
-        const fetchHeaders: Record<string, string> = {};
-        if (resumeFrom > 0) {
-          fetchHeaders["Range"] = `bytes=${resumeFrom}-`;
-          console.log(`[Download] Resuming ${name} from byte ${resumeFrom}`);
+        const isChunked = !!(
+          data.chunkUrls &&
+          data.chunkUrls.length > 0 &&
+          data.chunkSize &&
+          data.chunkCount
+        );
+        let receivedLength = resumeFrom;
+
+        if (!isChunked) {
+          // Legacy single-blob file
+          if (!data.url) throw new Error("Missing download URL");
+
+          const fetchHeaders: Record<string, string> = {};
+          if (resumeFrom > 0) {
+            fetchHeaders["Range"] = `bytes=${resumeFrom}-`;
+          }
+
+          const ciphertextRes = await fetch(data.url, {
+            headers: fetchHeaders,
+            signal: controller.signal,
+          });
+
+          if (
+            (!ciphertextRes.ok && ciphertextRes.status !== 206) ||
+            !ciphertextRes.body
+          ) {
+            throw new Error("Failed to download file content");
+          }
+
+          const contentLength =
+            +(ciphertextRes.headers.get("Content-Length") ?? 0) || 0;
+          const totalSize = contentLength
+            ? resumeFrom + contentLength
+            : obj.size;
+          const reader = ciphertextRes.body.getReader();
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            await appendChunk(obj.id, value);
+            receivedLength += value.length;
+            updateTask(obj.id, {
+              receivedBytes: receivedLength, // ADDED
+              progress: totalSize
+                ? Math.round((receivedLength / totalSize) * 100)
+                : 0,
+            });
+          }
+        } else {
+          // Multi-chunk encrypted file
+          const cipherChunkSize = data.chunkSize + 16;
+          const totalCipherSize =
+            (data.chunkCount - 1) * cipherChunkSize +
+            (obj.size - (data.chunkCount - 1) * data.chunkSize + 16);
+          const startChunkIndex = Math.floor(resumeFrom / cipherChunkSize);
+          const chunkOffset = resumeFrom % cipherChunkSize;
+
+          for (let i = startChunkIndex; i < data.chunkCount; i++) {
+            if (controller.signal.aborted) break;
+
+            const chunkUrl = data.chunkUrls[i];
+            const fetchHeaders: Record<string, string> = {};
+
+            if (i === startChunkIndex && chunkOffset > 0) {
+              fetchHeaders["Range"] = `bytes=${chunkOffset}-`;
+            }
+
+            const chunkRes = await fetch(chunkUrl, {
+              headers: fetchHeaders,
+              signal: controller.signal,
+            });
+            if ((!chunkRes.ok && chunkRes.status !== 206) || !chunkRes.body) {
+              throw new Error(`Failed to download chunk ${i}`);
+            }
+
+            const reader = chunkRes.body.getReader();
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              await appendChunk(obj.id, value);
+              receivedLength += value.length;
+              updateTask(obj.id, {
+                receivedBytes: receivedLength, // ADDED
+                progress: totalCipherSize
+                  ? Math.round((receivedLength / totalCipherSize) * 100)
+                  : 0,
+              });
+            }
+          }
         }
 
-        const ciphertextRes = await fetch(`/api/objects/${obj.id}/content`, {
-          headers: fetchHeaders,
-          signal: controller.signal,
-        });
+        if (controller.signal.aborted) return;
 
-        if (
-          (!ciphertextRes.ok && ciphertextRes.status !== 206) ||
-          !ciphertextRes.body
-        ) {
-          throw new Error("Failed to download file content");
-        }
-
-        const contentLength =
-          +(ciphertextRes.headers.get("Content-Length") ?? 0) || 0;
-        // Total expected size = already cached + remainder being streamed now
-        const totalSize = contentLength ? resumeFrom + contentLength : obj.size;
-
-        const reader = ciphertextRes.body.getReader();
-        let receivedLength = resumeFrom; // start counting from resume point
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          // Persist chunk immediately so it survives an abort
-          await appendChunk(obj.id, value);
-          receivedLength += value.length;
-
-          const progress = totalSize
-            ? Math.round((receivedLength / totalSize) * 100)
-            : 0;
-          updateTask(obj.id, { progress });
-        }
-
-        // ── Decrypt ───────────────────────────────────────────────────────
         updateTask(obj.id, { status: "decrypting", progress: 100 });
-
-        // Reconstruct full ciphertext from cache (includes bytes from prior runs)
         const cachedBytes = await getCachedBytes(obj.id);
         if (!cachedBytes) throw new Error("Cache lost after download");
 
-        const decryptedBlob = await decryptFile(
-          cachedBytes.buffer as ArrayBuffer,
-          data.encryptedDEK,
-          data.iv,
-          privateKey,
-          data.contentType ?? obj.contentType,
-        );
+        let decryptedBlob: Blob;
+        if (isChunked) {
+          decryptedBlob = await decryptFileChunkedCombined(
+            cachedBytes.buffer as ArrayBuffer,
+            data.encryptedDEK,
+            data.chunkIvs,
+            data.chunkSize,
+            data.chunkCount,
+            privateKey,
+            data.contentType ?? obj.contentType,
+          );
+        } else {
+          decryptedBlob = await decryptFile(
+            cachedBytes.buffer as ArrayBuffer,
+            data.encryptedDEK,
+            data.iv,
+            privateKey,
+            data.contentType ?? obj.contentType,
+          );
+        }
 
-        // Clean up cache now that we have plaintext
         await clearCache(obj.id);
 
-        // Trigger browser save
         const objectUrl = URL.createObjectURL(decryptedBlob);
         const a = document.createElement("a");
         a.href = objectUrl;
@@ -254,10 +304,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         updateTask(obj.id, { status: "completed" });
         abortControllers.delete(obj.id);
       } catch (err: unknown) {
-        if (err instanceof Error && err.name === "AbortError") {
-          // User cancelled — cache stays, status already set to "paused" by cancelDownload
-          return;
-        }
+        if (err instanceof Error && err.name === "AbortError") return;
         updateTask(obj.id, {
           status: "failed",
           error: err instanceof Error ? err.message : "Unknown error",
@@ -288,8 +335,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
 
 export function useDownload() {
   const context = useContext(DownloadContext);
-  if (context === undefined) {
+  if (context === undefined)
     throw new Error("useDownload must be used within a DownloadProvider");
-  }
   return context;
 }
