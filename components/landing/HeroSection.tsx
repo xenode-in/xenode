@@ -4,7 +4,7 @@ import { ShieldCheck } from "lucide-react";
 
 export function HeroSection() {
   return (
-    <section className="relative z-10 border-b border-white/10">
+    <section className="relative z-10 border-b ">
       <div className="max-w-[1200px] mx-auto flex flex-col items-center justify-center text-center px-8 pt-32 pb-24">
         {/* Eyebrow badge */}
         {/* <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/20 bg-white/5 text-sm mb-8 backdrop-blur-sm">
@@ -22,8 +22,7 @@ export function HeroSection() {
 
         {/* Subtext */}
         <p className="text-lg md:text-xl leading-relaxed opacity-70 mb-10 max-w-[520px]">
-          End-to-end encrypted cloud storage — no one, not even us, can read
-          your files.
+          End-to-end encrypted cloud storage
         </p>
 
         {/* CTA */}

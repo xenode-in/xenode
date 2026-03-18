@@ -70,7 +70,7 @@ function ScenarioCard({
     <div
       ref={ref}
       id={`scenario-${index}`}
-      className="rounded-xl border border-white/10 bg-white/5 p-8 backdrop-blur-sm transition-all duration-500 min-h-[350px] flex flex-col justify-center"
+      className="rounded-xl border  bg-white/5 p-8 backdrop-blur-sm transition-all duration-500 min-h-[350px] flex flex-col justify-center"
       style={{
         opacity: isInView ? 1 : 0.3,
         transform: isInView ? "scale(1)" : "scale(0.95)",
@@ -115,7 +115,7 @@ export function InActionSection() {
   return (
     <section
       id="how-it-works"
-      className="relative z-10 border-b border-white/10 flex justify-center px-6 md:px-8"
+      className="relative z-10 border-b  flex justify-center px-6 md:px-8"
     >
       <div className="w-full max-w-[1200px] py-20 px-0 md:px-6 flex flex-col md:flex-row gap-12 relative items-start">
         {/* Left Sidebar (Sticky) */}

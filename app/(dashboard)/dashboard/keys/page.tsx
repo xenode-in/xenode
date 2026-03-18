@@ -218,7 +218,7 @@ export default function ApiKeysPage() {
                         value={newKeyName}
                         onChange={(e) => setNewKeyName(e.target.value)}
                         placeholder="e.g., Production Server"
-                        className="bg-white/5 border-white/10 text-[#e8e4d9] placeholder:text-[#e8e4d9]/30"
+                        className="bg-white/5  text-[#e8e4d9] placeholder:text-[#e8e4d9]/30"
                         required
                       />
                     </div>
@@ -227,7 +227,7 @@ export default function ApiKeysPage() {
                       <select
                         value={newKeyExpiry}
                         onChange={(e) => setNewKeyExpiry(e.target.value)}
-                        className="w-full h-10 px-3 rounded-md bg-white/5 border border-white/10 text-[#e8e4d9] text-sm"
+                        className="w-full h-10 px-3 rounded-md bg-white/5 border  text-[#e8e4d9] text-sm"
                       >
                         <option value="never">Never</option>
                         <option value="30d">30 days</option>

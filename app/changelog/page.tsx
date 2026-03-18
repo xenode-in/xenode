@@ -197,7 +197,7 @@ export default function ChangelogPage() {
   return (
     <div className="relative min-h-screen flex flex-col font-sans bg-background text-foreground transition-colors duration-300">
       <ThemeGradientBackground />
-      
+
       {/* Grain overlay */}
       <div
         className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat"
@@ -222,10 +222,8 @@ export default function ChangelogPage() {
             </h1>
             <p className="text-lg md:text-xl text-muted-foreground max-w-[520px] leading-relaxed">
               New updates and improvements to{" "}
-              <span className="font-brand italic text-foreground">
-                Xenode
-              </span>
-              . Follow along as we build.
+              <span className="font-brand italic text-foreground">Xenode</span>.
+              Follow along as we build.
             </p>
           </div>
 
@@ -258,7 +256,7 @@ export default function ChangelogPage() {
               ))}
             </div>
           ) : totalEntries === 0 ? (
-            <div className="text-center py-20 bg-white/5 rounded-2xl border border-white/10">
+            <div className="text-center py-20 bg-white/5 rounded-2xl border ">
               <p className="text-lg text-[#e8e4d9]/50">
                 No changelog entries yet. Check back soon!
               </p>

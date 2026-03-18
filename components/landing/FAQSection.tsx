@@ -31,7 +31,7 @@ export function FAQSection() {
   const [open, setOpen] = useState<number | null>(null);
 
   return (
-    <section className="relative z-10 border-b border-white/10 flex justify-center px-6 md:px-8">
+    <section className="relative z-10 border-b  flex justify-center px-6 md:px-8">
       <div className="w-full max-w-[1200px] py-24 px-6 flex justify-center">
         <div className="w-full max-w-2xl">
           <p className="text-xs uppercase tracking-widest opacity-50 mb-3">
@@ -43,7 +43,7 @@ export function FAQSection() {
 
           <div className="flex flex-col">
             {faqs.map((faq, i) => (
-              <div key={i} className="border-b border-white/10">
+              <div key={i} className="border-b ">
                 <button
                   className="w-full flex items-center justify-between gap-4 py-5 text-left group"
                   onClick={() => setOpen(open === i ? null : i)}

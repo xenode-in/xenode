@@ -29,7 +29,7 @@ const cases = [
 
 export function UseCasesSection() {
   return (
-    <section className="relative z-10 border-b border-white/10 flex justify-center px-6 md:px-8">
+    <section className="relative z-10 border-b  flex justify-center px-6 md:px-8">
       <div className="w-full max-w-[1200px] py-24 px-6">
         {/* Header */}
         <p className="text-xs uppercase tracking-widest opacity-50 mb-3">
@@ -46,7 +46,7 @@ export function UseCasesSection() {
             return (
               <div
                 key={c.title}
-                className="rounded-xl border border-white/10 bg-white/5 p-8 backdrop-blur-sm flex flex-col gap-5 hover:border-white/20 transition-colors duration-200"
+                className="rounded-xl border  bg-white/5 p-8 backdrop-blur-sm flex flex-col gap-5 hover:border-white/20 transition-colors duration-200"
               >
                 <div className="flex items-start justify-between">
                   <span className="text-xs uppercase tracking-widest opacity-50 border border-white/15 rounded-full px-3 py-1">

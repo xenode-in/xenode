@@ -17,7 +17,7 @@ const legal = [
 
 export function LandingFooter() {
   return (
-    <footer className="relative z-10 border-t border-white/10 flex justify-center px-6 md:px-8">
+    <footer className="relative z-10 border-t  flex justify-center px-6 md:px-8">
       <div className="w-full max-w-[1200px] py-12 flex flex-col gap-10 px-6">
         {/* Top row */}
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
@@ -66,7 +66,7 @@ export function LandingFooter() {
         </div>
 
         {/* Divider */}
-        <div className="border-t border-white/10" />
+        <div className="border-t " />
 
         {/* Bottom row */}
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-xs opacity-40">
