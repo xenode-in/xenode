@@ -25,19 +25,24 @@ function createAuth() {
       sendOnSignUp: true,
       autoSignInAfterVerification: true,
       sendVerificationEmail: async ({ user, url }) => {
-        await resend.emails.send({
-          from: "Xenode <noreply@alerts.xenode.in>",
-          to: user.email,
-          subject: "Verify your email address - Xenode",
-          html: `
-            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eaeaec; border-radius: 8px;">
-              <h2 style="color: #333;">Welcome to Xenode, ${user.name}!</h2>
-              <p style="color: #555; line-height: 1.5;">Please verify your email address to complete your registration and get started.</p>
-              <a href="${url}" style="display: inline-block; background-color: #7cb686; color: #fff; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: bold; margin-top: 10px; margin-bottom: 20px;">Verify Email</a>
-              <p style="color: #888; font-size: 14px;">If you didn't create this account, you can safely ignore this email.</p>
-            </div>
-          `,
-        });
+        try {
+          await resend.emails.send({
+            from: "Xenode <noreply@alerts.xenode.in>",
+            to: user.email,
+            subject: "Verify your email address - Xenode",
+            html: `
+              <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eaeaec; border-radius: 8px;">
+                <h2 style="color: #333;">Welcome to Xenode, ${user.name}!</h2>
+                <p style="color: #555; line-height: 1.5;">Please verify your email address to complete your registration and get started.</p>
+                <a href="${url}" style="display: inline-block; background-color: #7cb686; color: #fff; text-decoration: none; padding: 12px 24px; border-radius: 6px; font-weight: bold; margin-top: 10px; margin-bottom: 20px;">Verify Email</a>
+                <p style="color: #888; font-size: 14px;">If you didn't create this account, you can safely ignore this email.</p>
+              </div>
+            `,
+          });
+        } catch (error) {
+          console.error("Failed to send verification email:", error);
+          // Don't throw the error, just log it so we don't crash the signup process
+        }
       },
     },
     secret: process.env.BETTER_AUTH_SECRET,
@@ -71,6 +76,16 @@ function createAuth() {
       cookieCache: {
         enabled: true,
         maxAge: 5 * 60,
+      },
+    },
+    rateLimit: {
+      window: 60, // time window in seconds
+      max: 100, // max requests in the window
+      customRules: {
+        "/send-verification-email": {
+          window: 60 * 10, // 10 minutes
+          max: 3, // 3 requests per 10 minutes
+        },
       },
     },
     trustedOrigins: [
