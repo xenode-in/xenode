@@ -248,6 +248,8 @@ export default function SharedFilePage() {
   const [error, setError] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const [downloading, setDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [downloadReceived, setDownloadReceived] = useState(0);
   const [done, setDone] = useState(false);
   const [shareKey, setShareKey] = useState("");
 
@@ -470,6 +472,8 @@ export default function SharedFilePage() {
   async function handleDownload() {
     if (!meta) return;
     setDownloading(true);
+    setDownloadProgress(0);
+    setDownloadReceived(0);
     setError(null);
     try {
       const res = await fetch(`/api/share/${token}/download`, {
@@ -487,6 +491,11 @@ export default function SharedFilePage() {
       }
 
       let blob: Blob;
+
+      const handleProgress = (pct: number) => {
+        setDownloadProgress(pct);
+        setDownloadReceived(Math.round((pct / 100) * meta.size));
+      };
 
       if (
         data.isEncrypted &&
@@ -506,20 +515,28 @@ export default function SharedFilePage() {
           const plaintextChunks: ArrayBuffer[] = [];
           const { decryptChunk } = await import("@/lib/crypto/fileEncryption");
           
+          let received = 0;
           for (let i = 0; i < data.chunkCount; i++) {
             const chunkRes = await fetch(data.chunkUrls[i]);
             if (!chunkRes.ok) throw new Error(`Failed to fetch chunk ${i}`);
             const chunkBuf = await chunkRes.arrayBuffer();
+            received += chunkBuf.byteLength;
+            setDownloadReceived(received);
+            
+            // Approximation for chunked download
+            const expectedTotal = data.chunkCount * (data.chunkSize + 16);
+            setDownloadProgress(Math.round((received / expectedTotal) * 100));
+
             const plain = await decryptChunk(chunkBuf, dek, chunkIvsArr[i]);
             plaintextChunks.push(plain);
           }
+          setDownloadProgress(100);
+          setDownloadReceived(meta.size);
           blob = new Blob(plaintextChunks, { type: data.contentType });
         } else {
           // Legacy single-blob
           if (!data.downloadUrl) throw new Error("Missing download URL");
-          const fileRes = await fetch(data.downloadUrl);
-          if (!fileRes.ok) throw new Error("Failed to fetch file");
-          const raw = await fileRes.arrayBuffer();
+          const raw = await fetchWithProgress(data.downloadUrl, handleProgress, undefined, meta.size);
           
           const ivBytes = b64ToBytes(data.iv);
           const decrypted = await crypto.subtle.decrypt(
@@ -539,17 +556,25 @@ export default function SharedFilePage() {
         // Not encrypted
         if (data.chunkUrls && data.chunkUrls.length > 0) {
           const chunks: BlobPart[] = [];
+          let received = 0;
           for (const chunkUrl of data.chunkUrls) {
             const chunkRes = await fetch(chunkUrl);
             if (!chunkRes.ok) throw new Error("Failed to fetch chunk");
-            chunks.push(await chunkRes.blob());
+            const chunkBuf = await chunkRes.arrayBuffer();
+            received += chunkBuf.byteLength;
+            setDownloadReceived(received);
+            
+            const expectedTotal = data.chunkCount ? data.chunkCount * (data.chunkSize || meta.size) : meta.size;
+            setDownloadProgress(Math.round((received / expectedTotal) * 100));
+            chunks.push(chunkBuf);
           }
+          setDownloadProgress(100);
+          setDownloadReceived(meta.size);
           blob = new Blob(chunks, { type: data.contentType });
         } else {
           if (!data.downloadUrl) throw new Error("Missing download URL");
-          const fileRes = await fetch(data.downloadUrl);
-          if (!fileRes.ok) throw new Error("Failed to fetch file");
-          blob = await fileRes.blob();
+          const raw = await fetchWithProgress(data.downloadUrl, handleProgress, undefined, meta.size);
+          blob = new Blob([raw], { type: data.contentType });
         }
       }
 
@@ -831,7 +856,7 @@ export default function SharedFilePage() {
               )}
 
               <Button
-                className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90"
+                className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 relative overflow-hidden"
                 onClick={handleDownload}
                 disabled={
                   downloading ||
@@ -839,16 +864,31 @@ export default function SharedFilePage() {
                   (meta.isEncrypted && !shareKey)
                 }
               >
-                {downloading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    {meta.isEncrypted ? "Decrypting…" : "Downloading…"}
-                  </>
-                ) : (
-                  <>
-                    <Download className="mr-2 h-4 w-4" /> Download
-                  </>
+                {downloading && downloadProgress > 0 && downloadProgress < 100 && (
+                  <div 
+                    className="absolute inset-y-0 left-0 bg-black/20 z-0 transition-all duration-200"
+                    style={{ width: `${downloadProgress}%` }}
+                  />
                 )}
+                
+                <span className="relative z-10 flex items-center justify-center w-full">
+                  {downloading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin shrink-0" />
+                      {downloadProgress > 0 ? (
+                        <span>
+                          {formatBytes(downloadReceived)} / {formatBytes(meta.size)}
+                        </span>
+                      ) : (
+                        <span>{meta.isEncrypted ? "Decrypting…" : "Downloading…"}</span>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <Download className="mr-2 h-4 w-4 shrink-0" /> Download
+                    </>
+                  )}
+                </span>
               </Button>
             </div>
           )}
