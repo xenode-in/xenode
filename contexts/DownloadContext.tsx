@@ -18,6 +18,7 @@ import {
   clearCache,
   getCachedIds,
   truncateCache,
+  getNextChunkIndex,
 } from "@/lib/downloadCache";
 
 export interface DownloadTask {
@@ -211,10 +212,12 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
             : obj.size;
           const reader = ciphertextRes.body.getReader();
 
+          let legacyChunkIndex = await getNextChunkIndex(obj.id); // Continue safely from cache
+
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            await appendChunk(obj.id, value);
+            await appendChunk(obj.id, value, legacyChunkIndex++);
             receivedLength += value.length;
             updateTask(obj.id, {
               receivedBytes: receivedLength, // ADDED
@@ -311,7 +314,13 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
                     : 0,
                 });
 
-                downloadedChunks.set(i, chunks);
+                const chunkBuf = new Uint8Array(chunks.reduce((acc, c) => acc + c.byteLength, 0));
+                let offset = 0;
+                for (const c of chunks) {
+                  chunkBuf.set(c, offset);
+                  offset += c.byteLength;
+                }
+                downloadedChunks.set(i, [chunkBuf]);
 
                 // Chain the append — only ONE append sequence runs at a time
                 appendPromise = appendPromise.then(async () => {
@@ -319,7 +328,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
                     const orderedChunks =
                       downloadedChunks.get(nextIndexToAppend)!;
                     for (const c of orderedChunks) {
-                      await appendChunk(obj.id, c);
+                      await appendChunk(obj.id, c, nextIndexToAppend);
                     }
                     downloadedChunks.delete(nextIndexToAppend);
                     nextIndexToAppend++;
