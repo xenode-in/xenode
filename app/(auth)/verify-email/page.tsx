@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState, Suspense, lazy } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Mail, ArrowRight, Loader2, CheckCircle2 } from "lucide-react";
+import { Mail, Loader2, CheckCircle2 } from "lucide-react";
 import { useSession, authClient } from "@/lib/auth/client";
 import { toast } from "sonner";
 
@@ -14,17 +14,22 @@ const Dithering = lazy(() =>
   })),
 );
 
-export default function VerifyEmailPage() {
+function VerifyEmailContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const emailParam = searchParams.get("email");
   const { data: session, isPending } = useSession();
   const [isResending, setIsResending] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
+  const [resendCount, setResendCount] = useState(0);
+
+  const targetEmail = session?.user?.email || emailParam;
 
   // Poll for verification status
   useEffect(() => {
-    if (!session?.user) return;
+    if (!targetEmail) return;
 
-    if (session.user.emailVerified) {
+    if (session?.user?.emailVerified) {
       toast.success("Email verified successfully!");
       router.push((session.user as any).onboarded ? "/dashboard" : "/onboarding");
       return;
@@ -40,21 +45,27 @@ export default function VerifyEmailPage() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [session, router]);
+  }, [session, targetEmail, router]);
 
   const handleResend = async () => {
-    if (!session?.user?.email) return;
+    if (!targetEmail) return;
+    
+    if (resendCount >= 5) {
+      toast.error("You've requested too many verification emails. Please check your spam folder or wait a while.");
+      return;
+    }
     
     setIsResending(true);
     try {
       const { error } = await authClient.sendVerificationEmail({
-        email: session.user.email,
-        callbackURL: `${window.location.origin}/${(session.user as any).onboarded ? "dashboard" : "onboarding"}`,
+        email: targetEmail,
+        callbackURL: `${window.location.origin}/onboarding`, // default to onboarding, if they are onboarded they will be redirected anyway
       });
       
       if (error) {
         toast.error(error.message || "Failed to resend email");
       } else {
+        setResendCount(prev => prev + 1);
         toast.success("Verification email resent!");
       }
     } catch {
@@ -64,16 +75,16 @@ export default function VerifyEmailPage() {
     }
   };
 
-  // If there's no session, user shouldn't be here
+  // If there's no session and no email param, user shouldn't be here
   useEffect(() => {
     if (!isPending) {
-      if (!session) {
+      if (!session && !emailParam) {
         router.push("/login");
-      } else if (session.user.emailVerified) {
+      } else if (session?.user?.emailVerified) {
         router.push((session.user as any).onboarded ? "/dashboard" : "/onboarding");
       }
     }
-  }, [session, isPending, router]);
+  }, [session, isPending, emailParam, router]);
 
   if (isPending) {
     return (
@@ -83,7 +94,7 @@ export default function VerifyEmailPage() {
     );
   }
 
-  if (!session || session.user.emailVerified) {
+  if ((!session && !emailParam) || session?.user?.emailVerified) {
     return null;
   }
 
@@ -148,7 +159,7 @@ export default function VerifyEmailPage() {
             <p className="text-base text-muted-foreground">
               We&apos;ve sent a verification link to{" "}
               <span className="font-medium text-foreground">
-                {session.user.email}
+                {targetEmail}
               </span>
             </p>
           </div>
@@ -182,7 +193,9 @@ export default function VerifyEmailPage() {
               Need to use a different email?{" "}
               <button
                 onClick={async () => {
-                  await authClient.signOut();
+                  if (session) {
+                    await authClient.signOut();
+                  }
                   router.push("/login");
                 }}
                 className="text-primary hover:underline font-medium"
@@ -194,5 +207,17 @@ export default function VerifyEmailPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function VerifyEmailPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-screen items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    }>
+      <VerifyEmailContent />
+    </Suspense>
   );
 }

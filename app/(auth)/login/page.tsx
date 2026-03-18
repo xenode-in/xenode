@@ -62,6 +62,10 @@ export default function LoginPage() {
           password: formData.password,
         });
         if (result.error) {
+          if (result.error.code === "EMAIL_NOT_VERIFIED" || result.error.message?.toLowerCase().includes("not verified")) {
+            router.push(`/verify-email?email=${encodeURIComponent(formData.email)}`);
+            return;
+          }
           setError(result.error.message || "Invalid credentials");
           return;
         }
@@ -84,12 +88,12 @@ export default function LoginPage() {
       if (isLogin) {
         const { data } = await authClient.getSession();
         if (data?.user?.emailVerified === false) {
-          router.push("/verify-email");
+          router.push(`/verify-email?email=${encodeURIComponent(formData.email)}`);
         } else {
           router.push("/dashboard");
         }
       } else {
-        router.push("/verify-email");
+        router.push(`/verify-email?email=${encodeURIComponent(formData.email)}`);
       }
     } catch {
       setError("Something went wrong. Please try again.");
