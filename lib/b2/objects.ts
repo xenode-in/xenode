@@ -123,16 +123,9 @@ export async function getDownloadUrl(
   key: string,
   expiresIn: number = 3600,
 ): Promise<string> {
-  if (process.env.AZURE_CDN_URL) {
-    return getSignedFileUrl(bucketName, key, expiresIn);
-  }
-
-  const command = new GetObjectCommand({
-    Bucket: bucketName,
-    Key: key,
-  });
-
-  return getSignedUrl(getS3Client(), command, { expiresIn });
+  // Always route through our proxy so we can benefit from AZURE_CDN_URL
+  // or handle custom stream processing (like range requests) uniformly.
+  return getSignedFileUrl(bucketName, key, expiresIn);
 }
 
 /**
