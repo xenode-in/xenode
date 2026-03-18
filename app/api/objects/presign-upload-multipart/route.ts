@@ -25,10 +25,13 @@ export async function POST(request: NextRequest) {
 
     const keyId = B2_KEY_ID.trim();
     const appKey = B2_APPLICATION_KEY.trim();
-    const { fileSize, fileType, bucketId, prefix, fileName } = await request.json();
+    const { fileSize, fileType, bucketId, chunkCount, prefix, fileName } = await request.json();
 
     if (!bucketId) {
       return NextResponse.json({ error: "bucketId required" }, { status: 400 });
+    }
+    if (!chunkCount || chunkCount <= 0) {
+      return NextResponse.json({ error: "chunkCount required" }, { status: 400 });
     }
 
     await dbConnect();
@@ -69,6 +72,16 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const s3Client = new S3Client({
+      endpoint: B2_ENDPOINT,
+      region: B2_REGION,
+      credentials: { accessKeyId: keyId, secretAccessKey: appKey },
+      forcePathStyle: true,
+    });
+
+    // Chunk calculation
+    const chunkSize = 2 * 1024 * 1024; // 2MB
+    
     const basePrefix = prefix || `users/${userId}/`;
     
     // Fallback to random hex if no filename is provided
@@ -77,30 +90,34 @@ export async function POST(request: NextRequest) {
     // Sanitize filename to prevent directory traversal
     safeFileName = safeFileName.replace(/[\/\\]/g, "_");
     
-    const opaqueKey = `${basePrefix}${safeFileName}`;
+    const logicalKey = `${basePrefix}${safeFileName}`;
+    
+    const urls = [];
+    for (let i = 0; i < chunkCount; i++) {
+      const chunkKey = `${logicalKey}-chunk-${i}`;
+      const command = new PutObjectCommand({
+        Bucket: bucket.b2BucketId,
+        Key: chunkKey,
+        ContentType: fileType || "application/octet-stream",
+      });
 
-    const s3Client = new S3Client({
-      endpoint: B2_ENDPOINT,
-      region: B2_REGION,
-      credentials: { accessKeyId: keyId, secretAccessKey: appKey },
-      forcePathStyle: true,
-    });
-
-    const command = new PutObjectCommand({
-      Bucket: bucket.b2BucketId,
-      Key: opaqueKey,
-      ContentType: fileType || "application/octet-stream",
-    });
-
-    const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+      const presignedUrl = await getSignedUrl(s3Client, command, { expiresIn: 3600 });
+      urls.push({
+        index: i,
+        key: chunkKey,
+        url: presignedUrl,
+      });
+    }
 
     return NextResponse.json({
-      uploadUrl: presignedUrl,
-      objectKey: opaqueKey,
+      fileId: logicalKey,
+      chunkSize,
+      chunkCount,
+      urls,
       bucketId: bucket._id.toString(),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to generate upload URL";
+    const message = error instanceof Error ? error.message : "Failed to generate multipart upload URLs";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

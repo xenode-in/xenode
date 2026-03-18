@@ -132,9 +132,220 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     };
   }, [tasks]);
 
+  const uploadChunkedVideoDirectly = useCallback(async (task: UploadTask) => {
+    uploadingIds.current.add(task.id);
+
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === task.id ? { ...t, status: "uploading", progress: 0 } : t,
+      ),
+    );
+
+    try {
+      let thumbnail: string | undefined;
+      try {
+        thumbnail = await generateThumbnail(task.file);
+      } catch (err) {
+        console.warn("Failed to generate thumbnail", err);
+      }
+
+      const chunkSize = 2 * 1024 * 1024; // 2MB
+      let cipherChunkSize = chunkSize;
+      let uploadBody: File | Blob = task.file;
+      let uploadContentType = task.file.type || "application/octet-stream";
+      let encryptedDEK: string | undefined;
+      let encryptedName: string | undefined;
+      let chunkCount = Math.ceil(task.file.size / chunkSize);
+      let chunkIvs: string | undefined;
+
+      if (shouldEncryptNow()) {
+        try {
+          const enc = await encryptFileChunked(
+            task.file,
+            cryptoPublicKeyRef.current!,
+            chunkSize
+          );
+          uploadBody = enc.ciphertext;
+          uploadContentType = "application/octet-stream";
+          encryptedDEK = enc.encryptedDEK;
+          chunkCount = enc.chunkCount;
+          chunkIvs = JSON.stringify(enc.chunkIvs);
+          cipherChunkSize = chunkSize + 16;
+
+          const nameBuf = new TextEncoder().encode(task.file.name);
+          const nameKey = crypto.getRandomValues(new Uint8Array(32));
+          const nameIV = crypto.getRandomValues(new Uint8Array(12));
+          const encNameBuf = await crypto.subtle.encrypt(
+            { name: "AES-GCM", iv: nameIV as Uint8Array<ArrayBuffer> },
+            await crypto.subtle.importKey(
+              "raw",
+              nameKey as Uint8Array<ArrayBuffer>,
+              { name: "AES-GCM", length: 256 },
+              false,
+              ["encrypt"],
+            ),
+            nameBuf,
+          );
+          const combined = new Uint8Array(
+            nameKey.byteLength + nameIV.byteLength + encNameBuf.byteLength,
+          );
+          combined.set(nameKey, 0);
+          combined.set(nameIV, nameKey.byteLength);
+          combined.set(
+            new Uint8Array(encNameBuf),
+            nameKey.byteLength + nameIV.byteLength,
+          );
+          encryptedName = toB64(combined);
+        } catch (err) {
+          console.warn("[E2EE] Encryption failed, falling back to plaintext", err);
+          uploadBody = task.file;
+          uploadContentType = task.file.type || "application/octet-stream";
+          encryptedDEK = undefined;
+          encryptedName = undefined;
+          chunkIvs = undefined;
+          chunkCount = Math.ceil(task.file.size / chunkSize);
+        }
+      }
+
+      const presignResponse = await fetch("/api/objects/presign-upload-multipart", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fileName: shouldEncryptNow() ? crypto.randomUUID() : task.file.name,
+          fileSize: uploadBody.size,
+          fileType: uploadContentType,
+          bucketId: task.bucketId,
+          prefix: task.prefix,
+          chunkCount,
+        }),
+      });
+
+      if (!presignResponse.ok) {
+        const error = await presignResponse.json();
+        throw new Error(error.error || "Failed to get multipart upload URLs");
+      }
+
+      const { fileId, urls, bucketId: returnedBucketId, chunkSize: serverChunkSize } = await presignResponse.json();
+      
+      const chunkUploads: { index: number; key: string; size: number }[] = [];
+      const loadedBytes = new Array(urls.length).fill(0);
+      const totalSize = uploadBody.size;
+
+      // Limit concurrency
+      const concurrency = 3;
+      let urlIndex = 0;
+
+      const uploadWorker = async () => {
+        while (urlIndex < urls.length) {
+          const currentIndex = urlIndex++;
+          const urlObj = urls[currentIndex];
+          const start = currentIndex * cipherChunkSize;
+          const end = Math.min(start + cipherChunkSize, totalSize);
+          const chunkBlob = uploadBody.slice(start, end);
+          
+          await new Promise<void>((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            // Optional: Register in uploadXHRs to support cancelTask later
+            // It gets complicated with multiple XHRs, let's keep simple first
+            
+            xhr.upload.addEventListener("progress", (e) => {
+              if (e.lengthComputable) {
+                loadedBytes[currentIndex] = e.loaded;
+                const totalLoaded = loadedBytes.reduce((a, b) => a + b, 0);
+                const progress = Math.round((totalLoaded / totalSize) * 100);
+                setTasks((prev) =>
+                  prev.map((t) => (t.id === task.id ? { ...t, progress } : t)),
+                );
+              }
+            });
+
+            xhr.addEventListener("load", () => {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                loadedBytes[currentIndex] = chunkBlob.size;
+                chunkUploads.push({
+                  index: currentIndex,
+                  key: urlObj.key,
+                  size: chunkBlob.size
+                });
+                resolve();
+              } else {
+                reject(new Error(`Chunk upload failed: ${xhr.status} - ${xhr.statusText}`));
+              }
+            });
+
+            xhr.addEventListener("error", () => reject(new Error("Network error during chunk upload")));
+            xhr.addEventListener("abort", () => reject(new Error("Upload aborted")));
+
+            xhr.open("PUT", urlObj.url);
+            xhr.setRequestHeader("Content-Type", uploadContentType);
+            xhr.send(chunkBlob);
+          });
+        }
+      };
+
+      const workers = Array.from({ length: Math.min(concurrency, urls.length) }, () => uploadWorker());
+      await Promise.all(workers);
+
+      // Sort chunkUploads by index just in case
+      chunkUploads.sort((a, b) => a.index - b.index);
+
+      const completeResponse = await fetch("/api/objects/complete-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          objectKey: fileId,
+          bucketId: returnedBucketId,
+          size: totalSize,
+          contentType: task.file.type,
+          thumbnail,
+          isEncrypted: !!encryptedDEK,
+          encryptedDEK,
+          encryptedName,
+          chunkSize: serverChunkSize,
+          chunkCount: urls.length,
+          chunkIvs,
+          isChunked: true,
+          chunks: chunkUploads,
+        }),
+      });
+
+      if (!completeResponse.ok) {
+        const error = await completeResponse.json();
+        throw new Error(error.error || "Failed to save file metadata");
+      }
+
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id ? { ...t, status: "completed", progress: 100 } : t,
+        ),
+      );
+    } catch (error) {
+      console.error("Upload error:", error);
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id
+            ? {
+                ...t,
+                status: "failed",
+                error: error instanceof Error ? error.message : "Upload failed",
+              }
+            : t,
+        ),
+      );
+    } finally {
+      uploadingIds.current.delete(task.id);
+      setActiveUploads((prev) => prev - 1);
+    }
+  }, []);
+
   const uploadFileDirectly = useCallback(async (task: UploadTask) => {
     // Prevent double upload (React Strict Mode)
     if (uploadingIds.current.has(task.id)) {
+      return;
+    }
+
+    if (task.file.type.startsWith("video/")) {
+      uploadChunkedVideoDirectly(task);
       return;
     }
 

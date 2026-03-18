@@ -37,7 +37,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 
   try {
-    const command = new GetObjectCommand({ Bucket: bucket, Key: key });
+    const rangeHeader = request.headers.get("range");
+    const command = new GetObjectCommand({ 
+      Bucket: bucket, 
+      Key: key,
+      ...(rangeHeader ? { Range: rangeHeader } : {})
+    });
     const response = await getS3Client().send(command);
 
     if (!response.Body) {
@@ -58,6 +63,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     if (response.ContentDisposition) {
       headers.set("Content-Disposition", response.ContentDisposition);
     }
+    if (response.ContentRange) {
+      headers.set("Content-Range", response.ContentRange);
+    }
+    headers.set("Accept-Ranges", "bytes");
 
     // Allow Azure CDN to cache responses for up to 1 hour at the edge.
     // The short-lived token in the URL means stale cache entries are harmless
@@ -67,7 +76,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     headers.set("Access-Control-Allow-Methods", "GET, OPTIONS");
     headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
 
-    return new NextResponse(stream, { status: 200, headers });
+    const status = response.ContentRange ? 206 : 200;
+
+    return new NextResponse(stream, { status, headers });
   } catch (error: unknown) {
     const message =
       error instanceof Error ? error.message : "Internal server error";

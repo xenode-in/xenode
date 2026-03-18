@@ -5,7 +5,7 @@ import { Play, Music2 } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { decryptFileName } from "@/lib/crypto/fileEncryption";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 
 interface ObjectData {
   id: string;
@@ -38,11 +38,11 @@ export function PreviewSection({ videos, images, audios }: PreviewSectionProps) 
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({});
   const { isUnlocked } = useCrypto();
 
-  const allItems = [...videos, ...images, ...audios];
+  const allItems = useMemo(() => [...videos, ...images, ...audios], [videos, images, audios]);
 
   useEffect(() => {
     if (!isUnlocked || !allItems.length) {
-      setDecryptedNames({});
+      setDecryptedNames((prev) => Object.keys(prev).length ? {} : prev);
       return;
     }
 

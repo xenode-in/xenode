@@ -246,30 +246,35 @@ export function DownloadProgress() {
                       <p className="text-sm text-card-foreground truncate">
                         {task.name}
                       </p>
-                      <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                        <p className="text-xs text-muted-foreground">
+                      <div className="flex items-center justify-between mt-0.5">
+                        <p className="text-xs text-muted-foreground flex items-center flex-wrap gap-2">
                           {task.status === "decrypting" ? (
                             <span className="text-primary font-medium tracking-wide">
                               DECRYPTING…
                             </span>
                           ) : task.status === "paused" ? (
                             <span className="text-yellow-400">
-                              Paused at {formatBytes(task.resumeFrom)} — tap
-                              Resume
+                              Paused at {formatBytes(task.receivedBytes || task.resumeFrom)}
                             </span>
-                          ) : task.status === "downloading" &&
-                            task.resumeFrom > 0 ? (
+                          ) : task.status === "downloading" ? (
                             <span className="text-primary">
-                              Resuming from {formatBytes(task.resumeFrom)}
+                              {formatBytes(task.receivedBytes || task.resumeFrom)} / {formatBytes(task.size)}
                             </span>
                           ) : (
                             <>{formatBytes(task.size)}</>
                           )}
                         </p>
-                        {task.status === "failed" && task.error && (
-                          <p className="text-xs text-red-400">{task.error}</p>
+                        
+                        {(task.status === "downloading" || task.status === "decrypting") && (
+                           <span className="text-xs font-medium text-muted-foreground">
+                             {task.progress}%
+                           </span>
                         )}
                       </div>
+                      
+                      {task.status === "failed" && task.error && (
+                        <p className="text-xs text-red-400 mt-1">{task.error}</p>
+                      )}
 
                       {/* Progress Bar */}
                       {(task.status === "downloading" ||
