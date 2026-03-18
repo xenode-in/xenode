@@ -14,6 +14,11 @@ export default async function OnboardingPage() {
     redirect("/login");
   }
 
+  // Enforce email verification before onboarding
+  if (session.user.emailVerified === false) {
+    redirect("/verify-email");
+  }
+
   // If already onboarded, send them to dashboard
   if (session.user.onboarded) {
     redirect("/dashboard");

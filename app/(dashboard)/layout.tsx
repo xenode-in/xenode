@@ -26,6 +26,11 @@ export default async function DashboardLayout({
     redirect("/login");
   }
 
+  // Enforce email verification
+  if (session.user.emailVerified === false) {
+    redirect("/verify-email");
+  }
+
   // Redirect to onboarding if not completed
   // Use loose check in case the field is undefined for older users
   if (session.user.onboarded === false) {
