@@ -24,6 +24,7 @@ export interface DownloadTask {
   name: string;
   size: number;
   progress: number;
+  receivedBytes: number; // ADDED
   resumeFrom: number;
   status: "downloading" | "decrypting" | "paused" | "completed" | "failed";
   error?: string;
@@ -141,6 +142,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
           name,
           size: obj.size,
           resumeFrom,
+          receivedBytes: resumeFrom, // ADDED
           progress:
             resumeFrom && obj.size
               ? Math.round((resumeFrom / obj.size) * 100)
@@ -214,6 +216,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
             await appendChunk(obj.id, value);
             receivedLength += value.length;
             updateTask(obj.id, {
+              receivedBytes: receivedLength, // ADDED
               progress: totalSize
                 ? Math.round((receivedLength / totalSize) * 100)
                 : 0,
@@ -253,6 +256,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
               await appendChunk(obj.id, value);
               receivedLength += value.length;
               updateTask(obj.id, {
+                receivedBytes: receivedLength, // ADDED
                 progress: totalCipherSize
                   ? Math.round((receivedLength / totalCipherSize) * 100)
                   : 0,
