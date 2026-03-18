@@ -48,10 +48,21 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    const url = await getDownloadUrl(bucket.b2BucketId, object.key);
+    let url = "";
+    let chunkUrls: string[] | undefined = undefined;
+
+    if (object.chunks && object.chunks.length > 0) {
+      const sortedChunks = [...object.chunks].sort((a, b) => a.index - b.index);
+      chunkUrls = await Promise.all(
+        sortedChunks.map((chunk) => getDownloadUrl(bucket.b2BucketId, chunk.key))
+      );
+    } else {
+      url = await getDownloadUrl(bucket.b2BucketId, object.key);
+    }
 
     return NextResponse.json({
       url,
+      chunkUrls,
       isEncrypted: object.isEncrypted ?? false,
       encryptedDEK: object.encryptedDEK ?? null,
       iv: object.iv ?? null,

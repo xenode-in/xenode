@@ -22,6 +22,11 @@ export interface IStorageObject extends Document {
   chunkSize?: number; // Plaintext bytes per chunk (e.g. 1 048 576)
   chunkCount?: number; // Total number of chunks
   chunkIvs?: string; // JSON array of Base64 12-byte IVs, one per chunk
+  chunks?: {
+    index: number;
+    key: string;
+    size: number;
+  }[]; // Metadata for individual chunks
 }
 
 const StorageObjectSchema = new Schema<IStorageObject>(
@@ -94,6 +99,16 @@ const StorageObjectSchema = new Schema<IStorageObject>(
     },
     chunkIvs: {
       type: String, // JSON-encoded string, e.g. '["iv0b64","iv1b64",...]'
+      required: false,
+    },
+    chunks: {
+      type: [
+        {
+          index: { type: Number, required: true },
+          key: { type: String, required: true },
+          size: { type: Number, required: true },
+        },
+      ],
       required: false,
     },
   },
