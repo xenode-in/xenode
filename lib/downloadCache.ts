@@ -127,3 +127,31 @@ export async function clearCache(objectId: string): Promise<void> {
     // Ignore cleanup errors
   }
 }
+
+/** Truncates the cached bytes to a specific length to align with chunk boundaries. */
+export async function truncateCache(
+  objectId: string,
+  length: number,
+): Promise<void> {
+  try {
+    const db = await openDB();
+    const existing: Blob | undefined = await new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const req = tx.objectStore(STORE_NAME).get(objectId);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(undefined);
+    });
+
+    if (!existing || existing.size <= length) return;
+
+    const sliced = existing.slice(0, length, "application/octet-stream");
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, "readwrite");
+      const req = tx.objectStore(STORE_NAME).put(sliced, objectId);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  } catch {
+    // Non-critical
+  }
+}

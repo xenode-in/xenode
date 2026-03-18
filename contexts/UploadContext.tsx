@@ -132,7 +132,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     };
   }, [tasks]);
 
-  const uploadChunkedVideoDirectly = useCallback(async (task: UploadTask) => {
+  const uploadChunkedMediaDirectly = useCallback(async (task: UploadTask) => {
     uploadingIds.current.add(task.id);
 
     setTasks((prev) =>
@@ -232,7 +232,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       const totalSize = uploadBody.size;
 
       // Limit concurrency
-      const concurrency = 3;
+      const concurrency = 4; // Bump concurrency to 4
       let urlIndex = 0;
 
       const uploadWorker = async () => {
@@ -245,8 +245,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           
           await new Promise<void>((resolve, reject) => {
             const xhr = new XMLHttpRequest();
-            // Optional: Register in uploadXHRs to support cancelTask later
-            // It gets complicated with multiple XHRs, let's keep simple first
             
             xhr.upload.addEventListener("progress", (e) => {
               if (e.lengthComputable) {
@@ -344,8 +342,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    if (task.file.type.startsWith("video/")) {
-      uploadChunkedVideoDirectly(task);
+    if (task.file.type.startsWith("video/") || task.file.type.startsWith("audio/")) {
+      uploadChunkedMediaDirectly(task);
       return;
     }
 

@@ -118,7 +118,7 @@ export async function decryptFile(
 export async function decryptFileChunkedCombined(
   ciphertext: ArrayBuffer,
   encryptedDEK: string,
-  chunkIvsStr: string,
+  chunkIvsStr: string | string[],
   chunkSize: number,
   chunkCount: number,
   privateKey: CryptoKey,
@@ -139,7 +139,7 @@ export async function decryptFileChunkedCombined(
     ["decrypt"],
   );
 
-  const chunkIvs: string[] = JSON.parse(chunkIvsStr);
+  const chunkIvs: string[] = typeof chunkIvsStr === 'string' ? JSON.parse(chunkIvsStr) : chunkIvsStr;
   const decryptedChunks: ArrayBuffer[] = [];
 
   // Decrypt each chunk independently
@@ -204,25 +204,34 @@ export async function encryptFileChunked(
   const plaintext = await file.arrayBuffer();
   const chunkCount = Math.ceil(plaintext.byteLength / chunkSize);
 
-  const chunkIvs: string[] = [];
-  const encryptedChunks: ArrayBuffer[] = [];
+  const chunkIvs: string[] = new Array(chunkCount);
+  const encryptedChunks: ArrayBuffer[] = new Array(chunkCount);
 
-  // 2. Encrypt each chunk with a fresh 12-byte random IV
-  for (let i = 0; i < chunkCount; i++) {
-    const start = i * chunkSize;
-    const end = Math.min(start + chunkSize, plaintext.byteLength);
-    const slice = plaintext.slice(start, end);
+  // Parallel encryption worker
+  const concurrency = 4;
+  let currentIndex = 0;
 
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const cipherChunk = await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv },
-      dek,
-      slice,
-    );
+  const encryptWorker = async () => {
+    while (currentIndex < chunkCount) {
+      const i = currentIndex++;
+      const start = i * chunkSize;
+      const end = Math.min(start + chunkSize, plaintext.byteLength);
+      const slice = plaintext.slice(start, end);
 
-    chunkIvs.push(toB64(iv));
-    encryptedChunks.push(cipherChunk);
-  }
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const cipherChunk = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv },
+        dek,
+        slice,
+      );
+
+      chunkIvs[i] = toB64(iv);
+      encryptedChunks[i] = cipherChunk;
+    }
+  };
+
+  const workers = Array.from({ length: Math.min(concurrency, chunkCount) }, () => encryptWorker());
+  await Promise.all(workers);
 
   // 3. Wrap the DEK with the user's RSA public key
   const rawDEK = await crypto.subtle.exportKey("raw", dek);
