@@ -64,7 +64,7 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
 
   useEffect(() => {
     if (!isUnlocked || !files.length) {
-      setDecryptedNames({});
+      setDecryptedNames((prev) => Object.keys(prev).length ? {} : prev);
       return;
     }
 
