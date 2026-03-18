@@ -64,14 +64,6 @@ export default function VerifyEmailPage() {
     }
   };
 
-  if (isPending) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
   // If there's no session, user shouldn't be here
   useEffect(() => {
     if (!isPending) {
@@ -82,6 +74,14 @@ export default function VerifyEmailPage() {
       }
     }
   }, [session, isPending, router]);
+
+  if (isPending) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   if (!session || session.user.emailVerified) {
     return null;
