@@ -27,6 +27,8 @@ export async function POST(request: NextRequest) {
       chunkSize,
       chunkCount,
       chunkIvs,
+      isChunked,
+      chunks,
     } = await request.json();
 
     if (!objectKey || !bucketId || !size) {
@@ -49,13 +51,38 @@ export async function POST(request: NextRequest) {
     }
 
     let b2FileId = "";
-    try {
-      const command = new HeadObjectCommand({ Bucket: bucket.b2BucketId, Key: objectKey });
-      const s3Response = await getS3Client().send(command);
-      b2FileId = s3Response.VersionId || `${bucket.b2BucketId}/${objectKey}`;
-    } catch (err) {
-      console.error("Failed to head object from B2:", err);
-      return NextResponse.json({ error: "File not found in storage" }, { status: 404 });
+    if (isChunked) {
+      if (!chunks || chunks.length !== chunkCount) {
+        return NextResponse.json({ error: "Invalid chunks provided" }, { status: 400 });
+      }
+
+      let totalSize = 0;
+      for (const chunk of chunks) {
+        try {
+          const command = new HeadObjectCommand({ Bucket: bucket.b2BucketId, Key: chunk.key });
+          await getS3Client().send(command);
+          totalSize += chunk.size;
+        } catch (err) {
+          console.error(`Failed to head chunk ${chunk.key} from B2:`, err);
+          return NextResponse.json({ error: `Chunk ${chunk.index} not found in storage` }, { status: 404 });
+        }
+      }
+
+      if (totalSize !== size) {
+        return NextResponse.json({ error: "Size mismatch" }, { status: 400 });
+      }
+
+      // No single b2FileId for chunked uploads
+      b2FileId = `multipart-${objectKey}`;
+    } else {
+      try {
+        const command = new HeadObjectCommand({ Bucket: bucket.b2BucketId, Key: objectKey });
+        const s3Response = await getS3Client().send(command);
+        b2FileId = s3Response.VersionId || `${bucket.b2BucketId}/${objectKey}`;
+      } catch (err) {
+        console.error("Failed to head object from B2:", err);
+        return NextResponse.json({ error: "File not found in storage" }, { status: 404 });
+      }
     }
 
     const existingObject = await StorageObject.findOne({ bucketId, key: objectKey });
@@ -74,6 +101,7 @@ export async function POST(request: NextRequest) {
         if (chunkSize) existingObject.chunkSize = chunkSize;
         if (chunkCount) existingObject.chunkCount = chunkCount;
         if (chunkIvs) existingObject.chunkIvs = chunkIvs;
+        if (isChunked && chunks) existingObject.chunks = chunks;
       }
       await existingObject.save();
       if (sizeDiff !== 0) {
@@ -98,6 +126,7 @@ export async function POST(request: NextRequest) {
       chunkSize: chunkSize ?? undefined,
       chunkCount: chunkCount ?? undefined,
       chunkIvs: chunkIvs ?? undefined,
+      chunks: isChunked && chunks ? chunks : undefined,
     });
 
     await incrementStorage(userId, size, { contentType, bucketId, isEncrypted });
