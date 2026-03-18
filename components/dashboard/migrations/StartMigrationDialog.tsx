@@ -16,18 +16,23 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Loader2, Folder, FileIcon, ChevronLeft } from "lucide-react";
+import { authClient } from "@/lib/auth/client";
+import { Loader2, Folder, FileIcon, ChevronLeft, CloudDownload } from "lucide-react";
 
 interface StartMigrationDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
+  hasGoogleAccount: boolean;
+  googleAccountId?: string;
 }
 
 export function StartMigrationDialog({
   open,
   onOpenChange,
   onSuccess,
+  hasGoogleAccount,
+  googleAccountId
 }: StartMigrationDialogProps) {
   const [provider, setProvider] = useState<string>("GOOGLE_DRIVE");
   const [destinationBucketId, setDestinationBucketId] = useState<string>("");
@@ -63,7 +68,7 @@ export function StartMigrationDialog({
   useEffect(() => {
     if (open) {
       fetchConfig();
-      fetchAccounts();
+      // fetchAccounts(); // Removing local account fetch
     } else {
       setSelectedFolders([]);
       setAvailableFolders([]);
@@ -73,10 +78,11 @@ export function StartMigrationDialog({
     }
   }, [open]);
 
-  const hasGoogleAccount = accounts.some((acc) => acc.providerId === "google");
-  const googleAccountId = accounts.find(
-    (acc) => acc.providerId === "google",
-  )?.accountId;
+  // Using props instead of local state for accounts
+  // const hasGoogleAccount = accounts.some((acc) => acc.providerId === "google");
+  // const googleAccountId = accounts.find(
+  //   (acc) => acc.providerId === "google",
+  // )?.accountId;
 
   useEffect(() => {
     if (googleAccountId && open) {
@@ -355,9 +361,31 @@ export function StartMigrationDialog({
           )}
 
           {!hasGoogleAccount && (
-            <div className="p-3 bg-yellow-500/10 text-yellow-500 text-sm rounded-md border border-yellow-500/20">
-              You haven&apos;t linked a Google account. Please link one in
-              Settings before migrating.
+            <div className="p-4 bg-secondary/50 rounded-lg border border-border flex flex-col items-center text-center space-y-3">
+              <div className="p-2 rounded-full bg-primary/10">
+                <CloudDownload className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <p className="text-sm font-medium text-foreground">
+                  Connect Google Drive
+                </p>
+                <p className="text-xs text-muted-foreground mt-1 max-w-[280px]">
+                  Link your Google account to authorize Xenode to read and import your files.
+                </p>
+              </div>
+              <Button
+                type="button"
+                className="w-full mt-2"
+                onClick={async () => {
+                  await authClient.linkSocial({
+                    provider: "google",
+                    callbackURL: "/dashboard/migrations",
+                    errorCallbackURL: "/dashboard/migrations",
+                  });
+                }}
+              >
+                Connect Account
+              </Button>
             </div>
           )}
 

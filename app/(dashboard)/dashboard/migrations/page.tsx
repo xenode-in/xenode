@@ -1,12 +1,16 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { authClient } from "@/lib/auth/client";
 import {
   CloudDownload,
   Plus,
   HardDrive,
   RefreshCw,
   Trash2,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatBytes } from "@/lib/utils/format";
@@ -39,6 +43,59 @@ export default function MigrationsPage() {
   const [migrations, setMigrations] = useState<MigrationJob[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  
+  const [accounts, setAccounts] = useState<any[]>([]);
+  const [isAccountsLoading, setIsAccountsLoading] = useState(true);
+  
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
+  useEffect(() => {
+    const error = searchParams.get("error");
+    if (error) {
+      if (
+        error === "email_doesn't_match" ||
+        error === "account_already_linked_to_different_user" ||
+        error === "signup_disabled" ||
+        error === "signup disabled"
+      ) {
+        toast.error("Cannot link account", {
+          description: "The Google account email must exactly match your Xenode login email.",
+          duration: 5000,
+        });
+      } else {
+        toast.error("Failed to link account", {
+          description: "Something went wrong while connecting your Google account.",
+          duration: 5000,
+        });
+      }
+      router.replace("/dashboard/migrations");
+    }
+  }, [searchParams, router]);
+
+  const fetchAccounts = async () => {
+    try {
+      const res = await fetch("/api/auth/accounts");
+      if (res.ok) {
+        const data = await res.json();
+        setAccounts(data);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsAccountsLoading(false);
+    }
+  };
+
+  const handleConnectGoogle = async () => {
+    await authClient.linkSocial({
+      provider: "google",
+      callbackURL: "/dashboard/migrations",
+      errorCallbackURL: "/dashboard/migrations"
+    });
+  };
+
+  const hasGoogleAccount = accounts.some(acc => acc.providerId === "google");
 
   const fetchMigrations = async () => {
     try {
@@ -56,6 +113,7 @@ export default function MigrationsPage() {
 
   useEffect(() => {
     fetchMigrations();
+    fetchAccounts();
 
     // Poll every 5 seconds if there are active migrations
     const hasActive = migrations.some((m) =>
@@ -131,6 +189,8 @@ export default function MigrationsPage() {
         open={isDialogOpen}
         onOpenChange={setIsDialogOpen}
         onSuccess={handleMigrationCreated}
+        hasGoogleAccount={hasGoogleAccount}
+        googleAccountId={accounts.find(acc => acc.providerId === "google")?.accountId}
       />
 
       <div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -224,17 +284,39 @@ export default function MigrationsPage() {
             <p className="text-sm text-foreground font-medium">
               No migrations yet
             </p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Start by connecting a provider and importing your files.
-            </p>
-            <Button
-              variant="outline"
-              className="mt-4 gap-2"
-              onClick={() => setIsDialogOpen(true)}
-            >
-              <Plus className="w-4 h-4" />
-              Start Import
-            </Button>
+            {isAccountsLoading ? (
+              <div className="mt-4 flex justify-center">
+                <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+              </div>
+            ) : hasGoogleAccount ? (
+              <>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Start by importing your files from Google Drive.
+                </p>
+                <Button
+                  variant="outline"
+                  className="mt-4 gap-2"
+                  onClick={() => setIsDialogOpen(true)}
+                >
+                  <Plus className="w-4 h-4" />
+                  Start Import
+                </Button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Connect your Google account to start importing files.
+                </p>
+                <Button
+                  variant="outline"
+                  className="mt-4 gap-2"
+                  onClick={handleConnectGoogle}
+                >
+                  <CloudDownload className="w-4 h-4" />
+                  Connect Google
+                </Button>
+              </>
+            )}
           </div>
         )}
       </div>
