@@ -2,13 +2,14 @@
 
 import { useState, Suspense, lazy, useEffect } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { signIn, signUp, authClient } from "@/lib/auth/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { GradualSpacing } from "@/components/ui/gradual-spacing";
+import { toast } from "sonner";
 
 const Dithering = lazy(() =>
   import("@paper-design/shaders-react").then((mod) => ({
@@ -16,8 +17,10 @@ const Dithering = lazy(() =>
   })),
 );
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const errorParam = searchParams.get("error");
   const [isLogin, setIsLogin] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -29,6 +32,15 @@ export default function LoginPage() {
     password: "",
     confirmPassword: "",
   });
+
+  // Handle URL errors (like expired tokens)
+  useEffect(() => {
+    if (errorParam === "TOKEN_EXPIRED") {
+      setError("Your verification link has expired. Please sign in to request a new one.");
+    } else if (errorParam === "INVALID_TOKEN") {
+      setError("Invalid verification link. Please sign in to request a new one.");
+    }
+  }, [errorParam]);
 
   const taglines = [
     "Your personal secure storage hub.",
@@ -301,5 +313,17 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex h-screen w-full items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    }>
+      <LoginForm />
+    </Suspense>
   );
 }

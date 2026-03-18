@@ -18,12 +18,24 @@ function VerifyEmailContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const emailParam = searchParams.get("email");
+  const errorParam = searchParams.get("error");
   const { data: session, isPending } = useSession();
   const [isResending, setIsResending] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
   const [resendCount, setResendCount] = useState(0);
 
   const targetEmail = session?.user?.email || emailParam;
+
+  // Handle errors from the email link
+  useEffect(() => {
+    if (errorParam === "TOKEN_EXPIRED") {
+      toast.error("Your verification link has expired. Please request a new one.");
+    } else if (errorParam === "INVALID_TOKEN") {
+      toast.error("Invalid verification link. Please request a new one.");
+    } else if (errorParam) {
+      toast.error("Failed to verify email. Please try again.");
+    }
+  }, [errorParam]);
 
   // Poll for verification status
   useEffect(() => {
@@ -189,19 +201,33 @@ function VerifyEmailContent() {
               Resend verification email
             </Button>
             
-            <p className="text-sm text-muted-foreground">
-              Need to use a different email?{" "}
-              <button
-                onClick={async () => {
-                  if (session) {
-                    await authClient.signOut();
-                  }
-                  router.push("/login");
-                }}
-                className="text-primary hover:underline font-medium"
-              >
-                Sign out
-              </button>
+            <p className="text-sm text-muted-foreground flex flex-col gap-2">
+              <span>
+                Verified on another device?{" "}
+                <button
+                  onClick={() => {
+                    router.refresh();
+                    router.push("/dashboard");
+                  }}
+                  className="text-primary hover:underline font-medium"
+                >
+                  Click to continue
+                </button>
+              </span>
+              <span>
+                Need to use a different email?{" "}
+                <button
+                  onClick={async () => {
+                    if (session) {
+                      await authClient.signOut();
+                    }
+                    router.push("/login");
+                  }}
+                  className="text-primary hover:underline font-medium"
+                >
+                  Sign out
+                </button>
+              </span>
             </p>
           </div>
         </div>
