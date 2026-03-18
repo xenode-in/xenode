@@ -18,10 +18,11 @@ import { DocViewerRenderers } from "@cyntler/react-doc-viewer";
 import dynamic from "next/dynamic";
 import "plyr-react/plyr.css";
 import {
-  useChunkedVideoPreview,
-  ChunkedStreamOptions,
-} from "@/hooks/useChunkedVideoPreview";
+  useVideoStream,
+  VideoStreamOptions,
+} from "@/hooks/useVideoStream";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
+import { cn } from "@/lib/utils";
 
 // Dynamically import DocViewer and Plyr with SSR disabled
 const DocViewer = dynamic(() => import("@cyntler/react-doc-viewer"), {
@@ -46,7 +47,8 @@ interface ShareMeta {
 }
 
 interface StreamData {
-  streamUrl: string;
+  streamUrl?: string;
+  chunkUrls?: string[];
   isEncrypted: boolean;
   iv?: string;
   contentType: string;
@@ -107,7 +109,7 @@ async function deriveDek(
       ) as ArrayBuffer,
     },
     { name: "AES-GCM" },
-    false,
+    true, // Extractable = true
     ["decrypt"],
   );
 }
@@ -179,62 +181,59 @@ async function fetchWithProgress(
 // ─────────────────────────────────────────────────────────────────────────────
 // Inner component: download+decrypt encrypted video, then play in Plyr
 // ─────────────────────────────────────────────────────────────────────────────
-function ChunkedVideoPlayer({
+function ChunkedStreamPlayer({
   opts,
   contentType,
+  onUrlChange,
 }: {
-  opts: ChunkedStreamOptions;
+  opts: VideoStreamOptions;
   contentType: string;
+  onUrlChange: (url: string | null) => void;
 }) {
-  const { blobUrl, progress, isDecrypting, fromCache, error } =
-    useChunkedVideoPreview(opts);
   const isAudio = contentType.startsWith("audio/");
+  const [videoElement, setVideoElement] = useState<HTMLMediaElement | null>(null);
+
+  const { blobUrl, error, isBuffering } = useVideoStream(opts, videoElement);
+
+  useEffect(() => {
+    onUrlChange(blobUrl);
+    return () => onUrlChange(null);
+  }, [blobUrl, onUrlChange]);
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-3 text-destructive">
-        <AlertCircle className="h-8 w-8" />
-        <p className="text-sm text-center max-w-sm">{error}</p>
+      <div className="flex h-full flex-col items-center justify-center p-4 text-center">
+        <AlertCircle className="mb-2 h-8 w-8 text-destructive" />
+        <p className="text-sm text-destructive">{error}</p>
       </div>
     );
   }
 
-  if (!blobUrl) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <div className="w-64">
-          <div className="flex justify-between text-xs text-white/60 mb-1.5">
-            <span>{isDecrypting ? "Decrypting…" : "Downloading…"}</span>
-            <span className="tabular-nums">{progress}%</span>
-          </div>
-          <div className="h-1.5 rounded-full bg-white/20 overflow-hidden">
-            <div
-              className="h-full bg-primary rounded-full transition-all duration-200"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Regular blob URL — Plyr can fetch this just fine (unlike MediaSource blob URLs)
   return (
-    <div className="h-full w-full bg-black flex items-center justify-center flex-col gap-2">
-      <div className={isAudio ? "w-full p-4" : "aspect-video w-full"}>
-        <Plyr
-          source={{
-            type: isAudio ? "audio" : "video",
-            sources: [{ src: blobUrl, type: contentType }],
-          }}
-          options={{ autoplay: true }}
+    <div className={cn("relative flex h-full items-center justify-center", isAudio ? "w-full p-4" : "w-full bg-black")}>
+      {isBuffering && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 backdrop-blur-sm pointer-events-none">
+          <Loader2 className="h-8 w-8 animate-spin text-white" />
+        </div>
+      )}
+      
+      {isAudio ? (
+        <audio
+          ref={(node) => setVideoElement(node)}
+          controls
+          autoPlay
+          className="w-full"
+          src={blobUrl || ""}
         />
-      </div>
-      {fromCache && (
-        <p className="text-xs text-green-400/80 flex items-center gap-1">
-          <span>⚡</span> Loaded from cache
-        </p>
+      ) : (
+        <video
+          ref={(node) => setVideoElement(node)}
+          controls
+          autoPlay
+          playsInline
+          className="max-h-full max-w-full"
+          src={blobUrl || ""}
+        />
       )}
     </div>
   );
@@ -261,7 +260,7 @@ export default function SharedFilePage() {
   const [directStreamUrl, setDirectStreamUrl] = useState<string | null>(null);
 
   // Path B: chunked encrypted video → MSE via hook
-  const [chunkedOpts, setChunkedOpts] = useState<ChunkedStreamOptions | null>(
+  const [chunkedOpts, setChunkedOpts] = useState<VideoStreamOptions | null>(
     null,
   );
 
@@ -319,7 +318,7 @@ export default function SharedFilePage() {
         throw new Error((data as unknown as { error: string }).error);
 
       // ── PATH A: Non-encrypted media → pure signed-URL streaming ───────────
-      if (isMedia && !data.isEncrypted) {
+      if (isMedia && !data.isEncrypted && data.streamUrl) {
         setDirectStreamUrl(data.streamUrl);
         setIsFetchingForPreview(false);
         return;
@@ -343,31 +342,89 @@ export default function SharedFilePage() {
         );
       }
 
-      // ── PATH B: Chunked encrypted media → MSE streaming ──────────────────
+      // ── PATH B: Chunked encrypted media → SW or MSE streaming ────────────
       if (
         isMedia &&
         data.isEncrypted &&
         dek &&
         data.chunkSize &&
         data.chunkCount &&
-        data.chunkIvs
+        data.chunkIvs &&
+        data.chunkUrls
       ) {
         const chunkIvsArr: string[] = JSON.parse(data.chunkIvs);
+        const rawDEK = await crypto.subtle.exportKey("raw", dek);
+        
+        if ("serviceWorker" in navigator) {
+          try {
+            const registration = await navigator.serviceWorker.register("/sw.js");
+            await navigator.serviceWorker.ready;
+            
+            let sw = navigator.serviceWorker.controller || registration.active;
+            
+            if (sw) {
+              await new Promise<void>((resolve, reject) => {
+                const channel = new MessageChannel();
+                channel.port1.onmessage = (event) => {
+                  if (event.data.success) resolve();
+                  else reject(new Error("Failed to register stream with SW"));
+                };
+                if (sw?.state !== 'activated') {
+                   sw?.addEventListener('statechange', () => {
+                      if (sw?.state === 'activated') {
+                         sw?.postMessage({
+                          type: 'REGISTER_STREAM',
+                          fileId: token,
+                          rawDEK,
+                          chunkSize: data.chunkSize || (2 * 1024 * 1024),
+                          chunkCount: data.chunkCount || data.chunkUrls!.length,
+                          chunkIvs: chunkIvsArr,
+                          urls: data.chunkUrls,
+                          contentType: data.contentType,
+                          size: meta.size
+                        }, [channel.port2]);
+                      }
+                   })
+                } else {
+                    sw.postMessage({
+                      type: 'REGISTER_STREAM',
+                      fileId: token,
+                      rawDEK,
+                      chunkSize: data.chunkSize || (2 * 1024 * 1024),
+                      chunkCount: data.chunkCount || data.chunkUrls!.length,
+                      chunkIvs: chunkIvsArr,
+                      urls: data.chunkUrls,
+                      contentType: data.contentType,
+                      size: meta.size
+                    }, [channel.port2]);
+                }
+              });
+
+              setDirectStreamUrl(`/sw/objects/${token}`);
+              setIsFetchingForPreview(false);
+              return; // Done using SW
+            }
+          } catch (err) {
+            console.error("SW streaming failed, falling back to MSE", err);
+          }
+        }
+        
+        // Fallback to MSE via chunkedOpts
         setChunkedOpts({
-          streamUrl: data.streamUrl,
+          urls: data.chunkUrls,
           dek,
           chunkSize: data.chunkSize,
           chunkCount: data.chunkCount,
           chunkIvs: chunkIvsArr,
           contentType: data.contentType,
-          cacheKey: token, // share token — Cache Storage key
-          fileSizeBytes: meta.size, // used to enforce the 500 MB cache limit
         });
         setIsFetchingForPreview(false);
         return;
       }
 
       // ── PATH C: Legacy single-blob encrypted file OR non-media ────────────
+      if (!data.streamUrl) throw new Error("Stream URL is missing for this file.");
+      
       // Fetch full ciphertext (or plaintext if not E2EE) with progress tracking
       // Uses the same Cache Storage mechanism behind the scenes
       const raw = await fetchWithProgress(
@@ -429,9 +486,6 @@ export default function SharedFilePage() {
         );
       }
 
-      const fileRes = await fetch(data.downloadUrl);
-      if (!fileRes.ok) throw new Error("Failed to fetch file");
-
       let blob: Blob;
 
       if (
@@ -440,33 +494,33 @@ export default function SharedFilePage() {
         meta.shareEncryptedDEK &&
         meta.shareKeyIv
       ) {
-        const raw = await fileRes.arrayBuffer();
         const dek = await deriveDek(
           shareKey,
           meta.shareEncryptedDEK,
           meta.shareKeyIv,
         );
 
-        // Chunked file: decrypt chunk-by-chunk and concatenate
-        if (data.chunkSize && data.chunkCount && data.chunkIvs) {
+        // Chunked file: download chunks separately and decrypt
+        if (data.chunkUrls && data.chunkUrls.length > 0 && data.chunkSize && data.chunkCount && data.chunkIvs) {
           const chunkIvsArr: string[] = JSON.parse(data.chunkIvs);
-          const cipherChunkSize = data.chunkSize + 16;
           const plaintextChunks: ArrayBuffer[] = [];
+          const { decryptChunk } = await import("@/lib/crypto/fileEncryption");
+          
           for (let i = 0; i < data.chunkCount; i++) {
-            const start = i * cipherChunkSize;
-            const end = start + cipherChunkSize;
-            const { decryptChunk } =
-              await import("@/lib/crypto/fileEncryption");
-            const plain = await decryptChunk(
-              raw.slice(start, end),
-              dek,
-              chunkIvsArr[i],
-            );
+            const chunkRes = await fetch(data.chunkUrls[i]);
+            if (!chunkRes.ok) throw new Error(`Failed to fetch chunk ${i}`);
+            const chunkBuf = await chunkRes.arrayBuffer();
+            const plain = await decryptChunk(chunkBuf, dek, chunkIvsArr[i]);
             plaintextChunks.push(plain);
           }
           blob = new Blob(plaintextChunks, { type: data.contentType });
         } else {
           // Legacy single-blob
+          if (!data.downloadUrl) throw new Error("Missing download URL");
+          const fileRes = await fetch(data.downloadUrl);
+          if (!fileRes.ok) throw new Error("Failed to fetch file");
+          const raw = await fileRes.arrayBuffer();
+          
           const ivBytes = b64ToBytes(data.iv);
           const decrypted = await crypto.subtle.decrypt(
             {
@@ -482,7 +536,21 @@ export default function SharedFilePage() {
           blob = new Blob([decrypted], { type: data.contentType });
         }
       } else {
-        blob = await fileRes.blob();
+        // Not encrypted
+        if (data.chunkUrls && data.chunkUrls.length > 0) {
+          const chunks: BlobPart[] = [];
+          for (const chunkUrl of data.chunkUrls) {
+            const chunkRes = await fetch(chunkUrl);
+            if (!chunkRes.ok) throw new Error("Failed to fetch chunk");
+            chunks.push(await chunkRes.blob());
+          }
+          blob = new Blob(chunks, { type: data.contentType });
+        } else {
+          if (!data.downloadUrl) throw new Error("Missing download URL");
+          const fileRes = await fetch(data.downloadUrl);
+          if (!fileRes.ok) throw new Error("Failed to fetch file");
+          blob = await fileRes.blob();
+        }
       }
 
       const url = URL.createObjectURL(blob);
@@ -554,7 +622,11 @@ export default function SharedFilePage() {
     // PATH B — chunked encrypted media: MSE streaming
     if (chunkedOpts) {
       return (
-        <ChunkedVideoPlayer opts={chunkedOpts} contentType={meta.contentType} />
+        <ChunkedStreamPlayer 
+          opts={chunkedOpts} 
+          contentType={meta.contentType} 
+          onUrlChange={() => {}} // No-op as modal handles state nicely
+        />
       );
     }
 

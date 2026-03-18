@@ -387,10 +387,10 @@ export function FilePreviewDialog({
           return;
         }
 
-        // 3. Fetch raw ciphertext via same-origin proxy to avoid CDN CORS block
+        // 3. Fetch raw ciphertext directly from CDN
         // Added Cache Storage check (fetchWithProgress) so previously decrypted files load instantly
         const ciphertextBuf = await fetchWithProgress(
-          `/api/objects/${file.id}/content`,
+          data.url, // Directly fetch from CDN URL instead of via /content proxy
           (pct) => {
             // Optional: You could expose progress to UI if you added a fetchProgress state
           },

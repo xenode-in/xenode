@@ -67,7 +67,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       );
   }
 
-  const object = await StorageObject.findById(link.objectId);
+  const object = await StorageObject.findById(link.objectId).lean();
   if (!object)
     return NextResponse.json({ error: "File not found" }, { status: 404 });
 
@@ -75,11 +75,24 @@ export async function POST(req: NextRequest, { params }: Params) {
   if (!bucket)
     return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
 
-  // 1-hour signed URL — enough for a preview session
-  const signedUrl = await getSignedFileUrl(bucket.name, object.key, 3600);
+  let signedUrl = "";
+  let chunkUrls: string[] | undefined = undefined;
+
+  if (object.chunks && object.chunks.length > 0) {
+    const sortedChunks = [...object.chunks].sort((a, b) => a.index - b.index);
+    chunkUrls = await Promise.all(
+      sortedChunks.map((chunk) =>
+        getSignedFileUrl(bucket.b2BucketId, chunk.key, 3600),
+      ),
+    );
+  } else {
+    // 1-hour signed URL — enough for a preview session
+    signedUrl = await getSignedFileUrl(bucket.b2BucketId, object.key, 3600);
+  }
 
   return NextResponse.json({
-    streamUrl: signedUrl,
+    streamUrl: signedUrl || undefined,
+    chunkUrls,
     isEncrypted: object.isEncrypted,
     iv: object.iv,
     contentType: object.contentType,
