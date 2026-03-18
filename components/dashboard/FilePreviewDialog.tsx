@@ -92,7 +92,7 @@ const ChunkedStreamPlayer = ({
           controls
           autoPlay
           className="w-full"
-          src={blobUrl || undefined}
+          src={blobUrl || ""}
         />
       ) : (
         <video
@@ -101,7 +101,7 @@ const ChunkedStreamPlayer = ({
           autoPlay
           playsInline
           className="max-h-full max-w-full"
-          src={blobUrl || undefined}
+          src={blobUrl || ""}
         />
       )}
     </div>
