@@ -211,9 +211,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          fileName: shouldEncryptNow() ? crypto.randomUUID() : task.file.name,
           fileSize: uploadBody.size,
           fileType: uploadContentType,
           bucketId: task.bucketId,
+          prefix: task.prefix,
           chunkCount,
         }),
       });

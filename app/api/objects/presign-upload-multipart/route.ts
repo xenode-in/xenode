@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
 
     const keyId = B2_KEY_ID.trim();
     const appKey = B2_APPLICATION_KEY.trim();
-    const { fileSize, fileType, bucketId, chunkCount } = await request.json();
+    const { fileSize, fileType, bucketId, chunkCount, prefix, fileName } = await request.json();
 
     if (!bucketId) {
       return NextResponse.json({ error: "bucketId required" }, { status: 400 });
@@ -81,7 +81,16 @@ export async function POST(request: NextRequest) {
 
     // Chunk calculation
     const chunkSize = 2 * 1024 * 1024; // 2MB
-    const logicalKey = `users/${userId}/${randomBytes(16).toString("hex")}`;
+    
+    const basePrefix = prefix || `users/${userId}/`;
+    
+    // Fallback to random hex if no filename is provided
+    let safeFileName = fileName || randomBytes(16).toString("hex");
+    
+    // Sanitize filename to prevent directory traversal
+    safeFileName = safeFileName.replace(/[\/\\]/g, "_");
+    
+    const logicalKey = `${basePrefix}${safeFileName}`;
     
     const urls = [];
     for (let i = 0; i < chunkCount; i++) {
