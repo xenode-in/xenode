@@ -1,42 +1,35 @@
 /**
  * lib/downloadCache.ts
  *
- * IndexedDB-backed chunk cache for resumable encrypted downloads.
+ * Cache API-backed chunk cache for resumable encrypted downloads.
  *
  * Each in-flight download stores its ciphertext bytes here as they arrive.
  * On restart the cached bytes are re-used so the Range request only fetches
  * the missing tail — exactly what MEGA does client-side.
  *
  * Store layout:
- *   DB  : "xenode-dl-cache"  (version 1)
- *   Store: "chunks"  key = objectId (string)  value = Blob
+ *   CacheStorage : "xenode-dl-cache-v2"
+ *   Entry: request URL = `/cache/chunks/${objectId}/${index}`, response = Blob
  */
 
-const DB_NAME = "xenode-dl-cache";
-const STORE_NAME = "chunks";
-const DB_VERSION = 1;
-
-function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore(STORE_NAME);
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-}
+const CACHE_NAME = "xenode-dl-cache-v2";
 
 /** Returns all object IDs that have cached bytes (i.e. interrupted downloads). */
 export async function getCachedIds(): Promise<string[]> {
   try {
-    const db = await openDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(STORE_NAME, "readonly");
-      const req = tx.objectStore(STORE_NAME).getAllKeys();
-      req.onsuccess = () => resolve((req.result as string[]) || []);
-      req.onerror = () => resolve([]);
-    });
+    const cache = await caches.open(CACHE_NAME);
+    const requests = await cache.keys();
+    const ids = new Set<string>();
+    
+    for (const req of requests) {
+      const url = new URL(req.url);
+      const parts = url.pathname.split("/");
+      // Expected path: /cache/chunks/{objectId}/{index}
+      if (parts.length >= 4 && parts[1] === "cache" && parts[2] === "chunks") {
+        ids.add(parts[3]);
+      }
+    }
+    return Array.from(ids);
   } catch {
     return [];
   }
@@ -45,16 +38,27 @@ export async function getCachedIds(): Promise<string[]> {
 /** Returns the number of bytes already cached for this object, or 0. */
 export async function getCachedSize(objectId: string): Promise<number> {
   try {
-    const db = await openDB();
-    return new Promise((resolve) => {
-      const tx = db.transaction(STORE_NAME, "readonly");
-      const req = tx.objectStore(STORE_NAME).get(objectId);
-      req.onsuccess = () => {
-        const blob: Blob | undefined = req.result;
-        resolve(blob ? blob.size : 0);
-      };
-      req.onerror = () => resolve(0);
-    });
+    const cache = await caches.open(CACHE_NAME);
+    const requests = await cache.keys();
+    let totalSize = 0;
+
+    for (const req of requests) {
+      const url = new URL(req.url);
+      if (url.pathname.startsWith(`/cache/chunks/${objectId}/`)) {
+        const res = await cache.match(req);
+        if (res) {
+            const sizeStr = res.headers.get("Content-Length");
+            if (sizeStr) {
+                totalSize += parseInt(sizeStr, 10);
+            } else {
+                // Fallback to reading blob size if header is missing
+                const blob = await res.blob();
+                totalSize += blob.size;
+            }
+        }
+      }
+    }
+    return totalSize;
   } catch {
     return 0;
   }
@@ -65,65 +69,140 @@ export async function getCachedBytes(
   objectId: string,
 ): Promise<Uint8Array | null> {
   try {
-    const db = await openDB();
-    const blob: Blob | undefined = await new Promise((resolve) => {
-      const tx = db.transaction(STORE_NAME, "readonly");
-      const req = tx.objectStore(STORE_NAME).get(objectId);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => resolve(undefined);
-    });
-    if (!blob || blob.size === 0) return null;
-    return new Uint8Array(await blob.arrayBuffer());
+    const cache = await caches.open(CACHE_NAME);
+    const requests = await cache.keys();
+    
+    // Find all chunks for this objectId and parse their indices
+    const chunkRequests = requests
+      .filter(req => new URL(req.url).pathname.startsWith(`/cache/chunks/${objectId}/`))
+      .map(req => {
+        const url = new URL(req.url);
+        const parts = url.pathname.split("/");
+        const index = parseInt(parts[parts.length - 1], 10);
+        return { req, index };
+      })
+      .sort((a, b) => a.index - b.index);
+
+    if (chunkRequests.length === 0) return null;
+
+    let totalLength = 0;
+    const buffers: Uint8Array[] = [];
+
+    // Read all responses
+    for (const { req } of chunkRequests) {
+      const res = await cache.match(req);
+      if (res) {
+        const arrayBuffer = await res.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+        buffers.push(uint8Array);
+        totalLength += uint8Array.length;
+      }
+    }
+
+    if (totalLength === 0) return null;
+
+    // Concatenate all chunks into a single Uint8Array
+    const combined = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const buf of buffers) {
+      combined.set(buf, offset);
+      offset += buf.length;
+    }
+
+    return combined;
   } catch {
     return null;
   }
 }
 
-/** Appends a single chunk to the existing cached blob (or creates a new one). */
+/** Appends a single chunk to the cache. */
 export async function appendChunk(
   objectId: string,
   chunk: Uint8Array,
+  index: number
 ): Promise<void> {
   try {
-    const db = await openDB();
-    // Read existing blob first then write the merged blob back
-    const existing: Blob | undefined = await new Promise((resolve) => {
-      const tx = db.transaction(STORE_NAME, "readonly");
-      const req = tx.objectStore(STORE_NAME).get(objectId);
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => resolve(undefined);
+    const cache = await caches.open(CACHE_NAME);
+    
+    // Create a synthetic response
+    const arrayBuffer = new Uint8Array(chunk).buffer;
+    const response = new Response(arrayBuffer, {
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "Content-Length": chunk.length.toString(),
+      }
     });
 
-    // Cast to Uint8Array<ArrayBuffer> to satisfy the BlobPart type constraint
-    const chunkPart =
-      chunk.buffer instanceof ArrayBuffer
-        ? new Uint8Array(chunk.buffer as ArrayBuffer)
-        : new Uint8Array(chunk);
-    const parts: BlobPart[] = existing ? [existing, chunkPart] : [chunkPart];
-    const merged = new Blob(parts, { type: "application/octet-stream" });
-
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      const req = tx.objectStore(STORE_NAME).put(merged, objectId);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
+    // Store in cache using a unique URL per chunk
+    const url = `/cache/chunks/${objectId}/${index}`;
+    await cache.put(url, response);
   } catch {
-    // Non-critical: if IndexedDB fails we still download, just can't resume
+    // Non-critical: if cache fails we still download, just can't resume
   }
 }
 
-/** Removes the cached bytes after a successful download. */
+/** Removes all cached chunks after a successful download. */
 export async function clearCache(objectId: string): Promise<void> {
   try {
-    const db = await openDB();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, "readwrite");
-      const req = tx.objectStore(STORE_NAME).delete(objectId);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error);
-    });
+    const cache = await caches.open(CACHE_NAME);
+    const requests = await cache.keys();
+
+    for (const req of requests) {
+      const url = new URL(req.url);
+      if (url.pathname.startsWith(`/cache/chunks/${objectId}/`)) {
+        await cache.delete(req);
+      }
+    }
   } catch {
     // Ignore cleanup errors
+  }
+}
+
+/** 
+ * Truncates the cached bytes. 
+ * Note: With the new Cache API strategy, we don't truncate blobs mid-chunk.
+ * We rely on deleting specific chunk indices if needed, or simply not
+ * fetching them. This is kept for compatibility with DownloadContext.tsx
+ * if we want to delete everything from a specific chunk index onwards.
+ */
+export async function truncateCache(
+  objectId: string,
+  fromIndex: number,
+): Promise<void> {
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    const requests = await cache.keys();
+
+    for (const req of requests) {
+      const url = new URL(req.url);
+      const parts = url.pathname.split("/");
+      if (parts.length >= 4 && parts[1] === "cache" && parts[2] === "chunks" && parts[3] === objectId) {
+        const idx = parseInt(parts[4], 10);
+        if (idx >= fromIndex) {
+          await cache.delete(req);
+        }
+      }
+    }
+  } catch {
+    //
+  }
+}
+
+export async function getNextChunkIndex(objectId: string): Promise<number> {
+  try {
+    const cache = await caches.open(CACHE_NAME);
+    const requests = await cache.keys();
+    let maxIndex = -1;
+    for (const req of requests) {
+      const url = new URL(req.url);
+      const parts = url.pathname.split("/");
+      if (parts.length >= 4 && parts[1] === "cache" && parts[2] === "chunks" && parts[3] === objectId) {
+        const idx = parseInt(parts[4], 10);
+        if (idx > maxIndex) maxIndex = idx;
+      }
+    }
+    return maxIndex + 1;
+  } catch {
+    return 0;
   }
 }
