@@ -16,7 +16,7 @@ export default function Home() {
         <ThemeGradientBackground />
         {/* Grid Lines Overlay */}
         <div className="fixed inset-0 pointer-events-none z-60 flex justify-center px-6 md:px-8">
-          <div className="w-full max-w-[1200px] border-x border-white/10 h-full" />
+          <div className="w-full max-w-[1200px] border-x  h-full" />
         </div>
 
         {/* Grain overlay */}

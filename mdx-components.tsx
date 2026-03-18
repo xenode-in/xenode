@@ -52,7 +52,7 @@ export function useMDXComponents(components: MDXComponents): MDXComponents {
       </code>
     ),
     pre: ({ children }) => (
-      <pre className="bg-black/40 rounded-lg p-4 overflow-x-auto my-4 border border-white/10">
+      <pre className="bg-black/40 rounded-lg p-4 overflow-x-auto my-4 border ">
         {children}
       </pre>
     ),

@@ -109,7 +109,12 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
     "@type": "BreadcrumbList",
     itemListElement: [
       { "@type": "ListItem", position: 1, name: "Home", item: BASE_URL },
-      { "@type": "ListItem", position: 2, name: "Blog", item: `${BASE_URL}/blog` },
+      {
+        "@type": "ListItem",
+        position: 2,
+        name: "Blog",
+        item: `${BASE_URL}/blog`,
+      },
       { "@type": "ListItem", position: 3, name: post.title, item: postUrl },
     ],
   };
@@ -158,7 +163,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
               {post.title}
             </h1>
             <p className="text-xl opacity-70 mb-6">{post.description}</p>
-            <div className="flex flex-wrap items-center gap-4 text-sm opacity-60 pb-6 border-b border-white/10">
+            <div className="flex flex-wrap items-center gap-4 text-sm opacity-60 pb-6 border-b ">
               <span className="flex items-center gap-1">
                 <User className="w-4 h-4" />
                 {post.author}

@@ -23,14 +23,14 @@ const stages = [
 
 export function StageTimeline() {
   return (
-    <section className="relative z-10 border-b border-white/10 flex justify-center px-6 md:px-8">
+    <section className="relative z-10 border-b  flex justify-center px-6 md:px-8">
       <div className="w-full max-w-[1200px] py-16 px-6">
         <p className="text-xs uppercase tracking-widest opacity-50 mb-8 text-center">
           EVERY STAGE OF YOUR JOURNEY
         </p>
 
         {/* Timeline strip */}
-        <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-white/10 border border-white/10 rounded-xl overflow-hidden">
+        <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-white/10 border  rounded-xl overflow-hidden">
           {stages.map((stage, i) => (
             <div
               key={stage.name}

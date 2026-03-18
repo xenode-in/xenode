@@ -26,7 +26,7 @@ const trustBadges = [
 
 export function SocialProofBar() {
   return (
-    <section className="relative z-10 border-y border-white/10 bg-white/[0.02] flex justify-center px-6 md:px-8">
+    <section className="relative z-10 border-y  bg-white/[0.02] flex justify-center px-6 md:px-8">
       <div className="w-full max-w-[1200px] py-16 px-6 flex flex-col gap-10">
         {/* Trust badges */}
         <div className="flex flex-wrap items-center justify-center gap-3">
@@ -45,7 +45,7 @@ export function SocialProofBar() {
           {quotes.map((q) => (
             <div
               key={q.author}
-              className="rounded-xl border border-white/10 bg-white/5 p-6 flex flex-col gap-4"
+              className="rounded-xl border  bg-white/5 p-6 flex flex-col gap-4"
             >
               <p className="text-sm leading-relaxed opacity-80">
                 &ldquo;{q.text}&rdquo;
