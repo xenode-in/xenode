@@ -115,7 +115,7 @@ export function OnboardingForm() {
     resolver: zodResolver(onboardingSchema),
     defaultValues: {
       theme: (theme as "light" | "dark" | "system") || "system",
-      encryptByDefault: false,
+      encryptByDefault: true,
       selectedPlan: "free",
     },
   });
@@ -464,7 +464,10 @@ export function OnboardingForm() {
                                             )}
                                           </div>
                                           <div className="text-xl font-bold">
-                                            ₹{plan.pricing.find(p => p.cycle === "monthly")?.priceINR ?? 0}
+                                            ₹
+                                            {plan.pricing.find(
+                                              (p) => p.cycle === "monthly",
+                                            )?.priceINR ?? 0}
                                             <span className="text-xs font-normal text-muted-foreground">
                                               /mo
                                             </span>
@@ -679,7 +682,7 @@ export function OnboardingForm() {
                       ? "Redirecting…"
                       : "Setting up..."
                     : isPaidPlan
-                      ? `Continue to Checkout → ₹${chosenPlanConfig?.pricing.find(p => p.cycle === "monthly")?.priceINR ?? 0}/mo`
+                      ? `Continue to Checkout → ₹${chosenPlanConfig?.pricing.find((p) => p.cycle === "monthly")?.priceINR ?? 0}/mo`
                       : "Go to Dashboard"}
                   {!isPending && <ArrowRight className="ml-2 h-4 w-4" />}
                 </Button>
