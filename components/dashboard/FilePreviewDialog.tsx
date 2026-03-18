@@ -309,6 +309,63 @@ export function FilePreviewDialog({
               fromB64(data.encryptedDEK)
             );
           
+            if ("serviceWorker" in navigator) {
+              try {
+                const registration = await navigator.serviceWorker.register("/sw.js");
+                await navigator.serviceWorker.ready;
+                
+                let sw = navigator.serviceWorker.controller || registration.active;
+                
+                if (sw) {
+                  await new Promise<void>((resolve, reject) => {
+                    const channel = new MessageChannel();
+                    channel.port1.onmessage = (event) => {
+                      if (event.data.success) resolve();
+                      else reject(new Error("Failed to register stream with SW"));
+                    };
+                    // Ensure state is activated
+                    if (sw?.state !== 'activated') {
+                       sw?.addEventListener('statechange', () => {
+                          if (sw?.state === 'activated') {
+                             sw?.postMessage({
+                              type: 'REGISTER_STREAM',
+                              fileId: file.id,
+                              rawDEK,
+                              chunkSize: data.chunkSize || (2 * 1024 * 1024),
+                              chunkCount: data.chunkCount || data.chunkUrls.length,
+                              chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
+                              urls: data.chunkUrls,
+                              contentType: data.contentType ?? file.contentType,
+                              size: file.size
+                            }, [channel.port2]);
+                          }
+                       })
+                    } else {
+                        sw.postMessage({
+                          type: 'REGISTER_STREAM',
+                          fileId: file.id,
+                          rawDEK,
+                          chunkSize: data.chunkSize || (2 * 1024 * 1024),
+                          chunkCount: data.chunkCount || data.chunkUrls.length,
+                          chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
+                          urls: data.chunkUrls,
+                          contentType: data.contentType ?? file.contentType,
+                          size: file.size
+                        }, [channel.port2]);
+                    }
+                  });
+
+                  if (!cancelled) {
+                    setUrl(`/sw/objects/${file.id}`);
+                    setLoading(false);
+                    return; // Don't fall back to MSE
+                  }
+                }
+              } catch (err) {
+                console.error("SW streaming failed, falling back to MSE", err);
+              }
+            }
+
             const dek = await crypto.subtle.importKey(
               "raw",
               rawDEK,

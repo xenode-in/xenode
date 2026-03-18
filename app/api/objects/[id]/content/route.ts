@@ -6,6 +6,7 @@ import StorageObject from "@/models/StorageObject";
 import { getDownloadUrl } from "@/lib/b2/objects";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -58,10 +59,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     headers.set("Cache-Control", "private, no-store");
 
     const status = upstream.status === 206 ? 206 : 200;
-    const buffer = await upstream.arrayBuffer();
-    headers.set("Content-Length", buffer.byteLength.toString());
-
-    return new NextResponse(buffer, { status, headers });
+    
+    // Stream directly — no arrayBuffer()
+    return new NextResponse(upstream.body, { status, headers });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
