@@ -1,24 +1,12 @@
 "use client";
 
-import React, {
-  createContext,
-  useContext,
-  useState,
-  useCallback,
-  useEffect,
-} from "react";
+import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
 import {
-  setupUserKeyVault,
-  unlockVault,
-  regenerateVault,
-  recoverAndResetVault,
-  updateVaultPassword,
+  setupUserKeyVault, unlockVault, regenerateVault,
+  recoverAndResetVault, updateVaultPassword,
 } from "@/lib/crypto/keySetup";
-import {
-  cacheKeys,
-  loadCachedKeys,
-  clearCachedKeys,
-} from "@/lib/crypto/keyCache";
+import { cacheKeys, loadCachedKeys, clearCachedKeys } from "@/lib/crypto/keyCache";
+import { clearLocalDb } from "@/lib/db/local";
 import { useSession } from "@/lib/auth/client";
 
 interface CryptoContextType {
@@ -28,23 +16,15 @@ interface CryptoContextType {
   privateKey: CryptoKey | null;
   publicKey: CryptoKey | null;
   metadataKey: CryptoKey | null;
-  /** Called after onboarding: setup vault with master password + recovery words */
   setup: (masterPassword: string, recoveryWords: string) => Promise<void>;
-  /** Called on new device: enter master password to unlock */
   unlock: (masterPassword: string) => Promise<void>;
-  /** Called from Settings: replace vault with new password + new recovery kit */
-  regenerate: (
-    newMasterPassword: string,
-    newRecoveryWords: string,
-  ) => Promise<void>;
-  /** Called from Settings: re-encrypts the vault when the account password is changed */
-  updatePassword: (
-    currentPassword: string,
-    newMasterPassword: string,
-  ) => Promise<void>;
-  /** Called from Unlock Vault: uses ONLY recovery kit to recover existing files and set a new master password */
+  regenerate: (newMasterPassword: string, newRecoveryWords: string) => Promise<void>;
+  updatePassword: (currentPassword: string, newMasterPassword: string) => Promise<void>;
   recover: (recoveryWords: string, newMasterPassword: string) => Promise<void>;
+  /** Lock vault in memory only (session continues) */
   lock: () => Promise<void>;
+  /** Full logout — wipes local DB + clears keys */
+  logout: () => Promise<void>;
   isModalOpen: boolean;
   setModalOpen: (open: boolean) => void;
 }
@@ -84,6 +64,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
         if (cached) {
           setPrivateKey(cached.privateKey);
           setPublicKey(cached.publicKey);
+          setMetadataKey(cached.metadataKey || null);
           setIsUnlocked(true);
           return;
         }
@@ -94,19 +75,17 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
             const keys = await unlockVault(storedPw);
             setPrivateKey(keys.privateKey);
             setPublicKey(keys.publicKey);
-          setMetadataKey(keys.metadataKey || null);
+            setMetadataKey(keys.metadataKey || null);
             setIsUnlocked(true);
             await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
             sessionStorage.removeItem("xenode-vault-pw");
             return;
           } catch (e: any) {
-            // Unlocking failed
             if (e.message === "NO_VAULT") {
               setNeedsSetup(true);
               setIsInitializing(false);
               return;
             }
-            console.error("Auto-unlock failed", e);
           }
         }
 
@@ -121,94 +100,62 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
     init();
   }, [userId, isPending]);
 
-  const setup = useCallback(
-    async (masterPassword: string, recoveryWords: string) => {
-      const keys = await setupUserKeyVault(masterPassword, recoveryWords);
-      setPrivateKey(keys.privateKey);
-      setPublicKey(keys.publicKey);
-          setMetadataKey(keys.metadataKey || null);
-      setIsUnlocked(true);
-      setNeedsSetup(false);
-      await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
-    },
-    [],
-  );
-
-  const unlock = useCallback(async (masterPassword: string) => {
-    const keys = await unlockVault(masterPassword);
-    setPrivateKey(keys.privateKey);
-    setPublicKey(keys.publicKey);
-          setMetadataKey(keys.metadataKey || null);
-    setIsUnlocked(true);
+  const setup = useCallback(async (masterPassword: string, recoveryWords: string) => {
+    const keys = await setupUserKeyVault(masterPassword, recoveryWords);
+    setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
+    setMetadataKey(keys.metadataKey || null); setIsUnlocked(true); setNeedsSetup(false);
     await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
   }, []);
 
-  const regenerate = useCallback(
-    async (newMasterPassword: string, newRecoveryWords: string) => {
-      const keys = await regenerateVault(newMasterPassword, newRecoveryWords);
-      setPrivateKey(keys.privateKey);
-      setPublicKey(keys.publicKey);
-          setMetadataKey(keys.metadataKey || null);
-      setIsUnlocked(true);
-      setNeedsSetup(false);
-      await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
-    },
-    [],
-  );
+  const unlock = useCallback(async (masterPassword: string) => {
+    const keys = await unlockVault(masterPassword);
+    setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
+    setMetadataKey(keys.metadataKey || null); setIsUnlocked(true);
+    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
+  }, []);
 
-  const updatePassword = useCallback(
-    async (currentPassword: string, newMasterPassword: string) => {
-      const keys = await updateVaultPassword(currentPassword, newMasterPassword);
-      setPrivateKey(keys.privateKey);
-      setPublicKey(keys.publicKey);
-          setMetadataKey(keys.metadataKey || null);
-      setIsUnlocked(true);
-      setNeedsSetup(false);
-      await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
-    },
-    [],
-  );
+  const regenerate = useCallback(async (newMasterPassword: string, newRecoveryWords: string) => {
+    const keys = await regenerateVault(newMasterPassword, newRecoveryWords);
+    setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
+    setMetadataKey(keys.metadataKey || null); setIsUnlocked(true); setNeedsSetup(false);
+    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
+  }, []);
 
-  const recover = useCallback(
-    async (recoveryWords: string, newMasterPassword: string) => {
-      const keys = await recoverAndResetVault(recoveryWords, newMasterPassword);
-      setPrivateKey(keys.privateKey);
-      setPublicKey(keys.publicKey);
-          setMetadataKey(keys.metadataKey || null);
-      setIsUnlocked(true);
-      setNeedsSetup(false);
-      await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
-    },
-    [],
-  );
+  const updatePassword = useCallback(async (currentPassword: string, newMasterPassword: string) => {
+    const keys = await updateVaultPassword(currentPassword, newMasterPassword);
+    setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
+    setMetadataKey(keys.metadataKey || null); setIsUnlocked(true); setNeedsSetup(false);
+    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
+  }, []);
 
+  const recover = useCallback(async (recoveryWords: string, newMasterPassword: string) => {
+    const keys = await recoverAndResetVault(recoveryWords, newMasterPassword);
+    setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
+    setMetadataKey(keys.metadataKey || null); setIsUnlocked(true); setNeedsSetup(false);
+    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
+  }, []);
+
+  // Lock: wipe keys from memory only, DB stays (re-login re-decrypts into RAM)
   const lock = useCallback(async () => {
-    setPrivateKey(null);
-    setPublicKey(null);
-    setMetadataKey(null);
-    setIsUnlocked(false);
+    setPrivateKey(null); setPublicKey(null); setMetadataKey(null); setIsUnlocked(false);
     await clearCachedKeys();
   }, []);
 
+  // Logout: wipe keys AND the entire local DB
+  const logout = useCallback(async () => {
+    setPrivateKey(null); setPublicKey(null); setMetadataKey(null); setIsUnlocked(false);
+    await clearCachedKeys();
+    if (userId) await clearLocalDb(userId); // drops IndexedDB + clears lastSync
+  }, [userId]);
+
   return (
-    <CryptoContext.Provider
-      value={{
-        isInitializing,
-        isUnlocked,
-        needsSetup,
-        privateKey,
-        publicKey,
-        metadataKey,
-        setup,
-        unlock,
-        regenerate,
-        updatePassword,
-        recover,
-        lock,
-        isModalOpen,
-        setModalOpen,
-      }}
-    >
+    <CryptoContext.Provider value={{
+      isInitializing, isUnlocked, needsSetup,
+      privateKey, publicKey, metadataKey,
+      setup, unlock, regenerate, updatePassword, recover,
+      lock, logout,
+      isModalOpen, setModalOpen,
+    }}>
       {children}
     </CryptoContext.Provider>
   );

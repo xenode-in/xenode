@@ -10,7 +10,7 @@ import React, {
 } from "react";
 import { useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { encryptFile, encryptFileChunked, encryptMetadataString } from "@/lib/crypto/fileEncryption";
+import { encryptFile, encryptFileChunked } from "@/lib/crypto/fileEncryption";
 import { toB64 } from "@/lib/crypto/utils";
 
 export interface UploadTask {
@@ -177,10 +177,27 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           const nameBuf = new TextEncoder().encode(task.file.name);
           const nameKey = crypto.getRandomValues(new Uint8Array(32));
           const nameIV = crypto.getRandomValues(new Uint8Array(12));
-          if (!cryptoMetadataKeyRef.current) {
-            throw new Error("Metadata key not available for encryption");
-          }
-          encryptedName = await encryptMetadataString(task.file.name, cryptoMetadataKeyRef.current);
+          const encNameBuf = await crypto.subtle.encrypt(
+            { name: "AES-GCM", iv: nameIV as Uint8Array<ArrayBuffer> },
+            await crypto.subtle.importKey(
+              "raw",
+              nameKey as Uint8Array<ArrayBuffer>,
+              { name: "AES-GCM", length: 256 },
+              false,
+              ["encrypt"],
+            ),
+            nameBuf,
+          );
+          const combined = new Uint8Array(
+            nameKey.byteLength + nameIV.byteLength + encNameBuf.byteLength,
+          );
+          combined.set(nameKey, 0);
+          combined.set(nameIV, nameKey.byteLength);
+          combined.set(
+            new Uint8Array(encNameBuf),
+            nameKey.byteLength + nameIV.byteLength,
+          );
+          encryptedName = toB64(combined);
         } catch (err) {
           console.warn("[E2EE] Encryption failed, falling back to plaintext", err);
           uploadBody = task.file;
@@ -422,10 +439,27 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           const nameBuf = new TextEncoder().encode(task.file.name);
           const nameKey = crypto.getRandomValues(new Uint8Array(32));
           const nameIV = crypto.getRandomValues(new Uint8Array(12));
-          if (!cryptoMetadataKeyRef.current) {
-            throw new Error("Metadata key not available for encryption");
-          }
-          encryptedName = await encryptMetadataString(task.file.name, cryptoMetadataKeyRef.current);
+          const encNameBuf = await crypto.subtle.encrypt(
+            { name: "AES-GCM", iv: nameIV as Uint8Array<ArrayBuffer> },
+            await crypto.subtle.importKey(
+              "raw",
+              nameKey as Uint8Array<ArrayBuffer>,
+              { name: "AES-GCM", length: 256 },
+              false,
+              ["encrypt"],
+            ),
+            nameBuf,
+          );
+          const combined = new Uint8Array(
+            nameKey.byteLength + nameIV.byteLength + encNameBuf.byteLength,
+          );
+          combined.set(nameKey, 0);
+          combined.set(nameIV, nameKey.byteLength);
+          combined.set(
+            new Uint8Array(encNameBuf),
+            nameKey.byteLength + nameIV.byteLength,
+          );
+          encryptedName = toB64(combined);
         } catch (err) {
           console.warn(
             "[E2EE] Encryption failed, falling back to plaintext",
