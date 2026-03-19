@@ -10,6 +10,7 @@ export interface LocalFile {
   createdAt: string; // ISO string
   updatedAt: string; // ISO string
   isEncrypted: boolean;
+  encryptedName?: string;
   tags: string[];
   thumbnail?: string;
   bucketId: string;
@@ -33,7 +34,7 @@ export const db = new XenodeDatabase();
 // In-memory search index
 export const searchIndex = new MiniSearch({
   fields: ["name", "tags", "contentType"], // fields to index for full-text search
-  storeFields: ["id", "name", "size", "contentType", "createdAt", "isEncrypted", "thumbnail", "key"], // fields to return with search results
+  storeFields: ["id", "name", "size", "contentType", "createdAt", "isEncrypted", "thumbnail", "key", "encryptedName"], // fields to return with search results
   searchOptions: {
     prefix: true,
     fuzzy: 0.2, // typo tolerance
