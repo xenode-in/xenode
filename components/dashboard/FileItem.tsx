@@ -34,11 +34,17 @@ import { decryptFileName } from "@/lib/crypto/fileEncryption";
 
 const getFileIcon = (contentType: string, className?: string) => {
   if (!contentType) return <FileGeneric className={className} />;
+  if (contentType === "application/x-directory") return <Folder className={className} />;
+  
   if (contentType.startsWith("image/"))
-    return <ImageIcon className={className} />;
-  if (contentType.startsWith("video/")) return <Video className={className} />;
-  if (contentType.startsWith("audio/")) return <Music className={className} />;
-  if (contentType.includes("pdf")) return <FileText className={className} />;
+    return <ImageIcon className={`text-blue-400 ${className || ""}`} />;
+  if (contentType.startsWith("video/")) 
+    return <Video className={`text-purple-400 ${className || ""}`} />;
+  if (contentType.startsWith("audio/")) 
+    return <Music className={`text-green-400 ${className || ""}`} />;
+  if (contentType.includes("pdf") || contentType.includes("document")) 
+    return <FileText className={`text-red-400 ${className || ""}`} />;
+    
   if (
     contentType.includes("zip") ||
     contentType.includes("tar") ||
@@ -47,28 +53,30 @@ const getFileIcon = (contentType: string, className?: string) => {
     contentType.includes("compressed") ||
     contentType.includes("archive")
   ) {
-    return <FileArchive className={className} />;
+    return <FileArchive className={`text-yellow-500 ${className || ""}`} />;
   }
   if (
     contentType.includes("javascript") ||
     contentType.includes("json") ||
     contentType.includes("html") ||
     contentType.includes("css") ||
-    contentType.includes("xml")
+    contentType.includes("xml") ||
+    contentType.includes("yaml") ||
+    contentType.includes("typescript")
   ) {
-    return <FileCode className={className} />;
+    return <FileCode className={`text-orange-400 ${className || ""}`} />;
   }
   if (
     contentType.includes("spreadsheet") ||
     contentType.includes("excel") ||
     contentType.includes("csv")
   ) {
-    return <FileSpreadsheet className={className} />;
+    return <FileSpreadsheet className={`text-emerald-500 ${className || ""}`} />;
   }
   if (contentType.startsWith("text/"))
-    return <FileText className={className} />;
+    return <FileText className={`text-muted-foreground/50 ${className || ""}`} />;
 
-  return <FileGeneric className={className} />;
+  return <FileGeneric className={`text-muted-foreground/50 ${className || ""}`} />;
 };
 
 interface ObjectData {

@@ -29,10 +29,16 @@ import { formatBytes } from "@/lib/utils";
 const getFileIcon = (contentType: string, className?: string) => {
   if (!contentType) return <FileIcon className={className} />;
   if (contentType === "application/x-directory") return <Folder className={className} />;
-  if (contentType.startsWith("image/")) return <ImageIcon className={className} />;
-  if (contentType.startsWith("video/")) return <Video className={className} />;
-  if (contentType.startsWith("audio/")) return <Music className={className} />;
-  if (contentType.includes("pdf")) return <FileText className={className} />;
+  
+  if (contentType.startsWith("image/")) 
+    return <ImageIcon className={`text-blue-400 ${className || ""}`} />;
+  if (contentType.startsWith("video/")) 
+    return <Video className={`text-purple-400 ${className || ""}`} />;
+  if (contentType.startsWith("audio/")) 
+    return <Music className={`text-green-400 ${className || ""}`} />;
+  if (contentType.includes("pdf") || contentType.includes("document")) 
+    return <FileText className={`text-red-400 ${className || ""}`} />;
+    
   if (
     contentType.includes("zip") ||
     contentType.includes("tar") ||
@@ -41,7 +47,7 @@ const getFileIcon = (contentType: string, className?: string) => {
     contentType.includes("compressed") ||
     contentType.includes("archive")
   ) {
-    return <FileArchive className={className} />;
+    return <FileArchive className={`text-yellow-500 ${className || ""}`} />;
   }
   if (
     contentType.includes("javascript") ||
@@ -52,9 +58,9 @@ const getFileIcon = (contentType: string, className?: string) => {
     contentType.includes("yaml") ||
     contentType.includes("typescript")
   ) {
-    return <FileCode className={className} />;
+    return <FileCode className={`text-orange-400 ${className || ""}`} />;
   }
-  return <FileIcon className={className} />;
+  return <FileIcon className={`text-muted-foreground/50 ${className || ""}`} />;
 };
 
 export function GlobalSearch() {
