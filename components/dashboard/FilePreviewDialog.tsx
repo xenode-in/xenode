@@ -44,6 +44,7 @@ interface ObjectData {
   createdAt: string;
   isEncrypted?: boolean;
   encryptedName?: string;
+  name?: string;
 }
 
 interface FilePreviewDialogProps {
@@ -275,7 +276,7 @@ export function FilePreviewDialog({
 
     async function decryptName() {
       try {
-        const name = await decryptFileName(file!.encryptedName!);
+        const name = file!.name || await decryptFileName(file!.encryptedName!);
         if (!cancelled) setDecryptedName(name);
       } catch (e) {
         console.error("Failed to decrypt preview file name", e);
@@ -535,7 +536,7 @@ export function FilePreviewDialog({
 
   if (!file) return null;
 
-  const name = decryptedName || fileNameFromKey(file.key);
+  const name = file.name || decryptedName || fileNameFromKey(file.key);
   const type = file.contentType;
 
   // Download handler: for encrypted files, trigger programmatic download

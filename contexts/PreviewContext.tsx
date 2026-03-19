@@ -22,6 +22,7 @@ interface ObjectData {
   thumbnail?: string;
   isEncrypted?: boolean;
   encryptedName?: string;
+  name?: string;
 }
 
 interface PreviewContextType {

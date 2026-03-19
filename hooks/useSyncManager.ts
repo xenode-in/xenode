@@ -29,7 +29,11 @@ export function useSyncManager() {
 
         for (let i = 0; i < files.length; i++) {
           const f = files[i];
-          let name = f.key.split('/').pop() || f.key;
+          let cleanKey = f.key;
+          if (cleanKey.endsWith('/')) {
+            cleanKey = cleanKey.slice(0, -1);
+          }
+          let name = cleanKey.split('/').pop() || f.key;
           
           if (f.isEncrypted && f.encryptedName) {
             try {
@@ -48,6 +52,7 @@ export function useSyncManager() {
             createdAt: new Date(f.createdAt).toISOString(),
             updatedAt: new Date(f.updatedAt).toISOString(),
             isEncrypted: f.isEncrypted || false,
+            encryptedName: f.encryptedName,
             tags: f.tags || [],
             thumbnail: f.thumbnail,
             bucketId: String(f.bucketId),
