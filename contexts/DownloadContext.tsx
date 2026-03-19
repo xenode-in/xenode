@@ -10,6 +10,7 @@ import React, {
 import {
   decryptFile,
   decryptFileChunkedCombined,
+  decryptFileName,
 } from "@/lib/crypto/fileEncryption";
 import {
   getCachedSize,
@@ -43,7 +44,7 @@ interface DownloadContextType {
   tasks: DownloadTask[];
   pendingResumes: PendingResume[];
   startDownload: (
-    obj: { id: string; key: string; size: number; contentType: string },
+    obj: { id: string; key: string; size: number; contentType: string; encryptedName?: string },
     isEncrypted: boolean,
     privateKey?: CryptoKey | null,
   ) => Promise<void>;
@@ -128,11 +129,18 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
 
   const startDownload = useCallback(
     async (
-      obj: { id: string; key: string; size: number; contentType: string },
+      obj: { id: string; key: string; size: number; contentType: string; encryptedName?: string },
       isEncrypted: boolean,
       privateKey?: CryptoKey | null,
     ) => {
-      const name = obj.key.split("/").pop() || "download";
+      let name = obj.key.split("/").pop() || "download";
+      if (isEncrypted && obj.encryptedName) {
+        try {
+          name = await decryptFileName(obj.encryptedName);
+        } catch (e) {
+          console.error("Failed to decrypt filename for download", e);
+        }
+      }
       const resumeFrom = isEncrypted ? await getCachedSize(obj.id) : 0;
       const controller = new AbortController();
       abortControllers.set(obj.id, controller);

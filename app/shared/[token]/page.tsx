@@ -22,7 +22,9 @@ import {
   VideoStreamOptions,
 } from "@/hooks/useVideoStream";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
+import { decryptFileName } from "@/lib/crypto/fileEncryption";
 import { cn } from "@/lib/utils";
+import Link from "next/link";
 
 // Dynamically import DocViewer and Plyr with SSR disabled
 const DocViewer = dynamic(() => import("@cyntler/react-doc-viewer"), {
@@ -252,6 +254,7 @@ export default function SharedFilePage() {
   const [downloadReceived, setDownloadReceived] = useState(0);
   const [done, setDone] = useState(false);
   const [shareKey, setShareKey] = useState("");
+  const [decryptedName, setDecryptedName] = useState<string | null>(null);
 
   // Preview state
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
@@ -287,7 +290,18 @@ export default function SharedFilePage() {
     if (!token) return;
     fetch(`/api/share/${token}`)
       .then((r) => r.json())
-      .then((d) => (d.error ? setError(d.error) : setMeta(d)))
+      .then((d) => {
+        if (d.error) {
+          setError(d.error);
+        } else {
+          setMeta(d);
+          if (d.isEncrypted && d.encryptedName) {
+            decryptFileName(d.encryptedName)
+              .then(setDecryptedName)
+              .catch(e => console.error("Failed to decrypt shared file name", e));
+          }
+        }
+      })
       .catch(() => setError("Failed to load share info"));
   }, [token]);
 
@@ -362,7 +376,7 @@ export default function SharedFilePage() {
             const registration = await navigator.serviceWorker.register("/sw.js");
             await navigator.serviceWorker.ready;
             
-            let sw = navigator.serviceWorker.controller || registration.active;
+            const sw = navigator.serviceWorker.controller || registration.active;
             
             if (sw) {
               await new Promise<void>((resolve, reject) => {
@@ -653,7 +667,7 @@ export default function SharedFilePage() {
       const a = document.createElement("a");
       a.href = url;
       a.download =
-        data.fileName || meta.fileName.split("/").pop() || "download";
+        decryptedName || data.fileName || meta.fileName.split("/").pop() || "download";
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -813,7 +827,7 @@ export default function SharedFilePage() {
       </div>
     );
 
-  const displayName = meta.fileName.split("/").pop() || meta.fileName;
+  const displayName = decryptedName || meta.fileName.split("/").pop() || meta.fileName;
   const canPreview =
     meta.contentType.startsWith("image/") ||
     meta.contentType.startsWith("video/") ||
@@ -966,12 +980,12 @@ export default function SharedFilePage() {
 
           <p className="text-center text-xs text-muted-foreground">
             Shared via{" "}
-            <a
+            <Link
               href="/"
               className="underline hover:text-primary transition-colors"
             >
               Xenode Drive
-            </a>
+            </Link>
           </p>
         </CardContent>
       </Card>

@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import {
   Loader2,
   AlertCircle,
@@ -29,6 +30,7 @@ import { useCrypto } from "@/contexts/CryptoContext";
 import {
   decryptFile,
   decryptFileChunkedCombined,
+  decryptFileName,
 } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
@@ -41,6 +43,8 @@ interface ObjectData {
   contentType: string;
   createdAt: string;
   isEncrypted?: boolean;
+  encryptedName?: string;
+  name?: string;
 }
 
 interface FilePreviewDialogProps {
@@ -53,10 +57,12 @@ const ChunkedStreamPlayer = ({
   opts,
   type,
   onUrlChange,
+  onReady,
 }: {
   opts: VideoStreamOptions;
   type: string;
   onUrlChange: (url: string | null) => void;
+  onReady?: () => void;
 }) => {
   const isAudio = type.startsWith("audio/");
   const [videoElement, setVideoElement] = useState<HTMLMediaElement | null>(null);
@@ -68,7 +74,14 @@ const ChunkedStreamPlayer = ({
     return () => onUrlChange(null);
   }, [blobUrl, onUrlChange]);
 
+  useEffect(() => {
+    if (error && onReady) {
+      onReady();
+    }
+  }, [error, onReady]);
+
   if (error) {
+    if (onReady) onReady();
     return (
       <div className="flex h-full flex-col items-center justify-center p-4 text-center">
         <AlertCircle className="mb-2 h-8 w-8 text-destructive" />
@@ -79,7 +92,7 @@ const ChunkedStreamPlayer = ({
 
   return (
     <div className={cn("relative flex h-full items-center justify-center", isAudio ? "w-full p-4" : "w-full bg-black")}>
-      {isBuffering && (
+      {isBuffering && !videoElement?.readyState && (
         <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 backdrop-blur-sm pointer-events-none">
           <Loader2 className="h-8 w-8 animate-spin text-white" />
         </div>
@@ -93,6 +106,8 @@ const ChunkedStreamPlayer = ({
           autoPlay
           className="w-full"
           src={blobUrl || ""}
+          onCanPlay={onReady}
+          onPlaying={onReady}
         />
       ) : (
         <video
@@ -102,14 +117,17 @@ const ChunkedStreamPlayer = ({
           playsInline
           className="max-h-full max-w-full"
           src={blobUrl || ""}
+          onCanPlay={onReady}
+          onPlaying={onReady}
         />
       )}
     </div>
   );
 };
 
-const MediaPlayer = ({ url, type }: { url: string; type: string }) => {
+const MediaPlayer = ({ url, type, onReady }: { url: string; type: string; onReady?: () => void }) => {
   const isAudio = type.startsWith("audio/");
+
   return (
     <div className={isAudio ? "w-full p-4" : "w-full"}>
       <Plyr
@@ -118,6 +136,8 @@ const MediaPlayer = ({ url, type }: { url: string; type: string }) => {
           sources: [{ src: url, type }],
         }}
         options={{ autoplay: true }}
+        onCanPlay={onReady}
+        onPlaying={onReady}
       />
     </div>
   );
@@ -208,11 +228,15 @@ export function FilePreviewDialog({
   const [isEncrypted, setIsEncrypted] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [streamOpts, setStreamOpts] = useState<VideoStreamOptions | null>(null);
+  const [loadingMessage, setLoadingMessage] = useState<string>("Loading preview...");
+  const [progress, setProgress] = useState<number | null>(null);
+  const [isVideoPreparing, setIsVideoPreparing] = useState(false);
+  const [decryptedName, setDecryptedName] = useState<string | null>(null);
 
   // Track object URLs we created so we can revoke them on close
   const objectUrlRef = useRef<string | null>(null);
 
-  const { privateKey, setModalOpen } = useCrypto();
+  const { privateKey, setModalOpen, isUnlocked } = useCrypto();
 
   const isLockedOut = file?.isEncrypted && !privateKey;
 
@@ -236,8 +260,35 @@ export function FilePreviewDialog({
       setIsEncrypted(false);
       setIsMinimized(false);
       setStreamOpts(null);
+      setLoadingMessage("Loading preview...");
+      setProgress(null);
+      setIsVideoPreparing(false);
+      setDecryptedName(null);
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    if (!file || !isUnlocked || !file.isEncrypted || !file.encryptedName) {
+      return;
+    }
+    
+    let cancelled = false;
+
+    async function decryptName() {
+      try {
+        const name = file!.name || await decryptFileName(file!.encryptedName!);
+        if (!cancelled) setDecryptedName(name);
+      } catch (e) {
+        console.error("Failed to decrypt preview file name", e);
+      }
+    }
+
+    decryptName();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [file, isUnlocked]);
 
   useEffect(() => {
     let cancelled = false;
@@ -247,9 +298,12 @@ export function FilePreviewDialog({
       if (!isOpen || !file || isLockedOut) return;
 
       setLoading(true);
+      setLoadingMessage("Fetching metadata...");
       setError("");
       setUrl(null);
       setStreamOpts(null);
+      setProgress(null);
+      setIsVideoPreparing(false);
 
       try {
         // 1. Fetch metadata + signed URL from our API
@@ -259,6 +313,9 @@ export function FilePreviewDialog({
         if (!data?.url && (!data?.chunkUrls || data.chunkUrls.length === 0)) throw new Error("No URL returned");
 
         const encrypted: boolean = data.isEncrypted ?? false;
+
+        const type = data.contentType ?? file.contentType;
+        const shouldShowPreparingUI = type.startsWith("video/") || type.startsWith("audio/") || type.startsWith("image/") || type === "application/pdf";
 
         if (!encrypted) {
           if (data.chunkUrls && data.chunkUrls.length > 0) {
@@ -273,6 +330,8 @@ export function FilePreviewDialog({
                 chunkIvs: [],
                 contentType: data.contentType ?? file.contentType,
               });
+              setLoadingMessage("Fetching initial chunks...");
+              if (shouldShowPreparingUI) setIsVideoPreparing(true);
               setLoading(false);
             }
           } else {
@@ -298,6 +357,7 @@ export function FilePreviewDialog({
 
         if (data.chunkUrls && data.chunkUrls.length > 0) {
           // 3a. New Multi-object streaming
+          setLoadingMessage("Preparing decryption...");
           if (!data.encryptedDEK) {
             throw new Error("Missing encrypted DEK for chunked file.");
           }
@@ -311,12 +371,14 @@ export function FilePreviewDialog({
           
             if ("serviceWorker" in navigator) {
               try {
+                setLoadingMessage("Registering Service Worker...");
                 const registration = await navigator.serviceWorker.register("/sw.js");
                 await navigator.serviceWorker.ready;
                 
-                let sw = navigator.serviceWorker.controller || registration.active;
+                const sw = navigator.serviceWorker.controller || registration.active;
                 
                 if (sw) {
+                  setLoadingMessage("Waiting for worker activation...");
                   await new Promise<void>((resolve, reject) => {
                     const channel = new MessageChannel();
                     channel.port1.onmessage = (event) => {
@@ -356,6 +418,8 @@ export function FilePreviewDialog({
                   });
 
                   if (!cancelled) {
+                    setLoadingMessage("Fetching initial chunks...");
+                    if (shouldShowPreparingUI) setIsVideoPreparing(true);
                     setUrl(`/sw/objects/${file.id}`);
                     setLoading(false);
                     return; // Don't fall back to MSE
@@ -382,6 +446,8 @@ export function FilePreviewDialog({
               chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
               contentType: data.contentType ?? file.contentType,
             });
+            if (shouldShowPreparingUI) setIsVideoPreparing(true);
+            setLoadingMessage("Fetching initial chunks...");
             setLoading(false);
           }
           return;
@@ -389,14 +455,20 @@ export function FilePreviewDialog({
 
         // 3. Fetch raw ciphertext directly from CDN
         // Added Cache Storage check (fetchWithProgress) so previously decrypted files load instantly
+        setLoadingMessage(encrypted ? "Downloading encrypted file..." : "Downloading file...");
         const ciphertextBuf = await fetchWithProgress(
           data.url, // Directly fetch from CDN URL instead of via /content proxy
           (pct) => {
-            // Optional: You could expose progress to UI if you added a fetchProgress state
+            if (!cancelled) setProgress(pct);
           },
           file.id, // Using the file.id as the cache key
           file.size, // using file.size to enforce the 500MB bypass limit limit
         );
+
+        if (!cancelled) {
+          setProgress(null);
+          setLoadingMessage("Decrypting file...");
+        }
 
         let decryptedBlob: Blob;
 
@@ -455,7 +527,7 @@ export function FilePreviewDialog({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, file, privateKey]);
+  }, [isOpen, file, privateKey, isLockedOut, setModalOpen]);
 
   const docs = useMemo(() => {
     if (!url || !file) return [];
@@ -464,7 +536,7 @@ export function FilePreviewDialog({
 
   if (!file) return null;
 
-  const name = fileNameFromKey(file.key);
+  const name = file.name || decryptedName || fileNameFromKey(file.key);
   const type = file.contentType;
 
   // Download handler: for encrypted files, trigger programmatic download
@@ -478,100 +550,113 @@ export function FilePreviewDialog({
   };
 
   const renderContent = () => {
-    if (loading) {
-      return (
-        <div className="grid h-full min-h-[40vh] place-items-center">
-          <div className="flex flex-col items-center">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="mt-3 text-sm text-muted-foreground">
-              {isEncrypted ? "Decrypting file..." : "Loading preview..."}
-            </p>
-          </div>
-        </div>
-      );
+    let innerContent = null;
+
+    if (!loading && !error) {
+      if (streamOpts) {
+        innerContent = (
+          <ChunkedStreamPlayer
+            opts={streamOpts}
+            type={type}
+            onUrlChange={(newUrl) => {
+              if (newUrl !== url) setUrl(newUrl);
+            }}
+            onReady={() => setIsVideoPreparing(false)}
+          />
+        );
+      } else if (url) {
+        if (type.startsWith("image/")) {
+          innerContent = (
+            <div className="grid h-full place-items-center bg-black/40 p-2 sm:p-4">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={url}
+                alt={name}
+                className="max-h-[calc(100dvh-8.5rem)] w-auto max-w-full object-contain"
+                onLoad={() => setIsVideoPreparing(false)}
+                onError={() => setIsVideoPreparing(false)}
+              />
+            </div>
+          );
+        } else if (type.startsWith("video/") || type.startsWith("audio/")) {
+          innerContent = (
+            <div className="h-full w-full bg-black flex items-center justify-center flex-col">
+              <div className={type.startsWith("video/") ? "aspect-video" : "py-4"}>
+                <MemoizedMediaPlayer url={url} type={type} onReady={() => setIsVideoPreparing(false)} />
+              </div>
+            </div>
+          );
+        } else if (type === "application/pdf") {
+          innerContent = (
+            <div className="h-full w-full bg-white">
+              <iframe 
+                src={url} 
+                className="h-full w-full border-0" 
+                title={name} 
+                onLoad={() => setIsVideoPreparing(false)}
+                onError={() => setIsVideoPreparing(false)}
+              />
+            </div>
+          );
+        } else {
+          // Other docs (DocViewer)
+          innerContent = (
+            <div className="h-full w-full bg-white">
+              <DocViewer
+                documents={docs}
+                pluginRenderers={DocViewerRenderers}
+                config={{
+                  header: {
+                    disableHeader: true,
+                    disableFileName: true,
+                    retainURLParams: true,
+                  },
+                  pdfVerticalScrollByDefault: true,
+                }}
+                style={{ height: "100%" }}
+              />
+            </div>
+          );
+        }
+      }
     }
 
-    if (error) {
-      return (
-        <div className="grid h-full min-h-[40vh] place-items-center px-6 text-center">
-          <div className="flex flex-col items-center">
-            <AlertCircle className="h-10 w-10 text-destructive" />
-            <p className="mt-3 text-sm text-destructive">{error}</p>
-            <div className="mt-5 flex gap-2">
-              <DialogClose asChild>
-                <Button variant="secondary">Close</Button>
-              </DialogClose>
+    const showLoader = loading || isVideoPreparing;
+
+    return (
+      <div className="relative h-full w-full">
+        {showLoader && (
+          <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/95 backdrop-blur-sm">
+            <div className="flex flex-col items-center w-full max-w-[200px] text-center">
+              <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+              <p className="text-sm font-medium text-foreground">
+                {loadingMessage}
+              </p>
+              {progress !== null && (
+                <div className="w-full mt-3 flex flex-col items-center">
+                  <Progress value={progress} className="h-1.5 w-full" />
+                  <p className="text-xs text-muted-foreground mt-1.5">{progress}%</p>
+                </div>
+              )}
             </div>
           </div>
-        </div>
-      );
-    }
+        )}
 
-    // Stream rendering
-    if (streamOpts) {
-      return (
-        <ChunkedStreamPlayer
-          opts={streamOpts}
-          type={type}
-          onUrlChange={(newUrl) => {
-            if (newUrl !== url) setUrl(newUrl);
-          }}
-        />
-      );
-    }
-
-    if (!url) return null;
-
-    // Image
-    if (type.startsWith("image/")) {
-      return (
-        <div className="grid h-full place-items-center bg-black/40 p-2 sm:p-4">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={url}
-            alt={name}
-            className="max-h-[calc(100dvh-8.5rem)] w-auto max-w-full object-contain"
-          />
-        </div>
-      );
-    }
-
-    // Video or Audio
-    if (type.startsWith("video/") || type.startsWith("audio/")) {
-      return (
-        <div className="h-full w-full bg-black flex items-center justify-center flex-col">
-          <div className={type.startsWith("video/") ? "aspect-video" : "py-4"}>
-            <MemoizedMediaPlayer url={url} type={type} />
+        {error ? (
+          <div className="grid h-full min-h-[40vh] place-items-center px-6 text-center">
+            <div className="flex flex-col items-center">
+              <AlertCircle className="h-10 w-10 text-destructive" />
+              <p className="mt-3 text-sm text-destructive">{error}</p>
+              <div className="mt-5 flex gap-2">
+                <DialogClose asChild>
+                  <Button variant="secondary">Close</Button>
+                </DialogClose>
+              </div>
+            </div>
           </div>
-        </div>
-      );
-    }
-
-    // PDF
-    if (type === "application/pdf") {
-      return (
-        <div className="h-full w-full bg-white">
-          <iframe src={url} className="h-full w-full border-0" title={name} />
-        </div>
-      );
-    }
-
-    // Other docs (DocViewer)
-    return (
-      <div className="h-full w-full bg-white">
-        <DocViewer
-          documents={docs}
-          pluginRenderers={DocViewerRenderers}
-          config={{
-            header: {
-              disableHeader: true,
-              disableFileName: true,
-              retainURLParams: true,
-            },
-            pdfVerticalScrollByDefault: true,
-          }}
-          style={{ height: "100%" }}
-        />
+        ) : (
+          innerContent
+        )}
       </div>
     );
   };
