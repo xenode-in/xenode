@@ -41,17 +41,17 @@ interface SignOutDialogProps {
 
 export function SignOutDialog({ open, onOpenChange }: SignOutDialogProps) {
   const router = useRouter();
-  const { lock } = useCrypto();
+  const { lock, logout } = useCrypto();
   const [clearKeys, setClearKeys] = useState(false);
   const [loading, setLoading] = useState(false);
 
   async function handleSignOut() {
     setLoading(true);
     try {
-      // Always lock in-memory keys from CryptoContext
-      await lock();
+      // Always log out (clears IDB if userId is present)
+      await logout();
 
-      // Optionally wipe IDB cache too
+      // Optionally wipe IDB cache too (redundant now if logout handles it, but kept for cache explicit clear)
       if (clearKeys) {
         await clearCachedKeys();
       }
