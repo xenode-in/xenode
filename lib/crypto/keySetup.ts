@@ -42,7 +42,7 @@ export async function setupUserKeyVault(
   masterPassword: string,
   recoveryWords: string,
   existingKeys?: { privateKeyBuf: ArrayBuffer; publicKeyBuf: ArrayBuffer },
-): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey }> {
+): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey; metadataKey: CryptoKey }> {
   const passphrase = buildVaultPassphrase(masterPassword, recoveryWords);
 
   let publicKeyBuf: ArrayBuffer;
@@ -141,7 +141,16 @@ export async function setupUserKeyVault(
     false,
     ["decrypt"],
   );
-  return { privateKey, publicKey };
+
+  const metadataKey = await crypto.subtle.importKey(
+    "raw",
+    await crypto.subtle.digest("SHA-256", privateKeyBuf),
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+
+  return { privateKey, publicKey, metadataKey };
 }
 
 /**
@@ -156,10 +165,7 @@ export async function setupUserKeyVault(
  * We store the recovery words encrypted with the master password on the server (separate field).
  * On unlock: fetch encrypted recovery words → decrypt with master password → rebuild full passphrase → decrypt vault.
  */
-export async function unlockVault(masterPassword: string): Promise<{
-  privateKey: CryptoKey;
-  publicKey: CryptoKey;
-}> {
+export async function unlockVault(masterPassword: string): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey; metadataKey: CryptoKey }> {
   const res = await fetch("/api/keys/vault");
   if (res.status === 404) throw new Error("NO_VAULT");
   if (!res.ok) {
@@ -220,7 +226,16 @@ export async function unlockVault(masterPassword: string): Promise<{
     false,
     ["encrypt"],
   );
-  return { privateKey, publicKey };
+
+  const metadataKey = await crypto.subtle.importKey(
+    "raw",
+    await crypto.subtle.digest("SHA-256", privateKeyBuf),
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+
+  return { privateKey, publicKey, metadataKey };
 }
 
 /**
@@ -231,7 +246,7 @@ export async function unlockVault(masterPassword: string): Promise<{
 export async function regenerateVault(
   newMasterPassword: string,
   recoveryWords: string,
-): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey }> {
+): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey; metadataKey: CryptoKey }> {
   return setupUserKeyVault(newMasterPassword, recoveryWords);
 }
 
@@ -244,7 +259,7 @@ export async function regenerateVault(
 export async function updateVaultPassword(
   currentPassword: string,
   newMasterPassword: string,
-): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey }> {
+): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey; metadataKey: CryptoKey }> {
   const res = await fetch("/api/keys/vault");
   if (res.status === 404) throw new Error("NO_VAULT");
   if (!res.ok) {
@@ -308,7 +323,7 @@ export async function updateVaultPassword(
 export async function recoverAndResetVault(
   recoveryWords: string,
   newMasterPassword: string,
-): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey }> {
+): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey; metadataKey: CryptoKey }> {
   const res = await fetch("/api/keys/vault");
   if (res.status === 404) throw new Error("NO_VAULT");
   if (!res.ok) {

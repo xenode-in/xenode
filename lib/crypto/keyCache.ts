@@ -1,22 +1,17 @@
-/**
- * lib/crypto/keyCache.ts
- * Store / restore the user's in-memory CryptoKey pair in IndexedDB so the
- * vault doesn't need to be re-unlocked on every page refresh.
- *
- * CryptoKey objects are structured-cloneable and can be stored in IDB even
- * when marked non-extractable — the browser keeps the raw key material opaque.
- */
-
 const DB_NAME = "xenode-crypto";
 const STORE_NAME = "keys";
 const PRIVATE_KEY_ID = "privateKey";
 const PUBLIC_KEY_ID = "publicKey";
+const METADATA_KEY_ID = "metadataKey";
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => {
-      req.result.createObjectStore(STORE_NAME);
+    const req = indexedDB.open(DB_NAME, 2); // Upgrade version to 2
+    req.onupgradeneeded = (e: any) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME);
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -27,6 +22,7 @@ function openDB(): Promise<IDBDatabase> {
 export async function cacheKeys(
   privateKey: CryptoKey,
   publicKey: CryptoKey,
+  metadataKey?: CryptoKey, // Optional for backwards compatibility
 ): Promise<void> {
   const db = await openDB();
   await new Promise<void>((resolve, reject) => {
@@ -34,6 +30,9 @@ export async function cacheKeys(
     const store = tx.objectStore(STORE_NAME);
     store.put(privateKey, PRIVATE_KEY_ID);
     store.put(publicKey, PUBLIC_KEY_ID);
+    if (metadataKey) {
+      store.put(metadataKey, METADATA_KEY_ID);
+    }
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
@@ -43,6 +42,7 @@ export async function cacheKeys(
 export async function loadCachedKeys(): Promise<{
   privateKey: CryptoKey;
   publicKey: CryptoKey;
+  metadataKey?: CryptoKey;
 } | null> {
   try {
     const db = await openDB();
@@ -51,10 +51,13 @@ export async function loadCachedKeys(): Promise<{
       const store = tx.objectStore(STORE_NAME);
       const privReq = store.get(PRIVATE_KEY_ID);
       const pubReq = store.get(PUBLIC_KEY_ID);
+      const metaReq = store.get(METADATA_KEY_ID);
+      
       tx.oncomplete = () => {
         const priv = privReq.result as CryptoKey | undefined;
         const pub = pubReq.result as CryptoKey | undefined;
-        if (priv && pub) resolve({ privateKey: priv, publicKey: pub });
+        const meta = metaReq.result as CryptoKey | undefined;
+        if (priv && pub) resolve({ privateKey: priv, publicKey: pub, metadataKey: meta });
         else resolve(null);
       };
       tx.onerror = () => reject(tx.error);

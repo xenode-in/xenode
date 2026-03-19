@@ -1,4 +1,5 @@
 "use client";
+import { GlobalSearch } from "@/components/dashboard/GlobalSearch";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -212,7 +213,10 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
               </Button>
             )}
 
-            {/* Breadcrumb area */}
+            /* Breadcrumb area */
+            <div className="hidden lg:block flex-1 max-w-xl">
+              <GlobalSearch />
+            </div>
             <div className="hidden lg:block" />
 
             {/* User dropdown */}

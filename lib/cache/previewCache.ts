@@ -85,6 +85,10 @@ export async function getCacheStats(): Promise<CacheStats> {
 
     await Promise.all(
       keys.map(async (req) => {
+        const url = new URL(req.url);
+        // Only count keys matching our specific preview cache pattern
+        if (!url.pathname.startsWith('/xenode-preview-cache/')) return;
+        
         const res = await cache.match(req);
         if (!res) return;
         if (now > +(res.headers.get("x-expires-at") ?? 0)) return; // expired
@@ -102,7 +106,18 @@ export async function getCacheStats(): Promise<CacheStats> {
 /** Deletes ALL entries in the preview cache. */
 export async function clearPreviewCache(): Promise<void> {
   try {
-    await caches.delete(CACHE_NAME);
+    const cache = await caches.open(CACHE_NAME);
+    const keys = await cache.keys();
+    
+    await Promise.all(
+      keys.map(async (req) => {
+        const url = new URL(req.url);
+        // Only delete keys matching our specific preview cache pattern
+        if (url.pathname.startsWith('/xenode-preview-cache/')) {
+          await cache.delete(req);
+        }
+      }),
+    );
   } catch {
     // Non-fatal
   }
@@ -116,6 +131,9 @@ export async function evictExpired(): Promise<void> {
     const now = Date.now();
     await Promise.all(
       keys.map(async (req) => {
+        const url = new URL(req.url);
+        if (!url.pathname.startsWith('/xenode-preview-cache/')) return;
+
         const res = await cache.match(req);
         if (!res) return;
         if (now > +(res.headers.get("x-expires-at") ?? 0))
