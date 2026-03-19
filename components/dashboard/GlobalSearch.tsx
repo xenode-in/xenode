@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { Search, File as FileIcon, Lock, Folder } from "lucide-react";
 import { searchIndex, LocalFile } from "@/lib/db/local";
 import { useSyncManager } from "@/hooks/useSyncManager";
+import { usePreview } from "@/contexts/PreviewContext";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import Link from "next/link";
@@ -16,6 +17,7 @@ export function GlobalSearch() {
   
   // Initialize sync
   const { isSyncing } = useSyncManager();
+  const { openPreview } = usePreview();
 
   useEffect(() => {
     if (!query.trim()) {
@@ -70,13 +72,33 @@ export function GlobalSearch() {
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
           <div className="max-h-[300px] overflow-y-auto p-1">
-            {results.map((result) => (
+            
+            {results.map((result) => {
+              const isFolder = result.contentType === "application/x-directory";
+              
+              const handleClick = (e: React.MouseEvent) => {
+                if (isFolder) return; // let Link handle folder navigation
+                e.preventDefault();
+                setOpen(false);
+                openPreview({
+                  id: result.id,
+                  key: result.key,
+                  size: result.size,
+                  contentType: result.contentType,
+                  createdAt: result.createdAt,
+                  isEncrypted: result.isEncrypted,
+                  encryptedName: result.encryptedName
+                });
+              };
+
+              return (
               <Link
                 key={result.id}
                 href={getResultUrl(result)}
-                onClick={() => setOpen(false)}
+                onClick={handleClick}
                 className="flex items-center gap-3 p-2 rounded-md hover:bg-accent transition-colors"
               >
+
                 <div className="w-8 h-8 rounded bg-primary/10 flex items-center justify-center shrink-0">
                   {result.contentType === "application/x-directory" ? (
                     <Folder className="w-4 h-4 text-primary" />
@@ -96,7 +118,8 @@ export function GlobalSearch() {
                   </p>
                 </div>
               </Link>
-            ))}
+              );
+            })}
           </div>
         </PopoverContent>
       </Popover>
