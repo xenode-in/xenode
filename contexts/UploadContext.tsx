@@ -10,7 +10,7 @@ import React, {
 } from "react";
 import { useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { encryptFile, encryptFileChunked } from "@/lib/crypto/fileEncryption";
+import { encryptFile, encryptFileChunked, encryptMetadataString } from "@/lib/crypto/fileEncryption";
 import { toB64 } from "@/lib/crypto/utils";
 
 export interface UploadTask {
@@ -93,11 +93,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const [activeUploads, setActiveUploads] = useState(0);
   const uploadingIds = useRef(new Set<string>());
   const uploadXHRs = useRef<Map<string, XMLHttpRequest>>(new Map());
-  const { publicKey: cryptoPublicKey } = useCrypto();
+  const { publicKey: cryptoPublicKey, metadataKey: cryptoMetadataKey } = useCrypto();
   // Keep a ref so the useCallback below always reads the latest key
   // without needing to be re-created (avoids stale closure)
   const cryptoPublicKeyRef = useRef<CryptoKey | null>(null);
   cryptoPublicKeyRef.current = cryptoPublicKey;
+  const cryptoMetadataKeyRef = useRef<CryptoKey | null>(null);
+  cryptoMetadataKeyRef.current = cryptoMetadataKey;
 
   /**
    * Determine whether we should encrypt this upload.
@@ -175,27 +177,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           const nameBuf = new TextEncoder().encode(task.file.name);
           const nameKey = crypto.getRandomValues(new Uint8Array(32));
           const nameIV = crypto.getRandomValues(new Uint8Array(12));
-          const encNameBuf = await crypto.subtle.encrypt(
-            { name: "AES-GCM", iv: nameIV as Uint8Array<ArrayBuffer> },
-            await crypto.subtle.importKey(
-              "raw",
-              nameKey as Uint8Array<ArrayBuffer>,
-              { name: "AES-GCM", length: 256 },
-              false,
-              ["encrypt"],
-            ),
-            nameBuf,
-          );
-          const combined = new Uint8Array(
-            nameKey.byteLength + nameIV.byteLength + encNameBuf.byteLength,
-          );
-          combined.set(nameKey, 0);
-          combined.set(nameIV, nameKey.byteLength);
-          combined.set(
-            new Uint8Array(encNameBuf),
-            nameKey.byteLength + nameIV.byteLength,
-          );
-          encryptedName = toB64(combined);
+          if (!cryptoMetadataKeyRef.current) {
+            throw new Error("Metadata key not available for encryption");
+          }
+          encryptedName = await encryptMetadataString(task.file.name, cryptoMetadataKeyRef.current);
         } catch (err) {
           console.warn("[E2EE] Encryption failed, falling back to plaintext", err);
           uploadBody = task.file;
@@ -437,27 +422,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           const nameBuf = new TextEncoder().encode(task.file.name);
           const nameKey = crypto.getRandomValues(new Uint8Array(32));
           const nameIV = crypto.getRandomValues(new Uint8Array(12));
-          const encNameBuf = await crypto.subtle.encrypt(
-            { name: "AES-GCM", iv: nameIV as Uint8Array<ArrayBuffer> },
-            await crypto.subtle.importKey(
-              "raw",
-              nameKey as Uint8Array<ArrayBuffer>,
-              { name: "AES-GCM", length: 256 },
-              false,
-              ["encrypt"],
-            ),
-            nameBuf,
-          );
-          const combined = new Uint8Array(
-            nameKey.byteLength + nameIV.byteLength + encNameBuf.byteLength,
-          );
-          combined.set(nameKey, 0);
-          combined.set(nameIV, nameKey.byteLength);
-          combined.set(
-            new Uint8Array(encNameBuf),
-            nameKey.byteLength + nameIV.byteLength,
-          );
-          encryptedName = toB64(combined);
+          if (!cryptoMetadataKeyRef.current) {
+            throw new Error("Metadata key not available for encryption");
+          }
+          encryptedName = await encryptMetadataString(task.file.name, cryptoMetadataKeyRef.current);
         } catch (err) {
           console.warn(
             "[E2EE] Encryption failed, falling back to plaintext",

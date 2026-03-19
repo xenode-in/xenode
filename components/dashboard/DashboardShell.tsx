@@ -1,4 +1,5 @@
 "use client";
+import { GlobalSearch } from "@/components/dashboard/GlobalSearch";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -168,7 +169,7 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Topbar */}
         <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-xl">
-          <div className="flex items-center justify-between px-4 lg:px-8 h-17">
+          <div className="flex items-center gap-2 sm:gap-4 px-4 lg:px-8 h-17 w-full">
             {/* Mobile menu */}
             {mounted ? (
               <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
@@ -212,11 +213,13 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
               </Button>
             )}
 
-            {/* Breadcrumb area */}
-            <div className="hidden lg:block" />
+            <div className="flex-1 max-w-xl min-w-0">
+              <GlobalSearch />
+            </div>
+            
 
             {/* User dropdown */}
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center shrink-0">
               {mounted ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
