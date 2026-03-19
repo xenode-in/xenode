@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Search, File as FileIcon, Lock } from "lucide-react";
+import { Search, File as FileIcon, Lock, Folder } from "lucide-react";
 import { searchIndex, LocalFile } from "@/lib/db/local";
 import { useSyncManager } from "@/hooks/useSyncManager";
 import { Input } from "@/components/ui/input";
@@ -35,6 +35,21 @@ export function GlobalSearch() {
     setOpen(true);
   }, [query]);
 
+  
+  const getResultUrl = (result: any) => {
+    if (result.contentType === "application/x-directory") {
+      const parts = result.key.split('/');
+      // e.g. ["users", "userid", "my-folder", ""]
+      if (parts.length > 2) {
+        // join everything after users/userid/
+        const relativePath = parts.slice(2).join('/');
+        return `/dashboard/files?folder=${encodeURIComponent(relativePath)}`;
+      }
+      return "/dashboard/files";
+    }
+    return `/dashboard/files?fileId=${result.id}`;
+  };
+
   return (
     <div className="relative w-full max-w-md ml-4">
       <Popover open={open && results.length > 0} onOpenChange={setOpen}>
@@ -58,12 +73,16 @@ export function GlobalSearch() {
             {results.map((result) => (
               <Link
                 key={result.id}
-                href={`/dashboard/files?fileId=${result.id}`}
+                href={getResultUrl(result)}
                 onClick={() => setOpen(false)}
                 className="flex items-center gap-3 p-2 rounded-md hover:bg-accent transition-colors"
               >
                 <div className="w-8 h-8 rounded bg-primary/10 flex items-center justify-center shrink-0">
-                  <FileIcon className="w-4 h-4 text-primary" />
+                  {result.contentType === "application/x-directory" ? (
+                    <Folder className="w-4 h-4 text-primary" />
+                  ) : (
+                    <FileIcon className="w-4 h-4 text-primary" />
+                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
@@ -73,7 +92,7 @@ export function GlobalSearch() {
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground truncate">
-                    {formatBytes(result.size || 0)} • {new Date(result.createdAt).toLocaleDateString()}
+                    {result.contentType === "application/x-directory" ? "Folder" : formatBytes(result.size || 0)} • {new Date(result.createdAt).toLocaleDateString()}
                   </p>
                 </div>
               </Link>
