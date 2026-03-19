@@ -1,42 +1,46 @@
 "use client";
 
 import { useLiveQuery } from "dexie-react-hooks";
-import { db } from "@/lib/db/local";
+import { getDb } from "@/lib/db/local";
+import { useSession } from "@/lib/auth/client";
 import { QuickAccessBar } from "@/components/dashboard/QuickAccessBar";
 import { PreviewSection } from "@/components/dashboard/PreviewSection";
 import { RecentFilesTable } from "@/components/dashboard/RecentFilesTable";
 
 export function DashboardClient() {
+  const { data: session } = useSession();
+  const userId = session?.user?.id;
+
   const recentFiles = useLiveQuery(
-    () => db.files.orderBy('createdAt').reverse().limit(8).toArray(),
-    []
+    () => userId ? getDb(userId).files.orderBy('createdAt').reverse().limit(8).toArray() : [],
+    [userId]
   );
 
   const videos = useLiveQuery(
-    () => db.files
+    () => userId ? getDb(userId).files
       .filter(f => f.contentType.startsWith("video/"))
       .reverse()
       .limit(1)
-      .toArray(),
-    []
+      .toArray() : [],
+    [userId]
   );
 
   const images = useLiveQuery(
-    () => db.files
+    () => userId ? getDb(userId).files
       .filter(f => f.contentType.startsWith("image/"))
       .reverse()
       .limit(4)
-      .toArray(),
-    []
+      .toArray() : [],
+    [userId]
   );
 
   const audios = useLiveQuery(
-    () => db.files
+    () => userId ? getDb(userId).files
       .filter(f => f.contentType.startsWith("audio/"))
       .reverse()
       .limit(1)
-      .toArray(),
-    []
+      .toArray() : [],
+    [userId]
   );
 
   // Still loading Dexie query
@@ -46,6 +50,8 @@ export function DashboardClient() {
 
   const hasPreview = (videos && videos.length > 0) || (images && images.length > 0) || (audios && audios.length > 0);
 
+  const mapToObjects = (files: any[]) => files.map(f => ({ ...f, encryptedName: f.encryptedName ?? undefined }));
+
   return (
     <div className="space-y-8">
       {/* Quick Access */}
@@ -54,14 +60,14 @@ export function DashboardClient() {
       {/* Preview */}
       {hasPreview && (
         <PreviewSection
-          videos={videos || []}
-          images={images || []}
-          audios={audios || []}
+          videos={mapToObjects(videos || [])}
+          images={mapToObjects(images || [])}
+          audios={mapToObjects(audios || [])}
         />
       )}
 
       {/* Recent Files */}
-      <RecentFilesTable files={recentFiles || []} />
+      <RecentFilesTable files={mapToObjects(recentFiles || [])} />
 
       {/* Empty state */}
       {recentFiles.length === 0 && !hasPreview && (
