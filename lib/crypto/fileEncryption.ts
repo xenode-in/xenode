@@ -304,3 +304,95 @@ export async function decryptFileName(
     return "Encrypted File";
   }
 }
+
+/**
+ * Encrypt a filename using the shared metadataKey.
+ * This ensures the server cannot read the filename at all,
+ * and we don't have to store a separate AES key for every file.
+ */
+export async function encryptMetadataString(
+  text: string,
+  metadataKey: CryptoKey,
+): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(text);
+  
+  const ciphertextBuffer = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    metadataKey,
+    encoded
+  );
+  
+  // Format: [12 bytes IV] + [Ciphertext]
+  const combined = new Uint8Array(iv.length + ciphertextBuffer.byteLength);
+  combined.set(iv, 0);
+  combined.set(new Uint8Array(ciphertextBuffer), iv.length);
+  
+  return toB64(combined);
+}
+
+/**
+ * Decrypt a filename using the shared metadataKey.
+ * This also handles legacy filenames (where the key was prepended).
+ */
+export async function decryptMetadataString(
+  encryptedB64: string,
+  metadataKey: CryptoKey | null,
+): Promise<string> {
+  try {
+    const combined = fromB64(encryptedB64);
+    
+    // Legacy format (44+ bytes): [32 bytes AES Key] + [12 bytes IV] + [Ciphertext]
+    // New format (12+ bytes): [12 bytes IV] + [Ciphertext]
+    // To distinguish, we assume if we have a metadataKey, it's the new format, BUT
+    // wait, what if existing files use the old format? 
+    // The old format explicitly stored a 32-byte raw key. The new format is just 12-byte IV + ciphertext.
+    // Let's try legacy decryption first if byteLength >= 44.
+    
+    if (combined.byteLength >= 44) {
+      try {
+        const nameKeyBytes = combined.slice(0, 32);
+        const nameIV = combined.slice(32, 44);
+        const ciphertext = combined.slice(44);
+
+        const legacyKey = await crypto.subtle.importKey(
+          "raw",
+          nameKeyBytes,
+          { name: "AES-GCM", length: 256 },
+          false,
+          ["decrypt"],
+        );
+
+        const plaintext = await crypto.subtle.decrypt(
+          { name: "AES-GCM", iv: nameIV },
+          legacyKey,
+          ciphertext,
+        );
+
+        // If decryption succeeds, it's a legacy file
+        return new TextDecoder().decode(plaintext);
+      } catch (err) {
+        // Fallback to new format
+      }
+    }
+
+    // New format using metadataKey
+    if (!metadataKey) {
+      return "Encrypted File";
+    }
+
+    const iv = combined.slice(0, 12);
+    const ciphertext = combined.slice(12);
+
+    const plaintext = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      metadataKey,
+      ciphertext,
+    );
+
+    return new TextDecoder().decode(plaintext);
+  } catch (err) {
+    console.warn("[E2EE] Failed to decrypt metadata string", err);
+    return "Encrypted File";
+  }
+}
