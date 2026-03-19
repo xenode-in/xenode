@@ -51,7 +51,7 @@ export function GlobalSearch() {
   };
 
   return (
-    <div className="relative w-full max-w-md ml-4">
+    <div className="relative w-full max-w-md sm:ml-4">
       <Popover open={open && results.length > 0} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <div className="relative">
@@ -65,7 +65,7 @@ export function GlobalSearch() {
           </div>
         </PopoverTrigger>
         <PopoverContent
-          className="w-[400px] p-0"
+          className="w-[calc(100vw-2rem)] sm:w-[400px] p-0"
           align="start"
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
