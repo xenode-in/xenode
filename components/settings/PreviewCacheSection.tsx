@@ -1,13 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
-import { HardDrive, Trash2, Loader2 } from "lucide-react";
+import { Trash2, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   getCacheStats,
-  clearPreviewCache,
-  MAX_CACHE_BYTES,
+  clearAllCaches,
   type CacheStats,
-} from "@/lib/cache/previewCache";
+} from "@/lib/cache";
 
 function formatBytes(bytes: number): string {
   if (!bytes || isNaN(bytes)) return "0 B";
@@ -36,7 +35,7 @@ export function PreviewCacheSection() {
       <div className="flex items-center justify-between py-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <p className="text-sm text-foreground">Preview Cache</p>
+            <p className="text-sm text-foreground">Cache Storage</p>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">Calculating…</p>
         </div>
@@ -50,7 +49,7 @@ export function PreviewCacheSection() {
 
   async function handleClear() {
     setClearing(true);
-    await clearPreviewCache();
+    await clearAllCaches();
     await refresh();
     setClearing(false);
     setCleared(true);
@@ -63,7 +62,7 @@ export function PreviewCacheSection() {
     <div className="flex items-center justify-between py-3">
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
-          <p className="text-sm text-foreground">Preview Cache</p>
+          <p className="text-sm text-foreground">Cache Storage</p>
           {cleared && (
             <span className="text-xs text-green-500 font-medium">
               Cleared ✓
@@ -77,7 +76,7 @@ export function PreviewCacheSection() {
             "No files cached"
           ) : (
             <>
-              {stats.count} file{stats.count !== 1 ? "s" : ""} ·{" "}
+              {stats.count} entr{stats.count !== 1 ? "ies" : "y"} ·{" "}
               <span className="font-medium">
                 {formatBytes(stats.totalBytes)}
               </span>{" "}
@@ -86,8 +85,8 @@ export function PreviewCacheSection() {
           )}
         </p>
         <p className="text-xs text-muted-foreground/60 mt-0.5">
-          Files under {formatBytes(MAX_CACHE_BYTES)} are cached for 24h to speed
-          up repeated previews. Encrypted — safe to clear anytime.
+          Previews (24h) and download chunks (7d) are cached locally.
+          Encrypted — safe to clear anytime.
         </p>
       </div>
 
