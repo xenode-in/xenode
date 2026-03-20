@@ -67,7 +67,7 @@ const ChunkedStreamPlayer = ({
   const isAudio = type.startsWith("audio/");
   const [videoElement, setVideoElement] = useState<HTMLMediaElement | null>(null);
 
-  const { blobUrl, error, isBuffering } = useVideoStream(opts, videoElement);
+  const { blobUrl, error, isBuffering, progress } = useVideoStream(opts, videoElement);
 
   useEffect(() => {
     onUrlChange(blobUrl);
@@ -93,8 +93,19 @@ const ChunkedStreamPlayer = ({
   return (
     <div className={cn("relative flex h-full items-center justify-center", isAudio ? "w-full p-4" : "w-full bg-black")}>
       {isBuffering && !videoElement?.readyState && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 backdrop-blur-sm pointer-events-none">
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-none gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-white" />
+          {progress > 0 && progress < 100 && (
+            <>
+              <div className="w-48 h-1.5 rounded-full bg-white/20 overflow-hidden">
+                <div
+                  className="h-full bg-white rounded-full transition-all duration-300"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              <p className="text-xs text-white/70">Buffering {progress}%</p>
+            </>
+          )}
         </div>
       )}
       
@@ -127,18 +138,69 @@ const ChunkedStreamPlayer = ({
 
 const MediaPlayer = ({ url, type, onReady }: { url: string; type: string; onReady?: () => void }) => {
   const isAudio = type.startsWith("audio/");
+  const [isWaiting, setIsWaiting] = useState(true);
+  const plyrContainerRef = useRef<HTMLDivElement>(null);
+  const onReadyRef = useRef(onReady);
+  onReadyRef.current = onReady;
+
+  // Poll for Plyr's <video>/<audio> element then attach buffering events
+  useEffect(() => {
+    const el = plyrContainerRef.current;
+    if (!el) return;
+
+    let media: HTMLMediaElement | null = null;
+    let disposed = false;
+
+    const onCanPlay = () => { setIsWaiting(false); onReadyRef.current?.(); };
+    const onPlaying = () => { setIsWaiting(false); onReadyRef.current?.(); };
+    const onWaiting = () => setIsWaiting(true);
+
+    const attach = (m: HTMLMediaElement) => {
+      media = m;
+      m.addEventListener("canplay", onCanPlay);
+      m.addEventListener("playing", onPlaying);
+      m.addEventListener("waiting", onWaiting);
+      if (m.readyState >= 3) { setIsWaiting(false); onReadyRef.current?.(); }
+    };
+
+    // Plyr creates the element asynchronously — poll until it appears
+    const interval = setInterval(() => {
+      if (disposed) return;
+      const found = el.querySelector("video, audio") as HTMLMediaElement | null;
+      if (found) { clearInterval(interval); attach(found); }
+    }, 100);
+
+    return () => {
+      disposed = true;
+      clearInterval(interval);
+      if (media) {
+        media.removeEventListener("canplay", onCanPlay);
+        media.removeEventListener("playing", onPlaying);
+        media.removeEventListener("waiting", onWaiting);
+      }
+    };
+  }, [url]);
 
   return (
-    <div className={isAudio ? "w-full p-4" : "w-full"}>
-      <Plyr
-        source={{
-          type: isAudio ? "audio" : "video",
-          sources: [{ src: url, type }],
-        }}
-        options={{ autoplay: true }}
-        onCanPlay={onReady}
-        onPlaying={onReady}
-      />
+    <div className={cn("relative", isAudio ? "w-full p-4" : "w-full")}>
+      {/* Overlay — always in DOM, toggled via CSS to avoid React/Plyr DOM conflicts */}
+      <div
+        className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm gap-3 transition-opacity duration-300"
+        style={{ opacity: isWaiting ? 1 : 0, pointerEvents: isWaiting ? "auto" : "none" }}
+      >
+        <Loader2 className="h-8 w-8 animate-spin text-white" />
+        <p className="text-xs text-white/70">Buffering…</p>
+      </div>
+
+      <div ref={plyrContainerRef}>
+        <Plyr
+          source={{
+            type: isAudio ? "audio" : "video",
+            sources: [{ src: url, type }],
+          }}
+          options={{ autoplay: true }}
+        />
+      </div>
     </div>
   );
 };
@@ -247,6 +309,14 @@ export function FilePreviewDialog({
       onClose();
     }
   }, [isOpen, isLockedOut, setModalOpen, onClose]);
+
+  // Pre-register the SW on mount so it's already active when a file is opened
+  // — eliminates ~200-500ms activation delay.
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
+  }, []);
 
   // Revoke any object URL when the dialog closes or file changes
   useEffect(() => {
@@ -371,50 +441,29 @@ export function FilePreviewDialog({
           
             if ("serviceWorker" in navigator) {
               try {
-                setLoadingMessage("Registering Service Worker...");
-                const registration = await navigator.serviceWorker.register("/sw.js");
-                await navigator.serviceWorker.ready;
-                
-                const sw = navigator.serviceWorker.controller || registration.active;
+                setLoadingMessage("Preparing stream...");
+                // SW was pre-registered on mount — just wait for it to be ready
+                const registration = await navigator.serviceWorker.ready;
+                const sw = registration.active;
                 
                 if (sw) {
-                  setLoadingMessage("Waiting for worker activation...");
                   await new Promise<void>((resolve, reject) => {
                     const channel = new MessageChannel();
                     channel.port1.onmessage = (event) => {
                       if (event.data.success) resolve();
                       else reject(new Error("Failed to register stream with SW"));
                     };
-                    // Ensure state is activated
-                    if (sw?.state !== 'activated') {
-                       sw?.addEventListener('statechange', () => {
-                          if (sw?.state === 'activated') {
-                             sw?.postMessage({
-                              type: 'REGISTER_STREAM',
-                              fileId: file.id,
-                              rawDEK,
-                              chunkSize: data.chunkSize || (2 * 1024 * 1024),
-                              chunkCount: data.chunkCount || data.chunkUrls.length,
-                              chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
-                              urls: data.chunkUrls,
-                              contentType: data.contentType ?? file.contentType,
-                              size: file.size
-                            }, [channel.port2]);
-                          }
-                       })
-                    } else {
-                        sw.postMessage({
-                          type: 'REGISTER_STREAM',
-                          fileId: file.id,
-                          rawDEK,
-                          chunkSize: data.chunkSize || (2 * 1024 * 1024),
-                          chunkCount: data.chunkCount || data.chunkUrls.length,
-                          chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
-                          urls: data.chunkUrls,
-                          contentType: data.contentType ?? file.contentType,
-                          size: file.size
-                        }, [channel.port2]);
-                    }
+                    sw.postMessage({
+                      type: "REGISTER_STREAM",
+                      fileId: file.id,
+                      rawDEK,
+                      chunkSize: data.chunkSize || 2 * 1024 * 1024,
+                      chunkCount: data.chunkCount || data.chunkUrls.length,
+                      chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
+                      urls: data.chunkUrls,
+                      contentType: data.contentType ?? file.contentType,
+                      size: file.size,
+                    }, [channel.port2]);
                   });
 
                   if (!cancelled) {
@@ -422,7 +471,7 @@ export function FilePreviewDialog({
                     if (shouldShowPreparingUI) setIsVideoPreparing(true);
                     setUrl(`/sw/objects/${file.id}`);
                     setLoading(false);
-                    return; // Don't fall back to MSE
+                    return;
                   }
                 }
               } catch (err) {

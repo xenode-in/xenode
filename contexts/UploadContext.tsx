@@ -84,6 +84,34 @@ const generateThumbnail = (file: File): Promise<string | undefined> => {
   });
 };
 
+/**
+ * Compute chunk size based on file type and size.
+ *
+ * Streamable media (video/audio):
+ *   - Chunks stay small so the first frame loads quickly via MediaSource.
+ *   - < 100 MB  →  2 MB   (50 chunks max, instant start)
+ *   - 100 MB–1 GB  →  4 MB   (balanced: ~250 chunks for 1 GB)
+ *   - > 1 GB  →  8 MB   (still ~2-4 s first-chunk on 10 Mbps)
+ *
+ * Other files (archives, documents, etc.):
+ *   - Optimize for upload throughput — fewer HTTP round-trips.
+ *   - max(8 MB, fileSize / 100) capped at 64 MB
+ */
+function getAdaptiveChunkSize(fileSize: number, mimeType: string): number {
+  const isStreamable =
+    mimeType.startsWith("video/") || mimeType.startsWith("audio/");
+
+  if (isStreamable) {
+    if (fileSize < 100 * 1024 * 1024) return 2 * 1024 * 1024;        // 2 MB
+    if (fileSize < 1024 * 1024 * 1024) return 4 * 1024 * 1024;       // 4 MB
+    return 8 * 1024 * 1024;                                           // 8 MB
+  }
+
+  // Non-streamable: bigger chunks, fewer requests
+  const adaptive = Math.max(8 * 1024 * 1024, Math.floor(fileSize / 100));
+  return Math.min(adaptive, 64 * 1024 * 1024);
+}
+
 export function UploadProvider({ children }: { children: React.ReactNode }) {
   const { data: session } = useSession();
   const sessionRef = useRef(session);
@@ -151,7 +179,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         console.warn("Failed to generate thumbnail", err);
       }
 
-      const chunkSize = 2 * 1024 * 1024; // 2MB
+      const chunkSize = getAdaptiveChunkSize(task.file.size, task.file.type);
       let cipherChunkSize = chunkSize;
       let uploadBody: File | Blob = task.file;
       let uploadContentType = task.file.type || "application/octet-stream";
@@ -219,6 +247,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           bucketId: task.bucketId,
           prefix: task.prefix,
           chunkCount,
+          chunkSize,
         }),
       });
 
