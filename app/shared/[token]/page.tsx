@@ -195,7 +195,7 @@ function ChunkedStreamPlayer({
   const isAudio = contentType.startsWith("audio/");
   const [videoElement, setVideoElement] = useState<HTMLMediaElement | null>(null);
 
-  const { blobUrl, error, isBuffering } = useVideoStream(opts, videoElement);
+  const { blobUrl, error, isBuffering, progress } = useVideoStream(opts, videoElement);
 
   useEffect(() => {
     onUrlChange(blobUrl);
@@ -214,8 +214,19 @@ function ChunkedStreamPlayer({
   return (
     <div className={cn("relative flex h-full items-center justify-center", isAudio ? "w-full p-4" : "w-full bg-black")}>
       {isBuffering && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 backdrop-blur-sm pointer-events-none">
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-none gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-white" />
+          {progress > 0 && progress < 100 && (
+            <>
+              <div className="w-48 h-1.5 rounded-full bg-white/20 overflow-hidden">
+                <div
+                  className="h-full bg-white rounded-full transition-all duration-300"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              <p className="text-xs text-white/70">Buffering {progress}%</p>
+            </>
+          )}
         </div>
       )}
       
@@ -237,6 +248,76 @@ function ChunkedStreamPlayer({
           src={blobUrl || ""}
         />
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Plyr media player with buffering overlay
+// ─────────────────────────────────────────────────────────────────────────────
+function SharedMediaPlayer({ url, type }: { url: string; type: string }) {
+  const isAudio = type.startsWith("audio/");
+  const [isWaiting, setIsWaiting] = useState(true);
+  const plyrContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = plyrContainerRef.current;
+    if (!el) return;
+
+    let media: HTMLMediaElement | null = null;
+    let disposed = false;
+
+    const onCanPlay = () => setIsWaiting(false);
+    const onPlaying = () => setIsWaiting(false);
+    const onWaiting = () => setIsWaiting(true);
+
+    const attach = (m: HTMLMediaElement) => {
+      media = m;
+      m.addEventListener("canplay", onCanPlay);
+      m.addEventListener("playing", onPlaying);
+      m.addEventListener("waiting", onWaiting);
+      if (m.readyState >= 3) setIsWaiting(false);
+    };
+
+    const interval = setInterval(() => {
+      if (disposed) return;
+      const found = el.querySelector("video, audio") as HTMLMediaElement | null;
+      if (found) { clearInterval(interval); attach(found); }
+    }, 100);
+
+    return () => {
+      disposed = true;
+      clearInterval(interval);
+      if (media) {
+        media.removeEventListener("canplay", onCanPlay);
+        media.removeEventListener("playing", onPlaying);
+        media.removeEventListener("waiting", onWaiting);
+      }
+    };
+  }, [url]);
+
+  return (
+    <div className="h-full w-full bg-black flex items-center justify-center">
+      <div className={cn("relative", isAudio ? "w-full p-4" : "aspect-video w-full")}>
+        {/* Overlay — always in DOM, toggled via CSS to avoid React/Plyr DOM conflicts */}
+        <div
+          className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm gap-3 transition-opacity duration-300"
+          style={{ opacity: isWaiting ? 1 : 0, pointerEvents: isWaiting ? "auto" : "none" }}
+        >
+          <Loader2 className="h-8 w-8 animate-spin text-white" />
+          <p className="text-xs text-white/70">Buffering…</p>
+        </div>
+
+        <div ref={plyrContainerRef}>
+          <Plyr
+            source={{
+              type: isAudio ? "audio" : "video",
+              sources: [{ src: url, type }],
+            }}
+            options={{ autoplay: true }}
+          />
+        </div>
+      </div>
     </div>
   );
 }
@@ -283,6 +364,14 @@ export default function SharedFilePage() {
   useEffect(() => {
     if (typeof window !== "undefined") {
       setShareKey(window.location.hash.replace("#key=", ""));
+    }
+  }, []);
+
+  // Pre-register the SW on mount so it's already active when the user
+  // clicks Preview — eliminates ~200-500ms activation delay.
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
   }, []);
 
@@ -373,11 +462,10 @@ export default function SharedFilePage() {
         
         if ("serviceWorker" in navigator) {
           try {
-            const registration = await navigator.serviceWorker.register("/sw.js");
-            await navigator.serviceWorker.ready;
-            
-            const sw = navigator.serviceWorker.controller || registration.active;
-            
+            // SW was pre-registered on mount — just wait for it to be ready
+            const registration = await navigator.serviceWorker.ready;
+            const sw = registration.active;
+
             if (sw) {
               await new Promise<void>((resolve, reject) => {
                 const channel = new MessageChannel();
@@ -385,40 +473,22 @@ export default function SharedFilePage() {
                   if (event.data.success) resolve();
                   else reject(new Error("Failed to register stream with SW"));
                 };
-                if (sw?.state !== 'activated') {
-                   sw?.addEventListener('statechange', () => {
-                      if (sw?.state === 'activated') {
-                         sw?.postMessage({
-                          type: 'REGISTER_STREAM',
-                          fileId: token,
-                          rawDEK,
-                          chunkSize: data.chunkSize || (2 * 1024 * 1024),
-                          chunkCount: data.chunkCount || (data.chunkUrls ? data.chunkUrls.length : 0),
-                          chunkIvs: chunkIvsArr,
-                          urls: data.chunkUrls,
-                          contentType: data.contentType,
-                          size: meta.size
-                        }, [channel.port2]);
-                      }
-                   })
-                } else {
-                    sw.postMessage({
-                      type: 'REGISTER_STREAM',
-                      fileId: token,
-                      rawDEK,
-                      chunkSize: data.chunkSize || (2 * 1024 * 1024),
-                      chunkCount: data.chunkCount || (data.chunkUrls ? data.chunkUrls.length : 0),
-                      chunkIvs: chunkIvsArr,
-                      urls: data.chunkUrls,
-                      contentType: data.contentType,
-                      size: meta.size
-                    }, [channel.port2]);
-                }
+                sw.postMessage({
+                  type: "REGISTER_STREAM",
+                  fileId: token,
+                  rawDEK,
+                  chunkSize: data.chunkSize || 2 * 1024 * 1024,
+                  chunkCount: data.chunkCount || (data.chunkUrls ? data.chunkUrls.length : 0),
+                  chunkIvs: chunkIvsArr,
+                  urls: data.chunkUrls,
+                  contentType: data.contentType,
+                  size: meta.size,
+                }, [channel.port2]);
               });
 
               setDirectStreamUrl(`/sw/objects/${token}`);
               setIsFetchingForPreview(false);
-              return; // Done using SW
+              return;
             }
           } catch (err) {
             console.error("SW streaming failed, falling back to MSE", err);
@@ -713,20 +783,7 @@ export default function SharedFilePage() {
 
     // PATH A — non-encrypted media: direct signed URL → native browser streaming
     if (directStreamUrl) {
-      const isAudio = type.startsWith("audio/");
-      return (
-        <div className="h-full w-full bg-black flex items-center justify-center">
-          <div className={isAudio ? "w-full p-4" : "aspect-video w-full"}>
-            <Plyr
-              source={{
-                type: isAudio ? "audio" : "video",
-                sources: [{ src: directStreamUrl, type }],
-              }}
-              options={{ autoplay: true }}
-            />
-          </div>
-        </div>
-      );
+      return <SharedMediaPlayer url={directStreamUrl} type={type} />;
     }
 
     // PATH B — chunked encrypted media: MSE streaming
@@ -755,20 +812,7 @@ export default function SharedFilePage() {
         );
       }
       if (type.startsWith("video/") || type.startsWith("audio/")) {
-        const isAudio = type.startsWith("audio/");
-        return (
-          <div className="h-full w-full bg-black flex items-center justify-center">
-            <div className={isAudio ? "w-full p-4" : "aspect-video w-full"}>
-              <Plyr
-                source={{
-                  type: isAudio ? "audio" : "video",
-                  sources: [{ src: blobPreviewUrl, type }],
-                }}
-                options={{ autoplay: true }}
-              />
-            </div>
-          </div>
-        );
+        return <SharedMediaPlayer url={blobPreviewUrl} type={type} />;
       }
       if (type === "application/pdf") {
         return (

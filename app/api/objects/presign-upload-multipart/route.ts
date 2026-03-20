@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
 
     const keyId = B2_KEY_ID.trim();
     const appKey = B2_APPLICATION_KEY.trim();
-    const { fileSize, fileType, bucketId, chunkCount, prefix, fileName } = await request.json();
+    const { fileSize, fileType, bucketId, chunkCount, prefix, fileName, chunkSize: clientChunkSize } = await request.json();
 
     if (!bucketId) {
       return NextResponse.json({ error: "bucketId required" }, { status: 400 });
@@ -79,8 +79,12 @@ export async function POST(request: NextRequest) {
       forcePathStyle: true,
     });
 
-    // Chunk calculation
-    const chunkSize = 2 * 1024 * 1024; // 2MB
+    // Accept client-provided adaptive chunk size (validated 2 MB – 64 MB)
+    const MIN_CHUNK = 2 * 1024 * 1024;
+    const MAX_CHUNK = 64 * 1024 * 1024;
+    const chunkSize = clientChunkSize
+      ? Math.max(MIN_CHUNK, Math.min(MAX_CHUNK, Number(clientChunkSize)))
+      : MIN_CHUNK;
     
     const basePrefix = prefix || `users/${userId}/`;
     

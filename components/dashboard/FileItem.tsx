@@ -34,17 +34,18 @@ import { decryptFileName } from "@/lib/crypto/fileEncryption";
 
 const getFileIcon = (contentType: string, className?: string) => {
   if (!contentType) return <FileGeneric className={className} />;
-  if (contentType === "application/x-directory") return <Folder className={className} />;
-  
+  if (contentType === "application/x-directory")
+    return <Folder className={className} />;
+
   if (contentType.startsWith("image/"))
-    return <ImageIcon className={`text-blue-400 ${className || ""}`} />;
-  if (contentType.startsWith("video/")) 
-    return <Video className={`text-purple-400 ${className || ""}`} />;
-  if (contentType.startsWith("audio/")) 
-    return <Music className={`text-green-400 ${className || ""}`} />;
-  if (contentType.includes("pdf") || contentType.includes("document")) 
-    return <FileText className={`text-red-400 ${className || ""}`} />;
-    
+    return <ImageIcon className={`text-blue-400! ${className || ""}`} />;
+  if (contentType.startsWith("video/"))
+    return <Video className={`text-purple-400! ${className || ""}`} />;
+  if (contentType.startsWith("audio/"))
+    return <Music className={`text-green-400! ${className || ""}`} />;
+  if (contentType.includes("pdf") || contentType.includes("document"))
+    return <FileText className={`text-red-400! ${className || ""}`} />;
+
   if (
     contentType.includes("zip") ||
     contentType.includes("tar") ||
@@ -71,12 +72,18 @@ const getFileIcon = (contentType: string, className?: string) => {
     contentType.includes("excel") ||
     contentType.includes("csv")
   ) {
-    return <FileSpreadsheet className={`text-emerald-500 ${className || ""}`} />;
+    return (
+      <FileSpreadsheet className={`text-emerald-500 ${className || ""}`} />
+    );
   }
   if (contentType.startsWith("text/"))
-    return <FileText className={`text-muted-foreground/50 ${className || ""}`} />;
+    return (
+      <FileText className={`text-muted-foreground/50 ${className || ""}`} />
+    );
 
-  return <FileGeneric className={`text-muted-foreground/50 ${className || ""}`} />;
+  return (
+    <FileGeneric className={`text-muted-foreground/50 ${className || ""}`} />
+  );
 };
 
 interface ObjectData {
