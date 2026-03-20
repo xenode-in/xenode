@@ -82,9 +82,25 @@ function LoginForm() {
           return;
         }
       } else {
+        const sanitizedEmail = formData.email.trim().toLowerCase();
+        
+        const checkRes = await fetch(`/api/auth/check-email`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: sanitizedEmail })
+        });
+      
+        if (checkRes.ok) {
+          const { exists } = await checkRes.json();
+          if (exists) {
+            setError("An account with this email already exists.");
+            return;
+          }
+        }
+
         const result = await signUp.email({
-          name: formData.name,
-          email: formData.email,
+          name: formData.name.trim(),
+          email: sanitizedEmail,
           password: formData.password,
           callbackURL: `${window.location.origin}/onboarding`, // Optional redirect after verification
         });
