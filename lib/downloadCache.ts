@@ -8,16 +8,17 @@
  * the missing tail — exactly what MEGA does client-side.
  *
  * Store layout:
- *   CacheStorage : "xenode-dl-cache-v2"
+ *   CacheStorage : "xenode-dl-chunks-v1"
  *   Entry: request URL = `/cache/chunks/${objectId}/${index}`, response = Blob
  */
 
-const CACHE_NAME = "xenode-dl-cache-v2";
+export const DL_CACHE_NAME = "xenode-dl-chunks-v1";
+const STALE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 /** Returns all object IDs that have cached bytes (i.e. interrupted downloads). */
 export async function getCachedIds(): Promise<string[]> {
   try {
-    const cache = await caches.open(CACHE_NAME);
+    const cache = await caches.open(DL_CACHE_NAME);
     const requests = await cache.keys();
     const ids = new Set<string>();
     
@@ -38,7 +39,7 @@ export async function getCachedIds(): Promise<string[]> {
 /** Returns the number of bytes already cached for this object, or 0. */
 export async function getCachedSize(objectId: string): Promise<number> {
   try {
-    const cache = await caches.open(CACHE_NAME);
+    const cache = await caches.open(DL_CACHE_NAME);
     const requests = await cache.keys();
     let totalSize = 0;
 
@@ -69,7 +70,7 @@ export async function getCachedBytes(
   objectId: string,
 ): Promise<Uint8Array | null> {
   try {
-    const cache = await caches.open(CACHE_NAME);
+    const cache = await caches.open(DL_CACHE_NAME);
     const requests = await cache.keys();
     
     // Find all chunks for this objectId and parse their indices
@@ -122,7 +123,7 @@ export async function appendChunk(
   index: number
 ): Promise<void> {
   try {
-    const cache = await caches.open(CACHE_NAME);
+    const cache = await caches.open(DL_CACHE_NAME);
     
     // Create a synthetic response
     const arrayBuffer = new Uint8Array(chunk).buffer;
@@ -130,6 +131,7 @@ export async function appendChunk(
       headers: {
         "Content-Type": "application/octet-stream",
         "Content-Length": chunk.length.toString(),
+        "x-cached-at": String(Date.now()),
       }
     });
 
@@ -144,7 +146,7 @@ export async function appendChunk(
 /** Removes all cached chunks after a successful download. */
 export async function clearCache(objectId: string): Promise<void> {
   try {
-    const cache = await caches.open(CACHE_NAME);
+    const cache = await caches.open(DL_CACHE_NAME);
     const requests = await cache.keys();
 
     for (const req of requests) {
@@ -170,7 +172,7 @@ export async function truncateCache(
   fromIndex: number,
 ): Promise<void> {
   try {
-    const cache = await caches.open(CACHE_NAME);
+    const cache = await caches.open(DL_CACHE_NAME);
     const requests = await cache.keys();
 
     for (const req of requests) {
@@ -190,7 +192,7 @@ export async function truncateCache(
 
 export async function getNextChunkIndex(objectId: string): Promise<number> {
   try {
-    const cache = await caches.open(CACHE_NAME);
+    const cache = await caches.open(DL_CACHE_NAME);
     const requests = await cache.keys();
     let maxIndex = -1;
     for (const req of requests) {
@@ -204,5 +206,59 @@ export async function getNextChunkIndex(objectId: string): Promise<number> {
     return maxIndex + 1;
   } catch {
     return 0;
+  }
+}
+
+/** Deletes any chunk entries older than 7 days. */
+export async function evictStaleChunks(): Promise<void> {
+  try {
+    const cache = await caches.open(DL_CACHE_NAME);
+    const requests = await cache.keys();
+    const now = Date.now();
+
+    await Promise.all(
+      requests.map(async (req) => {
+        const res = await cache.match(req);
+        if (!res) return;
+        const cachedAt = +(res.headers.get("x-cached-at") ?? 0);
+        // Entries without the header (legacy) are treated as stale
+        if (cachedAt === 0 || now - cachedAt > STALE_TTL_MS) {
+          await cache.delete(req);
+        }
+      }),
+    );
+  } catch {
+    // Non-fatal
+  }
+}
+
+export interface ChunkCacheStats {
+  /** Number of cached chunk entries */
+  count: number;
+  /** Sum of Content-Length across all chunk entries, in bytes */
+  totalBytes: number;
+}
+
+/** Returns the number of cached chunks and their approximate total size. */
+export async function getChunkCacheStats(): Promise<ChunkCacheStats> {
+  try {
+    const cache = await caches.open(DL_CACHE_NAME);
+    const requests = await cache.keys();
+    let totalBytes = 0;
+    let count = 0;
+
+    await Promise.all(
+      requests.map(async (req) => {
+        const res = await cache.match(req);
+        if (!res) return;
+        const len = +(res.headers.get("Content-Length") ?? 0);
+        totalBytes += len;
+        count++;
+      }),
+    );
+
+    return { count, totalBytes };
+  } catch {
+    return { count: 0, totalBytes: 0 };
   }
 }
