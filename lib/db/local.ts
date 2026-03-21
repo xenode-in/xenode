@@ -16,6 +16,7 @@ export interface LocalFile {
   bucketId: string;
   encryptedContentType?: string;
   encryptedDisplayName?: string;
+  mediaCategory?: string;
 }
 
 export class XenodeDatabase extends Dexie {
@@ -24,7 +25,7 @@ export class XenodeDatabase extends Dexie {
   constructor(userId: string) {
     super(`XenodeDB-${userId}`); // scoped per user
     this.version(1).stores({
-      files: "id, key, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName",
+      files: "id, key, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName, mediaCategory",
     });
   }
 }
@@ -32,7 +33,7 @@ export class XenodeDatabase extends Dexie {
 // In-memory search index — no sensitive data ever hits disk through this
 export const searchIndex = new MiniSearch<LocalFile>({
   fields: ["name", "tags", "contentType"],
-  storeFields: ["id", "name", "size", "contentType", "createdAt", "isEncrypted", "thumbnail", "key"],
+  storeFields: ["id", "name", "size", "contentType", "createdAt", "isEncrypted", "thumbnail", "key", "mediaCategory"],
   searchOptions: {
     prefix: true,
     fuzzy: 0.2,

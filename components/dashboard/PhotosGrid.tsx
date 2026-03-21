@@ -5,7 +5,8 @@ import { usePreview } from "@/contexts/PreviewContext";
 import { Loader2, ImageOff, LayoutGrid, Grid3x3, Rows3 } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptMetadataString, decryptThumbnail } from "@/lib/crypto/fileEncryption";
+import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
+import { useThumbnail } from "@/hooks/useThumbnail";
 
 interface ObjectData {
   id: string;
@@ -48,44 +49,70 @@ function groupByDate(photos: ObjectData[]) {
   return groups;
 }
 
+function PhotoThumbnail({ 
+  photo, 
+  onPhotoClick, 
+  decryptedName,
+  metadataKey,
+  className = ""
+}: { 
+  photo: ObjectData; 
+  onPhotoClick: (p: ObjectData) => void;
+  decryptedName?: string;
+  metadataKey: CryptoKey | null;
+  className?: string;
+}) {
+  const displayUrl = useThumbnail(photo.thumbnail, metadataKey);
+
+  return (
+    <div
+      onClick={() => onPhotoClick(photo)}
+      className={`relative rounded-2xl overflow-hidden bg-secondary border border-border/50 cursor-pointer group transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/5 hover:border-primary/30 hover:z-10 ${className}`}
+    >
+      {displayUrl ? (
+        <img
+          src={displayUrl}
+          alt={decryptedName || getFileName(photo.key)}
+          className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
+          loading="lazy"
+        />
+      ) : (
+        <div className="w-full aspect-square flex items-center justify-center bg-secondary transition-transform duration-700 group-hover:scale-105">
+          <ImageOff className="w-8 h-8 text-muted-foreground/20" />
+        </div>
+      )}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
+        <p className="text-white text-sm font-medium truncate drop-shadow-md">
+          {decryptedName || photo.encryptedName || getFileName(photo.key)}
+        </p>
+        <p className="text-white/80 text-xs font-medium drop-shadow-md mt-0.5">{formatBytes(photo.size)}</p>
+      </div>
+    </div>
+  );
+}
+
 function MasonryGrid({
   photos,
   onPhotoClick,
   decryptedNames,
-  decryptedThumbnails,
+  metadataKey,
 }: {
   photos: ObjectData[];
   onPhotoClick: (p: ObjectData) => void;
   decryptedNames: Record<string, string>;
-  decryptedThumbnails: Record<string, string>;
+  metadataKey: CryptoKey | null;
 }) {
   return (
     <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 sm:gap-4 space-y-3 sm:space-y-4">
       {photos.map((photo) => (
-        <div
+        <PhotoThumbnail
           key={photo.id}
-          onClick={() => onPhotoClick(photo)}
-          className="relative rounded-2xl overflow-hidden bg-secondary border border-border/50 cursor-pointer group transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/5 hover:border-primary/30 hover:z-10 break-inside-avoid"
-        >
-          {decryptedThumbnails[photo.id] || photo.thumbnail ? (
-            <img
-              src={decryptedThumbnails[photo.id] || photo.thumbnail}
-              alt={decryptedNames[photo.id] || getFileName(photo.key)}
-              className="w-full h-auto object-cover transition-transform duration-700 group-hover:scale-105"
-              loading="lazy"
-            />
-          ) : (
-            <div className="w-full aspect-square flex items-center justify-center bg-secondary transition-transform duration-700 group-hover:scale-105">
-              <ImageOff className="w-8 h-8 text-muted-foreground/20" />
-            </div>
-          )}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
-            <p className="text-white text-sm font-medium truncate drop-shadow-md">
-              {decryptedNames[photo.id] || photo.encryptedName || getFileName(photo.key)}
-            </p>
-            <p className="text-white/80 text-xs font-medium drop-shadow-md mt-0.5">{formatBytes(photo.size)}</p>
-          </div>
-        </div>
+          photo={photo}
+          onPhotoClick={onPhotoClick}
+          decryptedName={decryptedNames[photo.id]}
+          metadataKey={metadataKey}
+          className="break-inside-avoid"
+        />
       ))}
     </div>
   );
@@ -96,41 +123,24 @@ function UniformGrid({
   density,
   onPhotoClick,
   decryptedNames,
-  decryptedThumbnails,
+  metadataKey,
 }: {
   photos: ObjectData[];
   density: GridDensity;
   onPhotoClick: (p: ObjectData) => void;
   decryptedNames: Record<string, string>;
-  decryptedThumbnails: Record<string, string>;
+  metadataKey: CryptoKey | null;
 }) {
   return (
     <div className={`grid ${DENSITY_COLS[density]} gap-3 sm:gap-4 auto-rows-[140px]`}>
       {photos.map((photo) => (
-        <div
+        <PhotoThumbnail
           key={photo.id}
-          onClick={() => onPhotoClick(photo)}
-          className="relative rounded-2xl overflow-hidden bg-secondary border border-border/50 cursor-pointer group transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/5 hover:border-primary/30 hover:z-10"
-        >
-          {decryptedThumbnails[photo.id] || photo.thumbnail ? (
-            <img
-              src={decryptedThumbnails[photo.id] || photo.thumbnail}
-              alt={decryptedNames[photo.id] || getFileName(photo.key)}
-              className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-              loading="lazy"
-            />
-          ) : (
-            <div className="w-full h-full flex items-center justify-center bg-secondary transition-transform duration-700 group-hover:scale-105">
-              <ImageOff className="w-8 h-8 text-muted-foreground/20" />
-            </div>
-          )}
-          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
-            <p className="text-white text-sm font-medium truncate drop-shadow-md">
-              {decryptedNames[photo.id] || photo.encryptedName || getFileName(photo.key)}
-            </p>
-            <p className="text-white/80 text-xs font-medium drop-shadow-md mt-0.5">{formatBytes(photo.size)}</p>
-          </div>
-        </div>
+          photo={photo}
+          onPhotoClick={onPhotoClick}
+          decryptedName={decryptedNames[photo.id]}
+          metadataKey={metadataKey}
+        />
       ))}
     </div>
   );
@@ -146,7 +156,6 @@ export function PhotosGrid() {
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({});
-  const [decryptedThumbnails, setDecryptedThumbnails] = useState<Record<string, string>>({});
 
   const { openPreview } = usePreview();
   const { isUnlocked, metadataKey } = useCrypto();
@@ -154,13 +163,11 @@ export function PhotosGrid() {
   useEffect(() => {
     if (!isUnlocked || !photos.length) {
       setDecryptedNames((prev) => Object.keys(prev).length ? {} : prev);
-      setDecryptedThumbnails((prev) => Object.keys(prev).length ? {} : prev);
       return;
     }
 
     const decryptMetadata = async () => {
       const newNames: Record<string, string> = {};
-      const newThumbs: Record<string, string> = {};
       
       for (const photo of photos) {
         // Name
@@ -174,27 +181,15 @@ export function PhotosGrid() {
           }
         }
         
-        // Thumbnail
-        if (photo.thumbnail && photo.thumbnail.startsWith("enc:") && !decryptedThumbnails[photo.id] && metadataKey) {
-          try {
-            const thumb = await decryptThumbnail(photo.thumbnail, metadataKey);
-            newThumbs[photo.id] = thumb;
-          } catch (e) {
-            console.error("Failed to decrypt thumbnail", e);
-          }
-        }
       }
       
       if (Object.keys(newNames).length > 0) {
         setDecryptedNames((prev) => ({ ...prev, ...newNames }));
       }
-      if (Object.keys(newThumbs).length > 0) {
-        setDecryptedThumbnails((prev) => ({ ...prev, ...newThumbs }));
-      }
     };
 
     decryptMetadata();
-  }, [photos, isUnlocked, metadataKey, decryptedNames, decryptedThumbnails]);
+  }, [photos, isUnlocked, metadataKey, decryptedNames]);
 
   const fetchPhotos = useCallback(
     async (pageNum = 1, append = false) => {
@@ -381,7 +376,7 @@ export function PhotosGrid() {
               photos={groupPhotos}
               onPhotoClick={openPreview}
               decryptedNames={decryptedNames}
-              decryptedThumbnails={decryptedThumbnails}
+              metadataKey={metadataKey}
             />
           ) : (
             <UniformGrid
@@ -389,7 +384,7 @@ export function PhotosGrid() {
               density={gridMode as GridDensity}
               onPhotoClick={openPreview}
               decryptedNames={decryptedNames}
-              decryptedThumbnails={decryptedThumbnails}
+              metadataKey={metadataKey}
             />
           )}
         </div>

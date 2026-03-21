@@ -1,18 +1,8 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import {
-  Search,
-  File as FileIcon,
-  Lock,
-  Folder,
-  Image as ImageIcon,
-  Video,
-  Music,
-  FileText,
-  FileArchive,
-  FileCode,
-} from "lucide-react";
+import { Search, Lock, Folder } from "lucide-react";
+import { getFileIcon } from "@/lib/file-icons";
 import { searchIndex, LocalFile } from "@/lib/db/local";
 import { useSyncManager } from "@/hooks/useSyncManager";
 import { usePreview } from "@/contexts/PreviewContext";
@@ -24,44 +14,6 @@ import {
 } from "@/components/ui/popover";
 import Link from "next/link";
 import { formatBytes } from "@/lib/utils";
-
-
-const getFileIcon = (contentType: string, className?: string) => {
-  if (!contentType) return <FileIcon className={className} />;
-  if (contentType === "application/x-directory") return <Folder className={className} />;
-  
-  if (contentType.startsWith("image/")) 
-    return <ImageIcon className={`text-blue-400 ${className || ""}`} />;
-  if (contentType.startsWith("video/")) 
-    return <Video className={`text-purple-400 ${className || ""}`} />;
-  if (contentType.startsWith("audio/")) 
-    return <Music className={`text-green-400 ${className || ""}`} />;
-  if (contentType.includes("pdf") || contentType.includes("document")) 
-    return <FileText className={`text-red-400 ${className || ""}`} />;
-    
-  if (
-    contentType.includes("zip") ||
-    contentType.includes("tar") ||
-    contentType.includes("rar") ||
-    contentType.includes("7z") ||
-    contentType.includes("compressed") ||
-    contentType.includes("archive")
-  ) {
-    return <FileArchive className={`text-yellow-500 ${className || ""}`} />;
-  }
-  if (
-    contentType.includes("javascript") ||
-    contentType.includes("json") ||
-    contentType.includes("html") ||
-    contentType.includes("css") ||
-    contentType.includes("xml") ||
-    contentType.includes("yaml") ||
-    contentType.includes("typescript")
-  ) {
-    return <FileCode className={`text-orange-400 ${className || ""}`} />;
-  }
-  return <FileIcon className={`text-muted-foreground/50 ${className || ""}`} />;
-};
 
 export function GlobalSearch() {
   const [query, setQuery] = useState("");
@@ -153,7 +105,11 @@ export function GlobalSearch() {
                   className="flex items-center gap-3 p-2 rounded-md hover:bg-accent transition-colors"
                 >
                   <div className="w-8 h-8 rounded bg-primary/10 flex items-center justify-center shrink-0">
-                    {getFileIcon(result.contentType, "w-4 h-4 text-primary")}
+                    {getFileIcon(
+                      result.contentType,
+                      "w-4 h-4",
+                      result.mediaCategory,
+                    )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">

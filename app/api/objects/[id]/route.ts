@@ -134,6 +134,10 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     try {
       await deleteB2Object(bucket.b2BucketId, object.key);
+      // Delete thumbnail if it's stored in B2
+      if (object.thumbnail && object.thumbnail.startsWith("users/")) {
+        await deleteB2Object(bucket.b2BucketId, object.thumbnail);
+      }
     } catch {
       // Continue even if B2 delete fails
     }
