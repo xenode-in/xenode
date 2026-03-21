@@ -24,7 +24,7 @@ const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 export const metadata: Metadata = {
   metadataBase: new URL(BASE_URL),
   title: {
-    default: "Xenode — Store Files. Share Securely. Stay Private.",
+    default: "Xenode | Store Files. Share Securely. Stay Private.",
     template: "%s | Xenode",
   },
   description:
@@ -51,7 +51,7 @@ export const metadata: Metadata = {
     type: "website",
     locale: "en_IN",
     url: BASE_URL,
-    title: "Xenode — Store Files. Share Securely. Stay Private.",
+    title: "Xenode | Store Files. Share Securely. Stay Private.",
     description:
       "Xenode is end-to-end encrypted cloud storage built for people who value their privacy. No one, not even us, can read your files.",
     siteName: "Xenode",
@@ -60,13 +60,13 @@ export const metadata: Metadata = {
         url: "/og-image.png",
         width: 1200,
         height: 630,
-        alt: "Xenode — End-to-End Encrypted Cloud Storage",
+        alt: "Xenode | End-to-End Encrypted Cloud Storage",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Xenode — Store Files. Share Securely. Stay Private.",
+    title: "Xenode | Store Files. Share Securely. Stay Private.",
     description:
       "End-to-end encrypted cloud storage. No one, not even us, can read your files.",
     creator: "@xenode",

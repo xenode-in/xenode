@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -9,93 +9,146 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Loader2, Folder, FileIcon, ChevronLeft } from "lucide-react";
+import { Loader2, UploadCloud, FileArchive, CheckCircle2 } from "lucide-react";
+import { BlobReader, BlobWriter, ZipReader } from "@zip.js/zip.js";
+import { useCrypto } from "@/contexts/CryptoContext";
+import { useSession } from "@/lib/auth/client";
+import { encryptFile, encryptFileChunked } from "@/lib/crypto/fileEncryption";
+import { toB64 } from "@/lib/crypto/utils";
 
 interface StartMigrationDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
-  hasGoogleAccount: boolean;
-  googleAccountId?: string;
-  onReconnect?: () => void;
 }
+
+// Helper to resize image and get base64
+const generateThumbnail = (file: File): Promise<string | undefined> => {
+  return new Promise((resolve) => {
+    if (!file.type.startsWith("image/")) {
+      resolve(undefined);
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX_SIZE = 320;
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > MAX_SIZE) {
+            height *= MAX_SIZE / width;
+            width = MAX_SIZE;
+          }
+        } else {
+          if (height > MAX_SIZE) {
+            width *= MAX_SIZE / height;
+            height = MAX_SIZE;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL("image/jpeg", 0.8));
+        } else {
+          resolve(undefined);
+        }
+      };
+      img.onerror = () => resolve(undefined);
+      img.src = e.target?.result as string;
+    };
+    reader.onerror = () => resolve(undefined);
+    reader.readAsDataURL(file);
+  });
+};
+
+function getAdaptiveChunkSize(fileSize: number, mimeType: string): number {
+  const isStreamable =
+    mimeType.startsWith("video/") || mimeType.startsWith("audio/");
+  if (isStreamable) {
+    if (fileSize < 100 * 1024 * 1024) return 2 * 1024 * 1024;
+    if (fileSize < 1024 * 1024 * 1024) return 4 * 1024 * 1024;
+    return 8 * 1024 * 1024;
+  }
+  const adaptive = Math.max(8 * 1024 * 1024, Math.floor(fileSize / 100));
+  return Math.min(adaptive, 64 * 1024 * 1024);
+}
+
+const getMimeType = (filename: string): string => {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  switch (ext) {
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "png":
+      return "image/png";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    case "mp4":
+      return "video/mp4";
+    case "mov":
+      return "video/quicktime";
+    case "webm":
+      return "video/webm";
+    default:
+      return "application/octet-stream";
+  }
+};
+
+const isMedia = (filename: string): boolean => {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  return (
+    !!ext &&
+    ["jpg", "jpeg", "png", "gif", "webp", "mp4", "mov", "webm"].includes(ext)
+  );
+};
 
 export function StartMigrationDialog({
   open,
   onOpenChange,
   onSuccess,
-  hasGoogleAccount,
-  googleAccountId,
-  onReconnect,
 }: StartMigrationDialogProps) {
-  const [provider, setProvider] = useState<string>("GOOGLE_DRIVE");
   const [destinationBucketId, setDestinationBucketId] = useState<string>("");
   const [destinationPath, setDestinationPath] = useState<string>("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [takeoutFiles, setTakeoutFiles] = useState<File[]>([]);
 
-  const [selectedFolders, setSelectedFolders] = useState<string[]>([]);
-  const [availableFolders, setAvailableFolders] = useState<any[]>([]);
-  const [isLoadingFolders, setIsLoadingFolders] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [statusText, setStatusText] = useState("");
+  const [overallProgress, setOverallProgress] = useState(0);
+  const [currentFileProgress, setCurrentFileProgress] = useState(0);
+  const [stats, setStats] = useState({ totalFiles: 0, processedFiles: 0 });
 
-  const [currentFolderId, setCurrentFolderId] = useState<string>("root");
-  const [folderHistory, setFolderHistory] = useState<
-    { id: string; name: string }[]
-  >([]);
+  const { publicKey } = useCrypto();
+  const { data: session } = useSession();
+
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (open) {
       fetchConfig();
     } else {
-      setSelectedFolders([]);
-      setAvailableFolders([]);
-      setCurrentFolderId("root");
-      setFolderHistory([]);
-      setError(null);
+      setTakeoutFiles([]);
+      setIsProcessing(false);
+      setStatusText("");
+      setOverallProgress(0);
+      setCurrentFileProgress(0);
+      setStats({ totalFiles: 0, processedFiles: 0 });
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
     }
   }, [open]);
-
-  useEffect(() => {
-    if (googleAccountId && open) {
-      fetchDriveFolders(googleAccountId, currentFolderId);
-    }
-  }, [googleAccountId, open, currentFolderId]);
-
-  const fetchDriveFolders = async (accountId: string, folderId: string) => {
-    setIsLoadingFolders(true);
-    try {
-      const res = await fetch(
-        `/api/migrations/providers/google/folders?accountId=${accountId}&folderId=${folderId}`,
-      );
-      if (res.ok) {
-        const data = await res.json();
-        const folders = data || [];
-        setAvailableFolders(folders);
-
-        const folderIds = folders.map((f: any) => f.id);
-        setSelectedFolders((prev) => {
-          const newSelection = new Set([...prev, ...folderIds]);
-          return Array.from(newSelection);
-        });
-      } else if (res.status === 401 || res.status === 500) {
-        setError("Google session expired. Please reconnect your account. (Important: Login with same email id)");
-      } else {
-        setError("Failed to fetch folders. Please try again.");
-      }
-    } catch (err) {
-      console.error(err);
-      setError("An unexpected error occurred while fetching folders.");
-    } finally {
-      setIsLoadingFolders(false);
-    }
-  };
 
   const fetchConfig = async () => {
     try {
@@ -108,247 +161,528 @@ export function StartMigrationDialog({
         }
       }
     } catch (err) {
-      console.error(err);
+      console.error("Failed to load destination bucket", err);
     }
   };
 
-  const navigateToFolder = (folderId: string, folderName: string) => {
-    setFolderHistory((prev) => [...prev, { id: folderId, name: folderName }]);
-    setCurrentFolderId(folderId);
+  const getShouldEncrypt = () => {
+    // @ts-expect-error extra fields
+    return !!(publicKey && session?.user?.encryptByDefault);
   };
 
-  const navigateUp = () => {
-    setFolderHistory((prev) => {
-      const newHistory = [...prev];
-      newHistory.pop();
-      const last =
-        newHistory.length > 0 ? newHistory[newHistory.length - 1].id : "root";
-      setCurrentFolderId(last);
-      return newHistory;
+  const processAndUploadFile = async (rawFile: File, signal: AbortSignal) => {
+    if (signal.aborted) throw new Error("Aborted");
+
+    let uploadBody: File | Blob = rawFile;
+    let uploadContentType = rawFile.type;
+    let encryptedDEK: string | undefined;
+    let encryptedIV: string | undefined;
+    let encryptedName: string | undefined;
+    let chunkSize: number | undefined;
+    let chunkCount: number | undefined;
+    let chunkIvs: string | undefined;
+
+    const shouldEncryptNow = getShouldEncrypt();
+
+    // Attempt Encryption
+    if (shouldEncryptNow && publicKey) {
+      try {
+        const isStreamable =
+          rawFile.type.startsWith("video/") ||
+          rawFile.type.startsWith("audio/");
+        if (isStreamable) {
+          const enc = await encryptFileChunked(rawFile, publicKey);
+          uploadBody = enc.ciphertext;
+          encryptedDEK = enc.encryptedDEK;
+          chunkSize = enc.chunkSize;
+          chunkCount = enc.chunkCount;
+          chunkIvs = JSON.stringify(enc.chunkIvs);
+        } else {
+          const enc = await encryptFile(rawFile, publicKey);
+          uploadBody = enc.ciphertext;
+          encryptedDEK = enc.encryptedDEK;
+          encryptedIV = enc.iv;
+        }
+        uploadContentType = "application/octet-stream";
+
+        const nameBuf = new TextEncoder().encode(rawFile.name);
+        const nameKey = crypto.getRandomValues(new Uint8Array(32));
+        const nameIV = crypto.getRandomValues(new Uint8Array(12));
+        const encNameBuf = await crypto.subtle.encrypt(
+          { name: "AES-GCM", iv: nameIV as Uint8Array<ArrayBuffer> },
+          await crypto.subtle.importKey(
+            "raw",
+            nameKey as Uint8Array<ArrayBuffer>,
+            { name: "AES-GCM", length: 256 },
+            false,
+            ["encrypt"],
+          ),
+          nameBuf,
+        );
+        const combined = new Uint8Array(
+          nameKey.byteLength + nameIV.byteLength + encNameBuf.byteLength,
+        );
+        combined.set(nameKey, 0);
+        combined.set(nameIV, nameKey.byteLength);
+        combined.set(
+          new Uint8Array(encNameBuf),
+          nameKey.byteLength + nameIV.byteLength,
+        );
+        encryptedName = toB64(combined);
+      } catch (err) {
+        console.warn("[E2EE] Encryption failed, uploading plaintext", err);
+        uploadBody = rawFile;
+      }
+    }
+
+    if (signal.aborted) throw new Error("Aborted");
+
+    const thumbnail = await generateThumbnail(rawFile).catch(() => undefined);
+
+    // Get Presigned URLs
+    const isStreamableEncrypted =
+      shouldEncryptNow &&
+      (rawFile.type.startsWith("video/") || rawFile.type.startsWith("audio/"));
+
+    const endpoint = isStreamableEncrypted
+      ? "/api/objects/presign-upload-multipart"
+      : "/api/objects/presign-upload";
+
+    const presignReqType = isStreamableEncrypted
+      ? {
+          fileName: shouldEncryptNow ? crypto.randomUUID() : rawFile.name,
+          fileSize: uploadBody.size,
+          fileType: uploadContentType,
+          bucketId: destinationBucketId,
+          prefix: destinationPath,
+          chunkCount,
+          chunkSize,
+        }
+      : {
+          fileName: shouldEncryptNow ? crypto.randomUUID() : rawFile.name,
+          fileSize: uploadBody.size,
+          fileType: uploadContentType,
+          bucketId: destinationBucketId,
+          prefix: destinationPath,
+        };
+
+    const presignResponse = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(presignReqType),
     });
-  };
 
-  const toggleFolder = (folderId: string) => {
-    setSelectedFolders((prev) =>
-      prev.includes(folderId)
-        ? prev.filter((id) => id !== folderId)
-        : [...prev, folderId],
-    );
-  };
+    if (!presignResponse.ok) throw new Error("Failed to presign upload");
+    const pData = await presignResponse.json();
 
-  const allIds = availableFolders.map((f) => f.id);
-  const areAllSelected =
-    availableFolders.length > 0 &&
-    allIds.every((id) => selectedFolders.includes(id));
+    if (signal.aborted) throw new Error("Aborted");
 
-  const selectAllFolders = () => {
-    if (areAllSelected) {
-      setSelectedFolders((prev) => prev.filter((id) => !allIds.includes(id)));
-    } else {
-      setSelectedFolders((prev) => {
-        const newSet = new Set([...prev, ...allIds]);
-        return Array.from(newSet);
-      });
-    }
-  };
+    let chunkUploadRefs: { index: number; key: string; size: number }[] = [];
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setError(null);
+    // XHR Upload execution
+    if (isStreamableEncrypted) {
+      // Multipart upload
+      const {
+        fileId,
+        urls,
+        bucketId: returnedBucketId,
+        chunkSize: serverChunkSize,
+      } = pData;
+      let urlIndex = 0;
+      const totalSize = uploadBody.size;
+      const loadedBytes = new Array(urls.length).fill(0);
 
-    if (!hasGoogleAccount || !googleAccountId) {
-      setError("Please connect Google account first.");
-      setIsLoading(false);
-      return;
-    }
+      const cipherChunkSize = (chunkSize || 0) + 16;
+      const concurrency = 4;
 
-    if (!destinationBucketId) {
-      setError("Destination not configured.");
-      setIsLoading(false);
-      return;
-    }
+      const uploadWorker = async () => {
+        while (urlIndex < urls.length) {
+          if (signal.aborted) throw new Error("Aborted");
+          const currentIndex = urlIndex++;
+          const urlObj = urls[currentIndex];
+          const start = currentIndex * cipherChunkSize;
+          const end = Math.min(start + cipherChunkSize, totalSize);
+          const chunkBlob = uploadBody.slice(start, end);
 
-    if (selectedFolders.length === 0) {
-      setError("Select at least one item.");
-      setIsLoading(false);
-      return;
-    }
+          await new Promise<void>((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            const abortHandler = () => {
+              xhr.abort();
+              reject(new Error("Aborted"));
+            };
+            signal.addEventListener("abort", abortHandler);
 
-    try {
-      const res = await fetch("/api/migrations", {
+            xhr.upload.addEventListener("progress", (e) => {
+              if (e.lengthComputable) {
+                loadedBytes[currentIndex] = e.loaded;
+                const totalLoaded = loadedBytes.reduce((a, b) => a + b, 0);
+                setCurrentFileProgress(
+                  Math.round((totalLoaded / totalSize) * 100),
+                );
+              }
+            });
+            xhr.addEventListener("load", () => {
+              signal.removeEventListener("abort", abortHandler);
+              if (xhr.status >= 200 && xhr.status < 300) {
+                loadedBytes[currentIndex] = chunkBlob.size;
+                chunkUploadRefs.push({
+                  index: currentIndex,
+                  key: urlObj.key,
+                  size: chunkBlob.size,
+                });
+                resolve();
+              } else reject(new Error("Upload failed"));
+            });
+            xhr.addEventListener("error", () =>
+              reject(new Error("Network Error")),
+            );
+            xhr.open("PUT", urlObj.url);
+            xhr.setRequestHeader("Content-Type", uploadContentType);
+            xhr.send(chunkBlob);
+          });
+        }
+      };
+      await Promise.all(
+        Array.from(
+          { length: Math.min(concurrency, urls.length) },
+          uploadWorker,
+        ),
+      );
+      chunkUploadRefs.sort((a, b) => a.index - b.index);
+
+      if (signal.aborted) throw new Error("Aborted");
+
+      await fetch("/api/objects/complete-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          provider,
-          providerAccountId: googleAccountId,
-          destinationBucketId,
-          destinationPath: destinationPath
-            ? `${destinationPath}migrations/`
-            : "migrations/",
-          sourceFolderId: selectedFolders.join(","),
+          objectKey: fileId,
+          bucketId: returnedBucketId,
+          size: totalSize,
+          contentType: rawFile.type,
+          thumbnail,
+          isEncrypted: !!encryptedDEK,
+          encryptedDEK,
+          encryptedName,
+          chunkSize: serverChunkSize,
+          chunkCount: urls.length,
+          chunkIvs,
+          isChunked: true,
+          chunks: chunkUploadRefs,
         }),
       });
+    } else {
+      // Single Blob upload
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        const abortHandler = () => {
+          xhr.abort();
+          reject(new Error("Aborted"));
+        };
+        signal.addEventListener("abort", abortHandler);
 
-      if (!res.ok) throw new Error("Failed");
+        xhr.upload.addEventListener("progress", (e) => {
+          if (e.lengthComputable) {
+            setCurrentFileProgress(Math.round((e.loaded / e.total) * 100));
+          }
+        });
+        xhr.addEventListener("load", () => {
+          signal.removeEventListener("abort", abortHandler);
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else reject(new Error(`B2 error ${xhr.status}`));
+        });
+        xhr.addEventListener("error", () => reject(new Error("Network error")));
+        xhr.open("PUT", pData.uploadUrl);
+        xhr.setRequestHeader("Content-Type", uploadContentType);
+        xhr.send(uploadBody);
+      });
 
-      onSuccess();
-      onOpenChange(false);
-    } catch (err) {
-      setError("Failed to start migration");
-    } finally {
-      setIsLoading(false);
+      if (signal.aborted) throw new Error("Aborted");
+
+      await fetch("/api/objects/complete-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          objectKey: pData.objectKey,
+          bucketId: pData.bucketId,
+          size: uploadBody.size,
+          contentType: rawFile.type,
+          thumbnail,
+          isEncrypted: !!encryptedDEK,
+          encryptedDEK,
+          iv: encryptedIV,
+          encryptedName,
+          chunkSize,
+          chunkCount,
+          chunkIvs,
+        }),
+      });
     }
   };
 
+  const startExtraction = async () => {
+    if (!takeoutFiles.length) return;
+    setIsProcessing(true);
+    setStatusText("Analyzing ZIP files...");
+    setStats({ totalFiles: 0, processedFiles: 0 });
+
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+
+    try {
+      // Pass 1: Count total media entries to compute overall progress
+      let mediaEntriesTotal = 0;
+      const allMediaRefs: {
+        zipFile: File;
+        entry: any;
+        zipReader: ZipReader<any>;
+      }[] = [];
+
+      for (let i = 0; i < takeoutFiles.length; i++) {
+        const zipReader = new ZipReader(new BlobReader(takeoutFiles[i]));
+        const entries = await zipReader.getEntries();
+        for (const entry of entries) {
+          if (!entry.directory && isMedia(entry.filename)) {
+            mediaEntriesTotal++;
+            allMediaRefs.push({ zipFile: takeoutFiles[i], entry, zipReader });
+          }
+        }
+      }
+
+      setStats({ totalFiles: mediaEntriesTotal, processedFiles: 0 });
+
+      // Pass 2: Extract & Upload consecutively
+      let processed = 0;
+      for (const meta of allMediaRefs) {
+        if (signal.aborted) break;
+        setCurrentFileProgress(0);
+        setStatusText(`Processing ${meta.entry.filename.split("/").pop()}...`);
+
+        // Extract Blob into RAM iteratively to avoid crashing the browser
+        const blob = await meta.entry.getData(
+          new BlobWriter(getMimeType(meta.entry.filename)),
+        );
+        const file = new File(
+          [blob],
+          meta.entry.filename.split("/").pop() || "image.jpg",
+          {
+            type: getMimeType(meta.entry.filename),
+            lastModified: meta.entry.lastModDate?.getTime() || Date.now(),
+          },
+        );
+
+        // Push through E2EE and S3 logic
+        await processAndUploadFile(file, signal);
+
+        processed++;
+        setStats((prev) => ({ ...prev, processedFiles: processed }));
+        setOverallProgress(Math.round((processed / mediaEntriesTotal) * 100));
+      }
+
+      // Cleanup
+      for (const fileZipReader of new Set(
+        allMediaRefs.map((r) => r.zipReader),
+      )) {
+        await fileZipReader.close();
+      }
+
+      setStatusText("Migration Complete!");
+      setTimeout(() => {
+        onSuccess();
+        onOpenChange(false);
+      }, 2000);
+    } catch (err: any) {
+      if (err.message !== "Aborted") {
+        console.error("Takeout parsing crashed", err);
+        setStatusText("Migration failed: " + err.message);
+      }
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleCancel = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    onOpenChange(false);
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleCancel}>
       <DialogContent className="w-[95vw] max-w-lg sm:max-w-xl rounded-xl max-h-[85vh] flex flex-col">
-        {/* Header */}
         <DialogHeader>
           <DialogTitle className="text-base sm:text-lg">
-            Start Migration
+            Google Takeout Migration
           </DialogTitle>
           <DialogDescription className="text-xs sm:text-sm">
-            Import files from external providers into Xenode.
+            Import your photos securely in the browser. Supports End-to-End
+            Encryption out of the box.
           </DialogDescription>
         </DialogHeader>
 
-        {/* Content */}
-        <form
-          onSubmit={handleSubmit}
-          className="flex flex-col gap-4 overflow-y-auto pr-1"
-        >
-          {/* Provider */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Provider</label>
-            <Select value={provider} onValueChange={setProvider}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="GOOGLE_DRIVE">Google Drive</SelectItem>
-                <SelectItem value="ONEDRIVE" disabled>
-                  OneDrive
-                </SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          {/* Destination */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Destination</label>
-            <div className="p-3 bg-secondary rounded-md text-xs sm:text-sm">
-              <span className="font-semibold">Xenode</span> /{" "}
-              {destinationPath || "migrations"}
-            </div>
-          </div>
-
-          {/* File Picker */}
-          {hasGoogleAccount && (
-            <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span>Select Items</span>
-                <span>{selectedFolders.length}</span>
-              </div>
-
-              <div className="border rounded-md flex flex-col">
-                {/* Nav */}
-                <div className="flex items-center gap-2 p-2 border-b">
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    onClick={navigateUp}
-                    disabled={currentFolderId === "root"}
+        {!isProcessing && stats.processedFiles === 0 ? (
+          <div className="flex flex-col gap-4 overflow-y-auto pr-1">
+            <div className="rounded-lg border border-border bg-muted/40 p-4 space-y-3">
+              <p className="text-sm font-medium">
+                Step 1: Get your Takeout archive
+              </p>
+              <ol className="list-decimal list-inside space-y-1 text-xs text-muted-foreground pb-2 border-b">
+                <li>
+                  Go to{" "}
+                  <a
+                    href="https://takeout.google.com"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-primary underline"
                   >
-                    <ChevronLeft className="w-4 h-4" />
-                  </Button>
+                    takeout.google.com
+                  </a>
+                </li>
+                <li>
+                  Deselect all, then select <strong>Google Photos</strong>
+                </li>
+                <li>Export as ZIP and download to your local device.</li>
+              </ol>
 
-                  <span className="text-xs flex-1 truncate">
-                    {currentFolderId === "root"
-                      ? "My Drive"
-                      : folderHistory.at(-1)?.name}
-                  </span>
+              <p className="text-sm font-medium pt-2">
+                Step 2: Drop ZIP files below
+              </p>
+              <label className="flex flex-col items-center justify-center p-8 border-2 border-dashed border-border rounded-xl hover:bg-muted/30 transition-colors cursor-pointer group">
+                <UploadCloud className="w-10 h-10 text-muted-foreground group-hover:text-primary transition-colors mb-4" />
+                <p className="text-sm font-medium text-foreground mb-1 text-center">
+                  Drag and drop ZIP files here
+                </p>
+                <p className="text-xs text-muted-foreground text-center">
+                  Multi-part exports supported (e.g. Takeout-001.zip,
+                  Takeout-002.zip)
+                </p>
+                <input
+                  type="file"
+                  multiple
+                  accept=".zip"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files?.length) {
+                      setTakeoutFiles(Array.from(e.target.files));
+                    }
+                  }}
+                />
+              </label>
 
-                  <Button size="sm" variant="ghost" onClick={selectAllFolders}>
-                    {areAllSelected ? "Clear" : "All"}
-                  </Button>
-                </div>
-
-                {/* List */}
-                <div className="max-h-60 sm:max-h-72 overflow-y-auto p-2 space-y-1">
-                  {isLoadingFolders ? (
-                    <div className="flex justify-center py-6 text-sm">
-                      <Loader2 className="animate-spin mr-2" /> Loading
+              {takeoutFiles.length > 0 && (
+                <div className="space-y-2 mt-4 max-h-[150px] overflow-y-auto bg-background border rounded-md p-2">
+                  <p className="text-xs font-semibold px-2">
+                    Ready to process ({takeoutFiles.length} chunk
+                    {takeoutFiles.length > 1 ? "s" : ""}):
+                  </p>
+                  {takeoutFiles.map((file, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center text-xs text-muted-foreground px-2 py-1"
+                    >
+                      <FileArchive className="w-4 h-4 mr-2 text-primary" />
+                      <span className="truncate flex-1">{file.name}</span>
+                      <span>{(file.size / (1024 * 1024)).toFixed(1)} MB</span>
                     </div>
-                  ) : availableFolders.length > 0 ? (
-                    availableFolders.map((f) => (
-                      <div
-                        key={f.id}
-                        className="flex items-center gap-3 p-2 rounded-md hover:bg-muted cursor-pointer"
-                        onClick={() => toggleFolder(f.id)}
-                        onDoubleClick={() =>
-                          f.isFolder && navigateToFolder(f.id, f.name)
-                        }
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedFolders.includes(f.id)}
-                          readOnly
-                        />
-                        {f.isFolder ? (
-                          <Folder className="w-4 h-4 text-primary" />
-                        ) : (
-                          <FileIcon className="w-4 h-4" />
-                        )}
-                        <span className="text-sm truncate">{f.name}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-center text-xs py-6">Empty folder</div>
-                  )}
+                  ))}
                 </div>
-              </div>
-            </div>
-          )}
-
-          {/* Error */}
-          {error && (
-            <div className="text-red-500 text-sm bg-red-100 p-3 rounded flex flex-col gap-2">
-              <span>{error}</span>
-              {error.includes("session expired") && onReconnect && (
-                <Button 
-                  type="button" 
-                  variant="destructive" 
-                  size="sm" 
-                  onClick={onReconnect}
-                  className="w-fit"
-                >
-                  Reconnect Google
-                </Button>
               )}
             </div>
-          )}
 
-          {/* Footer */}
-          <div className="flex flex-col sm:flex-row gap-2 justify-end pt-2 border-t">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              className="w-full sm:w-auto"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={isLoading}
-              className="w-full sm:w-auto"
-            >
-              {isLoading ? "Starting..." : "Start Import"}
-            </Button>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Destination</label>
+              <div className="p-3 bg-secondary rounded-md text-xs sm:text-sm">
+                <span className="font-semibold">Xenode Storage</span> /{" "}
+                {destinationPath || ""}
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row gap-2 justify-end pt-2 border-t">
+              <Button type="button" variant="outline" onClick={handleCancel}>
+                Cancel
+              </Button>
+              <Button
+                onClick={startExtraction}
+                disabled={!takeoutFiles.length || !destinationBucketId}
+              >
+                Start Extraction
+              </Button>
+            </div>
           </div>
-        </form>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-8 space-y-6">
+            {overallProgress >= 100 ? (
+              <CheckCircle2 className="w-16 h-16 text-emerald-500 animate-in zoom-in" />
+            ) : (
+              <div className="relative flex items-center justify-center w-16 h-16">
+                <Loader2 className="w-16 h-16 text-primary animate-spin absolute" />
+              </div>
+            )}
+
+            <div className="text-center w-full px-6 space-y-2">
+              <h3 className="font-semibold text-lg">{statusText}</h3>
+              <p className="text-sm text-muted-foreground">
+                {stats.processedFiles} of {stats.totalFiles} media files
+                migrated
+              </p>
+
+              <div className="w-full space-y-1 mt-6">
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Overall Progress</span>
+                  <span>{overallProgress}%</span>
+                </div>
+                <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary transition-all duration-300 ease-in-out"
+                    style={{ width: `${overallProgress}%` }}
+                  />
+                </div>
+              </div>
+
+              <div className="w-full space-y-1 mt-4">
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>Current File Extraction & Upload</span>
+                  <span>{currentFileProgress}%</span>
+                </div>
+                <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary/60 transition-all duration-100 ease-linear"
+                    style={{ width: `${currentFileProgress}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="w-full px-6 pt-4">
+              <div className="rounded-md bg-yellow-500/10 border border-yellow-500/20 p-3 text-xs text-yellow-600 dark:text-yellow-400">
+                <strong>
+                  Please do not close this tab or put your computer to sleep.
+                </strong>{" "}
+                Extraction runs entirely in your browser memory to decrypt and
+                safely process files without sharing them with external servers.
+              </div>
+            </div>
+
+            {!isProcessing &&
+              stats.processedFiles > 0 &&
+              stats.processedFiles < stats.totalFiles && (
+                <p className="text-sm text-red-500">
+                  Migration was stopped or cancelled.
+                </p>
+              )}
+
+            {isProcessing && (
+              <Button
+                variant="ghost"
+                onClick={handleCancel}
+                className="mt-4 text-muted-foreground hover:text-red-500"
+              >
+                Cancel Migration
+              </Button>
+            )}
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
