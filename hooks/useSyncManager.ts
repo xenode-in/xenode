@@ -38,6 +38,8 @@ export function useSyncManager() {
             id: String(f._id),
             key: f.key,
             encryptedName: f.isEncrypted && f.encryptedName ? f.encryptedName : null,
+            encryptedDisplayName: f.encryptedDisplayName || null,
+            encryptedContentType: f.encryptedContentType || null,
             // name is only used in the MiniSearch index; we'll fill it below
             name: fallbackName,
             size: f.size,
@@ -69,9 +71,10 @@ export function useSyncManager() {
       const indexEntries = await Promise.all(
         allFiles.map(async (f) => {
           let name = f.name; // fallback (plaintext key basename for unencrypted files)
-          if (f.isEncrypted && f.encryptedName) {
+          const nameToDecrypt = f.encryptedDisplayName || f.encryptedName;
+          if (f.isEncrypted && nameToDecrypt) {
             try {
-              name = await decryptMetadataString(f.encryptedName, keys?.metadataKey || null);
+              name = await decryptMetadataString(nameToDecrypt, keys?.metadataKey || null);
             } catch {
               name = "Encrypted File";
             }

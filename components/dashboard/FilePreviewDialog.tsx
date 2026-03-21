@@ -30,7 +30,7 @@ import { useCrypto } from "@/contexts/CryptoContext";
 import {
   decryptFile,
   decryptFileChunkedCombined,
-  decryptFileName,
+  decryptMetadataString,
 } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
@@ -294,11 +294,12 @@ export function FilePreviewDialog({
   const [progress, setProgress] = useState<number | null>(null);
   const [isVideoPreparing, setIsVideoPreparing] = useState(false);
   const [decryptedName, setDecryptedName] = useState<string | null>(null);
+  const [decryptedContentType, setDecryptedContentType] = useState<string | null>(null);
 
   // Track object URLs we created so we can revoke them on close
   const objectUrlRef = useRef<string | null>(null);
 
-  const { privateKey, setModalOpen, isUnlocked } = useCrypto();
+  const { privateKey, metadataKey, setModalOpen, isUnlocked } = useCrypto();
 
   const isLockedOut = file?.isEncrypted && !privateKey;
 
@@ -334,31 +335,38 @@ export function FilePreviewDialog({
       setProgress(null);
       setIsVideoPreparing(false);
       setDecryptedName(null);
+      setDecryptedContentType(null);
     }
   }, [isOpen]);
 
   useEffect(() => {
-    if (!file || !isUnlocked || !file.isEncrypted || !file.encryptedName) {
+    if (!file || !isUnlocked || !file.isEncrypted) {
       return;
     }
     
     let cancelled = false;
-
-    async function decryptName() {
+    async function decryptMeta() {
+      if (!file) return;
       try {
-        const name = file!.name || await decryptFileName(file!.encryptedName!);
-        if (!cancelled) setDecryptedName(name);
+        if (file.encryptedName) {
+           const name = await decryptMetadataString(file.encryptedName, metadataKey);
+           if (!cancelled) setDecryptedName(name);
+        }
+        if (file.contentType === "application/octet-stream" || file.contentType === "") {
+          // If the passed contentType is generic, try to find the real one in DB metadata
+          // But here we only have what FileItem passed. 
+          // The main 'run' effect already fetches more metadata from /api/objects/:id
+        }
       } catch (e) {
-        console.error("Failed to decrypt preview file name", e);
+        console.error("Failed to decrypt preview metadata", e);
       }
     }
-
-    decryptName();
+    decryptMeta();
 
     return () => {
       cancelled = true;
     };
-  }, [file, isUnlocked]);
+  }, [file, isUnlocked, metadataKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -384,7 +392,17 @@ export function FilePreviewDialog({
 
         const encrypted: boolean = data.isEncrypted ?? false;
 
-        const type = data.contentType ?? file.contentType;
+        let type = data.contentType ?? file.contentType;
+        if (type === "application/octet-stream" && data.encryptedContentType && metadataKey) {
+          try {
+            type = await decryptMetadataString(data.encryptedContentType, metadataKey);
+            if (!cancelled) setDecryptedContentType(type);
+          } catch (e) {
+            console.warn("Failed to decrypt content type, staying as octet-stream", e);
+          }
+        } else {
+           if (!cancelled) setDecryptedContentType(type);
+        }
         const shouldShowPreparingUI = type.startsWith("video/") || type.startsWith("audio/") || type.startsWith("image/") || type === "application/pdf";
 
         if (!encrypted) {
@@ -398,7 +416,7 @@ export function FilePreviewDialog({
                 chunkSize: data.chunkSize || (2 * 1024 * 1024),
                 chunkCount: data.chunkCount || data.chunkUrls.length,
                 chunkIvs: [],
-                contentType: data.contentType ?? file.contentType,
+                contentType: type,
               });
               setLoadingMessage("Fetching initial chunks...");
               if (shouldShowPreparingUI) setIsVideoPreparing(true);
@@ -461,7 +479,7 @@ export function FilePreviewDialog({
                       chunkCount: data.chunkCount || data.chunkUrls.length,
                       chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
                       urls: data.chunkUrls,
-                      contentType: data.contentType ?? file.contentType,
+                      contentType: type,
                       size: file.size,
                     }, [channel.port2]);
                   });
@@ -493,7 +511,7 @@ export function FilePreviewDialog({
               chunkSize: data.chunkSize || (2 * 1024 * 1024),
               chunkCount: data.chunkCount || data.chunkUrls.length,
               chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
-              contentType: data.contentType ?? file.contentType,
+              contentType: type,
             });
             if (shouldShowPreparingUI) setIsVideoPreparing(true);
             setLoadingMessage("Fetching initial chunks...");
@@ -576,17 +594,17 @@ export function FilePreviewDialog({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, file, privateKey, isLockedOut, setModalOpen]);
+  }, [isOpen, file, privateKey, isLockedOut, setModalOpen, metadataKey]);
 
   const docs = useMemo(() => {
     if (!url || !file) return [];
-    return [{ uri: url, fileType: file.contentType }];
-  }, [url, file]);
+    return [{ uri: url, fileType: decryptedContentType || file.contentType }];
+  }, [url, file, decryptedContentType]);
 
   if (!file) return null;
 
   const name = file.name || decryptedName || fileNameFromKey(file.key);
-  const type = file.contentType;
+  const type = decryptedContentType || file.contentType;
 
   // Download handler: for encrypted files, trigger programmatic download
   // from the decrypted Blob URL instead of opening the ciphertext URL.

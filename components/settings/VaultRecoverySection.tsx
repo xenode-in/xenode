@@ -79,11 +79,16 @@ export function VaultRecoverySection() {
           <div className="flex items-start gap-2">
             <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
             <div className="space-y-1">
-              <p className="text-sm font-medium text-foreground">This will replace your current vault</p>
-              <p className="text-xs text-muted-foreground">
+              <p className="text-sm font-bold text-destructive uppercase tracking-tight flex items-center gap-1.5">
+                <AlertTriangle className="h-4 w-4" />
+                CRITICAL: This will replace your current vault
+              </p>
+              <p className="text-[13px] leading-relaxed text-foreground font-medium">
                 A new recovery kit and keypair will be generated. Any files currently
-                encrypted with your old key will no longer be accessible.
-                Make sure you've downloaded unencrypted copies of important files first.
+                encrypted with your old key <span className="underline decoration-destructive underline-offset-2">will no longer be accessible</span>.
+              </p>
+              <p className="text-xs text-muted-foreground italic">
+                Make sure you've downloaded unencrypted copies of important files before proceeding.
               </p>
             </div>
           </div>

@@ -11,6 +11,8 @@ import {
   AlertCircle,
   Users,
 } from "lucide-react";
+import { useCrypto } from "@/contexts/CryptoContext";
+import { decryptMetadataString, encryptWithShareKey } from "@/lib/crypto/fileEncryption";
 import {
   Dialog,
   DialogContent,
@@ -36,6 +38,10 @@ export interface ShareableFile {
   size: number;
   contentType: string;
   isEncrypted?: boolean;
+  encryptedName?: string;
+  encryptedDisplayName?: string;
+  encryptedContentType?: string;
+  thumbnail?: string;
 }
 
 interface ShareDialogProps {
@@ -70,6 +76,7 @@ export function ShareDialog({
   getDEKBytes,
 }: ShareDialogProps) {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const { metadataKey } = useCrypto();
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,6 +93,9 @@ export function ShareDialog({
     try {
       let shareEncryptedDEK: string | undefined;
       let shareKeyIv: string | undefined;
+      let shareEncryptedName: string | undefined;
+      let shareEncryptedContentType: string | undefined;
+      let shareEncryptedThumbnail: string | undefined;
       let fragment: string | undefined;
 
       if (file.isEncrypted && getDEKBytes) {
@@ -98,7 +108,7 @@ export function ShareDialog({
           shareKeyRaw,
           { name: "AES-GCM" },
           false,
-          ["wrapKey"],
+          ["wrapKey", "encrypt", "decrypt"],
         );
 
         // Import the DEK so we can wrap it
@@ -126,6 +136,29 @@ export function ShareDialog({
         shareKeyIv = bytesToB64(iv);
         // The raw share key goes ONLY in the URL fragment (never to server)
         fragment = bytesToB64url(shareKeyRaw);
+
+        // Re-encrypt metadata with share key
+        if (metadataKey) {
+          const nameToDecrypt = file.encryptedDisplayName || file.encryptedName;
+          if (nameToDecrypt) {
+            const plaintextName = await decryptMetadataString(nameToDecrypt, metadataKey);
+            shareEncryptedName = await encryptWithShareKey(plaintextName, shareKeyObj);
+          }
+          if (file.encryptedContentType) {
+            const plaintextType = await decryptMetadataString(file.encryptedContentType, metadataKey);
+            shareEncryptedContentType = await encryptWithShareKey(plaintextType, shareKeyObj);
+          }
+          if (file.thumbnail && file.thumbnail.startsWith("enc:")) {
+            // Thumbnails are small, we can just decrypt and re-encrypt
+            // or pass them along if they use the same key (they don't, they use metadataKey)
+            // For now, let's just skip share-specific thumbnail encryption unless requested
+            // Wait, the requirement says "Fix 9: Generate share-key-encrypted metadata".
+            // Let's implement it.
+            const { decryptThumbnail } = await import("@/lib/crypto/fileEncryption");
+            const plaintextThumb = await decryptThumbnail(file.thumbnail, metadataKey);
+            shareEncryptedThumbnail = await encryptWithShareKey(plaintextThumb, shareKeyObj);
+          }
+        }
       }
 
       const sharedWithList = sharedWithInput
@@ -139,7 +172,13 @@ export function ShareDialog({
         ...(expiresIn !== "never" && { expiresIn: parseInt(expiresIn) }),
         ...(maxDl && { maxDownloads: parseInt(maxDl) }),
         ...(usePass && pass && { password: pass }),
-        ...(shareEncryptedDEK && { shareEncryptedDEK, shareKeyIv }),
+        ...(shareEncryptedDEK && { 
+          shareEncryptedDEK, 
+          shareKeyIv,
+          shareEncryptedName,
+          shareEncryptedContentType,
+          shareEncryptedThumbnail
+        }),
         ...(sharedWithList.length > 0 && { sharedWith: sharedWithList }),
       };
 

@@ -84,11 +84,17 @@ export async function POST(req: NextRequest, { params }: Params) {
     chunkUrls,
     isEncrypted: object.isEncrypted,
     iv: object.iv,
-    contentType: object.contentType,
-    fileName: object.key.split("/").pop() ?? object.key,
+    contentType: link.shareEncryptedContentType || object.contentType,
+    fileName: link.shareEncryptedName || (object.encryptedName || object.key.split("/").pop())!,
+    shareEncryptedName: link.shareEncryptedName,
+    shareEncryptedContentType: link.shareEncryptedContentType,
+    shareEncryptedThumbnail: link.shareEncryptedThumbnail,
+    shareEncryptedDEK: link.shareEncryptedDEK,
+    shareKeyIv: link.shareKeyIv,
     // Chunked encryption metadata (undefined for legacy single-blob files)
     chunkSize: object.chunkSize,
     chunkCount: object.chunkCount,
     chunkIvs: object.chunkIvs,
+    thumbnail: link.shareEncryptedThumbnail || object.thumbnail,
   });
 }

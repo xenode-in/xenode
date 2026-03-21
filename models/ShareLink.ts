@@ -16,6 +16,9 @@ export interface IShareLink extends Document {
   /** For E2EE files: DEK re-wrapped with per-share AES-GCM key */
   shareEncryptedDEK?: string;
   shareKeyIv?: string;
+  shareEncryptedName?: string;
+  shareEncryptedContentType?: string;
+  shareEncryptedThumbnail?: string;
   accessType: "view" | "download";
   sharedWith: string[]; // Array of emails or user IDs the file is explicitly shared with
   createdAt: Date;
@@ -51,6 +54,9 @@ const ShareLinkSchema = new Schema<IShareLink>(
     passwordHash: { type: String, required: false },
     shareEncryptedDEK: { type: String, required: false },
     shareKeyIv: { type: String, required: false },
+    shareEncryptedName: { type: String, required: false },
+    shareEncryptedContentType: { type: String, required: false },
+    shareEncryptedThumbnail: { type: String, required: false },
     accessType: {
       type: String,
       enum: ["view", "download"],

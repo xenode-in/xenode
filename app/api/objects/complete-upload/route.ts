@@ -9,6 +9,14 @@ import { HeadObjectCommand } from "@aws-sdk/client-s3";
 
 export const dynamic = "force-dynamic";
 
+function getMediaCategory(contentType: string): string {
+  if (contentType.startsWith("image/")) return "image";
+  if (contentType.startsWith("video/")) return "video";
+  if (contentType.startsWith("audio/")) return "audio";
+  if (contentType.includes("pdf") || contentType.includes("document")) return "document";
+  return "other";
+}
+
 export async function POST(request: NextRequest) {
   try {
     const session = await requireAuth(request);
@@ -19,6 +27,8 @@ export async function POST(request: NextRequest) {
       bucketId,
       size,
       contentType,
+      originalContentType,
+      encryptedContentType,
       thumbnail,
       encryptedDEK,
       iv,
@@ -49,6 +59,8 @@ export async function POST(request: NextRequest) {
     if (!bucket) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
+
+    const mediaCategory = getMediaCategory(originalContentType ?? contentType);
 
     let b2FileId = "";
     if (isChunked) {
@@ -91,10 +103,12 @@ export async function POST(request: NextRequest) {
       const sizeDiff = size - existingObject.size;
       existingObject.size = size;
       existingObject.contentType = contentType;
+      existingObject.mediaCategory = mediaCategory as any;
       existingObject.b2FileId = b2FileId;
       if (thumbnail) existingObject.thumbnail = thumbnail;
       if (isEncrypted) {
         existingObject.isEncrypted = true;
+        if (encryptedContentType) existingObject.encryptedContentType = encryptedContentType;
         if (encryptedDEK) existingObject.encryptedDEK = encryptedDEK;
         if (iv) existingObject.iv = iv;
         if (encryptedName) existingObject.encryptedName = encryptedName;
@@ -117,6 +131,8 @@ export async function POST(request: NextRequest) {
       key: objectKey,
       size,
       contentType,
+      encryptedContentType: encryptedContentType ?? undefined,
+      mediaCategory,
       b2FileId,
       thumbnail,
       isEncrypted: isEncrypted ?? false,
@@ -129,7 +145,7 @@ export async function POST(request: NextRequest) {
       chunks: isChunked && chunks ? chunks : undefined,
     });
 
-    await incrementStorage(userId, size, { contentType, bucketId, isEncrypted });
+    await incrementStorage(userId, size, { contentType: originalContentType ?? contentType, bucketId, isEncrypted });
     await updateBucketStats(bucketId, 1, size);
 
     return NextResponse.json({ object: storageObject }, { status: 201 });

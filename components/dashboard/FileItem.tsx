@@ -30,7 +30,7 @@ import {
 import { formatBytes, formatDate } from "@/lib/utils";
 import { forwardRef, useRef, useCallback, useState, useEffect } from "react";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptFileName } from "@/lib/crypto/fileEncryption";
+import { decryptFileName, decryptMetadataString, decryptThumbnail } from "@/lib/crypto/fileEncryption";
 
 const getFileIcon = (contentType: string, className?: string) => {
   if (!contentType) return <FileGeneric className={className} />;
@@ -97,6 +97,7 @@ interface ObjectData {
   thumbnail?: string;
   isEncrypted?: boolean;
   encryptedName?: string;
+  encryptedDisplayName?: string;
 }
 
 interface ItemProps {
@@ -143,17 +144,44 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     const isFolder =
       item.contentType === "application/x-directory" || item.key.endsWith("/");
 
-    const { isUnlocked } = useCrypto();
+    const { isUnlocked, metadataKey } = useCrypto();
     const [decryptedName, setDecryptedName] = useState<string | null>(null);
+    const [decryptedTags, setDecryptedTags] = useState<string[] | null>(null);
+    const [decryptedThumbnail, setDecryptedThumbnail] = useState<string | null>(null);
 
     useEffect(() => {
-      if (item.isEncrypted && item.encryptedName && isUnlocked) {
-        decryptFileName(item.encryptedName).then(setDecryptedName);
+      if (isUnlocked && metadataKey) {
+        // Name
+        const isFolder = item.contentType === "application/x-directory" || item.key.endsWith("/");
+        const nameToDecrypt = isFolder 
+          ? item.encryptedDisplayName 
+          : (item.isEncrypted ? item.encryptedName : null);
+          
+        if (nameToDecrypt) {
+          decryptMetadataString(nameToDecrypt, metadataKey).then(setDecryptedName);
+        } else {
+          setDecryptedName(null);
+        }
+
+        // Tags
+        if (item.tags && item.tags.length > 0 && metadataKey) {
+          Promise.all(item.tags.map(t => decryptMetadataString(t, metadataKey))).then(setDecryptedTags);
+        } else {
+          setDecryptedTags(null);
+        }
+
+        // Thumbnail
+        if (item.thumbnail && item.thumbnail.startsWith("enc:") && metadataKey) {
+          decryptThumbnail(item.thumbnail, metadataKey).then(setDecryptedThumbnail);
+        } else {
+          setDecryptedThumbnail(item.thumbnail || null);
+        }
       } else {
-        // eslint-disable-next-line
         setDecryptedName(null);
+        setDecryptedTags(null);
+        setDecryptedThumbnail(item.thumbnail && !item.thumbnail?.startsWith("enc:") ? item.thumbnail : null);
       }
-    }, [item.isEncrypted, item.encryptedName, isUnlocked]);
+    }, [item.isEncrypted, item.encryptedName, item.encryptedDisplayName, item.tags, item.thumbnail, isUnlocked, metadataKey]);
 
     // Virtual folder fallback name
     let baseName = item.key;
@@ -245,9 +273,9 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
           <div className="flex items-center gap-3 text-foreground font-medium">
             {isFolder ? (
               <Folder className="w-5 h-5 text-primary fill-primary/20" />
-            ) : item.thumbnail ? (
+            ) : decryptedThumbnail ? (
               <img
-                src={item.thumbnail}
+                src={decryptedThumbnail}
                 alt={name}
                 className="w-8 h-8 rounded object-cover border border-border"
               />
@@ -261,9 +289,9 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
                 aria-label="Encrypted"
               />
             )}
-            {item.tags && item.tags.length > 0 && (
+            {(decryptedTags || item.tags) && (decryptedTags || item.tags)!.length > 0 && (
               <div className="flex gap-1">
-                {item.tags.map((tag) => (
+                {(decryptedTags || item.tags)!.map((tag) => (
                   <Badge
                     key={tag}
                     variant="outline"
@@ -421,17 +449,43 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
     const isFolder =
       item.contentType === "application/x-directory" || item.key.endsWith("/");
 
-    const { isUnlocked } = useCrypto();
+    const { isUnlocked, metadataKey } = useCrypto();
     const [decryptedName, setDecryptedName] = useState<string | null>(null);
+    const [decryptedTags, setDecryptedTags] = useState<string[] | null>(null);
+    const [decryptedThumbnail, setDecryptedThumbnail] = useState<string | null>(null);
 
     useEffect(() => {
-      if (item.isEncrypted && item.encryptedName && isUnlocked) {
-        decryptFileName(item.encryptedName).then(setDecryptedName);
+      if (isUnlocked && metadataKey) {
+        const isFolder = item.contentType === "application/x-directory" || item.key.endsWith("/");
+        const nameToDecrypt = isFolder
+          ? item.encryptedDisplayName
+          : (item.isEncrypted ? item.encryptedName : null);
+
+        if (nameToDecrypt) {
+          decryptMetadataString(nameToDecrypt, metadataKey).then(setDecryptedName);
+        } else {
+          setDecryptedName(null);
+        }
+
+        // Tags
+        if (item.tags && item.tags.length > 0 && metadataKey) {
+          Promise.all(item.tags.map(t => decryptMetadataString(t, metadataKey))).then(setDecryptedTags);
+        } else {
+          setDecryptedTags(null);
+        }
+
+        // Thumbnail
+        if (item.thumbnail && item.thumbnail.startsWith("enc:") && metadataKey) {
+          decryptThumbnail(item.thumbnail, metadataKey).then(setDecryptedThumbnail);
+        } else {
+          setDecryptedThumbnail(item.thumbnail || null);
+        }
       } else {
-        // eslint-disable-next-line
         setDecryptedName(null);
+        setDecryptedTags(null);
+        setDecryptedThumbnail(item.thumbnail && !item.thumbnail?.startsWith("enc:") ? item.thumbnail : null);
       }
-    }, [item.isEncrypted, item.encryptedName, isUnlocked]);
+    }, [item.isEncrypted, item.encryptedName, item.encryptedDisplayName, item.tags, item.thumbnail, isUnlocked, metadataKey]);
 
     let baseName = item.key;
     if (item.id.startsWith("virtual-")) {
@@ -532,9 +586,9 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
         ) : (
           <>
             <div className="flex-1 flex items-center justify-center w-full p-4 pb-0 overflow-hidden">
-              {item.thumbnail ? (
+              {decryptedThumbnail ? (
                 <img
-                  src={item.thumbnail}
+                  src={decryptedThumbnail}
                   alt={name}
                   className="w-full h-full object-contain rounded"
                 />
@@ -569,9 +623,9 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
         )}
 
         {/* Tags Indicator */}
-        {item.tags && item.tags.length > 0 && (
+        {(decryptedTags || item.tags) && (decryptedTags || item.tags)!.length > 0 && (
           <div className="flex gap-1 mt-2 flex-wrap justify-center absolute top-2 left-2">
-            {item.tags.slice(0, 3).map((tag) => (
+            {(decryptedTags || item.tags)!.slice(0, 3).map((tag) => (
               <div
                 key={tag}
                 className="w-1.5 h-1.5 rounded-full bg-primary"

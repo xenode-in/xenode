@@ -71,6 +71,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
 
         const storedPw = sessionStorage.getItem("xenode-vault-pw");
         if (storedPw) {
+          sessionStorage.removeItem("xenode-vault-pw");
           try {
             const keys = await unlockVault(storedPw);
             setPrivateKey(keys.privateKey);
@@ -78,7 +79,6 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
             setMetadataKey(keys.metadataKey || null);
             setIsUnlocked(true);
             await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
-            sessionStorage.removeItem("xenode-vault-pw");
             return;
           } catch (e: any) {
             if (e.message === "NO_VAULT") {
