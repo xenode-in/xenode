@@ -7,7 +7,7 @@ import {
   CopyObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { getS3Client } from "./client";
+import { getS3Client, getPublicS3Client } from "./client";
 import { getSignedFileUrl } from "./cdn";
 
 export interface B2ObjectInfo {
@@ -26,6 +26,7 @@ export async function uploadObject(
   body: Buffer | ReadableStream | Uint8Array,
   contentType: string = "application/octet-stream",
   size?: number,
+  client: any = getS3Client(),
 ): Promise<{ etag: string; b2FileId: string }> {
   const command = new PutObjectCommand({
     Bucket: bucketName,
@@ -35,7 +36,7 @@ export async function uploadObject(
     ContentLength: size,
   });
 
-  const response = await getS3Client().send(command);
+  const response = await client.send(command);
   return {
     etag: response.ETag || "",
     b2FileId: response.VersionId || `${bucketName}/${key}`,
