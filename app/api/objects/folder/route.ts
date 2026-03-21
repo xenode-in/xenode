@@ -108,6 +108,10 @@ export async function DELETE(request: NextRequest) {
     for (const obj of objects) {
       try {
         await deleteObject(b2BucketName, obj.key);
+        // Delete thumbnail if it's stored in B2
+        if (obj.thumbnail && obj.thumbnail.startsWith("users/")) {
+          await deleteObject(b2BucketName, obj.thumbnail);
+        }
       } catch (e) {
         console.error(`Failed to delete B2 object ${obj.key}:`, e);
       }

@@ -186,6 +186,38 @@ export function StartMigrationDialog({
   const processAndUploadFile = async (rawFile: File, signal: AbortSignal) => {
     if (signal.aborted) throw new Error("Aborted");
 
+    const uploadEncryptedThumbnail = async (
+      encryptedDataUrl: string,
+      bucketId: string,
+      fileStorageKey: string,
+    ): Promise<string | undefined> => {
+      try {
+        const thumbKey = `${fileStorageKey}-thumb`;
+        const bytes = new TextEncoder().encode(encryptedDataUrl);
+        const blob = new Blob([bytes], { type: "application/octet-stream" });
+
+        const presign = await fetch("/api/objects/presign-upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileName: `${fileStorageKey.split("/").pop()}-thumb`,
+            fileSize: blob.size,
+            fileType: "application/octet-stream",
+            bucketId,
+            prefix: fileStorageKey.includes("/")
+              ? fileStorageKey.substring(0, fileStorageKey.lastIndexOf("/") + 1)
+              : `users/${session?.user?.id}/`,
+          }),
+        });
+        const { uploadUrl } = await presign.json();
+        await fetch(uploadUrl, { method: "PUT", body: blob, signal });
+        return thumbKey;
+      } catch (err) {
+        console.error("Failed to upload thumbnail to B2:", err);
+        return undefined;
+      }
+    };
+
     let uploadBody: File | Blob = rawFile;
     let uploadContentType = rawFile.type;
     let encryptedDEK: string | undefined;
@@ -347,6 +379,16 @@ export function StartMigrationDialog({
 
       if (signal.aborted) throw new Error("Aborted");
 
+      // Handle thumbnail upload to B2
+      let thumbnailKey: string | undefined;
+      if (thumbnail && thumbnail.startsWith("enc:")) {
+        thumbnailKey = await uploadEncryptedThumbnail(
+          thumbnail,
+          returnedBucketId,
+          fileId,
+        );
+      }
+
       await fetch("/api/objects/complete-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -360,7 +402,8 @@ export function StartMigrationDialog({
           encryptedContentType: shouldEncryptNow && metadataKey
             ? await encryptMetadataString(rawFile.type, metadataKey)
             : undefined,
-          thumbnail,
+          thumbnail: thumbnailKey || thumbnail,
+          thumbnailKey,
           isEncrypted: !!encryptedDEK,
           encryptedDEK,
           encryptedName,
@@ -399,6 +442,16 @@ export function StartMigrationDialog({
 
       if (signal.aborted) throw new Error("Aborted");
 
+      // Handle thumbnail upload to B2
+      let thumbnailKey: string | undefined;
+      if (thumbnail && thumbnail.startsWith("enc:")) {
+        thumbnailKey = await uploadEncryptedThumbnail(
+          thumbnail,
+          pData.bucketId,
+          pData.objectKey,
+        );
+      }
+
       await fetch("/api/objects/complete-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -412,7 +465,8 @@ export function StartMigrationDialog({
           encryptedContentType: shouldEncryptNow && metadataKey
             ? await encryptMetadataString(rawFile.type, metadataKey)
             : undefined,
-          thumbnail,
+          thumbnail: thumbnailKey || thumbnail,
+          thumbnailKey,
           isEncrypted: !!encryptedDEK,
           encryptedDEK,
           iv: encryptedIV,
@@ -423,8 +477,7 @@ export function StartMigrationDialog({
         }),
       });
     }
-  };
-
+  }
   const startExtraction = async () => {
     if (!takeoutFiles.length) return;
     setIsProcessing(true);

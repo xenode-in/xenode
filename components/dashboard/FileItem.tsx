@@ -12,79 +12,23 @@ import { Badge } from "@/components/ui/badge";
 import { TableRow, TableCell } from "@/components/ui/table";
 import {
   Folder,
-  FileText,
-  DownloadCloud,
   Trash2,
   Tag,
   Scissors,
   Lock,
+  FileText,
   Link2,
-  Image as ImageIcon,
-  Video,
-  Music,
-  FileArchive,
-  FileCode,
-  FileSpreadsheet,
-  File as FileGeneric,
+  DownloadCloud,
 } from "lucide-react";
-import { formatBytes, formatDate } from "@/lib/utils";
+import { formatBytes, formatDate, cn } from "@/lib/utils";
+import { getFileIcon } from "@/lib/file-icons";
 import { forwardRef, useRef, useCallback, useState, useEffect } from "react";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptFileName, decryptMetadataString, decryptThumbnail } from "@/lib/crypto/fileEncryption";
-
-const getFileIcon = (contentType: string, className?: string) => {
-  if (!contentType) return <FileGeneric className={className} />;
-  if (contentType === "application/x-directory")
-    return <Folder className={className} />;
-
-  if (contentType.startsWith("image/"))
-    return <ImageIcon className={`text-blue-400! ${className || ""}`} />;
-  if (contentType.startsWith("video/"))
-    return <Video className={`text-purple-400! ${className || ""}`} />;
-  if (contentType.startsWith("audio/"))
-    return <Music className={`text-green-400! ${className || ""}`} />;
-  if (contentType.includes("pdf") || contentType.includes("document"))
-    return <FileText className={`text-red-400! ${className || ""}`} />;
-
-  if (
-    contentType.includes("zip") ||
-    contentType.includes("tar") ||
-    contentType.includes("rar") ||
-    contentType.includes("7z") ||
-    contentType.includes("compressed") ||
-    contentType.includes("archive")
-  ) {
-    return <FileArchive className={`text-yellow-500 ${className || ""}`} />;
-  }
-  if (
-    contentType.includes("javascript") ||
-    contentType.includes("json") ||
-    contentType.includes("html") ||
-    contentType.includes("css") ||
-    contentType.includes("xml") ||
-    contentType.includes("yaml") ||
-    contentType.includes("typescript")
-  ) {
-    return <FileCode className={`text-orange-400 ${className || ""}`} />;
-  }
-  if (
-    contentType.includes("spreadsheet") ||
-    contentType.includes("excel") ||
-    contentType.includes("csv")
-  ) {
-    return (
-      <FileSpreadsheet className={`text-emerald-500 ${className || ""}`} />
-    );
-  }
-  if (contentType.startsWith("text/"))
-    return (
-      <FileText className={`text-muted-foreground/50 ${className || ""}`} />
-    );
-
-  return (
-    <FileGeneric className={`text-muted-foreground/50 ${className || ""}`} />
-  );
-};
+import {
+  decryptFileName,
+  decryptMetadataString,
+} from "@/lib/crypto/fileEncryption";
+import { useThumbnail } from "@/hooks/useThumbnail";
 
 interface ObjectData {
   id: string; // use id, not _id
@@ -96,6 +40,7 @@ interface ObjectData {
   position?: number;
   thumbnail?: string;
   isEncrypted?: boolean;
+  mediaCategory?: string;
   encryptedName?: string;
   encryptedDisplayName?: string;
 }
@@ -147,41 +92,48 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     const { isUnlocked, metadataKey } = useCrypto();
     const [decryptedName, setDecryptedName] = useState<string | null>(null);
     const [decryptedTags, setDecryptedTags] = useState<string[] | null>(null);
-    const [decryptedThumbnail, setDecryptedThumbnail] = useState<string | null>(null);
+    const decryptedThumbnail = useThumbnail(item.thumbnail, metadataKey);
 
     useEffect(() => {
       if (isUnlocked && metadataKey) {
         // Name
-        const isFolder = item.contentType === "application/x-directory" || item.key.endsWith("/");
-        const nameToDecrypt = isFolder 
-          ? item.encryptedDisplayName 
-          : (item.isEncrypted ? item.encryptedName : null);
-          
+        const isFolder =
+          item.contentType === "application/x-directory" ||
+          item.key.endsWith("/");
+        const nameToDecrypt = isFolder
+          ? item.encryptedDisplayName
+          : item.isEncrypted
+            ? item.encryptedName
+            : null;
+
         if (nameToDecrypt) {
-          decryptMetadataString(nameToDecrypt, metadataKey).then(setDecryptedName);
+          decryptMetadataString(nameToDecrypt, metadataKey).then(
+            setDecryptedName,
+          );
         } else {
           setDecryptedName(null);
         }
 
         // Tags
         if (item.tags && item.tags.length > 0 && metadataKey) {
-          Promise.all(item.tags.map(t => decryptMetadataString(t, metadataKey))).then(setDecryptedTags);
+          Promise.all(
+            item.tags.map((t) => decryptMetadataString(t, metadataKey)),
+          ).then(setDecryptedTags);
         } else {
           setDecryptedTags(null);
-        }
-
-        // Thumbnail
-        if (item.thumbnail && item.thumbnail.startsWith("enc:") && metadataKey) {
-          decryptThumbnail(item.thumbnail, metadataKey).then(setDecryptedThumbnail);
-        } else {
-          setDecryptedThumbnail(item.thumbnail || null);
         }
       } else {
         setDecryptedName(null);
         setDecryptedTags(null);
-        setDecryptedThumbnail(item.thumbnail && !item.thumbnail?.startsWith("enc:") ? item.thumbnail : null);
       }
-    }, [item.isEncrypted, item.encryptedName, item.encryptedDisplayName, item.tags, item.thumbnail, isUnlocked, metadataKey]);
+    }, [
+      item.isEncrypted,
+      item.encryptedName,
+      item.encryptedDisplayName,
+      item.tags,
+      isUnlocked,
+      metadataKey,
+    ]);
 
     // Virtual folder fallback name
     let baseName = item.key;
@@ -269,7 +221,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
           }
         }}
       >
-        <TableCell className="w-[50%]">
+        <TableCell className="w-[50%] min-w-0">
           <div className="flex items-center gap-3 text-foreground font-medium">
             {isFolder ? (
               <Folder className="w-5 h-5 text-primary fill-primary/20" />
@@ -280,33 +232,36 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
                 className="w-8 h-8 rounded object-cover border border-border"
               />
             ) : (
-              getFileIcon(item.contentType, "w-4 h-4 text-muted-foreground/30")
+              getFileIcon(item.contentType, "w-4 h-4 ", item.mediaCategory)
             )}
-            <span className="truncate max-w-[300px]">{name}</span>
+
+            <span className="truncate block max-w-[300px]">{name}</span>
+
             {item.isEncrypted && (
-              <Lock
-                className="h-3 w-3 shrink-0 text-primary/60"
-                aria-label="Encrypted"
-              />
+              <Lock className="h-3 w-3 shrink-0 text-primary/60" />
             )}
-            {(decryptedTags || item.tags) && (decryptedTags || item.tags)!.length > 0 && (
-              <div className="flex gap-1">
-                {(decryptedTags || item.tags)!.map((tag) => (
-                  <Badge
-                    key={tag}
-                    variant="outline"
-                    className="text-[10px] h-4 px-1 border-primary/30 text-primary"
-                  >
-                    {tag}
-                  </Badge>
-                ))}
-              </div>
-            )}
+
+            {(decryptedTags || item.tags) &&
+              (decryptedTags || item.tags)!.length > 0 && (
+                <div className="flex gap-1">
+                  {(decryptedTags || item.tags)!.map((tag) => (
+                    <Badge
+                      key={tag}
+                      variant="outline"
+                      className="text-[10px] h-4 px-1 border-primary/30 text-primary"
+                    >
+                      {tag}
+                    </Badge>
+                  ))}
+                </div>
+              )}
           </div>
         </TableCell>
+
         <TableCell className="text-muted-foreground/40 w-[15%]">
           {isFolder ? "-" : formatBytes(item.size)}
         </TableCell>
+
         <TableCell className="text-muted-foreground/40 w-[15%]">
           {isFolder ? (
             "Folder"
@@ -319,9 +274,11 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
             </Badge>
           )}
         </TableCell>
+
         <TableCell className="text-muted-foreground/40 text-sm w-[20%]">
           {formatDate(item.createdAt)}
         </TableCell>
+
         <TableCell className="text-right w-[100px]">
           <div className="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
             {!isFolder && (
@@ -338,8 +295,8 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
             )}
             {!isFolder && (
               <Button
-                variant="ghost"
                 size="icon"
+                variant="ghost"
                 onClick={(e) => {
                   e.stopPropagation();
                   onShare?.(item);
@@ -348,18 +305,9 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
                 <Link2 className="w-4 h-4 text-muted-foreground/40 hover:text-primary" />
               </Button>
             )}
-            {!item.id.startsWith("virtual-") && (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onTag?.(item);
-                }}
-              >
-                <Tag className="w-4 h-4 text-muted-foreground/40 hover:text-primary" />
-              </Button>
-            )}
+            <Button size="icon" variant="ghost">
+              <Tag className="w-4 h-4" />
+            </Button>
           </div>
         </TableCell>
       </TableRow>
@@ -373,7 +321,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
             {isFolder ? (
               <Folder className="w-5 h-5 text-primary fill-primary/20" />
             ) : (
-              getFileIcon(item.contentType, "w-4 h-4 text-muted-foreground/30")
+              getFileIcon(item.contentType, "w-4 h-4", item.mediaCategory)
             )}
             <span>{name}</span>
           </div>
@@ -452,40 +400,47 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
     const { isUnlocked, metadataKey } = useCrypto();
     const [decryptedName, setDecryptedName] = useState<string | null>(null);
     const [decryptedTags, setDecryptedTags] = useState<string[] | null>(null);
-    const [decryptedThumbnail, setDecryptedThumbnail] = useState<string | null>(null);
+    const decryptedThumbnail = useThumbnail(item.thumbnail, metadataKey);
 
     useEffect(() => {
       if (isUnlocked && metadataKey) {
-        const isFolder = item.contentType === "application/x-directory" || item.key.endsWith("/");
+        const isFolder =
+          item.contentType === "application/x-directory" ||
+          item.key.endsWith("/");
         const nameToDecrypt = isFolder
           ? item.encryptedDisplayName
-          : (item.isEncrypted ? item.encryptedName : null);
+          : item.isEncrypted
+            ? item.encryptedName
+            : null;
 
         if (nameToDecrypt) {
-          decryptMetadataString(nameToDecrypt, metadataKey).then(setDecryptedName);
+          decryptMetadataString(nameToDecrypt, metadataKey).then(
+            setDecryptedName,
+          );
         } else {
           setDecryptedName(null);
         }
 
         // Tags
         if (item.tags && item.tags.length > 0 && metadataKey) {
-          Promise.all(item.tags.map(t => decryptMetadataString(t, metadataKey))).then(setDecryptedTags);
+          Promise.all(
+            item.tags.map((t) => decryptMetadataString(t, metadataKey)),
+          ).then(setDecryptedTags);
         } else {
           setDecryptedTags(null);
-        }
-
-        // Thumbnail
-        if (item.thumbnail && item.thumbnail.startsWith("enc:") && metadataKey) {
-          decryptThumbnail(item.thumbnail, metadataKey).then(setDecryptedThumbnail);
-        } else {
-          setDecryptedThumbnail(item.thumbnail || null);
         }
       } else {
         setDecryptedName(null);
         setDecryptedTags(null);
-        setDecryptedThumbnail(item.thumbnail && !item.thumbnail?.startsWith("enc:") ? item.thumbnail : null);
       }
-    }, [item.isEncrypted, item.encryptedName, item.encryptedDisplayName, item.tags, item.thumbnail, isUnlocked, metadataKey]);
+    }, [
+      item.isEncrypted,
+      item.encryptedName,
+      item.encryptedDisplayName,
+      item.tags,
+      isUnlocked,
+      metadataKey,
+    ]);
 
     let baseName = item.key;
     if (item.id.startsWith("virtual-")) {
@@ -595,13 +550,14 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
               ) : item.contentType.startsWith("image/") ||
                 item.contentType.startsWith("video/") ? (
                 <div className="relative w-full h-full flex items-center justify-center">
-                  {getFileIcon(item.contentType, "w-10 h-10 text-primary")}
+                  {getFileIcon(
+                    item.contentType,
+                    "w-10 h-10",
+                    item.mediaCategory,
+                  )}
                 </div>
               ) : (
-                getFileIcon(
-                  item.contentType,
-                  "w-10 h-10 text-muted-foreground/20 group-hover:text-primary transition-colors",
-                )
+                getFileIcon(item.contentType, "w-10 h-10", item.mediaCategory)
               )}
             </div>
             <div className="w-full flex flex-col items-center gap-0.5 mt-2">
@@ -623,17 +579,18 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
         )}
 
         {/* Tags Indicator */}
-        {(decryptedTags || item.tags) && (decryptedTags || item.tags)!.length > 0 && (
-          <div className="flex gap-1 mt-2 flex-wrap justify-center absolute top-2 left-2">
-            {(decryptedTags || item.tags)!.slice(0, 3).map((tag) => (
-              <div
-                key={tag}
-                className="w-1.5 h-1.5 rounded-full bg-primary"
-                title={tag}
-              />
-            ))}
-          </div>
-        )}
+        {(decryptedTags || item.tags) &&
+          (decryptedTags || item.tags)!.length > 0 && (
+            <div className="flex gap-1 mt-2 flex-wrap justify-center absolute top-2 left-2">
+              {(decryptedTags || item.tags)!.slice(0, 3).map((tag) => (
+                <div
+                  key={tag}
+                  className="w-1.5 h-1.5 rounded-full bg-primary"
+                  title={tag}
+                />
+              ))}
+            </div>
+          )}
 
         {/* Action Overlay (Hover) */}
         <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex-col gap-1.5 hidden md:flex">

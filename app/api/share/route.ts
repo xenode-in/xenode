@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
     userId = session.user.id;
 
     const {
-      objectId, expiresIn, maxDownloads, password,
+      token, objectId, expiresIn, maxDownloads, password,
       accessType = "download", shareEncryptedDEK, shareKeyIv,
       shareEncryptedName, shareEncryptedContentType, shareEncryptedThumbnail,
       sharedWith = [],
@@ -49,6 +49,7 @@ export async function POST(req: NextRequest) {
     }
 
     const shareData: Record<string, unknown> = {
+      token,
       objectId: object._id,
       bucketId: object.bucketId,
       createdBy: userId,

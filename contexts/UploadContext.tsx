@@ -142,6 +142,48 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const cryptoMetadataKeyRef = useRef<CryptoKey | null>(null);
   cryptoMetadataKeyRef.current = cryptoMetadataKey;
 
+  const uploadEncryptedThumbnail = useCallback(
+    async (
+      encryptedDataUrl: string,
+      bucketId: string,
+      fileStorageKey: string,
+    ): Promise<string | undefined> => {
+      try {
+        const thumbKey = `${fileStorageKey}-thumb`;
+
+        // Convert encrypted string to bytes for upload
+        const bytes = new TextEncoder().encode(encryptedDataUrl);
+        const blob = new Blob([bytes], { type: "application/octet-stream" });
+
+        const presign = await fetch("/api/objects/presign-upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileName: `${fileStorageKey.split("/").pop()}-thumb`,
+            fileSize: blob.size,
+            fileType: "application/octet-stream",
+            bucketId,
+            prefix: fileStorageKey.includes("/")
+              ? fileStorageKey.substring(0, fileStorageKey.lastIndexOf("/") + 1)
+              : `users/${sessionRef.current?.user?.id}/`,
+          }),
+        });
+        const { uploadUrl } = await presign.json();
+
+        await fetch(uploadUrl, {
+          method: "PUT",
+          body: blob,
+        });
+
+        return thumbKey;
+      } catch (err) {
+        console.error("Failed to upload thumbnail to B2:", err);
+        return undefined;
+      }
+    },
+    [],
+  );
+
   /**
    * Determine whether we should encrypt this upload.
    * Requires BOTH:
@@ -253,6 +295,16 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
       const { fileId, urls, bucketId: returnedBucketId, chunkSize: serverChunkSize } = await presignResponse.json();
       
+      // Handle thumbnail upload to B2
+      let thumbnailKey: string | undefined;
+      if (thumbnail && thumbnail.startsWith("enc:")) {
+        thumbnailKey = await uploadEncryptedThumbnail(
+          thumbnail,
+          returnedBucketId,
+          fileId
+        );
+      }
+
       const chunkUploads: { index: number; key: string; size: number }[] = [];
       const loadedBytes = new Array(urls.length).fill(0);
       const totalSize = uploadBody.size;
@@ -326,7 +378,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           encryptedContentType: shouldEncryptNow() && cryptoMetadataKeyRef.current
             ? await encryptMetadataString(task.file.type, cryptoMetadataKeyRef.current)
             : undefined,
-          thumbnail,
+          thumbnail: thumbnailKey || thumbnail, // Use thumbnailKey if available, otherwise original thumbnail
           isEncrypted: !!encryptedDEK,
           encryptedDEK,
           encryptedName,
@@ -365,7 +417,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       uploadingIds.current.delete(task.id);
       setActiveUploads((prev) => prev - 1);
     }
-  }, []);
+  }, [uploadEncryptedThumbnail]);
 
   const uploadFileDirectly = useCallback(async (task: UploadTask) => {
     // Prevent double upload (React Strict Mode)
@@ -486,7 +538,17 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // Step 3: Upload to B2 with XHR for progress tracking
+      // Step 3: Handle thumbnail upload to B2
+      let thumbnailKey: string | undefined;
+      if (thumbnail && thumbnail.startsWith("enc:")) {
+        thumbnailKey = await uploadEncryptedThumbnail(
+          thumbnail,
+          returnedBucketId,
+          objectKey
+        );
+      }
+
+      // Step 4: Upload to B2 with XHR for progress tracking
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         uploadXHRs.current.set(task.id, xhr);
@@ -539,7 +601,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           encryptedContentType: shouldEncryptNow() && cryptoMetadataKeyRef.current
             ? await encryptMetadataString(task.file.type, cryptoMetadataKeyRef.current)
             : undefined,
-          thumbnail,
+          thumbnail: thumbnailKey || thumbnail, // Use thumbnailKey if available, otherwise original thumbnail
           isEncrypted: !!encryptedDEK,
           encryptedDEK,
           iv: encryptedIV,

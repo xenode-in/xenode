@@ -98,10 +98,19 @@ export function ShareDialog({
       let shareEncryptedThumbnail: string | undefined;
       let fragment: string | undefined;
 
+      const body: Record<string, unknown> = {
+        objectId: file.id,
+        accessType: "download",
+        ...(expiresIn !== "never" && { expiresIn: parseInt(expiresIn) }),
+        ...(maxDl && { maxDownloads: parseInt(maxDl) }),
+        ...(usePass && pass && { password: pass }),
+        ...(sharedWithInput && { sharedWith: sharedWithInput.split(",").map(s => s.trim()).filter(Boolean) }),
+      };
+
       if (file.isEncrypted && getDEKBytes) {
         const dekBytes = await getDEKBytes(file.id);
 
-        // Generate a fresh random 256-bit share key
+        // 1. Generate a fresh random 256-bit share key
         const shareKeyRaw = crypto.getRandomValues(new Uint8Array(32));
         const shareKeyObj = await crypto.subtle.importKey(
           "raw",
@@ -111,7 +120,11 @@ export function ShareDialog({
           ["wrapKey", "encrypt", "decrypt"],
         );
 
-        // Import the DEK so we can wrap it
+        // 2. Generate the token locally so we can use it for the B2 path
+        const tokenBytes = crypto.getRandomValues(new Uint8Array(32));
+        const token = bytesToB64url(tokenBytes);
+
+        // 3. Import the DEK so we can wrap it
         const dekKey = await crypto.subtle.importKey(
           "raw",
           dekBytes.buffer.slice(
@@ -123,7 +136,7 @@ export function ShareDialog({
           ["encrypt", "decrypt"],
         );
 
-        // Wrap DEK with share key
+        // 4. Wrap DEK with share key
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const wrapped = await crypto.subtle.wrapKey(
           "raw",
@@ -137,7 +150,7 @@ export function ShareDialog({
         // The raw share key goes ONLY in the URL fragment (never to server)
         fragment = bytesToB64url(shareKeyRaw);
 
-        // Re-encrypt metadata with share key
+        // 5. Re-encrypt metadata with share key
         if (metadataKey) {
           const nameToDecrypt = file.encryptedDisplayName || file.encryptedName;
           if (nameToDecrypt) {
@@ -149,39 +162,51 @@ export function ShareDialog({
             shareEncryptedContentType = await encryptWithShareKey(plaintextType, shareKeyObj);
           }
           if (file.thumbnail && file.thumbnail.startsWith("enc:")) {
-            // Thumbnails are small, we can just decrypt and re-encrypt
-            // or pass them along if they use the same key (they don't, they use metadataKey)
-            // For now, let's just skip share-specific thumbnail encryption unless requested
-            // Wait, the requirement says "Fix 9: Generate share-key-encrypted metadata".
-            // Let's implement it.
             const { decryptThumbnail } = await import("@/lib/crypto/fileEncryption");
             const plaintextThumb = await decryptThumbnail(file.thumbnail, metadataKey);
-            shareEncryptedThumbnail = await encryptWithShareKey(plaintextThumb, shareKeyObj);
+            const shareEncThumbB64 = await encryptWithShareKey(plaintextThumb, shareKeyObj);
+            
+            // OPTION B: Store in B2 at shares/{token}-thumb
+            try {
+              // Get user's config for bucketId
+              const configRes = await fetch("/api/drive/config");
+              const config = await configRes.json();
+              if (config.bucket) {
+                const presignRes = await fetch("/api/objects/presign-upload", {
+                  method: "POST",
+                  body: JSON.stringify({
+                    bucketId: config.bucket._id,
+                    prefix: "shares/",
+                    fileName: `${token}-thumb`,
+                    fileType: "application/octet-stream",
+                    fileSize: shareEncThumbB64.length,
+                  }),
+                });
+                const { uploadUrl, objectKey } = await presignRes.json();
+                
+                await fetch(uploadUrl, {
+                  method: "PUT",
+                  body: shareEncThumbB64,
+                  headers: { "Content-Type": "application/octet-stream" },
+                });
+                
+                shareEncryptedThumbnail = objectKey;
+              }
+            } catch (err) {
+              console.error("Failed to upload shared thumbnail to B2", err);
+              // Fallback to legacy inline if B2 fails? No, requirement is Option B.
+            }
           }
         }
+        
+        // Pass the token we generated
+        (body as any).token = token;
+        if (shareEncryptedDEK) body.shareEncryptedDEK = shareEncryptedDEK;
+        if (shareKeyIv) body.shareKeyIv = shareKeyIv;
+        if (shareEncryptedName) body.shareEncryptedName = shareEncryptedName;
+        if (shareEncryptedContentType) body.shareEncryptedContentType = shareEncryptedContentType;
+        if (shareEncryptedThumbnail) body.shareEncryptedThumbnail = shareEncryptedThumbnail;
       }
-
-      const sharedWithList = sharedWithInput
-        .split(",")
-        .map((email) => email.trim())
-        .filter(Boolean);
-
-      const body: Record<string, unknown> = {
-        objectId: file.id,
-        accessType: "download",
-        ...(expiresIn !== "never" && { expiresIn: parseInt(expiresIn) }),
-        ...(maxDl && { maxDownloads: parseInt(maxDl) }),
-        ...(usePass && pass && { password: pass }),
-        ...(shareEncryptedDEK && { 
-          shareEncryptedDEK, 
-          shareKeyIv,
-          shareEncryptedName,
-          shareEncryptedContentType,
-          shareEncryptedThumbnail
-        }),
-        ...(sharedWithList.length > 0 && { sharedWith: sharedWithList }),
-      };
-
       const res = await fetch("/api/share", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
