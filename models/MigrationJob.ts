@@ -11,8 +11,7 @@ export enum MigrationStatus {
 }
 
 export enum ProviderType {
-  GOOGLE_DRIVE = "GOOGLE_DRIVE",
-  ONEDRIVE = "ONEDRIVE",
+  GOOGLE_TAKEOUT = "GOOGLE_TAKEOUT",
 }
 
 export interface IMigrationJob extends Document {
@@ -24,14 +23,14 @@ export interface IMigrationJob extends Document {
   destinationPath: string; // Base folder path to migrate to (e.g. "rootPrefix/Migrations")
   sourceFolderId: string; // Root folder ID from provider ("root" for entirely)
   status: MigrationStatus;
-  
+
   totalFiles: number;
   processedFiles: number;
   failedFiles: number;
-  
+
   totalBytes: number;
   migratedBytes: number;
-  
+
   createdAt: Date;
   updatedAt: Date;
 }
@@ -39,24 +38,24 @@ export interface IMigrationJob extends Document {
 const MigrationJobSchema = new Schema<IMigrationJob>(
   {
     userId: { type: String, required: true, index: true },
-    provider: { 
-      type: String, 
-      enum: Object.values(ProviderType), 
-      required: true 
+    provider: {
+      type: String,
+      enum: Object.values(ProviderType),
+      required: true,
     },
     providerAccountId: { type: String, required: true },
-    destinationBucketId: { 
-      type: Schema.Types.ObjectId, 
-      ref: "Bucket", 
-      required: true 
+    destinationBucketId: {
+      type: Schema.Types.ObjectId,
+      ref: "Bucket",
+      required: true,
     },
     destinationPath: { type: String, default: "" },
     sourceFolderId: { type: String, required: true },
-    status: { 
-      type: String, 
-      enum: Object.values(MigrationStatus), 
+    status: {
+      type: String,
+      enum: Object.values(MigrationStatus),
       default: MigrationStatus.CREATED,
-      index: true
+      index: true,
     },
     totalFiles: { type: Number, default: 0 },
     processedFiles: { type: Number, default: 0 },
@@ -66,7 +65,7 @@ const MigrationJobSchema = new Schema<IMigrationJob>(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 MigrationJobSchema.index({ userId: 1, createdAt: -1 });
