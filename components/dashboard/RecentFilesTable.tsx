@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptFileName } from "@/lib/crypto/fileEncryption";
+import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
 import { useState, useEffect } from "react";
 
 interface ObjectData {
@@ -60,7 +60,7 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>(
     {},
   );
-  const { isUnlocked } = useCrypto();
+  const { isUnlocked, metadataKey } = useCrypto();
 
   useEffect(() => {
     if (!isUnlocked || !files.length) {
@@ -74,10 +74,11 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
         if (
           file.isEncrypted &&
           file.encryptedName &&
+          metadataKey &&
           !decryptedNames[file.id]
         ) {
           try {
-            const name = await decryptFileName(file.encryptedName);
+            const name = await decryptMetadataString(file.encryptedName, metadataKey);
             newNames[file.id] = name;
           } catch (e) {
             console.error("Failed to decrypt name", e);

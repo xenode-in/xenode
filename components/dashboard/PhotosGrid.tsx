@@ -5,7 +5,7 @@ import { usePreview } from "@/contexts/PreviewContext";
 import { Loader2, ImageOff, LayoutGrid, Grid3x3, Rows3 } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptFileName } from "@/lib/crypto/fileEncryption";
+import { decryptMetadataString, decryptThumbnail } from "@/lib/crypto/fileEncryption";
 
 interface ObjectData {
   id: string;
@@ -18,6 +18,7 @@ interface ObjectData {
   tags?: string[];
   position?: number;
   encryptedName?: string;
+  encryptedDisplayName?: string;
 }
 
 type GridDensity = "large" | "medium" | "small";
@@ -51,10 +52,12 @@ function MasonryGrid({
   photos,
   onPhotoClick,
   decryptedNames,
+  decryptedThumbnails,
 }: {
   photos: ObjectData[];
   onPhotoClick: (p: ObjectData) => void;
   decryptedNames: Record<string, string>;
+  decryptedThumbnails: Record<string, string>;
 }) {
   return (
     <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 sm:gap-4 space-y-3 sm:space-y-4">
@@ -64,10 +67,10 @@ function MasonryGrid({
           onClick={() => onPhotoClick(photo)}
           className="relative rounded-2xl overflow-hidden bg-secondary border border-border/50 cursor-pointer group transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/5 hover:border-primary/30 hover:z-10 break-inside-avoid"
         >
-          {photo.thumbnail ? (
+          {decryptedThumbnails[photo.id] || photo.thumbnail ? (
             <img
-              src={photo.thumbnail}
-              alt={getFileName(photo.key)}
+              src={decryptedThumbnails[photo.id] || photo.thumbnail}
+              alt={decryptedNames[photo.id] || getFileName(photo.key)}
               className="w-full h-auto object-cover transition-transform duration-700 group-hover:scale-105"
               loading="lazy"
             />
@@ -93,11 +96,13 @@ function UniformGrid({
   density,
   onPhotoClick,
   decryptedNames,
+  decryptedThumbnails,
 }: {
   photos: ObjectData[];
   density: GridDensity;
   onPhotoClick: (p: ObjectData) => void;
   decryptedNames: Record<string, string>;
+  decryptedThumbnails: Record<string, string>;
 }) {
   return (
     <div className={`grid ${DENSITY_COLS[density]} gap-3 sm:gap-4 auto-rows-[140px]`}>
@@ -107,10 +112,10 @@ function UniformGrid({
           onClick={() => onPhotoClick(photo)}
           className="relative rounded-2xl overflow-hidden bg-secondary border border-border/50 cursor-pointer group transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/5 hover:border-primary/30 hover:z-10"
         >
-          {photo.thumbnail ? (
+          {decryptedThumbnails[photo.id] || photo.thumbnail ? (
             <img
-              src={photo.thumbnail}
-              alt={getFileName(photo.key)}
+              src={decryptedThumbnails[photo.id] || photo.thumbnail}
+              alt={decryptedNames[photo.id] || getFileName(photo.key)}
               className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
               loading="lazy"
             />
@@ -141,35 +146,55 @@ export function PhotosGrid() {
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({});
+  const [decryptedThumbnails, setDecryptedThumbnails] = useState<Record<string, string>>({});
 
   const { openPreview } = usePreview();
-  const { isUnlocked } = useCrypto();
+  const { isUnlocked, metadataKey } = useCrypto();
 
   useEffect(() => {
     if (!isUnlocked || !photos.length) {
       setDecryptedNames((prev) => Object.keys(prev).length ? {} : prev);
+      setDecryptedThumbnails((prev) => Object.keys(prev).length ? {} : prev);
       return;
     }
 
-    const decryptNames = async () => {
+    const decryptMetadata = async () => {
       const newNames: Record<string, string> = {};
+      const newThumbs: Record<string, string> = {};
+      
       for (const photo of photos) {
-        if (photo.isEncrypted && photo.encryptedName && !decryptedNames[photo.id]) {
+        // Name
+        const nameToDecrypt = photo.encryptedDisplayName || photo.encryptedName;
+        if (photo.isEncrypted && nameToDecrypt && !decryptedNames[photo.id]) {
           try {
-            const name = await decryptFileName(photo.encryptedName);
+            const name = await decryptMetadataString(nameToDecrypt, metadataKey);
             newNames[photo.id] = name;
           } catch (e) {
             console.error("Failed to decrypt name", e);
           }
         }
+        
+        // Thumbnail
+        if (photo.thumbnail && photo.thumbnail.startsWith("enc:") && !decryptedThumbnails[photo.id] && metadataKey) {
+          try {
+            const thumb = await decryptThumbnail(photo.thumbnail, metadataKey);
+            newThumbs[photo.id] = thumb;
+          } catch (e) {
+            console.error("Failed to decrypt thumbnail", e);
+          }
+        }
       }
+      
       if (Object.keys(newNames).length > 0) {
         setDecryptedNames((prev) => ({ ...prev, ...newNames }));
       }
+      if (Object.keys(newThumbs).length > 0) {
+        setDecryptedThumbnails((prev) => ({ ...prev, ...newThumbs }));
+      }
     };
 
-    decryptNames();
-  }, [photos, isUnlocked]);
+    decryptMetadata();
+  }, [photos, isUnlocked, metadataKey, decryptedNames, decryptedThumbnails]);
 
   const fetchPhotos = useCallback(
     async (pageNum = 1, append = false) => {
@@ -187,7 +212,7 @@ export function PhotosGrid() {
 
         const bucketId = configData.bucket._id;
         const res = await fetch(
-          `/api/objects?bucketId=${bucketId}&contentType=image&limit=50&page=${pageNum}`
+          `/api/objects?bucketId=${bucketId}&mediaCategory=image&limit=50&page=${pageNum}`
         );
         const data = await res.json();
 
@@ -356,6 +381,7 @@ export function PhotosGrid() {
               photos={groupPhotos}
               onPhotoClick={openPreview}
               decryptedNames={decryptedNames}
+              decryptedThumbnails={decryptedThumbnails}
             />
           ) : (
             <UniformGrid
@@ -363,6 +389,7 @@ export function PhotosGrid() {
               density={gridMode as GridDensity}
               onPhotoClick={openPreview}
               decryptedNames={decryptedNames}
+              decryptedThumbnails={decryptedThumbnails}
             />
           )}
         </div>

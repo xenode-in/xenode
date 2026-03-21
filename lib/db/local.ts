@@ -14,6 +14,8 @@ export interface LocalFile {
   tags: string[];
   thumbnail?: string;
   bucketId: string;
+  encryptedContentType?: string;
+  encryptedDisplayName?: string;
 }
 
 export class XenodeDatabase extends Dexie {
@@ -22,7 +24,7 @@ export class XenodeDatabase extends Dexie {
   constructor(userId: string) {
     super(`XenodeDB-${userId}`); // scoped per user
     this.version(1).stores({
-      files: "id, key, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId",
+      files: "id, key, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName",
     });
   }
 }

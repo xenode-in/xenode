@@ -13,8 +13,13 @@ import { Loader2, UploadCloud, FileArchive, CheckCircle2 } from "lucide-react";
 import { BlobReader, BlobWriter, ZipReader } from "@zip.js/zip.js";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { useSession } from "@/lib/auth/client";
-import { encryptFile, encryptFileChunked } from "@/lib/crypto/fileEncryption";
-import { toB64 } from "@/lib/crypto/utils";
+import {
+  encryptFile,
+  encryptFileChunked,
+  encryptMetadataString,
+  encryptThumbnail,
+} from "@/lib/crypto/fileEncryption";
+import { fromB64, toB64 } from "@/lib/crypto/utils";
 
 interface StartMigrationDialogProps {
   open: boolean;
@@ -106,6 +111,14 @@ const getMimeType = (filename: string): string => {
   }
 };
 
+const getMediaCategory = (contentType: string): string => {
+  if (contentType.startsWith("image/")) return "image";
+  if (contentType.startsWith("video/")) return "video";
+  if (contentType.startsWith("audio/")) return "audio";
+  if (contentType.includes("pdf") || contentType.includes("document")) return "document";
+  return "other";
+};
+
 const isMedia = (filename: string): boolean => {
   const ext = filename.split(".").pop()?.toLowerCase();
   return (
@@ -129,7 +142,7 @@ export function StartMigrationDialog({
   const [currentFileProgress, setCurrentFileProgress] = useState(0);
   const [stats, setStats] = useState({ totalFiles: 0, processedFiles: 0 });
 
-  const { publicKey } = useCrypto();
+  const { publicKey, metadataKey } = useCrypto();
   const { data: session } = useSession();
 
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -205,30 +218,9 @@ export function StartMigrationDialog({
         }
         uploadContentType = "application/octet-stream";
 
-        const nameBuf = new TextEncoder().encode(rawFile.name);
-        const nameKey = crypto.getRandomValues(new Uint8Array(32));
-        const nameIV = crypto.getRandomValues(new Uint8Array(12));
-        const encNameBuf = await crypto.subtle.encrypt(
-          { name: "AES-GCM", iv: nameIV as Uint8Array<ArrayBuffer> },
-          await crypto.subtle.importKey(
-            "raw",
-            nameKey as Uint8Array<ArrayBuffer>,
-            { name: "AES-GCM", length: 256 },
-            false,
-            ["encrypt"],
-          ),
-          nameBuf,
-        );
-        const combined = new Uint8Array(
-          nameKey.byteLength + nameIV.byteLength + encNameBuf.byteLength,
-        );
-        combined.set(nameKey, 0);
-        combined.set(nameIV, nameKey.byteLength);
-        combined.set(
-          new Uint8Array(encNameBuf),
-          nameKey.byteLength + nameIV.byteLength,
-        );
-        encryptedName = toB64(combined);
+        if (metadataKey) {
+          encryptedName = await encryptMetadataString(rawFile.name, metadataKey);
+        }
       } catch (err) {
         console.warn("[E2EE] Encryption failed, uploading plaintext", err);
         uploadBody = rawFile;
@@ -237,7 +229,10 @@ export function StartMigrationDialog({
 
     if (signal.aborted) throw new Error("Aborted");
 
-    const thumbnail = await generateThumbnail(rawFile).catch(() => undefined);
+    const rawThumbnail = await generateThumbnail(rawFile).catch(() => undefined);
+    const thumbnail = rawThumbnail && shouldEncryptNow && metadataKey
+      ? await encryptThumbnail(rawThumbnail, metadataKey).catch(() => undefined)
+      : rawThumbnail;
 
     // Get Presigned URLs
     const isStreamableEncrypted =
@@ -359,7 +354,12 @@ export function StartMigrationDialog({
           objectKey: fileId,
           bucketId: returnedBucketId,
           size: totalSize,
-          contentType: rawFile.type,
+          contentType: shouldEncryptNow ? "application/octet-stream" : rawFile.type,
+          originalContentType: rawFile.type,
+          mediaCategory: getMediaCategory(rawFile.type),
+          encryptedContentType: shouldEncryptNow && metadataKey
+            ? await encryptMetadataString(rawFile.type, metadataKey)
+            : undefined,
           thumbnail,
           isEncrypted: !!encryptedDEK,
           encryptedDEK,
@@ -406,7 +406,12 @@ export function StartMigrationDialog({
           objectKey: pData.objectKey,
           bucketId: pData.bucketId,
           size: uploadBody.size,
-          contentType: rawFile.type,
+          contentType: shouldEncryptNow ? "application/octet-stream" : rawFile.type,
+          originalContentType: rawFile.type,
+          mediaCategory: getMediaCategory(rawFile.type),
+          encryptedContentType: shouldEncryptNow && metadataKey
+            ? await encryptMetadataString(rawFile.type, metadataKey)
+            : undefined,
           thumbnail,
           isEncrypted: !!encryptedDEK,
           encryptedDEK,

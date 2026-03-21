@@ -22,7 +22,9 @@ export async function POST(req: NextRequest) {
 
     const {
       objectId, expiresIn, maxDownloads, password,
-      accessType = "download", shareEncryptedDEK, shareKeyIv, sharedWith = [],
+      accessType = "download", shareEncryptedDEK, shareKeyIv,
+      shareEncryptedName, shareEncryptedContentType, shareEncryptedThumbnail,
+      sharedWith = [],
     } = await req.json();
 
     if (!objectId) {
@@ -58,7 +60,13 @@ export async function POST(req: NextRequest) {
     if (password) shareData.passwordHash = await bcrypt.hash(password, 12);
     if (expiresIn) shareData.expiresAt = new Date(Date.now() + Number(expiresIn) * 3_600_000);
     if (maxDownloads) shareData.maxDownloads = Number(maxDownloads);
-    if (shareEncryptedDEK) { shareData.shareEncryptedDEK = shareEncryptedDEK; shareData.shareKeyIv = shareKeyIv; }
+    if (shareEncryptedDEK) {
+      shareData.shareEncryptedDEK = shareEncryptedDEK;
+      shareData.shareKeyIv = shareKeyIv;
+      shareData.shareEncryptedName = shareEncryptedName;
+      shareEncryptedContentType && (shareData.shareEncryptedContentType = shareEncryptedContentType);
+      shareEncryptedThumbnail && (shareData.shareEncryptedThumbnail = shareEncryptedThumbnail);
+    }
 
     const link = await ShareLink.create(shareData);
 

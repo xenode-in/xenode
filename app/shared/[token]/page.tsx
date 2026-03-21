@@ -22,7 +22,7 @@ import {
   VideoStreamOptions,
 } from "@/hooks/useVideoStream";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
-import { decryptFileName } from "@/lib/crypto/fileEncryption";
+import { decryptWithShareKey } from "@/lib/crypto/fileEncryption";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 
@@ -46,6 +46,8 @@ interface ShareMeta {
   maxDownloads?: number;
   shareEncryptedDEK?: string;
   shareKeyIv?: string;
+  shareEncryptedName?: string;
+  shareEncryptedContentType?: string;
 }
 
 interface StreamData {
@@ -57,7 +59,7 @@ interface StreamData {
   fileName: string;
   chunkSize?: number;
   chunkCount?: number;
-  chunkIvs?: string; // JSON string from server
+  chunkIvs?: string;
 }
 
 function b64ToBytes(b64: string): Uint8Array {
@@ -77,7 +79,6 @@ function formatBytes(n: number): string {
   return `${(n / 1_048_576).toFixed(1)} MB`;
 }
 
-/** Derive the shared DEK from the URL-fragment share key + the wrapped DEK in meta */
 async function deriveDek(
   shareKeyB64url: string,
   shareEncryptedDEK: string,
@@ -111,12 +112,11 @@ async function deriveDek(
       ) as ArrayBuffer,
     },
     { name: "AES-GCM" },
-    true, // Extractable = true
+    true,
     ["decrypt"],
   );
 }
 
-/** Fetch a URL while invoking onProgress(0-100) as bytes arrive */
 async function fetchWithProgress(
   url: string,
   onProgress: (pct: number) => void,
@@ -133,16 +133,13 @@ async function fetchWithProgress(
       stream = cached.body!;
       total = +(cached.headers.get("x-content-length") ?? 0) || total;
       fromCache = true;
-      console.log(`[PreviewCache] Cache hit for generic preview: ${cacheKey}`);
     }
   }
 
   if (!stream!) {
     const res = await fetch(url);
     if (!res.ok) throw new Error("Failed to fetch file");
-
     total = +(res.headers.get("content-length") ?? 0) || total;
-
     if (cacheKey) {
       const [forCache, forRead] = res.body!.tee();
       storeCachedStream(cacheKey, forCache, total).catch(() => {});
@@ -155,10 +152,7 @@ async function fetchWithProgress(
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let received = 0;
-
-  if (fromCache) {
-    onProgress(100); // instant jump
-  }
+  if (fromCache) onProgress(100);
 
   while (true) {
     const { done, value } = await reader.read();
@@ -179,10 +173,6 @@ async function fetchWithProgress(
   return combined.buffer;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ─────────────────────────────────────────────────────────────────────────────
-// Inner component: download+decrypt encrypted video, then play in Plyr
-// ─────────────────────────────────────────────────────────────────────────────
 function ChunkedStreamPlayer({
   opts,
   contentType,
@@ -194,7 +184,6 @@ function ChunkedStreamPlayer({
 }) {
   const isAudio = contentType.startsWith("audio/");
   const [videoElement, setVideoElement] = useState<HTMLMediaElement | null>(null);
-
   const { blobUrl, error, isBuffering, progress } = useVideoStream(opts, videoElement);
 
   useEffect(() => {
@@ -229,32 +218,15 @@ function ChunkedStreamPlayer({
           )}
         </div>
       )}
-      
       {isAudio ? (
-        <audio
-          ref={(node) => setVideoElement(node)}
-          controls
-          autoPlay
-          className="w-full"
-          src={blobUrl || ""}
-        />
+        <audio ref={(node) => setVideoElement(node)} controls autoPlay className="w-full" src={blobUrl || ""} />
       ) : (
-        <video
-          ref={(node) => setVideoElement(node)}
-          controls
-          autoPlay
-          playsInline
-          className="max-h-full max-w-full"
-          src={blobUrl || ""}
-        />
+        <video ref={(node) => setVideoElement(node)} controls autoPlay playsInline className="max-h-full max-w-full" src={blobUrl || ""} />
       )}
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Plyr media player with buffering overlay
-// ─────────────────────────────────────────────────────────────────────────────
 function SharedMediaPlayer({ url, type }: { url: string; type: string }) {
   const isAudio = type.startsWith("audio/");
   const [isWaiting, setIsWaiting] = useState(true);
@@ -263,33 +235,25 @@ function SharedMediaPlayer({ url, type }: { url: string; type: string }) {
   useEffect(() => {
     const el = plyrContainerRef.current;
     if (!el) return;
-
     let media: HTMLMediaElement | null = null;
     let disposed = false;
-
-    const onCanPlay = () => setIsWaiting(false);
     const onPlaying = () => setIsWaiting(false);
     const onWaiting = () => setIsWaiting(true);
-
     const attach = (m: HTMLMediaElement) => {
       media = m;
-      m.addEventListener("canplay", onCanPlay);
       m.addEventListener("playing", onPlaying);
       m.addEventListener("waiting", onWaiting);
       if (m.readyState >= 3) setIsWaiting(false);
     };
-
     const interval = setInterval(() => {
       if (disposed) return;
       const found = el.querySelector("video, audio") as HTMLMediaElement | null;
       if (found) { clearInterval(interval); attach(found); }
     }, 100);
-
     return () => {
       disposed = true;
       clearInterval(interval);
       if (media) {
-        media.removeEventListener("canplay", onCanPlay);
         media.removeEventListener("playing", onPlaying);
         media.removeEventListener("waiting", onWaiting);
       }
@@ -299,7 +263,6 @@ function SharedMediaPlayer({ url, type }: { url: string; type: string }) {
   return (
     <div className="h-full w-full bg-black flex items-center justify-center">
       <div className={cn("relative", isAudio ? "w-full p-4" : "aspect-video w-full")}>
-        {/* Overlay — always in DOM, toggled via CSS to avoid React/Plyr DOM conflicts */}
         <div
           className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm gap-3 transition-opacity duration-300"
           style={{ opacity: isWaiting ? 1 : 0, pointerEvents: isWaiting ? "auto" : "none" }}
@@ -307,24 +270,14 @@ function SharedMediaPlayer({ url, type }: { url: string; type: string }) {
           <Loader2 className="h-8 w-8 animate-spin text-white" />
           <p className="text-xs text-white/70">Buffering…</p>
         </div>
-
         <div ref={plyrContainerRef}>
-          <Plyr
-            source={{
-              type: isAudio ? "audio" : "video",
-              sources: [{ src: url, type }],
-            }}
-            options={{ autoplay: true }}
-          />
+          <Plyr source={{ type: isAudio ? "audio" : "video", sources: [{ src: url, type }] }} options={{ autoplay: true }} />
         </div>
       </div>
     </div>
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Main page component
-// ─────────────────────────────────────────────────────────────────────────────
 export default function SharedFilePage() {
   const { token } = useParams<{ token: string }>();
   const [meta, setMeta] = useState<ShareMeta | null>(null);
@@ -334,23 +287,78 @@ export default function SharedFilePage() {
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [downloadReceived, setDownloadReceived] = useState(0);
   const [done, setDone] = useState(false);
-  const [shareKey, setShareKey] = useState("");
   const [decryptedName, setDecryptedName] = useState<string | null>(null);
+  const [decryptedContentType, setDecryptedContentType] = useState<string | null>(
+    null,
+  );
+  const [shareKey, setShareKey] = useState("");
 
   // Preview state
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isFetchingForPreview, setIsFetchingForPreview] = useState(false);
   const [fetchProgress, setFetchProgress] = useState(0);
 
-  // Path A: non-encrypted video → direct signed URL
+  // Consolidated data loader
+  useEffect(() => {
+    if (!token) return;
+
+    const loadData = async () => {
+      try {
+        const res = await fetch(`/api/share/${token}`);
+        const d = await res.json();
+
+        if (d.error) {
+          setError(d.error);
+        } else {
+          // Map 'name' from API to 'fileName' expected by UI if missing
+          if (d.name && !d.fileName) {
+            d.fileName = d.name;
+          }
+          setMeta(d);
+
+          // Decrypt shared metadata if key is present in hash
+          if (d.shareEncryptedName && shareKey) {
+            try {
+              const skBytes = b64urlToBytes(shareKey);
+              const shareKeyObj = await crypto.subtle.importKey(
+                "raw",
+                skBytes.buffer.slice(
+                  skBytes.byteOffset,
+                  skBytes.byteOffset + skBytes.byteLength
+                ) as ArrayBuffer,
+                { name: "AES-GCM" },
+                false,
+                ["decrypt", "unwrapKey"]
+              );
+              const name = await decryptWithShareKey(
+                d.shareEncryptedName,
+                shareKeyObj,
+              );
+              setDecryptedName(name);
+
+              if (d.shareEncryptedContentType) {
+                const type = await decryptWithShareKey(
+                  d.shareEncryptedContentType,
+                  shareKeyObj,
+                );
+                setDecryptedContentType(type);
+              }
+            } catch (err) {
+              console.error("Failed to decrypt shared file name", err);
+            }
+          }
+        }
+      } catch (err) {
+        setError("Failed to load share info");
+      }
+    };
+
+    loadData();
+  }, [token, shareKey]);
+
+  // Preview Paths
   const [directStreamUrl, setDirectStreamUrl] = useState<string | null>(null);
-
-  // Path B: chunked encrypted video → MSE via hook
-  const [chunkedOpts, setChunkedOpts] = useState<VideoStreamOptions | null>(
-    null,
-  );
-
-  // Path C: legacy encrypted or non-video → blob URL
+  const [chunkedOpts, setChunkedOpts] = useState<VideoStreamOptions | null>(null);
   const [blobPreviewUrl, setBlobPreviewUrl] = useState<string | null>(null);
   const blobUrlRef = useRef<string | null>(null);
 
@@ -360,54 +368,31 @@ export default function SharedFilePage() {
     };
   }, []);
 
-  // Share key is ONLY in the URL fragment
+  // Sync shareKey from URL hash
   useEffect(() => {
     if (typeof window !== "undefined") {
-      setShareKey(window.location.hash.replace("#key=", ""));
+      const hash = window.location.hash;
+      if (hash.startsWith("#key=")) {
+        setShareKey(hash.replace("#key=", ""));
+      }
     }
   }, []);
 
-  // Pre-register the SW on mount so it's already active when the user
-  // clicks Preview — eliminates ~200-500ms activation delay.
+  // SW Registration
   useEffect(() => {
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
   }, []);
 
-  useEffect(() => {
-    if (!token) return;
-    fetch(`/api/share/${token}`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.error) {
-          setError(d.error);
-        } else {
-          setMeta(d);
-          if (d.isEncrypted && d.encryptedName) {
-            decryptFileName(d.encryptedName)
-              .then(setDecryptedName)
-              .catch(e => console.error("Failed to decrypt shared file name", e));
-          }
-        }
-      })
-      .catch(() => setError("Failed to load share info"));
-  }, [token]);
-
-  // ── Preview handler ────────────────────────────────────────────────────────
-
   async function handlePreview() {
     if (!meta) return;
     setIsPreviewOpen(true);
-
-    // Already have everything we need — just open the modal
     if (directStreamUrl || chunkedOpts || blobPreviewUrl) return;
 
     setError(null);
-
-    const isMedia =
-      meta.contentType.startsWith("video/") ||
-      meta.contentType.startsWith("audio/");
+    const isMedia = (decryptedContentType || meta.contentType).startsWith("video/") || 
+                   (decryptedContentType || meta.contentType).startsWith("audio/");
 
     try {
       setIsFetchingForPreview(true);
@@ -418,84 +403,57 @@ export default function SharedFilePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password: password || undefined }),
       });
-      const data: StreamData = await res.json();
-      if (!res.ok)
-        throw new Error((data as unknown as { error: string }).error);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
 
-      // ── PATH A: Non-encrypted media → pure signed-URL streaming ───────────
+      // Path A: Plain media
       if (isMedia && !data.isEncrypted && data.streamUrl) {
         setDirectStreamUrl(data.streamUrl);
         setIsFetchingForPreview(false);
         return;
       }
 
-      // Guard: encrypted but no key in fragment
       if (data.isEncrypted && (!shareKey || !meta.shareEncryptedDEK)) {
-        throw new Error(
-          "This file is end-to-end encrypted but no decryption key was found in the link. " +
-            "Make sure you're using the full link including the #key=… at the end.",
-        );
+        throw new Error("Missing decryption key in URL.");
       }
 
-      // Derive DEK (needed for both chunked and legacy paths)
       let dek: CryptoKey | undefined;
       if (data.isEncrypted && meta.shareEncryptedDEK && meta.shareKeyIv) {
-        dek = await deriveDek(
-          shareKey,
-          meta.shareEncryptedDEK,
-          meta.shareKeyIv,
-        );
+        dek = await deriveDek(shareKey, meta.shareEncryptedDEK, meta.shareKeyIv);
       }
 
-      // ── PATH B: Chunked encrypted media → SW or MSE streaming ────────────
-      if (
-        isMedia &&
-        data.isEncrypted &&
-        dek &&
-        data.chunkSize &&
-        data.chunkCount &&
-        data.chunkIvs &&
-        data.chunkUrls
-      ) {
-        const chunkIvsArr: string[] = JSON.parse(data.chunkIvs);
+      // Path B: Chunked encrypted media
+      if (isMedia && data.isEncrypted && dek && data.chunkUrls) {
+        const chunkIvsArr = JSON.parse(data.chunkIvs);
         const rawDEK = await crypto.subtle.exportKey("raw", dek);
         
         if ("serviceWorker" in navigator) {
           try {
-            // SW was pre-registered on mount — just wait for it to be ready
             const registration = await navigator.serviceWorker.ready;
             const sw = registration.active;
-
             if (sw) {
               await new Promise<void>((resolve, reject) => {
                 const channel = new MessageChannel();
-                channel.port1.onmessage = (event) => {
-                  if (event.data.success) resolve();
-                  else reject(new Error("Failed to register stream with SW"));
-                };
+                channel.port1.onmessage = (e) => e.data.success ? resolve() : reject();
                 sw.postMessage({
                   type: "REGISTER_STREAM",
                   fileId: token,
                   rawDEK,
-                  chunkSize: data.chunkSize || 2 * 1024 * 1024,
-                  chunkCount: data.chunkCount || (data.chunkUrls ? data.chunkUrls.length : 0),
+                  chunkSize: data.chunkSize,
+                  chunkCount: data.chunkCount,
                   chunkIvs: chunkIvsArr,
                   urls: data.chunkUrls,
                   contentType: data.contentType,
                   size: meta.size,
                 }, [channel.port2]);
               });
-
               setDirectStreamUrl(`/sw/objects/${token}`);
               setIsFetchingForPreview(false);
               return;
             }
-          } catch (err) {
-            console.error("SW streaming failed, falling back to MSE", err);
-          }
+          } catch {}
         }
-        
-        // Fallback to MSE via chunkedOpts
+
         setChunkedOpts({
           urls: data.chunkUrls,
           dek,
@@ -508,56 +466,35 @@ export default function SharedFilePage() {
         return;
       }
 
-      // ── PATH C: Legacy single-blob encrypted file OR non-media ────────────
-      if (!data.streamUrl) throw new Error("Stream URL is missing for this file.");
-      
-      // Fetch full ciphertext (or plaintext if not E2EE) with progress tracking
-      // Uses the same Cache Storage mechanism behind the scenes
-      const raw = await fetchWithProgress(
-        data.streamUrl,
-        setFetchProgress,
-        token,
-        meta.size,
-      );
-
+      // Path C: Blob preview
+      if (!data.streamUrl) throw new Error("Stream URL missing");
+      const raw = await fetchWithProgress(data.streamUrl, setFetchProgress, token, meta.size);
       let blob: Blob;
       if (data.isEncrypted && dek && data.iv) {
         const ivBytes = b64ToBytes(data.iv);
         const decrypted = await crypto.subtle.decrypt(
-          {
-            name: "AES-GCM",
-            iv: ivBytes.buffer.slice(
-              ivBytes.byteOffset,
-              ivBytes.byteOffset + ivBytes.byteLength,
-            ) as ArrayBuffer,
-          },
+          { name: "AES-GCM", iv: ivBytes.buffer.slice(ivBytes.byteOffset, ivBytes.byteOffset + ivBytes.byteLength) as ArrayBuffer },
           dek,
-          raw,
+          raw
         );
-        blob = new Blob([decrypted], { type: data.contentType });
+        blob = new Blob([decrypted], { type: decryptedContentType || data.contentType });
       } else {
-        blob = new Blob([raw], { type: data.contentType });
+        blob = new Blob([raw], { type: decryptedContentType || data.contentType });
       }
-
       const url = URL.createObjectURL(blob);
       blobUrlRef.current = url;
       setBlobPreviewUrl(url);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Preview failed");
+    } catch (e: any) {
+      setError(e.message || "Preview failed");
       setIsPreviewOpen(false);
     } finally {
       setIsFetchingForPreview(false);
-      setFetchProgress(0);
     }
   }
-
-  // ── Download handler ───────────────────────────────────────────────────────
 
   async function handleDownload() {
     if (!meta) return;
     setDownloading(true);
-    setDownloadProgress(0);
-    setDownloadReceived(0);
     setError(null);
     try {
       const res = await fetch(`/api/share/${token}/download`, {
@@ -569,507 +506,131 @@ export default function SharedFilePage() {
       if (!res.ok) throw new Error(data.error);
 
       if (data.isEncrypted && (!shareKey || !meta.shareEncryptedDEK)) {
-        throw new Error(
-          "Decryption key missing — make sure you're using the full link including the #key=… at the end.",
-        );
+        throw new Error("Missing decryption key.");
+      }
+
+      let dek: CryptoKey | undefined;
+      if (data.isEncrypted && meta.shareEncryptedDEK && meta.shareKeyIv) {
+        dek = await deriveDek(shareKey, meta.shareEncryptedDEK, meta.shareKeyIv);
       }
 
       let blob: Blob;
-
-      const handleProgress = (pct: number) => {
-        setDownloadProgress(pct);
-        setDownloadReceived(Math.round((pct / 100) * meta.size));
-      };
-
-      if (
-        data.isEncrypted &&
-        shareKey &&
-        meta.shareEncryptedDEK &&
-        meta.shareKeyIv
-      ) {
-        const dek = await deriveDek(
-          shareKey,
-          meta.shareEncryptedDEK,
-          meta.shareKeyIv,
-        );
-
-        // Chunked file: download chunks separately and decrypt
-        if (data.chunkUrls && data.chunkUrls.length > 0 && data.chunkSize && data.chunkCount && data.chunkIvs) {
-          const chunkIvsArr: string[] = JSON.parse(data.chunkIvs);
-          const plaintextChunks: ArrayBuffer[] = new Array(data.chunkCount);
+      if (data.isEncrypted && dek) {
+        if (data.chunkUrls) {
           const { decryptChunk } = await import("@/lib/crypto/fileEncryption");
-          
-          let received = 0;
-          let currentIndex = 0;
-          const concurrency = 4;
-
-          const downloadWorker = async () => {
-            while (currentIndex < (data.chunkCount || data.chunkUrls!.length)) {
-              const i = currentIndex++;
-              const chunkRes = await fetch(data.chunkUrls![i]);
-              if (!chunkRes.ok) throw new Error(`Failed to fetch chunk ${i}`);
-              
-              // Read via stream for smoother progress updates
-              const reader = chunkRes.body!.getReader();
-              const chunks: Uint8Array[] = [];
-              let chunkReceived = 0;
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                chunks.push(value);
-                received += value.byteLength;
-                chunkReceived += value.byteLength;
-                
-                // Update UI smoothly
-                if (chunkReceived > 250 * 1024) {
-                   setDownloadReceived(received);
-                   const expectedTotal = (data.chunkCount || data.chunkUrls!.length) * ((data.chunkSize || 0) + 16);
-                   setDownloadProgress(Math.round((received / expectedTotal) * 100));
-                   chunkReceived = 0;
-                }
-              }
-              
-              setDownloadReceived(received);
-              const expectedTotal = (data.chunkCount || data.chunkUrls!.length) * ((data.chunkSize || 0) + 16);
-              setDownloadProgress(Math.round((received / expectedTotal) * 100));
-
-              // Combine chunk bytes
-              const chunkBuf = new Uint8Array(chunks.reduce((acc, c) => acc + c.byteLength, 0));
-              let offset = 0;
-              for (const c of chunks) {
-                chunkBuf.set(c, offset);
-                offset += c.byteLength;
-              }
-
-              // Decrypt concurrently
-              const plain = await decryptChunk(chunkBuf.buffer, dek, chunkIvsArr[i]);
-              plaintextChunks[i] = plain;
-            }
-          };
-
-          const workers = Array.from({ length: Math.min(concurrency, data.chunkCount || data.chunkUrls!.length) }, () => downloadWorker());
-          await Promise.all(workers);
-
-          setDownloadProgress(100);
-          setDownloadReceived(meta.size);
-          blob = new Blob(plaintextChunks, { type: data.contentType });
+          const chunkIvsArr = JSON.parse(data.chunkIvs);
+          const plaintextChunks = [];
+          for (let i = 0; i < data.chunkUrls.length; i++) {
+            const cr = await fetch(data.chunkUrls[i]);
+            const cb = await cr.arrayBuffer();
+            plaintextChunks.push(await decryptChunk(cb, dek, chunkIvsArr[i]));
+            setDownloadProgress(Math.round(((i + 1) / data.chunkUrls.length) * 100));
+          }
+          blob = new Blob(plaintextChunks, { type: decryptedContentType || data.contentType });
         } else {
-          // Legacy single-blob
-          if (!data.downloadUrl) throw new Error("Missing download URL");
-          const raw = await fetchWithProgress(data.downloadUrl, handleProgress, undefined, meta.size);
-          
+          const raw = await fetchWithProgress(data.downloadUrl, setDownloadProgress, undefined, meta.size);
           const ivBytes = b64ToBytes(data.iv);
           const decrypted = await crypto.subtle.decrypt(
-            {
-              name: "AES-GCM",
-              iv: ivBytes.buffer.slice(
-                ivBytes.byteOffset,
-                ivBytes.byteOffset + ivBytes.byteLength,
-              ) as ArrayBuffer,
-            },
+            { name: "AES-GCM", iv: ivBytes.buffer.slice(ivBytes.byteOffset, ivBytes.byteOffset + ivBytes.byteLength) as ArrayBuffer },
             dek,
-            raw,
+            raw
           );
-          blob = new Blob([decrypted], { type: data.contentType });
+          blob = new Blob([decrypted], { type: decryptedContentType || data.contentType });
         }
       } else {
-        // Not encrypted
-        if (data.chunkUrls && data.chunkUrls.length > 0) {
-          const chunks: BlobPart[] = new Array(data.chunkCount || data.chunkUrls.length);
-          let received = 0;
-          let currentIndex = 0;
-          const concurrency = 4;
-          
-          const downloadWorker = async () => {
-            while (currentIndex < data.chunkUrls!.length) {
-              const i = currentIndex++;
-              const chunkUrl = data.chunkUrls![i];
-              const chunkRes = await fetch(chunkUrl);
-              if (!chunkRes.ok) throw new Error("Failed to fetch chunk");
-              
-              // Read via stream for smoother progress updates
-              const reader = chunkRes.body!.getReader();
-              const chunkArrays: Uint8Array[] = [];
-              let chunkReceived = 0;
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                chunkArrays.push(value);
-                received += value.byteLength;
-                chunkReceived += value.byteLength;
-                
-                if (chunkReceived > 250 * 1024) {
-                   setDownloadReceived(received);
-                   const expectedTotal = data.chunkCount ? data.chunkCount * (data.chunkSize || meta.size) : meta.size;
-                   setDownloadProgress(Math.round((received / expectedTotal) * 100));
-                   chunkReceived = 0;
-                }
-              }
-              
-              setDownloadReceived(received);
-              const expectedTotal = data.chunkCount ? data.chunkCount * (data.chunkSize || meta.size) : meta.size;
-              setDownloadProgress(Math.round((received / expectedTotal) * 100));
-
-              const chunkBuf = new Uint8Array(chunkArrays.reduce((acc, c) => acc + c.byteLength, 0));
-              let offset = 0;
-              for (const c of chunkArrays) {
-                chunkBuf.set(c, offset);
-                offset += c.byteLength;
-              }
-              chunks[i] = chunkBuf.buffer;
-            }
-          };
-
-          const workers = Array.from({ length: Math.min(concurrency, data.chunkUrls.length) }, () => downloadWorker());
-          await Promise.all(workers);
-
-          setDownloadProgress(100);
-          setDownloadReceived(meta.size);
-          blob = new Blob(chunks, { type: data.contentType });
-        } else {
-          if (!data.downloadUrl) throw new Error("Missing download URL");
-          const raw = await fetchWithProgress(data.downloadUrl, handleProgress, undefined, meta.size);
-          blob = new Blob([raw], { type: data.contentType });
-        }
+        const raw = await fetchWithProgress(data.downloadUrl, setDownloadProgress, undefined, meta.size);
+        blob = new Blob([raw], { type: decryptedContentType || data.contentType });
       }
 
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download =
-        decryptedName || data.fileName || meta.fileName.split("/").pop() || "download";
+      a.download = decryptedName || data.fileName || meta.fileName || "download";
       document.body.appendChild(a);
       a.click();
-      document.body.removeChild(a);
       URL.revokeObjectURL(url);
       setDone(true);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Download failed");
+    } catch (e: any) {
+       setError(e.message || "Download failed");
     } finally {
-      setDownloading(false);
+       setDownloading(false);
     }
   }
 
-  // ── Preview renderer ───────────────────────────────────────────────────────
 
-  const renderPreview = () => {
-    if (!meta) return null;
+  if (error && !meta) return (
+    <div className="min-h-screen flex items-center justify-center p-4 bg-background">
+      <Card className="w-full max-w-md">
+        <CardContent className="pt-6 text-center space-y-3">
+          <AlertCircle className="mx-auto h-10 w-10 text-destructive" />
+          <p className="font-semibold text-foreground">{error}</p>
+        </CardContent>
+      </Card>
+    </div>
+  );
 
-    // Loading screen while fetching/decrypting
-    if (isFetchingForPreview) {
-      return (
-        <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          {fetchProgress > 0 ? (
-            <>
-              <div className="w-64 h-2 rounded-full bg-secondary overflow-hidden">
-                <div
-                  className="h-full bg-primary rounded-full transition-all duration-200"
-                  style={{ width: `${fetchProgress}%` }}
-                />
-              </div>
-              <p className="text-sm">
-                {meta.isEncrypted ? "Decrypting" : "Loading"} {fetchProgress}%
-              </p>
-            </>
-          ) : (
-            <p className="text-sm">Preparing preview…</p>
-          )}
-        </div>
-      );
-    }
+  if (!meta) return (
+    <div className="min-h-screen flex items-center justify-center bg-background">
+      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+    </div>
+  );
 
-    const type = meta.contentType;
-
-    // PATH A — non-encrypted media: direct signed URL → native browser streaming
-    if (directStreamUrl) {
-      return <SharedMediaPlayer url={directStreamUrl} type={type} />;
-    }
-
-    // PATH B — chunked encrypted media: MSE streaming
-    if (chunkedOpts) {
-      return (
-        <ChunkedStreamPlayer 
-          opts={chunkedOpts} 
-          contentType={meta.contentType} 
-          onUrlChange={() => {}} // No-op as modal handles state nicely
-        />
-      );
-    }
-
-    // PATH C — legacy / non-media: blob URL
-    if (blobPreviewUrl) {
-      if (type.startsWith("image/")) {
-        return (
-          <div className="grid h-full place-items-center bg-black/40 p-2 sm:p-4">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={blobPreviewUrl}
-              alt={meta.fileName}
-              className="max-h-[calc(100dvh-8.5rem)] w-auto max-w-full object-contain"
-            />
-          </div>
-        );
-      }
-      if (type.startsWith("video/") || type.startsWith("audio/")) {
-        return <SharedMediaPlayer url={blobPreviewUrl} type={type} />;
-      }
-      if (type === "application/pdf") {
-        return (
-          <div className="h-full w-full bg-white">
-            <iframe
-              src={blobPreviewUrl}
-              className="h-full w-full border-0"
-              title={meta.fileName}
-            />
-          </div>
-        );
-      }
-      return (
-        <div className="h-full w-full bg-white">
-          <DocViewer
-            documents={[{ uri: blobPreviewUrl, fileType: type }]}
-            pluginRenderers={DocViewerRenderers}
-            config={{
-              header: {
-                disableHeader: true,
-                disableFileName: true,
-                retainURLParams: true,
-              },
-              pdfVerticalScrollByDefault: true,
-            }}
-            style={{ height: "100%" }}
-          />
-        </div>
-      );
-    }
-
-    return null;
-  };
-
-  // ── Render ─────────────────────────────────────────────────────────────────
-
-  if (error && !meta)
-    return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-background">
-        <Card className="w-full max-w-md">
-          <CardContent className="pt-6 text-center space-y-3">
-            <AlertCircle className="mx-auto h-10 w-10 text-destructive" />
-            <p className="font-semibold text-foreground">{error}</p>
-            <p className="text-sm text-muted-foreground">
-              This link may have expired, been revoked, or never existed.
-            </p>
-          </CardContent>
-        </Card>
-      </div>
-    );
-
-  if (!meta)
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-
-  const displayName = decryptedName || meta.fileName.split("/").pop() || meta.fileName;
-  const canPreview =
-    meta.contentType.startsWith("image/") ||
-    meta.contentType.startsWith("video/") ||
-    meta.contentType.startsWith("audio/") ||
-    meta.contentType === "application/pdf";
+  const displayName =
+    decryptedName ||
+    (meta.fileName ? meta.fileName.split("/").pop() : "File") ||
+    "File";
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-md border-border bg-card">
-        <CardHeader className="text-center pb-2">
+      <Card className="w-full max-w-md">
+        <CardHeader className="text-center">
           <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-            {meta.thumbnail ? (
-              <img
-                src={meta.thumbnail}
-                alt={displayName}
-                className="h-16 w-16 rounded-full object-cover"
-              />
-            ) : (
-              <File className="h-8 w-8 text-primary" />
-            )}
+            {meta.thumbnail ? <img src={meta.thumbnail} alt={displayName} className="h-16 w-16 rounded-full object-cover" /> : <File className="h-8 w-8 text-primary" />}
           </div>
-          <CardTitle className="break-all text-lg text-foreground">
-            {displayName}
-          </CardTitle>
-          <p className="text-sm text-muted-foreground">
-            {formatBytes(meta.size)}
-          </p>
-          {meta.isEncrypted && (
-            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-green-500 mt-1">
-              <Lock className="h-3 w-3" /> End-to-End Encrypted
-            </span>
-          )}
+          <CardTitle className="break-all text-lg">{displayName}</CardTitle>
+          <p className="text-sm text-muted-foreground">{formatBytes(meta.size)}</p>
         </CardHeader>
-
         <CardContent className="space-y-4">
-          {meta.expiresAt && (
-            <p className="text-center text-xs text-muted-foreground">
-              Expires {new Date(meta.expiresAt).toLocaleString()}
-            </p>
-          )}
-          {meta.maxDownloads && (
-            <p className="text-center text-xs text-muted-foreground">
-              {meta.downloadCount} / {meta.maxDownloads} downloads used
-            </p>
-          )}
-
           {meta.isPasswordProtected && !done && (
-            <div className="space-y-1.5">
-              <label className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                <Lock className="h-3.5 w-3.5" /> Password
-              </label>
-              <Input
-                type="password"
-                placeholder="Enter password to access this file"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleDownload()}
-                className="bg-secondary/50 border-border"
-              />
-            </div>
+            <Input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} />
           )}
-
-          {meta.isEncrypted && !shareKey && (
-            <div className="flex items-start gap-2 rounded-lg bg-amber-500/10 border border-amber-500/20 p-3 text-sm text-amber-500">
-              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
-              <div>
-                <p className="font-medium">Decryption key missing</p>
-                <p className="text-xs mt-0.5 text-amber-400/80">
-                  The link is incomplete — ask the sender to reshare the full
-                  link including the{" "}
-                  <code className="bg-amber-500/20 px-1 rounded">#key=…</code>{" "}
-                  at the end.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {error && (
-            <div className="flex items-center gap-2 rounded-lg bg-destructive/10 border border-destructive/20 p-3 text-sm text-destructive">
-              <AlertCircle className="h-4 w-4 shrink-0" />
-              {error}
-            </div>
-          )}
-
-          {done ? (
-            <div className="flex items-center gap-2 rounded-lg bg-green-500/10 border border-green-500/20 p-3 text-sm text-green-500">
-              <CheckCircle2 className="h-4 w-4 shrink-0" /> Downloaded
-              successfully!
-            </div>
-          ) : (
-            <div className="flex gap-2 w-full">
-              {canPreview && (
-                <Button
-                  variant="secondary"
-                  className="flex-1 bg-secondary text-secondary-foreground hover:bg-secondary/80"
-                  onClick={handlePreview}
-                  disabled={
-                    downloading ||
-                    isFetchingForPreview ||
-                    (meta.isPasswordProtected && !password) ||
-                    (meta.isEncrypted && !shareKey)
-                  }
-                >
-                  {isFetchingForPreview ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Eye className="mr-2 h-4 w-4" />
-                  )}
-                  Preview
-                </Button>
-              )}
-
-              <Button
-                className="flex-1 bg-primary text-primary-foreground hover:bg-primary/90 relative overflow-hidden"
-                onClick={handleDownload}
-                disabled={
-                  downloading ||
-                  (meta.isPasswordProtected && !password) ||
-                  (meta.isEncrypted && !shareKey)
-                }
-              >
-                {downloading && downloadProgress > 0 && downloadProgress < 100 && (
-                  <div 
-                    className="absolute inset-y-0 left-0 bg-black/20 z-0 transition-all duration-200"
-                    style={{ width: `${downloadProgress}%` }}
-                  />
-                )}
-                
-                <span className="relative z-10 flex items-center justify-center w-full">
-                  {downloading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin shrink-0" />
-                      {downloadProgress > 0 ? (
-                        <span>
-                          {formatBytes(downloadReceived)} / {formatBytes(meta.size)}
-                        </span>
-                      ) : (
-                        <span>{meta.isEncrypted ? "Decrypting…" : "Downloading…"}</span>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <Download className="mr-2 h-4 w-4 shrink-0" /> Download
-                    </>
-                  )}
-                </span>
-              </Button>
-            </div>
-          )}
-
-          <p className="text-center text-xs text-muted-foreground">
-            Shared via{" "}
-            <Link
-              href="/"
-              className="underline hover:text-primary transition-colors"
-            >
-              Xenode Drive
-            </Link>
-          </p>
+          <Button className="w-full" onClick={handleDownload} disabled={downloading}>
+            {downloading ? `Downloading ${downloadProgress}%` : "Download"}
+          </Button>
+          <Button variant="outline" className="w-full" onClick={handlePreview}>Preview</Button>
         </CardContent>
       </Card>
 
-      {/* Full Screen Preview Modal */}
-      {isPreviewOpen && meta && (
-        <div className="fixed inset-0 z-50 bg-background/95 backdrop-blur-sm flex flex-col">
-          <div className="flex items-center justify-between p-4 border-b border-border bg-card/50">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
-                {meta.isEncrypted ? (
-                  <Lock className="h-5 w-5 text-primary" />
-                ) : (
-                  <File className="h-5 w-5 text-primary" />
-                )}
-              </div>
-              <div>
-                <h3 className="text-sm font-semibold text-foreground">
-                  {displayName}
-                </h3>
-                <p className="text-xs text-muted-foreground truncate max-w-[200px] sm:max-w-md">
-                  {formatBytes(meta.size)} • {meta.contentType}
-                  {chunkedOpts && (
-                    <span className="ml-1 text-green-500">
-                      • Streaming E2EE
-                    </span>
-                  )}
-                </p>
-              </div>
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setIsPreviewOpen(false)}
-            >
-              <X className="h-6 w-6" />
-            </Button>
-          </div>
-          <div className="flex-1 overflow-hidden relative">
-            {renderPreview()}
+      {/* Preview Modal */}
+      {isPreviewOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+          <div className="relative w-full max-w-4xl h-[80vh] bg-card rounded-xl overflow-hidden shadow-2xl">
+             <Button variant="ghost" size="icon" className="absolute right-2 top-2 z-10 text-white hover:bg-white/20" onClick={() => setIsPreviewOpen(false)}>
+               <X className="h-4 w-4" />
+             </Button>
+             
+             {isFetchingForPreview ? (
+               <div className="flex h-full flex-col items-center justify-center gap-4 text-white">
+                 <Loader2 className="h-10 w-10 animate-spin" />
+                 <p>Preparing preview {fetchProgress}%</p>
+               </div>
+             ) : (
+               <div className="h-full w-full">
+                 {directStreamUrl ? (
+                   <SharedMediaPlayer url={directStreamUrl} type={decryptedContentType || meta.contentType} />
+                 ) : chunkedOpts ? (
+                   <ChunkedStreamPlayer opts={chunkedOpts} contentType={decryptedContentType || meta.contentType} onUrlChange={() => {}} />
+                 ) : blobPreviewUrl ? (
+                   (decryptedContentType || meta.contentType).startsWith("image/") ? (
+                     <div className="flex h-full items-center justify-center bg-black"><img src={blobPreviewUrl} alt={displayName} className="max-h-full" /></div>
+                   ) : (decryptedContentType || meta.contentType) === "application/pdf" ? (
+                     <iframe src={blobPreviewUrl} className="w-full h-full border-0" />
+                   ) : (
+                     <div className="flex h-full items-center justify-center p-8"><p>Preview not supported for this file type.</p></div>
+                   )
+                 ) : null}
+               </div>
+             )}
           </div>
         </div>
       )}

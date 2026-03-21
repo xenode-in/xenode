@@ -70,6 +70,7 @@ import {
 } from "@dnd-kit/sortable";
 import { FileItem, FileRow, FileCard } from "@/components/dashboard/FileItem";
 import { formatBytes, formatDate } from "@/lib/utils";
+import { encryptMetadataString, decryptMetadataString } from "@/lib/crypto/fileEncryption";
 
 interface ObjectData {
   id: string; // use id, not _id
@@ -82,6 +83,8 @@ interface ObjectData {
   thumbnail?: string;
   isEncrypted?: boolean;
   encryptedName?: string;
+  encryptedDisplayName?: string;
+  encryptedContentType?: string;
 }
 
 interface BucketData {
@@ -103,6 +106,57 @@ export default function FilesPage() {
   const [bucket, setBucket] = useState<BucketData | null>(null);
   const [rootPrefix, setRootPrefix] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+
+  const [objects, setObjects] = useState<ObjectData[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Navigation State
+  const [currentPrefix, setCurrentPrefix] = useState("");
+
+  // Actions State
+  const [deleteIds, setDeleteIds] = useState<string[]>([]);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState("");
+
+  // Create Folder State
+  const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [creatingFolder, setCreatingFolder] = useState(false);
+
+  // Downloading State
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+
+  // Tagging State
+  const [taggingObj, setTaggingObj] = useState<ObjectData | null>(null);
+  const [newTag, setNewTag] = useState("");
+
+  // Clipboard State (for Move)
+  const [clipboard, setClipboard] = useState<{
+    action: "move";
+    items: ObjectData[];
+  } | null>(null);
+  const [processingPaste, setProcessingPaste] = useState(false);
+
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  // Selection State
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
+  const [isSelecting, setIsSelecting] = useState(false);
+  const [selectionBox, setSelectionBox] = useState<{
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+  } | null>(null);
+
+  // Global context imports
+  const { addTasks, tasks } = useUpload();
+  const { privateKey, metadataKey, setModalOpen } = useCrypto();
+  const { startDownload } = useDownload();
+  const { openPreview, closePreview } = usePreview();
+
+  const [shareFile, setShareFile] = useState<ShareableFile | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!bucketId) return;
@@ -159,28 +213,40 @@ export default function FilesPage() {
         console.error(err);
         setError("Failed to connect to storage");
       });
-  }, []);
-  const [objects, setObjects] = useState<ObjectData[]>([]);
-  const [loading, setLoading] = useState(true);
+  }, [searchParams]);
 
-  // Navigation State
-  const [currentPrefix, setCurrentPrefix] = useState("");
-
-  const handleNavigation = useCallback((newPrefix: string) => {
-    setCurrentPrefix(newPrefix);
-    if (newPrefix === rootPrefix) {
-      router.push('/dashboard/files');
-    } else {
-      const relative = newPrefix.slice(rootPrefix.length);
-      router.push(`/dashboard/files?folder=${encodeURIComponent(relative)}`);
-    }
-  }, [rootPrefix, router]);
+  const [decryptedFolderNameMap, setDecryptedFolderNameMap] = useState<Record<string, string>>({});
+  
+  useEffect(() => {
+    if (!metadataKey || !objects.length) return;
+    
+    const decryptFolders = async () => {
+      const newMap: Record<string, string> = {};
+      for (const obj of objects) {
+        if (obj.contentType === "application/x-directory" && obj.isEncrypted && obj.encryptedDisplayName && !decryptedFolderNameMap[obj.key]) {
+          try {
+            const name = await decryptMetadataString(obj.encryptedDisplayName, metadataKey);
+            newMap[obj.key] = name;
+          } catch (e) {
+            console.error("Failed to decrypt folder name", e);
+          }
+        }
+      }
+      if (Object.keys(newMap).length > 0) {
+        setDecryptedFolderNameMap(prev => ({ ...prev, ...newMap }));
+      }
+    };
+    
+    decryptFolders();
+  }, [objects, metadataKey, decryptedFolderNameMap]);
 
   // Sync URL changes to currentPrefix when user uses back/forward buttons
   useEffect(() => {
     if (!rootPrefix) return;
     const folderParam = searchParams.get("folder");
-    const expectedPrefix = folderParam ? `${rootPrefix}${folderParam}` : rootPrefix;
+    const expectedPrefix = folderParam
+      ? `${rootPrefix}${folderParam}`
+      : rootPrefix;
     if (currentPrefix !== expectedPrefix) {
       setCurrentPrefix(expectedPrefix);
     }
@@ -251,46 +317,6 @@ export default function FilesPage() {
       files: files.sort(sortFiles),
     };
   }, [objects, currentPrefix]);
-
-  // Actions State
-  const [deleteIds, setDeleteIds] = useState<string[]>([]);
-  const [deleting, setDeleting] = useState(false);
-  const [error, setError] = useState("");
-
-  // Create Folder State
-  const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
-  const [newFolderName, setNewFolderName] = useState("");
-  const [creatingFolder, setCreatingFolder] = useState(false);
-
-  // Downloading State
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
-
-  // Preview State
-  const { openPreview, closePreview } = usePreview();
-
-  // Tagging State
-  const [taggingObj, setTaggingObj] = useState<ObjectData | null>(null);
-  const [newTag, setNewTag] = useState("");
-
-  // Clipboard State (for Move)
-  const [clipboard, setClipboard] = useState<{
-    action: "move";
-    items: ObjectData[];
-  } | null>(null);
-  const [processingPaste, setProcessingPaste] = useState(false);
-
-  const [activeId, setActiveId] = useState<string | null>(null);
-
-  // Selection State
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
-  const [isSelecting, setIsSelecting] = useState(false);
-  const [selectionBox, setSelectionBox] = useState<{
-    startX: number;
-    startY: number;
-    currentX: number;
-    currentY: number;
-  } | null>(null);
 
   // DnD Sensors
   const sensors = useSensors(
@@ -683,17 +709,20 @@ export default function FilesPage() {
       setNewTag("");
       return;
     }
-    const updatedTags = [...currentTags, newTag.trim()];
+    let tagToSave = newTag.trim();
+    if (!!privateKey && metadataKey) {
+      tagToSave = await encryptMetadataString(tagToSave, metadataKey);
+    }
 
     try {
       const res = await fetch(`/api/objects/${taggingObj.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tags: updatedTags }),
+        body: JSON.stringify({ tags: [...currentTags, tagToSave] }),
       });
 
       if (res.ok) {
-        setTaggingObj({ ...taggingObj, tags: updatedTags });
+        setTaggingObj({ ...taggingObj, tags: [...currentTags, tagToSave] });
         setNewTag("");
         fetchData(); // Refresh list headers
       }
@@ -737,13 +766,6 @@ export default function FilesPage() {
     setViewMode(mode);
     localStorage.setItem("filesViewMode", mode);
   };
-
-  // Global context imports
-  const { addTasks, tasks } = useUpload();
-  const { privateKey, setModalOpen } = useCrypto();
-  const { startDownload } = useDownload();
-
-  const [shareFile, setShareFile] = useState<ShareableFile | null>(null);
 
   async function getDEKBytes(fileId: string): Promise<Uint8Array> {
     if (!privateKey) {
@@ -929,28 +951,43 @@ export default function FilesPage() {
     if (!newFolderName.trim() || !bucketId) return;
     setCreatingFolder(true);
     setError("");
-
     try {
+      const isEncrypted = !!privateKey;
+      const folderName = newFolderName.trim();
+
+      // If encrypted, use a random UUID for the physical storage key
+      // and store the real name in encryptedDisplayName
+      const storageName = isEncrypted ? crypto.randomUUID() : folderName;
+      let encryptedDisplayName: string | undefined;
+
+      if (isEncrypted && metadataKey) {
+        encryptedDisplayName = await encryptMetadataString(
+          folderName,
+          metadataKey,
+        );
+      }
+
       const res = await fetch("/api/objects/folder", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           bucketId,
-          name: newFolderName,
+          name: storageName,
+          encryptedDisplayName,
           prefix: currentPrefix,
         }),
       });
 
-      if (!res.ok) {
+      if (res.ok) {
+        setNewFolderName("");
+        setIsCreateFolderOpen(false);
+        fetchData();
+      } else {
         const data = await res.json();
-        throw new Error(data.error);
+        setError(data.error || "Failed to create folder");
       }
-
-      setNewFolderName("");
-      setIsCreateFolderOpen(false);
-      fetchData();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create folder");
+      setError("Failed to create folder");
     } finally {
       setCreatingFolder(false);
     }
@@ -1006,6 +1043,19 @@ export default function FilesPage() {
     }
   };
 
+  const handleNavigation = useCallback(
+    (prefix: string) => {
+      // breadcrumbs derived relative to rootPrefix
+      const relative = prefix.startsWith(rootPrefix)
+        ? prefix.slice(rootPrefix.length)
+        : prefix;
+      router.push(`?folder=${encodeURIComponent(relative)}`);
+      setCurrentPrefix(prefix);
+      setSelectedIds(new Set());
+    },
+    [router, rootPrefix],
+  );
+
   const handleDownload = async (obj: ObjectData) => {
     try {
       await startDownload(obj, !!obj.isEncrypted, privateKey);
@@ -1042,6 +1092,21 @@ export default function FilesPage() {
     handleNavigation(`${rootPrefix}${newRelativePath}/`);
   };
 
+  const breadcrumbs = useMemo(() => {
+    const relativePrefix = currentPrefix.startsWith(rootPrefix)
+      ? currentPrefix.slice(rootPrefix.length)
+      : currentPrefix;
+    const parts = relativePrefix.split("/").filter(Boolean);
+
+    // Attempt to map UUIDs in breadcrumbs to decrypted names
+    let runningPrefix = rootPrefix;
+    return parts.map((part) => {
+      runningPrefix += `${part}/`;
+      const decrypted = decryptedFolderNameMap[runningPrefix];
+      return { part, display: decrypted || part };
+    });
+  }, [currentPrefix, rootPrefix, decryptedFolderNameMap]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -1073,12 +1138,6 @@ export default function FilesPage() {
       </div>
     );
   }
-
-  const relativePrefix = currentPrefix.startsWith(rootPrefix)
-    ? currentPrefix.slice(rootPrefix.length)
-    : currentPrefix;
-  const breadcrumbs = relativePrefix.split("/").filter(Boolean);
-
   const folderIds = viewObjects.folders.map((f) => f.id);
   const fileIds = viewObjects.files.map((f) => f.id);
 
@@ -1128,8 +1187,8 @@ export default function FilesPage() {
               }`}
             >
               <Home className="w-4 h-4" />
-            </button>
-            {breadcrumbs.map((part, i) => (
+            </button>{" "}
+            {breadcrumbs.map((bc, i) => (
               <div key={i} className="flex items-center gap-2 shrink-0">
                 <ChevronRight className="w-4 h-4 text-muted-foreground/30" />
                 <button
@@ -1140,7 +1199,7 @@ export default function FilesPage() {
                       : "text-muted-foreground/60"
                   }`}
                 >
-                  {part}
+                  {bc.display}
                 </button>
               </div>
             ))}
@@ -1525,19 +1584,12 @@ export default function FilesPage() {
           <div className="flex flex-wrap gap-2 min-h-[50px] bg-secondary/20 rounded-lg p-3">
             {taggingObj?.tags && taggingObj.tags.length > 0 ? (
               taggingObj.tags.map((tag) => (
-                <Badge
+                <TagItem
                   key={tag}
-                  variant="secondary"
-                  className="bg-secondary text-primary hover:bg-secondary flex gap-1 items-center pl-2 pr-1 py-1"
-                >
-                  {tag}
-                  <button
-                    onClick={() => handleRemoveTag(tag)}
-                    className="hover:text-destructive p-0.5 rounded-full hover:bg-background/20"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </Badge>
+                  encryptedTag={tag}
+                  metadataKey={metadataKey}
+                  onRemove={handleRemoveTag}
+                />
               ))
             ) : (
               <span className="text-muted-foreground/30 text-sm italic">
@@ -1652,5 +1704,45 @@ export default function FilesPage() {
         getDEKBytes={getDEKBytes}
       />
     </div>
+  );
+}
+
+function TagItem({
+  encryptedTag,
+  metadataKey,
+  onRemove,
+}: {
+  encryptedTag: string;
+  metadataKey: any;
+  onRemove: (tag: string) => void;
+}) {
+  const [display, setDisplay] = useState(encryptedTag);
+
+  useEffect(() => {
+    if (
+      metadataKey &&
+      (encryptedTag.startsWith("0x02") || encryptedTag.length > 50)
+    ) {
+      decryptMetadataString(encryptedTag, metadataKey)
+        .then(setDisplay)
+        .catch(() => setDisplay(encryptedTag));
+    } else {
+      setDisplay(encryptedTag);
+    }
+  }, [encryptedTag, metadataKey]);
+
+  return (
+    <Badge
+      variant="secondary"
+      className="bg-secondary text-primary hover:bg-secondary flex gap-1 items-center pl-2 pr-1 py-1"
+    >
+      {display}
+      <button
+        onClick={() => onRemove(encryptedTag)}
+        className="hover:text-destructive p-0.5 rounded-full hover:bg-background/20"
+      >
+        <Trash2 className="w-3 h-3" />
+      </button>
+    </Badge>
   );
 }

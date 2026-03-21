@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Play, Music2 } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptFileName } from "@/lib/crypto/fileEncryption";
+import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
 import { useState, useEffect, useMemo } from "react";
 
 interface ObjectData {
@@ -42,7 +42,7 @@ export function PreviewSection({
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>(
     {},
   );
-  const { isUnlocked } = useCrypto();
+  const { isUnlocked, metadataKey } = useCrypto();
 
   const allItems = useMemo(
     () => [...videos, ...images, ...audios],
@@ -61,10 +61,11 @@ export function PreviewSection({
         if (
           item.isEncrypted &&
           item.encryptedName &&
+          metadataKey &&
           !decryptedNames[item.id]
         ) {
           try {
-            const name = await decryptFileName(item.encryptedName);
+            const name = await decryptMetadataString(item.encryptedName, metadataKey);
             newNames[item.id] = name;
           } catch (e) {
             console.error("Failed to decrypt name", e);

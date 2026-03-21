@@ -7,6 +7,8 @@ export interface IStorageObject extends Document {
   key: string;
   size: number;
   contentType: string;
+  encryptedContentType?: string;
+  mediaCategory: "image" | "video" | "audio" | "document" | "other";
   b2FileId: string;
   tags: string[];
   position: number;
@@ -18,6 +20,7 @@ export interface IStorageObject extends Document {
   encryptedDEK?: string; // Base64 RSA-OAEP wrapped AES-256 DEK
   iv?: string; // Base64 12-byte GCM IV (legacy single-blob only)
   encryptedName?: string; // Base64 AES-GCM encrypted original filename
+  encryptedDisplayName?: string; // For E2EE folders
   /** Chunked encryption fields — present only on chunked uploads (video/audio) */
   chunkSize?: number; // Plaintext bytes per chunk (e.g. 1 048 576)
   chunkCount?: number; // Total number of chunks
@@ -55,6 +58,20 @@ const StorageObjectSchema = new Schema<IStorageObject>(
     contentType: {
       type: String,
       default: "application/octet-stream",
+    },
+    encryptedContentType: {
+      type: String,
+      required: false,
+    },
+    encryptedDisplayName: {
+      type: String,
+      required: false,
+    },
+    mediaCategory: {
+      type: String,
+      enum: ["image", "video", "audio", "document", "other"],
+      default: "other",
+      index: true,
     },
     b2FileId: {
       type: String,

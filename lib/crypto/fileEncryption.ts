@@ -183,6 +183,86 @@ export async function decryptFileName(
 }
 
 /**
+ * Encrypt a thumbnail (Data URL) using the metadataKey
+ */
+export async function encryptThumbnail(
+  dataUrl: string,
+  metadataKey: CryptoKey,
+): Promise<string> {
+  const encoded = new TextEncoder().encode(dataUrl);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const cipher = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    metadataKey,
+    encoded,
+  );
+  const combined = new Uint8Array(12 + cipher.byteLength);
+  combined.set(iv, 0);
+  combined.set(new Uint8Array(cipher), 12);
+  return "enc:" + toB64(combined);
+}
+
+/**
+ * Decrypts a thumbnail encrypted with encryptThumbnail().
+ * Returns the original data URL unchanged if not encrypted (no "enc:" prefix).
+ */
+export async function decryptThumbnail(
+  thumbnail: string,
+  metadataKey: CryptoKey,
+): Promise<string> {
+  if (!thumbnail.startsWith("enc:")) return thumbnail;
+  try {
+    const bytes = fromB64(thumbnail.slice(4));
+    const iv = bytes.slice(0, 12);
+    const cipher = bytes.slice(12);
+    const plain = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv },
+      metadataKey,
+      cipher,
+    );
+    return new TextDecoder().decode(plain);
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Encrypts a metadata string using a raw AES-GCM key (the share DEK).
+ * Used to re-encrypt filename/contentType/thumbnail for public share pages
+ * that have no vault access.
+ */
+export async function encryptWithShareKey(
+  text: string,
+  shareKey: CryptoKey,
+): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const cipher = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    shareKey,
+    new TextEncoder().encode(text),
+  );
+  const combined = new Uint8Array(12 + cipher.byteLength);
+  combined.set(iv, 0);
+  combined.set(new Uint8Array(cipher), 12);
+  return toB64(combined);
+}
+
+export async function decryptWithShareKey(
+  b64: string,
+  shareKey: CryptoKey,
+): Promise<string> {
+  const bytes = fromB64(b64);
+  const iv = bytes.slice(0, 12);
+  const cipher = bytes.slice(12);
+  const plain = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    shareKey,
+    cipher,
+  );
+  return new TextDecoder().decode(plain);
+}
+
+/**
  * Encrypts a string using the shared metadataKey.
  * Format: [0x02 version byte] + [12 bytes IV] + [ciphertext]
  */

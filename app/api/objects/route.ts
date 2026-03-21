@@ -8,7 +8,8 @@ import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 
 const LIST_PROJECTION =
-  "key size contentType thumbnail tags position createdAt isEncrypted encryptedName";
+  "key size contentType encryptedContentType thumbnail tags position createdAt " +
+  "isEncrypted encryptedName encryptedDisplayName mediaCategory";
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
@@ -39,6 +40,7 @@ export async function GET(request: NextRequest) {
     );
     const skip = (page - 1) * limit;
     const contentTypeFilter = searchParams.get("contentType");
+    const mediaCategoryFilter = searchParams.get("mediaCategory");
 
     await dbConnect();
 
@@ -60,7 +62,9 @@ export async function GET(request: NextRequest) {
       const prefix = `users/${userId}/`;
       query.key = { $gte: prefix, $lt: prefix + "\uffff" };
     }
-    if (contentTypeFilter) {
+    if (mediaCategoryFilter) {
+      query.mediaCategory = mediaCategoryFilter;
+    } else if (contentTypeFilter) {
       query.contentType = { $regex: `^${contentTypeFilter}/`, $options: "i" };
     }
 

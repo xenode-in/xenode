@@ -10,7 +10,12 @@ import React, {
 } from "react";
 import { useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { encryptFile, encryptFileChunked } from "@/lib/crypto/fileEncryption";
+import {
+  encryptFile,
+  encryptFileChunked,
+  encryptMetadataString,
+  encryptThumbnail,
+} from "@/lib/crypto/fileEncryption";
 import { toB64 } from "@/lib/crypto/utils";
 
 export interface UploadTask {
@@ -112,6 +117,14 @@ function getAdaptiveChunkSize(fileSize: number, mimeType: string): number {
   return Math.min(adaptive, 64 * 1024 * 1024);
 }
 
+function getMediaCategory(mimeType: string): string {
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType.startsWith("audio/")) return "audio";
+  if (mimeType.includes("pdf") || mimeType.includes("document")) return "document";
+  return "other";
+}
+
 export function UploadProvider({ children }: { children: React.ReactNode }) {
   const { data: session } = useSession();
   const sessionRef = useRef(session);
@@ -172,11 +185,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     );
 
     try {
+      const rawThumbnail = await generateThumbnail(task.file).catch(() => undefined);
       let thumbnail: string | undefined;
-      try {
-        thumbnail = await generateThumbnail(task.file);
-      } catch (err) {
-        console.warn("Failed to generate thumbnail", err);
+      if (rawThumbnail && cryptoMetadataKeyRef.current && shouldEncryptNow()) {
+        thumbnail = await encryptThumbnail(rawThumbnail, cryptoMetadataKeyRef.current)
+          .catch(() => undefined);
+      } else {
+        thumbnail = rawThumbnail;
       }
 
       const chunkSize = getAdaptiveChunkSize(task.file.size, task.file.type);
@@ -202,30 +217,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           chunkIvs = JSON.stringify(enc.chunkIvs);
           cipherChunkSize = chunkSize + 16;
 
-          const nameBuf = new TextEncoder().encode(task.file.name);
-          const nameKey = crypto.getRandomValues(new Uint8Array(32));
-          const nameIV = crypto.getRandomValues(new Uint8Array(12));
-          const encNameBuf = await crypto.subtle.encrypt(
-            { name: "AES-GCM", iv: nameIV as Uint8Array<ArrayBuffer> },
-            await crypto.subtle.importKey(
-              "raw",
-              nameKey as Uint8Array<ArrayBuffer>,
-              { name: "AES-GCM", length: 256 },
-              false,
-              ["encrypt"],
-            ),
-            nameBuf,
+          encryptedName = await encryptMetadataString(
+            task.file.name,
+            cryptoMetadataKeyRef.current!,
           );
-          const combined = new Uint8Array(
-            nameKey.byteLength + nameIV.byteLength + encNameBuf.byteLength,
-          );
-          combined.set(nameKey, 0);
-          combined.set(nameIV, nameKey.byteLength);
-          combined.set(
-            new Uint8Array(encNameBuf),
-            nameKey.byteLength + nameIV.byteLength,
-          );
-          encryptedName = toB64(combined);
         } catch (err) {
           console.warn("[E2EE] Encryption failed, falling back to plaintext", err);
           uploadBody = task.file;
@@ -325,7 +320,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           objectKey: fileId,
           bucketId: returnedBucketId,
           size: totalSize,
-          contentType: task.file.type,
+          contentType: shouldEncryptNow() ? "application/octet-stream" : task.file.type,
+          originalContentType: task.file.type,
+          mediaCategory: getMediaCategory(task.file.type),
+          encryptedContentType: shouldEncryptNow() && cryptoMetadataKeyRef.current
+            ? await encryptMetadataString(task.file.type, cryptoMetadataKeyRef.current)
+            : undefined,
           thumbnail,
           isEncrypted: !!encryptedDEK,
           encryptedDEK,
@@ -387,12 +387,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     );
 
     try {
-      // Step 0: Generate thumbnail if image
+      const rawThumbnail = await generateThumbnail(task.file).catch(() => undefined);
       let thumbnail: string | undefined;
-      try {
-        thumbnail = await generateThumbnail(task.file);
-      } catch (err) {
-        console.warn("Failed to generate thumbnail", err);
+      if (rawThumbnail && cryptoMetadataKeyRef.current && shouldEncryptNow()) {
+        thumbnail = await encryptThumbnail(rawThumbnail, cryptoMetadataKeyRef.current)
+          .catch(() => undefined);
+      } else {
+        thumbnail = rawThumbnail;
       }
 
       // Step 1: Get presigned URL from server
@@ -465,30 +466,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           }
 
           // Encrypt the original filename (shared by both paths)
-          const nameBuf = new TextEncoder().encode(task.file.name);
-          const nameKey = crypto.getRandomValues(new Uint8Array(32));
-          const nameIV = crypto.getRandomValues(new Uint8Array(12));
-          const encNameBuf = await crypto.subtle.encrypt(
-            { name: "AES-GCM", iv: nameIV as Uint8Array<ArrayBuffer> },
-            await crypto.subtle.importKey(
-              "raw",
-              nameKey as Uint8Array<ArrayBuffer>,
-              { name: "AES-GCM", length: 256 },
-              false,
-              ["encrypt"],
-            ),
-            nameBuf,
+          encryptedName = await encryptMetadataString(
+            task.file.name,
+            cryptoMetadataKeyRef.current!,
           );
-          const combined = new Uint8Array(
-            nameKey.byteLength + nameIV.byteLength + encNameBuf.byteLength,
-          );
-          combined.set(nameKey, 0);
-          combined.set(nameIV, nameKey.byteLength);
-          combined.set(
-            new Uint8Array(encNameBuf),
-            nameKey.byteLength + nameIV.byteLength,
-          );
-          encryptedName = toB64(combined);
         } catch (err) {
           console.warn(
             "[E2EE] Encryption failed, falling back to plaintext",
@@ -552,7 +533,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           objectKey,
           bucketId: returnedBucketId,
           size: uploadBody instanceof Blob ? uploadBody.size : task.file.size,
-          contentType: task.file.type,
+          contentType: shouldEncryptNow() ? "application/octet-stream" : task.file.type,
+          originalContentType: task.file.type,
+          mediaCategory: getMediaCategory(task.file.type),
+          encryptedContentType: shouldEncryptNow() && cryptoMetadataKeyRef.current
+            ? await encryptMetadataString(task.file.type, cryptoMetadataKeyRef.current)
+            : undefined,
           thumbnail,
           isEncrypted: !!encryptedDEK,
           encryptedDEK,

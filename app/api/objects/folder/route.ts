@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     const session = await requireAuth(request);
     const userId = session.user.id;
     const body = await request.json();
-    const { bucketId, name, prefix = "" } = body;
+    const { bucketId, name, encryptedDisplayName, prefix = "" } = body;
 
     if (!bucketId || !name) {
       return NextResponse.json({ error: "Bucket ID and folder name are required" }, { status: 400 });
@@ -56,6 +56,7 @@ export async function POST(request: NextRequest) {
       key: fullKey,
       size: 0,
       contentType: "application/x-directory",
+      encryptedDisplayName,
       b2FileId: uploadResult.b2FileId,
     });
 

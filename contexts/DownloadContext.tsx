@@ -10,7 +10,7 @@ import React, {
 import {
   decryptFile,
   decryptFileChunkedCombined,
-  decryptFileName,
+  decryptMetadataString,
 } from "@/lib/crypto/fileEncryption";
 import {
   getCachedSize,
@@ -47,6 +47,7 @@ interface DownloadContextType {
     obj: { id: string; key: string; size: number; contentType: string; encryptedName?: string },
     isEncrypted: boolean,
     privateKey?: CryptoKey | null,
+    metadataKey?: CryptoKey | null,
   ) => Promise<void>;
   cancelDownload: (id: string) => void;
   dismissResumes: () => void;
@@ -132,11 +133,12 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
       obj: { id: string; key: string; size: number; contentType: string; encryptedName?: string },
       isEncrypted: boolean,
       privateKey?: CryptoKey | null,
+      metadataKey?: CryptoKey | null,
     ) => {
       let name = obj.key.split("/").pop() || "download";
-      if (isEncrypted && obj.encryptedName) {
+      if (isEncrypted && obj.encryptedName && metadataKey) {
         try {
-          name = await decryptFileName(obj.encryptedName);
+          name = await decryptMetadataString(obj.encryptedName, metadataKey);
         } catch (e) {
           console.error("Failed to decrypt filename for download", e);
         }

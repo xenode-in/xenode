@@ -24,21 +24,26 @@ export async function GET(_: NextRequest, { params }: Params) {
 
   const obj = link.objectId as any;
 
-  return NextResponse.json({
-    fileName: obj?.key ?? "",
-    encryptedName: obj?.encryptedName,
-    size: obj?.size ?? 0,
-    contentType: obj?.contentType ?? "application/octet-stream",
-    isEncrypted: obj?.isEncrypted ?? false,
-    thumbnail: obj?.thumbnail,
+  const response = {
+    id: obj?._id,
+    name: link.isPasswordProtected ? "Locked File" : (link.shareEncryptedName || obj?.encryptedName || obj?.key?.split("/").pop()),
+    encryptedName: link.isPasswordProtected ? undefined : (link.shareEncryptedName || obj?.encryptedName),
+    shareEncryptedName: link.isPasswordProtected ? undefined : link.shareEncryptedName,
+    shareEncryptedContentType: link.isPasswordProtected ? undefined : link.shareEncryptedContentType,
+    shareEncryptedThumbnail: link.isPasswordProtected ? undefined : link.shareEncryptedThumbnail,
+    size: obj?.size,
+    contentType: link.isPasswordProtected ? "application/octet-stream" : (link.shareEncryptedContentType || obj?.contentType),
+    isEncrypted: obj?.isEncrypted,
     isPasswordProtected: link.isPasswordProtected,
-    accessType: link.accessType,
     expiresAt: link.expiresAt,
-    downloadCount: link.downloadCount,
-    maxDownloads: link.maxDownloads,
-    shareEncryptedDEK: link.shareEncryptedDEK,
-    shareKeyIv: link.shareKeyIv,
-  });
+    // DEK is ONLY for the recipient who knows the password (sent via POST)
+    // or if there is no password, we can send it now.
+    shareEncryptedDEK: link.isPasswordProtected ? undefined : link.shareEncryptedDEK,
+    shareKeyIv: link.isPasswordProtected ? undefined : link.shareKeyIv,
+    thumbnail: link.isPasswordProtected ? undefined : (link.shareEncryptedThumbnail || obj?.thumbnail),
+  };
+
+  return NextResponse.json(response);
 }
 
 /** DELETE /api/share/[token] — Revoke a share link (owner only) */

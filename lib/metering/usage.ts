@@ -110,7 +110,7 @@ export async function incrementStorage(
 
   captureEvent(userId, "object_uploaded", {
     fileSizeMB: Number((sizeBytes / (1024 * 1024)).toFixed(2)),
-    contentType: meta?.contentType ?? "unknown",
+    contentType: meta?.isEncrypted ? "encrypted" : (meta?.contentType ?? "unknown"),
     bucketId: meta?.bucketId,
     isEncrypted: meta?.isEncrypted ?? false,
   });
