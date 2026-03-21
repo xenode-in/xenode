@@ -45,6 +45,7 @@ interface ObjectData {
   createdAt: string;
   isEncrypted?: boolean;
   encryptedName?: string;
+  encryptedMetadata?: string;
   name?: string;
   bucketId: string;
 }
@@ -296,6 +297,7 @@ export function FilePreviewDialog({
   const [progress, setProgress] = useState<number | null>(null);
   const [isVideoPreparing, setIsVideoPreparing] = useState(false);
   const [decryptedName, setDecryptedName] = useState<string | null>(null);
+  const [decryptedType, setDecryptedType] = useState<string | null>(null);
 
   // Track object URLs we created so we can revoke them on close
   const objectUrlRef = useRef<string | null>(null);
@@ -337,6 +339,7 @@ export function FilePreviewDialog({
       setProgress(null);
       setIsVideoPreparing(false);
       setDecryptedName(null);
+      setDecryptedType(null);
     }
   }, [isOpen]);
 
@@ -351,11 +354,11 @@ export function FilePreviewDialog({
       try {
         const aad = buildAad({ 
           userId, 
-          bucketId: file.bucketId, 
-          objectKey: file.key, 
+          bucketId: file!.bucketId, 
+          objectKey: file!.key, 
           version: CRYPTO_VERSION 
         });
-        const name = file!.name || await decryptMetadataString(file!.encryptedName!, metadataKey, aad);
+        const name = file!.name || (file!.encryptedName ? await decryptMetadataString(file!.encryptedName, metadataKey, aad) : "");
         if (!cancelled) setDecryptedName(name);
       } catch (e) {
         console.error("Failed to decrypt preview file name", e);
@@ -393,7 +396,30 @@ export function FilePreviewDialog({
 
         const encrypted: boolean = data.isEncrypted ?? false;
 
-        const type = data.contentType ?? file.contentType;
+        let type = data.contentType ?? file.contentType;
+        if (encrypted && (data.encryptedMetadata || file.encryptedMetadata)) {
+          try {
+            const aad = buildAad({ 
+              userId, 
+              bucketId: file!.bucketId, 
+              objectKey: file!.key, 
+              version: CRYPTO_VERSION 
+            });
+            const metaStr = await decryptMetadataString(
+              data.encryptedMetadata || file.encryptedMetadata,
+              metadataKey,
+              aad
+            );
+            const meta = JSON.parse(metaStr);
+            if (meta.contentType) {
+              type = meta.contentType;
+              if (!cancelled) setDecryptedType(meta.contentType);
+            }
+          } catch (e) {
+            console.error("Failed to decrypt metadata for preview", e);
+          }
+        }
+
         const shouldShowPreparingUI = type.startsWith("video/") || type.startsWith("audio/") || type.startsWith("image/") || type === "application/pdf";
 
         if (!encrypted) {
@@ -407,7 +433,7 @@ export function FilePreviewDialog({
                 chunkSize: data.chunkSize || (2 * 1024 * 1024),
                 chunkCount: data.chunkCount || data.chunkUrls.length,
                 chunkIvs: [],
-                contentType: data.contentType ?? file.contentType,
+                contentType: type,
               });
               setLoadingMessage("Fetching initial chunks...");
               if (shouldShowPreparingUI) setIsVideoPreparing(true);
@@ -470,7 +496,7 @@ export function FilePreviewDialog({
                       chunkCount: data.chunkCount || data.chunkUrls.length,
                       chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
                       urls: data.chunkUrls,
-                      contentType: data.contentType ?? file.contentType,
+                      contentType: type,
                       size: file.size,
                     }, [channel.port2]);
                   });
@@ -478,7 +504,7 @@ export function FilePreviewDialog({
                   if (!cancelled) {
                     setLoadingMessage("Fetching initial chunks...");
                     if (shouldShowPreparingUI) setIsVideoPreparing(true);
-                    setUrl(`/sw/objects/${file.id}`);
+                    setUrl(`/sw/objects/${file!.id}`);
                     setLoading(false);
                     return;
                   }
@@ -502,7 +528,7 @@ export function FilePreviewDialog({
               chunkSize: data.chunkSize || (2 * 1024 * 1024),
               chunkCount: data.chunkCount || data.chunkUrls.length,
               chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
-              contentType: data.contentType ?? file.contentType,
+              contentType: type,
             });
             if (shouldShowPreparingUI) setIsVideoPreparing(true);
             setLoadingMessage("Fetching initial chunks...");
@@ -519,8 +545,8 @@ export function FilePreviewDialog({
           (pct) => {
             if (!cancelled) setProgress(pct);
           },
-          file.id, // Using the file.id as the cache key
-          file.size, // using file.size to enforce the 500MB bypass limit limit
+          file!.id, // Using the file.id as the cache key
+          file!.size, // using file.size to enforce the 500MB bypass limit limit
         );
 
         if (!cancelled) {
@@ -544,8 +570,8 @@ export function FilePreviewDialog({
             data.chunkSize,
             data.chunkCount,
             privateKey,
-            { userId, bucketId: file.bucketId, objectKey: file.key, version: CRYPTO_VERSION },
-            data.contentType ?? file.contentType,
+            { userId, bucketId: file!.bucketId, objectKey: file!.key, version: CRYPTO_VERSION },
+            type,
           );
         } else {
           // 4b. Decrypt standard singular payload
@@ -556,8 +582,8 @@ export function FilePreviewDialog({
           }
           const aad = buildAad({ 
             userId, 
-            bucketId: file.bucketId, 
-            objectKey: file.key, 
+            bucketId: file!.bucketId, 
+            objectKey: file!.key, 
             version: CRYPTO_VERSION 
           });
           decryptedBlob = await decryptFile(
@@ -566,7 +592,7 @@ export function FilePreviewDialog({
             data.iv,
             privateKey,
             aad,
-            data.contentType ?? file.contentType,
+            type,
           );
         }
 
@@ -597,13 +623,14 @@ export function FilePreviewDialog({
 
   const docs = useMemo(() => {
     if (!url || !file) return [];
-    return [{ uri: url, fileType: file.contentType }];
-  }, [url, file]);
+    const effectiveType = decryptedType || file.contentType;
+    return [{ uri: url, fileType: effectiveType }];
+  }, [url, file, decryptedType]);
 
   if (!file) return null;
 
   const name = file.name || decryptedName || fileNameFromKey(file.key);
-  const type = file.contentType;
+  const type = decryptedType || file.contentType;
 
   // Download handler: for encrypted files, trigger programmatic download
   // from the decrypted Blob URL instead of opening the ciphertext URL.

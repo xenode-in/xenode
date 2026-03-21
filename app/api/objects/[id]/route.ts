@@ -71,6 +71,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       chunkSize: object.chunkSize ?? null,
       chunkCount: object.chunkCount ?? null,
       chunkIvs: object.chunkIvs ?? null,
+      encryptedMetadata: object.encryptedMetadata ?? null,
+      cryptoVersion: object.cryptoVersion ?? null,
     });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {

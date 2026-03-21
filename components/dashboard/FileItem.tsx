@@ -149,6 +149,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     const { isUnlocked, metadataKey, session } = useCrypto() as any;
     const userId = session?.user?.id;
     const [decryptedName, setDecryptedName] = useState<string | null>(null);
+    const [decryptedMeta, setDecryptedMeta] = useState<any>(null);
 
     useEffect(() => {
       if (item.isEncrypted && item.encryptedName && isUnlocked) {
@@ -158,7 +159,17 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
           objectKey: item.key, 
           version: CRYPTO_VERSION 
         });
-        decryptMetadataString(item.encryptedName, metadataKey, aad).then(setDecryptedName);
+        if (item.encryptedName) {
+          decryptMetadataString(item.encryptedName, metadataKey, aad)
+            .then(setDecryptedName)
+            .catch(err => console.error("Failed to decrypt name", err));
+        }
+
+        if (item.encryptedMetadata) {
+          decryptMetadataString(item.encryptedMetadata, metadataKey, aad)
+            .then(str => setDecryptedMeta(JSON.parse(str)))
+            .catch(err => console.error("Failed to decrypt meta", err));
+        }
       } else {
         // eslint-disable-next-line
         setDecryptedName(null);
@@ -179,6 +190,9 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     }
 
     const name = decryptedName || baseName;
+    const effectiveContentType = decryptedMeta?.contentType || item.contentType;
+    const effectiveSize = decryptedMeta?.size || item.size;
+    const effectiveThumbnail = decryptedMeta?.thumbnail || item.thumbnail;
 
     const defaultActions = (
       <>
@@ -255,14 +269,14 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
           <div className="flex items-center gap-3 text-foreground font-medium">
             {isFolder ? (
               <Folder className="w-5 h-5 text-primary fill-primary/20" />
-            ) : item.thumbnail ? (
+            ) : effectiveThumbnail ? (
               <img
-                src={item.thumbnail}
+                src={effectiveThumbnail}
                 alt={name}
                 className="w-8 h-8 rounded object-cover border border-border"
               />
             ) : (
-              getFileIcon(item.contentType, "w-4 h-4 text-muted-foreground/30")
+              getFileIcon(effectiveContentType, "w-4 h-4 text-muted-foreground/30")
             )}
             <span className="truncate max-w-[300px]">{name}</span>
             {item.isEncrypted && (
@@ -287,7 +301,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
           </div>
         </TableCell>
         <TableCell className="text-muted-foreground/40 w-[15%]">
-          {isFolder ? "-" : formatBytes(item.size)}
+          {isFolder ? "-" : formatBytes(effectiveSize)}
         </TableCell>
         <TableCell className="text-muted-foreground/40 w-[15%]">
           {isFolder ? (
@@ -297,7 +311,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
               variant="secondary"
               className="bg-secondary text-muted-foreground/50 border-0 text-xs"
             >
-              {item.contentType.split("/").pop()}
+              {effectiveContentType.split("/").pop()}
             </Badge>
           )}
         </TableCell>
@@ -434,21 +448,33 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
     const { isUnlocked, metadataKey, session } = useCrypto() as any;
     const userId = session?.user?.id;
     const [decryptedName, setDecryptedName] = useState<string | null>(null);
+    const [decryptedMeta, setDecryptedMeta] = useState<any>(null);
 
     useEffect(() => {
-      if (item.isEncrypted && item.encryptedName && isUnlocked) {
+      if (item.isEncrypted && isUnlocked) {
         const aad = buildAad({ 
           userId, 
           bucketId: item.bucketId, 
           objectKey: item.key, 
           version: CRYPTO_VERSION 
         });
-        decryptMetadataString(item.encryptedName, metadataKey, aad).then(setDecryptedName);
+
+        if (item.encryptedName) {
+          decryptMetadataString(item.encryptedName, metadataKey, aad)
+            .then(setDecryptedName)
+            .catch(err => console.error("Failed to decrypt name grid", err));
+        }
+
+        if (item.encryptedMetadata) {
+          decryptMetadataString(item.encryptedMetadata, metadataKey, aad)
+            .then(str => setDecryptedMeta(JSON.parse(str)))
+            .catch(err => console.error("Failed to decrypt meta grid", err));
+        }
       } else {
-        // eslint-disable-next-line
         setDecryptedName(null);
+        setDecryptedMeta(null);
       }
-    }, [item.isEncrypted, item.encryptedName, isUnlocked]);
+    }, [item.isEncrypted, item.encryptedName, item.encryptedMetadata, isUnlocked, userId, metadataKey]);
 
     let baseName = item.key;
     if (item.id.startsWith("virtual-")) {
@@ -463,6 +489,9 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
     }
 
     const name = decryptedName || baseName;
+    const effectiveContentType = decryptedMeta?.contentType || item.contentType;
+    const effectiveSize = decryptedMeta?.size || item.size;
+    const effectiveThumbnail = decryptedMeta?.thumbnail || item.thumbnail;
 
     const defaultActions = (
       <>
@@ -549,20 +578,20 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
         ) : (
           <>
             <div className="flex-1 flex items-center justify-center w-full p-4 pb-0 overflow-hidden">
-              {item.thumbnail ? (
+              {effectiveThumbnail ? (
                 <img
-                  src={item.thumbnail}
+                  src={effectiveThumbnail}
                   alt={name}
                   className="w-full h-full object-contain rounded"
                 />
-              ) : item.contentType.startsWith("image/") ||
-                item.contentType.startsWith("video/") ? (
+              ) : effectiveContentType.startsWith("image/") ||
+                effectiveContentType.startsWith("video/") ? (
                 <div className="relative w-full h-full flex items-center justify-center">
-                  {getFileIcon(item.contentType, "w-10 h-10 text-primary")}
+                  {getFileIcon(effectiveContentType, "w-10 h-10 text-primary")}
                 </div>
               ) : (
                 getFileIcon(
-                  item.contentType,
+                  effectiveContentType,
                   "w-10 h-10 text-muted-foreground/20 group-hover:text-primary transition-colors",
                 )
               )}
@@ -572,7 +601,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
                 {name}
               </span>
               <span className="text-muted-foreground/40 text-xs mt-1">
-                {formatBytes(item.size)}
+                {formatBytes(effectiveSize)}
               </span>
             </div>
           </>

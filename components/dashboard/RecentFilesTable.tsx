@@ -24,6 +24,7 @@ interface ObjectData {
   thumbnail?: string;
   isEncrypted?: boolean;
   encryptedName?: string;
+  encryptedMetadata?: string;
   bucketId: string;
 }
 
@@ -62,39 +63,60 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>(
     {},
   );
+  const [decryptedMetas, setDecryptedMetas] = useState<Record<string, any>>({});
   const { isUnlocked, metadataKey, session } = useCrypto() as any;
   const userId = session?.user?.id;
 
   useEffect(() => {
     if (!isUnlocked || !files.length) {
-      setDecryptedNames((prev) => Object.keys(prev).length ? {} : prev);
+      setDecryptedNames((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
 
     const decryptNames = async () => {
       const newNames: Record<string, string> = {};
+      const newMetas: Record<string, any> = {};
       for (const file of files) {
-        if (
-          file.isEncrypted &&
-          file.encryptedName &&
-          !decryptedNames[file.id]
-        ) {
+        if (!file.isEncrypted) continue;
+
+        const aad = buildAad({
+          userId,
+          bucketId: file.bucketId,
+          objectKey: file.key,
+          version: CRYPTO_VERSION,
+        });
+
+        if (file.encryptedName && !decryptedNames[file.id]) {
           try {
-            const aad = buildAad({ 
-              userId, 
-              bucketId: file.bucketId, 
-              objectKey: file.key, 
-              version: CRYPTO_VERSION 
-            });
-            const name = await decryptMetadataString(file.encryptedName, metadataKey, aad);
+            const name = await decryptMetadataString(
+              file.encryptedName,
+              metadataKey,
+              aad,
+            );
             newNames[file.id] = name;
           } catch (e) {
             console.error("Failed to decrypt name", e);
           }
         }
+
+        if (file.encryptedMetadata && !decryptedMetas[file.id]) {
+          try {
+            const metaStr = await decryptMetadataString(
+              file.encryptedMetadata,
+              metadataKey,
+              aad,
+            );
+            newMetas[file.id] = JSON.parse(metaStr);
+          } catch (e) {
+            console.error("Failed to decrypt metadata", e);
+          }
+        }
       }
       if (Object.keys(newNames).length > 0) {
         setDecryptedNames((prev) => ({ ...prev, ...newNames }));
+      }
+      if (Object.keys(newMetas).length > 0) {
+        setDecryptedMetas((prev) => ({ ...prev, ...newMetas }));
       }
     };
 
@@ -127,46 +149,52 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
         </div>
 
         {/* Rows */}
-        {files.map((file) => (
-          <div
-            key={file.id}
-            className="grid grid-cols-[2fr_1fr_1fr_40px] gap-4 px-4 py-3 border-b border-border/50 last:border-0 hover:bg-secondary/40 transition-colors items-center"
-          >
-            {/* Name */}
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="w-7 h-7 rounded-lg bg-secondary flex items-center justify-center shrink-0">
-                <FileTypeIcon contentType={file.contentType} />
+        {files.map((file) => {
+          const meta = decryptedMetas[file.id] || {};
+          const effectiveContentType = meta.contentType || file.contentType;
+          const effectiveSize = meta.size || file.size;
+
+          return (
+            <div
+              key={file.id}
+              className="grid grid-cols-[2fr_1fr_1fr_40px] gap-4 px-4 py-3 border-b border-border/50 last:border-0 hover:bg-secondary/40 transition-colors items-center"
+            >
+              {/* Name */}
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-7 h-7 rounded-lg bg-secondary flex items-center justify-center shrink-0">
+                  <FileTypeIcon contentType={effectiveContentType} />
+                </div>
+                <span className="text-sm text-foreground truncate">
+                  {decryptedNames[file.id] ||
+                    file.encryptedName ||
+                    getFileName(file.key)}
+                </span>
+                {file.isEncrypted && (
+                  <Lock className="w-3 h-3 text-primary/60 shrink-0" />
+                )}
               </div>
-              <span className="text-sm text-foreground truncate">
-                {decryptedNames[file.id] ||
-                  file.encryptedName ||
-                  getFileName(file.key)}
+
+              {/* Size */}
+              <span className="text-sm text-muted-foreground">
+                {formatBytes(effectiveSize)}
               </span>
-              {file.isEncrypted && (
-                <Lock className="w-3 h-3 text-primary/60 shrink-0" />
-              )}
+
+              {/* Last Modified */}
+              <span className="text-sm text-muted-foreground">
+                {new Date(file.createdAt).toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  year: "numeric",
+                })}
+              </span>
+
+              {/* Action */}
+              <button className="flex items-center justify-center w-7 h-7 rounded-lg hover:bg-secondary transition-colors ml-auto">
+                <MoreHorizontal className="w-4 h-4 text-muted-foreground" />
+              </button>
             </div>
-
-            {/* Size */}
-            <span className="text-sm text-muted-foreground">
-              {formatBytes(file.size)}
-            </span>
-
-            {/* Last Modified */}
-            <span className="text-sm text-muted-foreground">
-              {new Date(file.createdAt).toLocaleDateString("en-US", {
-                month: "short",
-                day: "numeric",
-                year: "numeric",
-              })}
-            </span>
-
-            {/* Action */}
-            <button className="flex items-center justify-center w-7 h-7 rounded-lg hover:bg-secondary transition-colors ml-auto">
-              <MoreHorizontal className="w-4 h-4 text-muted-foreground" />
-            </button>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
