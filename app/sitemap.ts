@@ -2,10 +2,10 @@ import { MetadataRoute } from "next";
 import { getAllSlugs as getBlogSlugs } from "@/lib/blog";
 import { getAllChangelogEntries as getChangelogSlugs } from "@/lib/changelog";
 
-export default function sitemap(): MetadataRoute.Sitemap {
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
-  const blogSlugs = getBlogSlugs();
+  const blogSlugs = await getBlogSlugs();
   const changelogSlugs = getChangelogSlugs();
 
   const blogUrls = blogSlugs.map((slug) => ({
@@ -15,8 +15,8 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: 0.7,
   }));
 
-  const changelogUrls = changelogSlugs.map((slug) => ({
-    url: `${baseUrl}/changelog/${slug}`,
+  const changelogUrls = changelogSlugs.map((entry) => ({
+    url: `${baseUrl}/changelog/${entry.slug}`,
     lastModified: new Date(),
     changeFrequency: "weekly" as const,
     priority: 0.6,
