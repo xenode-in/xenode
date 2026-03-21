@@ -8,6 +8,9 @@ export interface IBucket extends Document {
   region: string;
   objectCount: number;
   totalSizeBytes: number;
+  isEncrypted: boolean;
+  encryptedName?: string;
+  cryptoVersion?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -45,6 +48,16 @@ const BucketSchema = new Schema<IBucket>(
     totalSizeBytes: {
       type: Number,
       default: 0,
+    },
+    isEncrypted: {
+      type: Boolean,
+      default: false,
+    },
+    encryptedName: {
+      type: String,
+    },
+    cryptoVersion: {
+      type: Number,
     },
   },
   {

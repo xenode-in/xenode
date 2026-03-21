@@ -29,6 +29,7 @@ export function buildVaultPassphrase(
  * Called once during onboarding.
  */
 export async function setupUserKeyVault(
+  userId: string,
   masterPassword: string,
   recoveryWords: string,
   existingKeys?: { privateKeyBuf: ArrayBuffer; publicKeyBuf: ArrayBuffer },
@@ -70,8 +71,11 @@ export async function setupUserKeyVault(
     privateKeyBuf,
   );
 
-  // Sign the encrypted private key for integrity
-  const vaultHmac = await hmacSha256(hmacKey, encryptedPrivKey);
+  // Sign the encrypted private key for integrity — bound to userId
+  const vaultHmac = await hmacSha256(
+    hmacKey,
+    new Uint8Array([...new Uint8Array(encryptedPrivKey), ...new TextEncoder().encode(userId)])
+  );
 
   // Encrypt recovery words using a key derived ONLY from the master password
   const recoverySalt = crypto.getRandomValues(new Uint8Array(16)) as Uint8Array<ArrayBuffer>;
@@ -126,9 +130,16 @@ export async function setupUserKeyVault(
     ["decrypt"],
   );
 
-  const metadataKey = await crypto.subtle.importKey(
-    "raw",
-    await crypto.subtle.digest("SHA-256", privateKeyBuf),
+  // FIX 7: Use HKDF for domain-separated metadataKey derivation
+  const metadataKeyMaterial = await crypto.subtle.importKey("raw", privateKeyBuf, "HKDF", false, ["deriveKey"]);
+  const metadataKey = await crypto.subtle.deriveKey(
+    { 
+      name: "HKDF", 
+      hash: "SHA-256", 
+      salt: new TextEncoder().encode("xenode-metadata-key-v2"), 
+      info: new TextEncoder().encode(userId) 
+    },
+    metadataKeyMaterial,
     { name: "AES-GCM", length: 256 },
     false,
     ["encrypt", "decrypt"]
@@ -141,7 +152,7 @@ export async function setupUserKeyVault(
  * unlockVault
  * Called on new device / cleared IDB cache.
  */
-export async function unlockVault(masterPassword: string): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey; metadataKey: CryptoKey }> {
+export async function unlockVault(userId: string, masterPassword: string): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey; metadataKey: CryptoKey }> {
   const res = await fetch("/api/keys/vault");
   if (res.status === 404) throw new Error("NO_VAULT");
   if (!res.ok) {
@@ -186,7 +197,11 @@ export async function unlockVault(masterPassword: string): Promise<{ privateKey:
   // INTEGRITY CHECK (V2+)
   if (vaultVersion >= 2) {
     if (!vaultHmac) throw new Error("VAULT_TAMPERED");
-    const computedHmac = await hmacSha256(hmacKey, encryptedPrivateKeyBuf);
+    // FIX 5c: Bind userId here too
+    const computedHmac = await hmacSha256(
+      hmacKey,
+      new Uint8Array([...new Uint8Array(encryptedPrivateKeyBuf), ...new TextEncoder().encode(userId)])
+    );
     const storedHmac = fromB64(vaultHmac);
     
     // Constant-time check comparison (basic)
@@ -228,9 +243,16 @@ export async function unlockVault(masterPassword: string): Promise<{ privateKey:
     ["encrypt"],
   );
 
-  const metadataKey = await crypto.subtle.importKey(
-    "raw",
-    await crypto.subtle.digest("SHA-256", privateKeyBuf),
+  // FIX 7: HKDF here too
+  const metadataKeyMaterial = await crypto.subtle.importKey("raw", privateKeyBuf, "HKDF", false, ["deriveKey"]);
+  const metadataKey = await crypto.subtle.deriveKey(
+    { 
+      name: "HKDF", 
+      hash: "SHA-256", 
+      salt: new TextEncoder().encode("xenode-metadata-key-v2"), 
+      info: new TextEncoder().encode(userId) 
+    },
+    metadataKeyMaterial,
     { name: "AES-GCM", length: 256 },
     false,
     ["encrypt", "decrypt"]
@@ -243,16 +265,18 @@ export async function unlockVault(masterPassword: string): Promise<{ privateKey:
  * regenerateVault
  */
 export async function regenerateVault(
+  userId: string,
   newMasterPassword: string,
   recoveryWords: string,
 ): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey; metadataKey: CryptoKey }> {
-  return setupUserKeyVault(newMasterPassword, recoveryWords);
+  return setupUserKeyVault(userId, newMasterPassword, recoveryWords);
 }
 
 /**
  * updateVaultPassword
  */
 export async function updateVaultPassword(
+  userId: string,
   currentPassword: string,
   newMasterPassword: string,
 ): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey; metadataKey: CryptoKey }> {
@@ -278,7 +302,7 @@ export async function updateVaultPassword(
     fromB64(vault.encryptedPrivateKey),
   );
 
-  return setupUserKeyVault(newMasterPassword, recoveryWords, {
+  return setupUserKeyVault(userId, newMasterPassword, recoveryWords, {
     privateKeyBuf,
     publicKeyBuf: fromB64(vault.publicKey).buffer,
   });
@@ -288,6 +312,7 @@ export async function updateVaultPassword(
  * recoverAndResetVault
  */
 export async function recoverAndResetVault(
+  userId: string,
   recoveryWords: string,
   newMasterPassword: string,
 ): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey; metadataKey: CryptoKey }> {
@@ -304,7 +329,7 @@ export async function recoverAndResetVault(
     fromB64(vault.encryptedPrivateKeyRecovery),
   );
 
-  return setupUserKeyVault(newMasterPassword, recoveryWords, {
+  return setupUserKeyVault(userId, newMasterPassword, recoveryWords, {
     privateKeyBuf,
     publicKeyBuf: fromB64(vault.publicKey).buffer,
   });

@@ -21,7 +21,8 @@ import {
   Lock,
 } from "lucide-react";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptFileName } from "@/lib/crypto/fileEncryption";
+import { decryptMetadataString, buildAad } from "@/lib/crypto/fileEncryption";
+import { CRYPTO_VERSION } from "@/lib/crypto/utils";
 
 interface RawShareLink {
   _id: string;
@@ -33,6 +34,7 @@ interface RawShareLink {
     contentType: string;
     isEncrypted?: boolean;
     encryptedName?: string;
+    bucketId: string;
   };
   bucketId?: {
     name: string;
@@ -48,7 +50,7 @@ export default function SharedWithMePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({});
-  const { isUnlocked } = useCrypto();
+  const { isUnlocked, metadataKey } = useCrypto() as any;
 
   const fetchLinks = async () => {
     try {
@@ -78,7 +80,13 @@ export default function SharedWithMePage() {
       for (const link of links) {
         if (link.objectId.isEncrypted && link.objectId.encryptedName) {
           try {
-            const name = await decryptFileName(link.objectId.encryptedName);
+            const aad = buildAad({ 
+              userId: link.createdBy, 
+              bucketId: link.objectId.bucketId, 
+              objectKey: link.objectId.key, 
+              version: CRYPTO_VERSION 
+            });
+            const name = await decryptMetadataString(link.objectId.encryptedName, metadataKey, aad);
             newNames[link._id] = name;
           } catch (e) {
             console.error("Failed to decrypt name", e);

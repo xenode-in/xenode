@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
       sharedWith: { $in: [session.user.email, session.user.id] },
       isRevoked: false,
     })
-      .populate("objectId", "key size contentType isEncrypted encryptedName thumbnail")
+      .populate("objectId", "key size contentType isEncrypted encryptedName thumbnail bucketId")
       .populate("bucketId", "name")
       .sort({ createdAt: -1 })
       .lean();

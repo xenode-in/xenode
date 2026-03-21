@@ -78,7 +78,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
         const storedPw = sessionStorage.getItem("xenode-vault-pw");
         if (storedPw) {
           try {
-            const keys = await unlockVault(storedPw);
+            const keys = await unlockVault(userId!, storedPw);
             setPrivateKey(keys.privateKey);
             setPublicKey(keys.publicKey);
             setMetadataKey(keys.metadataKey || null);
@@ -107,35 +107,35 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
   }, [userId, isPending]);
 
   const setup = useCallback(async (masterPassword: string, recoveryWords: string) => {
-    const keys = await setupUserKeyVault(masterPassword, recoveryWords);
+    const keys = await setupUserKeyVault(userId!, masterPassword, recoveryWords);
     setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
     setMetadataKey(keys.metadataKey || null); setIsUnlocked(true); setNeedsSetup(false);
     await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
   }, []);
 
   const unlock = useCallback(async (masterPassword: string) => {
-    const keys = await unlockVault(masterPassword);
+    const keys = await unlockVault(userId!, masterPassword);
     setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
     setMetadataKey(keys.metadataKey || null); setIsUnlocked(true);
     await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
   }, []);
 
   const regenerate = useCallback(async (newMasterPassword: string, newRecoveryWords: string) => {
-    const keys = await regenerateVault(newMasterPassword, newRecoveryWords);
+    const keys = await regenerateVault(userId!, newMasterPassword, newRecoveryWords);
     setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
     setMetadataKey(keys.metadataKey || null); setIsUnlocked(true); setNeedsSetup(false);
     await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
   }, []);
 
   const updatePassword = useCallback(async (currentPassword: string, newMasterPassword: string) => {
-    const keys = await updateVaultPassword(currentPassword, newMasterPassword);
+    const keys = await updateVaultPassword(userId!, currentPassword, newMasterPassword);
     setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
     setMetadataKey(keys.metadataKey || null); setIsUnlocked(true); setNeedsSetup(false);
     await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
   }, []);
 
   const recover = useCallback(async (recoveryWords: string, newMasterPassword: string) => {
-    const keys = await recoverAndResetVault(recoveryWords, newMasterPassword);
+    const keys = await recoverAndResetVault(userId!, recoveryWords, newMasterPassword);
     setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
     setMetadataKey(keys.metadataKey || null); setIsUnlocked(true); setNeedsSetup(false);
     await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);

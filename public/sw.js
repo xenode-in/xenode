@@ -10,6 +10,19 @@
  */
 
 const streamRegistry = new Map();
+const CRYPTO_VERSION = 1;
+
+function buildAad(params) {
+  const aadObj = {
+    u: params.userId,
+    b: params.bucketId,
+    k: params.objectKey,
+    v: params.version,
+    i: params.chunkIndex,
+    n: params.totalChunks,
+  };
+  return new TextEncoder().encode(JSON.stringify(aadObj));
+}
 
 // ── Registry limits ───────────────────────────────────────────────────────────
 // Each entry is ~60 KB for a typical 1 GB / 2 MB-chunk file (urls + ivs).
@@ -37,6 +50,9 @@ self.addEventListener("message", async (e) => {
       urls,
       contentType,
       size,
+      bucketId,
+      creatorId,
+      version = CRYPTO_VERSION,
     } = e.data;
 
     // Evict the least-recently-accessed entry when at capacity
@@ -71,6 +87,10 @@ self.addEventListener("message", async (e) => {
       urls,
       contentType,
       plainSize,
+      bucketId,
+      creatorId,
+      version,
+      objectKey: fileId,
       registeredAt: Date.now(),
       lastAccessedAt: Date.now(),
     });
@@ -130,8 +150,10 @@ function fromB64(b64) {
 // ── Response builder with prefetch pipeline ──────────────────────────────────
 
 async function buildResponse(config, request) {
-  const { dek, chunkSize, chunkCount, chunkIvs, urls, contentType, plainSize } =
-    config;
+  const { 
+    dek, chunkSize, chunkCount, chunkIvs, urls, contentType, plainSize,
+    creatorId, bucketId, version, objectKey
+  } = config;
 
   // ── Parse Range header ─────────────────────────────────────────────────────
   let start = 0;
@@ -165,8 +187,16 @@ async function buildResponse(config, request) {
     if (!res.ok) throw new Error(`Failed to fetch chunk ${i}: ${res.status}`);
     const cipher = await res.arrayBuffer();
     const iv = fromB64(chunkIvs[i]);
+    const aad = buildAad({
+      userId: creatorId,
+      bucketId,
+      objectKey,
+      version,
+      chunkIndex: i,
+      totalChunks: chunkCount,
+    });
     const plain = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
+      { name: "AES-GCM", iv, additionalData: aad },
       dek,
       cipher,
     );

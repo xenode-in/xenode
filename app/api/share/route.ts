@@ -23,6 +23,7 @@ export async function POST(req: NextRequest) {
     const {
       objectId, expiresIn, maxDownloads, password,
       accessType = "download", shareEncryptedDEK, shareKeyIv, sharedWith = [],
+      bucketId,
     } = await req.json();
 
     if (!objectId) {
@@ -111,7 +112,7 @@ export async function GET(req: NextRequest) {
     await dbConnect();
 
     const links = await ShareLink.find({ createdBy: userId, isRevoked: false })
-      .populate("objectId", "key size contentType isEncrypted encryptedName")
+      .populate("objectId", "key size contentType isEncrypted encryptedName bucketId")
       .sort({ createdAt: -1 })
       .lean();
 

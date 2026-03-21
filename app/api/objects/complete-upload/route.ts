@@ -25,6 +25,8 @@ export async function POST(request: NextRequest) {
       isEncrypted,
       cryptoVersion,
       encryptedName,
+      encryptedMetadata,
+      encryptedManifest,
       chunkSize,
       chunkCount,
       chunkIvs,
@@ -99,10 +101,12 @@ export async function POST(request: NextRequest) {
         if (encryptedDEK) existingObject.encryptedDEK = encryptedDEK;
         if (iv) existingObject.iv = iv;
         if (encryptedName) existingObject.encryptedName = encryptedName;
+        if (encryptedMetadata) existingObject.encryptedMetadata = encryptedMetadata;
+        if (encryptedManifest) existingObject.chunkIvs = encryptedManifest; // Manifest replaces raw Ivs if encrypted
         if (cryptoVersion) existingObject.cryptoVersion = cryptoVersion;
         if (chunkSize) existingObject.chunkSize = chunkSize;
         if (chunkCount) existingObject.chunkCount = chunkCount;
-        if (chunkIvs) existingObject.chunkIvs = chunkIvs;
+        if (chunkIvs && !isEncrypted) existingObject.chunkIvs = chunkIvs;
         if (isChunked && chunks) existingObject.chunks = chunks;
       }
       await existingObject.save();
@@ -126,9 +130,10 @@ export async function POST(request: NextRequest) {
       encryptedDEK: encryptedDEK ?? undefined,
       iv: iv ?? undefined,
       encryptedName: encryptedName ?? undefined,
+      encryptedMetadata: encryptedMetadata ?? undefined,
       chunkSize: chunkSize ?? undefined,
       chunkCount: chunkCount ?? undefined,
-      chunkIvs: chunkIvs ?? undefined,
+      chunkIvs: isEncrypted ? (encryptedManifest ?? undefined) : (chunkIvs ?? undefined),
       chunks: isChunked && chunks ? chunks : undefined,
     });
 

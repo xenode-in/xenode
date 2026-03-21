@@ -209,7 +209,17 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         uploadContentType = "application/octet-stream";
         encryptedDEK = enc.encryptedDEK;
         chunkCount = enc.chunkCount;
-        chunkIvs = JSON.stringify(enc.chunkIvs);
+        
+        // FIX 6: Encrypt chunk manifest (count + order + IVs)
+        const manifest = { chunkCount: enc.chunkCount, chunkSize, chunkIvs: enc.chunkIvs };
+        const manifestAad = buildAad({ ...aadBase, version: CRYPTO_VERSION });
+        // We reuse encryptMetadataString for the manifest blob
+        chunkIvs = await encryptMetadataString(
+          JSON.stringify(manifest),
+          cryptoMetadataKeyRef.current!,
+          manifestAad
+        );
+
         cipherChunkSize = chunkSize + 16;
 
         // Metadata AAD (version 2)
@@ -219,6 +229,19 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           cryptoMetadataKeyRef.current!,
           metadataAad,
         );
+
+        // FIX 4: Encrypt sensitive metadata (size, type, tags)
+        const sensitiveMetadata = {
+          size: task.file.size,
+          contentType: task.file.type || "application/octet-stream",
+          thumbnail, // Include JPEG thumbnail in encrypted blob
+        };
+        const encryptedMetadata = await encryptMetadataString(
+          JSON.stringify(sensitiveMetadata),
+          cryptoMetadataKeyRef.current!,
+          metadataAad
+        );
+        (task as any).encryptedMetadataBlob = encryptedMetadata; // temporary attachment
       }
 
       const presignResponse = await fetch("/api/objects/presign-upload-multipart", {
@@ -309,15 +332,19 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           objectKey: fileId,
           bucketId: returnedBucketId,
           size: totalSize,
-          contentType: task.file.type,
-          thumbnail,
+          contentType: isEncrypted ? "application/octet-stream" : task.file.type,
+          thumbnail: isEncrypted ? undefined : thumbnail,
           isEncrypted: !!encryptedDEK,
           cryptoVersion: isEncrypted ? CRYPTO_VERSION : undefined,
           encryptedDEK,
           encryptedName,
+          // FIX 4/6: Pass the new authenticated blobs
+          encryptedMetadata: (isEncrypted && (task as any).encryptedMetadataBlob) || undefined,
+          encryptedManifest: isEncrypted ? chunkIvs : undefined, 
+          // Note: chunkIvs was overwritten with encrypted manifest in chunked path
           chunkSize: serverChunkSize,
           chunkCount: urls.length,
-          chunkIvs,
+          chunkIvs: isEncrypted ? undefined : chunkIvs, // don't send raw IVs if encrypted
           isChunked: true,
           chunks: chunkUploads,
         }),
@@ -461,6 +488,19 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           cryptoMetadataKeyRef.current!,
           metadataAad
         );
+
+        // FIX 4: Encrypt sensitive metadata
+        const sensitiveMetadata = {
+          size: task.file.size,
+          contentType: task.file.type || "application/octet-stream",
+          thumbnail, // Include JPEG thumbnail in encrypted blob
+        };
+        const encryptedMetadataBlob = await encryptMetadataString(
+          JSON.stringify(sensitiveMetadata),
+          cryptoMetadataKeyRef.current!,
+          metadataAad
+        );
+        (task as any).encryptedMetadataBlob = encryptedMetadataBlob;
       }
 
       // Step 3: Upload to B2 with XHR for progress tracking
@@ -510,13 +550,14 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           objectKey: returnedObjectKey,
           bucketId: returnedBucketId,
           size: uploadBody instanceof Blob ? uploadBody.size : task.file.size,
-          contentType: task.file.type,
-          thumbnail,
+          contentType: isEncrypted ? "application/octet-stream" : task.file.type,
+          thumbnail: isEncrypted ? undefined : thumbnail,
           isEncrypted: !!encryptedDEK,
           cryptoVersion: isEncrypted ? CRYPTO_VERSION : undefined,
           encryptedDEK,
           iv: encryptedIV,
           encryptedName,
+          encryptedMetadata: (isEncrypted && (task as any).encryptedMetadataBlob) || undefined,
           chunkSize,
           chunkCount,
           chunkIvs,

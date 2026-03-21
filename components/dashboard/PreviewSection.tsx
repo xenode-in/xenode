@@ -4,7 +4,8 @@ import Link from "next/link";
 import { Play, Music2 } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptFileName } from "@/lib/crypto/fileEncryption";
+import { decryptMetadataString, buildAad } from "@/lib/crypto/fileEncryption";
+import { CRYPTO_VERSION } from "@/lib/crypto/utils";
 import { useState, useEffect, useMemo } from "react";
 
 interface ObjectData {
@@ -16,6 +17,7 @@ interface ObjectData {
   thumbnail?: string;
   isEncrypted?: boolean;
   encryptedName?: string;
+  bucketId: string;
 }
 
 interface PreviewSectionProps {
@@ -42,7 +44,8 @@ export function PreviewSection({
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>(
     {},
   );
-  const { isUnlocked } = useCrypto();
+  const { isUnlocked, metadataKey, session } = useCrypto() as any;
+  const userId = session?.user?.id;
 
   const allItems = useMemo(
     () => [...videos, ...images, ...audios],
@@ -64,7 +67,13 @@ export function PreviewSection({
           !decryptedNames[item.id]
         ) {
           try {
-            const name = await decryptFileName(item.encryptedName);
+            const aad = buildAad({ 
+              userId, 
+              bucketId: item.bucketId, 
+              objectKey: item.key, 
+              version: CRYPTO_VERSION 
+            });
+            const name = await decryptMetadataString(item.encryptedName, metadataKey, aad);
             newNames[item.id] = name;
           } catch (e) {
             console.error("Failed to decrypt name", e);

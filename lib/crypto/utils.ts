@@ -86,7 +86,7 @@ export async function hmacSha256(
 ): Promise<ArrayBuffer> {
   // Ensure we don't pass SharedArrayBuffer to Web Crypto (which some environments forbid)
   const buffer = data instanceof Uint8Array ? data.buffer : data;
-  if (buffer instanceof SharedArrayBuffer) {
+  if (typeof SharedArrayBuffer !== "undefined" && buffer instanceof SharedArrayBuffer) {
     return crypto.subtle.sign("HMAC", key, new Uint8Array(data));
   }
   return crypto.subtle.sign("HMAC", key, data as BufferSource);

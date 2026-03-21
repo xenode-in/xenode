@@ -30,7 +30,8 @@ import {
 import { formatBytes, formatDate } from "@/lib/utils";
 import { forwardRef, useRef, useCallback, useState, useEffect } from "react";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptFileName } from "@/lib/crypto/fileEncryption";
+import { decryptMetadataString, buildAad } from "@/lib/crypto/fileEncryption";
+import { CRYPTO_VERSION } from "@/lib/crypto/utils";
 
 const getFileIcon = (contentType: string, className?: string) => {
   if (!contentType) return <FileGeneric className={className} />;
@@ -97,6 +98,8 @@ interface ObjectData {
   thumbnail?: string;
   isEncrypted?: boolean;
   encryptedName?: string;
+  encryptedMetadata?: string;
+  bucketId: string;
 }
 
 interface ItemProps {
@@ -143,12 +146,19 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     const isFolder =
       item.contentType === "application/x-directory" || item.key.endsWith("/");
 
-    const { isUnlocked } = useCrypto();
+    const { isUnlocked, metadataKey, session } = useCrypto() as any;
+    const userId = session?.user?.id;
     const [decryptedName, setDecryptedName] = useState<string | null>(null);
 
     useEffect(() => {
       if (item.isEncrypted && item.encryptedName && isUnlocked) {
-        decryptFileName(item.encryptedName).then(setDecryptedName);
+        const aad = buildAad({ 
+          userId, 
+          bucketId: item.bucketId, 
+          objectKey: item.key, 
+          version: CRYPTO_VERSION 
+        });
+        decryptMetadataString(item.encryptedName, metadataKey, aad).then(setDecryptedName);
       } else {
         // eslint-disable-next-line
         setDecryptedName(null);
@@ -421,12 +431,19 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
     const isFolder =
       item.contentType === "application/x-directory" || item.key.endsWith("/");
 
-    const { isUnlocked } = useCrypto();
+    const { isUnlocked, metadataKey, session } = useCrypto() as any;
+    const userId = session?.user?.id;
     const [decryptedName, setDecryptedName] = useState<string | null>(null);
 
     useEffect(() => {
       if (item.isEncrypted && item.encryptedName && isUnlocked) {
-        decryptFileName(item.encryptedName).then(setDecryptedName);
+        const aad = buildAad({ 
+          userId, 
+          bucketId: item.bucketId, 
+          objectKey: item.key, 
+          version: CRYPTO_VERSION 
+        });
+        decryptMetadataString(item.encryptedName, metadataKey, aad).then(setDecryptedName);
       } else {
         // eslint-disable-next-line
         setDecryptedName(null);

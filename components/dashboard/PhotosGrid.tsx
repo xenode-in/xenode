@@ -5,7 +5,8 @@ import { usePreview } from "@/contexts/PreviewContext";
 import { Loader2, ImageOff, LayoutGrid, Grid3x3, Rows3 } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptFileName } from "@/lib/crypto/fileEncryption";
+import { decryptMetadataString, buildAad } from "@/lib/crypto/fileEncryption";
+import { CRYPTO_VERSION } from "@/lib/crypto/utils";
 
 interface ObjectData {
   id: string;
@@ -18,6 +19,8 @@ interface ObjectData {
   tags?: string[];
   position?: number;
   encryptedName?: string;
+  encryptedMetadata?: string;
+  bucketId: string;
 }
 
 type GridDensity = "large" | "medium" | "small";
@@ -51,10 +54,12 @@ function MasonryGrid({
   photos,
   onPhotoClick,
   decryptedNames,
+  decryptedMetas,
 }: {
   photos: ObjectData[];
   onPhotoClick: (p: ObjectData) => void;
   decryptedNames: Record<string, string>;
+  decryptedMetas: Record<string, any>;
 }) {
   return (
     <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 sm:gap-4 space-y-3 sm:space-y-4">
@@ -64,9 +69,9 @@ function MasonryGrid({
           onClick={() => onPhotoClick(photo)}
           className="relative rounded-2xl overflow-hidden bg-secondary border border-border/50 cursor-pointer group transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/5 hover:border-primary/30 hover:z-10 break-inside-avoid"
         >
-          {photo.thumbnail ? (
+          {photo.thumbnail || decryptedMetas[photo.id]?.thumbnail ? (
             <img
-              src={photo.thumbnail}
+              src={photo.thumbnail || decryptedMetas[photo.id]?.thumbnail}
               alt={getFileName(photo.key)}
               className="w-full h-auto object-cover transition-transform duration-700 group-hover:scale-105"
               loading="lazy"
@@ -80,7 +85,7 @@ function MasonryGrid({
             <p className="text-white text-sm font-medium truncate drop-shadow-md">
               {decryptedNames[photo.id] || photo.encryptedName || getFileName(photo.key)}
             </p>
-            <p className="text-white/80 text-xs font-medium drop-shadow-md mt-0.5">{formatBytes(photo.size)}</p>
+            <p className="text-white/80 text-xs font-medium drop-shadow-md mt-0.5">{formatBytes(decryptedMetas[photo.id]?.size || photo.size)}</p>
           </div>
         </div>
       ))}
@@ -93,11 +98,13 @@ function UniformGrid({
   density,
   onPhotoClick,
   decryptedNames,
+  decryptedMetas,
 }: {
   photos: ObjectData[];
   density: GridDensity;
   onPhotoClick: (p: ObjectData) => void;
   decryptedNames: Record<string, string>;
+  decryptedMetas: Record<string, any>;
 }) {
   return (
     <div className={`grid ${DENSITY_COLS[density]} gap-3 sm:gap-4 auto-rows-[140px]`}>
@@ -107,9 +114,9 @@ function UniformGrid({
           onClick={() => onPhotoClick(photo)}
           className="relative rounded-2xl overflow-hidden bg-secondary border border-border/50 cursor-pointer group transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/5 hover:border-primary/30 hover:z-10"
         >
-          {photo.thumbnail ? (
+          {photo.thumbnail || decryptedMetas[photo.id]?.thumbnail ? (
             <img
-              src={photo.thumbnail}
+              src={photo.thumbnail || decryptedMetas[photo.id]?.thumbnail}
               alt={getFileName(photo.key)}
               className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
               loading="lazy"
@@ -123,7 +130,7 @@ function UniformGrid({
             <p className="text-white text-sm font-medium truncate drop-shadow-md">
               {decryptedNames[photo.id] || photo.encryptedName || getFileName(photo.key)}
             </p>
-            <p className="text-white/80 text-xs font-medium drop-shadow-md mt-0.5">{formatBytes(photo.size)}</p>
+            <p className="text-white/80 text-xs font-medium drop-shadow-md mt-0.5">{formatBytes(decryptedMetas[photo.id]?.size || photo.size)}</p>
           </div>
         </div>
       ))}
@@ -140,10 +147,12 @@ export function PhotosGrid() {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const { isUnlocked, metadataKey, session } = useCrypto() as any;
+  const userId = session?.user?.id;
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({});
+  const [decryptedMetas, setDecryptedMetas] = useState<Record<string, any>>({});
 
   const { openPreview } = usePreview();
-  const { isUnlocked } = useCrypto();
 
   useEffect(() => {
     if (!isUnlocked || !photos.length) {
@@ -153,18 +162,38 @@ export function PhotosGrid() {
 
     const decryptNames = async () => {
       const newNames: Record<string, string> = {};
+      const newMetas: Record<string, any> = {};
       for (const photo of photos) {
+        const aad = buildAad({ 
+          userId, 
+          bucketId: photo.bucketId, 
+          objectKey: photo.key, 
+          version: CRYPTO_VERSION 
+        });
+
         if (photo.isEncrypted && photo.encryptedName && !decryptedNames[photo.id]) {
           try {
-            const name = await decryptFileName(photo.encryptedName);
+            const name = await decryptMetadataString(photo.encryptedName, metadataKey, aad);
             newNames[photo.id] = name;
           } catch (e) {
             console.error("Failed to decrypt name", e);
           }
         }
+
+        if (photo.isEncrypted && photo.encryptedMetadata && !decryptedMetas[photo.id]) {
+          try {
+            const metaStr = await decryptMetadataString(photo.encryptedMetadata, metadataKey, aad);
+            newMetas[photo.id] = JSON.parse(metaStr);
+          } catch (e) {
+            console.error("Failed to decrypt metadata", e);
+          }
+        }
       }
       if (Object.keys(newNames).length > 0) {
         setDecryptedNames((prev) => ({ ...prev, ...newNames }));
+      }
+      if (Object.keys(newMetas).length > 0) {
+        setDecryptedMetas((prev) => ({ ...prev, ...newMetas }));
       }
     };
 
@@ -356,6 +385,7 @@ export function PhotosGrid() {
               photos={groupPhotos}
               onPhotoClick={openPreview}
               decryptedNames={decryptedNames}
+              decryptedMetas={decryptedMetas}
             />
           ) : (
             <UniformGrid
@@ -363,6 +393,7 @@ export function PhotosGrid() {
               density={gridMode as GridDensity}
               onPhotoClick={openPreview}
               decryptedNames={decryptedNames}
+              decryptedMetas={decryptedMetas}
             />
           )}
         </div>

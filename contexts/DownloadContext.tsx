@@ -153,14 +153,25 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
       const bucketId = metadata?.bucketId || (obj as any).bucketId;
       const objectKey = obj.id;
 
-      if (isEncrypted && obj.encryptedName && userId && bucketId) {
+      if (isEncrypted && userId && bucketId) {
         try {
-          // Attempt V2 decryption first if it looks like V2, or fallback to legacy logic in decryptMetadataString
           const aad = buildAad({ userId, bucketId, objectKey, version: CRYPTO_VERSION });
-          name = await decryptMetadataString(obj.encryptedName, (obj as any).metadataKey || null, aad);
+          
+          if (obj.encryptedName) {
+            name = await decryptMetadataString(obj.encryptedName, (obj as any).metadataKey || null, aad);
+          }
+
+          // FIX 4: Decrypt sensitive metadata if available
+          if ((obj as any).encryptedMetadata) {
+            const metaBlob = await decryptMetadataString((obj as any).encryptedMetadata, (obj as any).metadataKey || null, aad);
+            const meta = JSON.parse(metaBlob);
+            // We could update obj.size/contentType here if they were wrong, 
+            // but more importantly, we should TRUST these decrypted values.
+            if (meta.size) (obj as any).size = meta.size;
+            if (meta.contentType) (obj as any).contentType = meta.contentType;
+          }
         } catch (e) {
-          console.error("Failed to decrypt filename for download", e);
-          // If decryption fails and it's mandatory, name stays as ID or key
+          console.error("Failed to decrypt metadata for download", e);
         }
       }
       const resumeFrom = isEncrypted ? await getCachedSize(obj.id) : 0;
@@ -206,13 +217,34 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
 
         if (!privateKey) throw new Error("Vault locked. Please unlock first.");
 
-        const isChunked = !!(
+        let isChunked = !!(
           data.chunkUrls &&
           data.chunkUrls.length > 0 &&
           data.chunkSize &&
           data.chunkCount
         );
         let receivedLength = resumeFrom;
+
+        // FIX 6: Decrypt chunk manifest if encrypted
+        let decryptedChunkIvs = data.chunkIvs;
+        if (isEncrypted && isChunked && data.chunkIvs) {
+          try {
+            const aad = buildAad({ userId, bucketId, objectKey, version: CRYPTO_VERSION });
+            const manifestBlob = await decryptMetadataString(data.chunkIvs, (obj as any).metadataKey || null, aad);
+            const manifest = JSON.parse(manifestBlob);
+            
+            // Overwrite server-provided metadata with authenticated manifest values
+            data.chunkCount = manifest.chunkCount;
+            data.chunkSize = manifest.chunkSize;
+            decryptedChunkIvs = JSON.stringify(manifest.chunkIvs);
+            
+            // Re-verify isChunked state
+            isChunked = !!(data.chunkCount && data.chunkSize && manifest.chunkIvs);
+          } catch (e) {
+            console.error("Failed to decrypt chunk manifest", e);
+            throw new Error("CHUNK_MANIFEST_TAMPERED");
+          }
+        }
 
         if (!isChunked) {
           // Legacy single-blob file
@@ -398,7 +430,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
           decryptedBlob = await decryptFileChunkedCombined(
             cachedBytes.buffer as ArrayBuffer,
             data.encryptedDEK,
-            data.chunkIvs,
+            decryptedChunkIvs,
             data.chunkSize,
             data.chunkCount,
             privateKey,

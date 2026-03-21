@@ -38,6 +38,8 @@ export async function GET(_: NextRequest, { params }: Params) {
     maxDownloads: link.maxDownloads,
     shareEncryptedDEK: link.shareEncryptedDEK,
     shareKeyIv: link.shareKeyIv,
+    creatorId: link.createdBy,
+    bucketId: link.bucketId,
   });
 }
 

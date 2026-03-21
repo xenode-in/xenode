@@ -10,7 +10,8 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { decryptChunk } from "@/lib/crypto/fileEncryption";
+import { decryptChunk, buildAad } from "@/lib/crypto/fileEncryption";
+import { CRYPTO_VERSION, AADParams } from "@/lib/crypto/utils";
 
 export interface VideoStreamOptions {
   urls: string[];
@@ -19,6 +20,7 @@ export interface VideoStreamOptions {
   chunkCount: number;
   chunkIvs: string[];
   contentType: string;
+  aadBase?: Omit<AADParams, "chunkIndex" | "totalChunks">;
 }
 
 export interface VideoStreamState {
@@ -116,7 +118,11 @@ export function useVideoStream(
         const res = await fetch(urls[i], { signal: abort.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const cipher = await res.arrayBuffer();
-        return dek ? await decryptChunk(cipher, dek, chunkIvs[i]) : cipher;
+        if (dek && opts.aadBase) {
+          const aad = buildAad({ ...opts.aadBase, chunkIndex: i, totalChunks: chunkCount });
+          return await decryptChunk(cipher, dek, chunkIvs[i], aad);
+        }
+        return cipher;
       };
 
       // Warm up pipeline
@@ -202,9 +208,12 @@ async function fullDecryptFallback(
       const res = await fetch(urls[i], { signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const cipher = await res.arrayBuffer();
-      plaintextChunks[i] = dek
-        ? await decryptChunk(cipher, dek, chunkIvs[i])
-        : cipher;
+      if (dek && opts.aadBase) {
+        const aad = buildAad({ ...opts.aadBase, chunkIndex: i, totalChunks: chunkCount });
+        plaintextChunks[i] = await decryptChunk(cipher, dek, chunkIvs[i], aad);
+      } else {
+        plaintextChunks[i] = cipher;
+      }
       if (onProgress) onProgress(Math.round(((i + 1) / chunkCount) * 100));
     }
   };

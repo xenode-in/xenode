@@ -30,9 +30,10 @@ import { useCrypto } from "@/contexts/CryptoContext";
 import {
   decryptFile,
   decryptFileChunkedCombined,
-  decryptFileName,
+  decryptMetadataString,
+  buildAad,
 } from "@/lib/crypto/fileEncryption";
-import { fromB64 } from "@/lib/crypto/utils";
+import { CRYPTO_VERSION, fromB64 } from "@/lib/crypto/utils";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
 import { useVideoStream, VideoStreamOptions } from "@/hooks/useVideoStream";
 
@@ -45,6 +46,7 @@ interface ObjectData {
   isEncrypted?: boolean;
   encryptedName?: string;
   name?: string;
+  bucketId: string;
 }
 
 interface FilePreviewDialogProps {
@@ -298,7 +300,8 @@ export function FilePreviewDialog({
   // Track object URLs we created so we can revoke them on close
   const objectUrlRef = useRef<string | null>(null);
 
-  const { privateKey, setModalOpen, isUnlocked } = useCrypto();
+  const { privateKey, metadataKey, session, setModalOpen, isUnlocked } = useCrypto() as any;
+  const userId = session?.user?.id;
 
   const isLockedOut = file?.isEncrypted && !privateKey;
 
@@ -346,7 +349,13 @@ export function FilePreviewDialog({
 
     async function decryptName() {
       try {
-        const name = file!.name || await decryptFileName(file!.encryptedName!);
+        const aad = buildAad({ 
+          userId, 
+          bucketId: file.bucketId, 
+          objectKey: file.key, 
+          version: CRYPTO_VERSION 
+        });
+        const name = file!.name || await decryptMetadataString(file!.encryptedName!, metadataKey, aad);
         if (!cancelled) setDecryptedName(name);
       } catch (e) {
         console.error("Failed to decrypt preview file name", e);
@@ -535,6 +544,7 @@ export function FilePreviewDialog({
             data.chunkSize,
             data.chunkCount,
             privateKey,
+            { userId, bucketId: file.bucketId, objectKey: file.key, version: CRYPTO_VERSION },
             data.contentType ?? file.contentType,
           );
         } else {
@@ -544,11 +554,18 @@ export function FilePreviewDialog({
               "Missing encryption parameters (IV or DEK). File might be corrupted.",
             );
           }
+          const aad = buildAad({ 
+            userId, 
+            bucketId: file.bucketId, 
+            objectKey: file.key, 
+            version: CRYPTO_VERSION 
+          });
           decryptedBlob = await decryptFile(
             ciphertextBuf,
             data.encryptedDEK,
             data.iv,
             privateKey,
+            aad,
             data.contentType ?? file.contentType,
           );
         }
