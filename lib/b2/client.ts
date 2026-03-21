@@ -1,6 +1,7 @@
 import { S3Client } from "@aws-sdk/client-s3";
 
 let _client: S3Client | null = null;
+let _publicClient: S3Client | null = null;
 
 /**
  * Get or create the S3 client for B2
@@ -41,6 +42,33 @@ export function getS3Client(): S3Client {
   }
 
   return _client;
+}
+
+/**
+ * Get the public S3 client (Zata.ai)
+ */
+export function getPublicS3Client(): S3Client {
+  if (!_publicClient) {
+    const PUBLIC_ENDPOINT = process.env.PUBLIC_S3_ENDPOINT || "https://idr01.zata.ai";
+    const B2_REGION = process.env.B2_REGION || "us-west-004";
+    const B2_KEY_ID = process.env.B2_KEY_ID;
+    const B2_APPLICATION_KEY = process.env.B2_APPLICATION_KEY;
+
+    if (!B2_KEY_ID || !B2_APPLICATION_KEY) {
+      throw new Error("B2_KEY_ID and B2_APPLICATION_KEY environment variables are required");
+    }
+
+    _publicClient = new S3Client({
+      endpoint: PUBLIC_ENDPOINT,
+      region: B2_REGION,
+      credentials: {
+        accessKeyId: B2_KEY_ID.trim(),
+        secretAccessKey: B2_APPLICATION_KEY.trim(),
+      },
+      forcePathStyle: true,
+    });
+  }
+  return _publicClient;
 }
 
 export const getB2Region = () => process.env.B2_REGION || "us-west-004";

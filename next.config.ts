@@ -5,6 +5,22 @@ const nextConfig: NextConfig = {
   pageExtensions: ["js", "jsx", "md", "mdx", "ts", "tsx"],
   output: "standalone",
   reactStrictMode: false,
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "xenode.in",
+        port: "",
+        pathname: "/**",
+      },
+      {
+        protocol: "https",
+        hostname: "xenopublic.idr01.zata.ai",
+        port: "",
+        pathname: "/**",
+      },
+    ],
+  },
   // Allow admin subdomain in development
   async headers() {
     return [

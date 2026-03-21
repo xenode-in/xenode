@@ -14,6 +14,7 @@ import {
   DollarSign,
   Ticket,
   Activity,
+  FileText,
 } from "lucide-react";
 
 interface AdminSidebarProps {
@@ -69,6 +70,12 @@ const navItems = [
     label: "Billing Simulator",
     icon: Activity,
     roles: ["super_admin"],
+  },
+  {
+    href: "/admin/dashboard/blogs",
+    label: "Blogs",
+    icon: FileText,
+    roles: ["super_admin", "admin"],
   },
 ];
 

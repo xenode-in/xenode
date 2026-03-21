@@ -1,9 +1,5 @@
-import fs from "fs";
-import path from "path";
-import matter from "gray-matter";
-import readingTime from "reading-time";
-
-const POSTS_PATH = path.join(process.cwd(), "content/blog");
+import dbConnect from "@/lib/mongodb";
+import Blog from "@/models/Blog";
 
 export interface BlogPost {
   slug: string;
@@ -14,6 +10,8 @@ export interface BlogPost {
   tags: string[];
   readingTime: string;
   content: string;
+  image?: string;
+  folder?: string;
 }
 
 export interface BlogPostMeta {
@@ -24,71 +22,85 @@ export interface BlogPostMeta {
   author: string;
   tags: string[];
   readingTime: string;
+  image?: string;
+  folder?: string;
 }
 
-export function getAllPosts(): BlogPostMeta[] {
-  // Create directory if it doesn't exist
-  if (!fs.existsSync(POSTS_PATH)) {
-    fs.mkdirSync(POSTS_PATH, { recursive: true });
-    return [];
-  }
+export const BLOG_FOLDERS = [
+  {
+    slug: "announcements",
+    title: "Announcements",
+    description: "Stay up to date with the latest news and product updates.",
+    image: "/blog/announcements.webp",
+  },
+  {
+    slug: "support",
+    title: "Support",
+    description: "Helpful guides and resources to help you use Xenode.",
+    image: "/blog/support.webp",
+  },
+  {
+    slug: "updates",
+    title: "Updates",
+    description: "Technical changelogs and feature releases.",
+    image: "/blog/updates.webp",
+  },
+  {
+    slug: "guides",
+    title: "Guides",
+    description: "Step-by-step tutorials and deep dives.",
+    image: "/blog/guides.webp",
+  },
+  {
+    slug: "security",
+    title: "Security",
+    description: "Learn about how we keep your data safe.",
+    image: "/blog/security.webp",
+  },
+];
 
-  const files = fs
-    .readdirSync(POSTS_PATH)
-    .filter((file) => file.endsWith(".mdx"));
+export async function getAllPosts(): Promise<BlogPostMeta[]> {
+  await dbConnect();
+  const blogs = await Blog.find({}).sort({ date: -1 }).lean();
 
-  const posts = files.map((file) => {
-    const filePath = path.join(POSTS_PATH, file);
-    const source = fs.readFileSync(filePath, "utf-8");
-    const { data, content } = matter(source);
-    const slug = file.replace(".mdx", "");
-
-    return {
-      slug,
-      title: data.title || "Untitled",
-      description: data.description || "",
-      date: data.date || new Date().toISOString(),
-      author: data.author || "Xenode Team",
-      tags: data.tags || [],
-      readingTime: readingTime(content).text,
-    };
-  });
-
-  // Sort by date, newest first
-  return posts.sort(
-    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-  );
+  return blogs.map((blog: any) => ({
+    slug: blog.slug,
+    title: blog.title,
+    description: blog.description,
+    date: blog.date.toISOString(),
+    author: blog.author,
+    tags: blog.tags,
+    readingTime: blog.readingTime,
+    image: blog.image,
+    folder: blog.folder,
+  }));
 }
 
-export function getPostBySlug(slug: string): BlogPost | null {
-  const filePath = path.join(POSTS_PATH, `${slug}.mdx`);
+export async function getPostBySlug(
+  slug: string | string[],
+): Promise<BlogPost | null> {
+  const slugPath = Array.isArray(slug) ? slug.join("/") : slug;
+  await dbConnect();
 
-  if (!fs.existsSync(filePath)) {
-    return null;
-  }
-
-  const source = fs.readFileSync(filePath, "utf-8");
-  const { data, content } = matter(source);
+  const blog = await Blog.findOne({ slug: slugPath }).lean();
+  if (!blog) return null;
 
   return {
-    slug,
-    title: data.title || "Untitled",
-    description: data.description || "",
-    date: data.date || new Date().toISOString(),
-    author: data.author || "Xenode Team",
-    tags: data.tags || [],
-    readingTime: readingTime(content).text,
-    content,
+    slug: blog.slug,
+    title: blog.title,
+    description: blog.description,
+    date: blog.date.toISOString(),
+    author: blog.author,
+    tags: blog.tags,
+    readingTime: blog.readingTime,
+    content: blog.content,
+    image: blog.image,
+    folder: blog.folder,
   };
 }
 
-export function getAllSlugs(): string[] {
-  if (!fs.existsSync(POSTS_PATH)) {
-    return [];
-  }
-
-  return fs
-    .readdirSync(POSTS_PATH)
-    .filter((file) => file.endsWith(".mdx"))
-    .map((file) => file.replace(".mdx", ""));
+export async function getAllSlugs(): Promise<string[]> {
+  await dbConnect();
+  const slugs = await Blog.find({}, { slug: 1 }).lean();
+  return slugs.map((s: any) => s.slug);
 }

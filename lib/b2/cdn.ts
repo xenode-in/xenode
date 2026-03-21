@@ -46,6 +46,17 @@ export function verifyFileToken(
   return diff === 0;
 }
 /**
+ * Returns a direct public Zata.ai URL for an asset.
+ * Assumes the object/bucket is public.
+ */
+export function getPublicB2Url(bucketName: string, key: string): string {
+  // Use the specific Zata.ai public pattern provided by the user
+  // Pattern: https://[bucket].idr01.zata.ai/[key]
+  const endpoint = process.env.PUBLIC_S3_ENDPOINT || "https://idr01.zata.ai";
+  const base = endpoint.replace(/^https?:\/\//, "");
+  return `https://${bucketName}.${base}/${key}`;
+}
+/**
  * Build the full signed proxy URL for a file.
  * Uses Azure CDN base URL if configured, otherwise falls back to the app URL.
  */

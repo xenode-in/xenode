@@ -82,10 +82,11 @@ export function Navbar() {
         <AnimatedLink
           href="/blog"
           onClick={closeMenu}
-          className="flex items-center gap-2 text-sm text-foreground/70 hover:text-foreground"
+          className="text-sm text-foreground/70 hover:text-foreground"
         >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Blog
+          <div className="flex gap-2 items-center">
+            <ArrowLeft className="w-4 h-4" /> <span>Back to Blog</span>
+          </div>
         </AnimatedLink>
       )}
 
