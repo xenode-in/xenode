@@ -16,6 +16,8 @@ export interface IUserKeyVault extends Document {
   recoveryIv: string;
   /** PBKDF2 salt for master-password-only key derivation (base64) */
   recoverySalt: string;
+  vaultVersion: number;
+  vaultHmac?: string;
   /** AES-GCM encrypted PKCS#8 private key using ONLY recovery words (base64) */
   encryptedPrivateKeyRecovery?: string;
   /** PBKDF2 salt for recovery-words-only key derivation (base64) */
@@ -36,6 +38,8 @@ const UserKeyVaultSchema = new Schema<IUserKeyVault>(
     encryptedRecoveryWords: { type: String, required: true },
     recoveryIv: { type: String, required: true },
     recoverySalt: { type: String, required: true },
+    vaultVersion: { type: Number, default: 1 },
+    vaultHmac: { type: String },
     encryptedPrivateKeyRecovery: { type: String, required: false },
     recoveryWordSalt: { type: String, required: false },
     recoveryWordIv: { type: String, required: false },

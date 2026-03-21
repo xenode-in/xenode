@@ -16,6 +16,8 @@ interface CryptoContextType {
   privateKey: CryptoKey | null;
   publicKey: CryptoKey | null;
   metadataKey: CryptoKey | null;
+  vaultVersion: number | null;
+  vaultHmac: string | null;
   setup: (masterPassword: string, recoveryWords: string) => Promise<void>;
   unlock: (masterPassword: string) => Promise<void>;
   regenerate: (newMasterPassword: string, newRecoveryWords: string) => Promise<void>;
@@ -41,6 +43,8 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
   const [privateKey, setPrivateKey] = useState<CryptoKey | null>(null);
   const [publicKey, setPublicKey] = useState<CryptoKey | null>(null);
   const [metadataKey, setMetadataKey] = useState<CryptoKey | null>(null);
+  const [vaultVersion, setVaultVersion] = useState<number | null>(null);
+  const [vaultHmac, setVaultHmac] = useState<string | null>(null);
   const [isModalOpen, setModalOpen] = useState(false);
 
   useEffect(() => {
@@ -49,6 +53,8 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
     setPrivateKey(null);
     setPublicKey(null);
     setMetadataKey(null);
+    setVaultVersion(null);
+    setVaultHmac(null);
     setIsUnlocked(false);
     setNeedsSetup(false);
 
@@ -137,13 +143,17 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
 
   // Lock: wipe keys from memory only, DB stays (re-login re-decrypts into RAM)
   const lock = useCallback(async () => {
-    setPrivateKey(null); setPublicKey(null); setMetadataKey(null); setIsUnlocked(false);
+    setPrivateKey(null); setPublicKey(null); setMetadataKey(null);
+    setVaultVersion(null); setVaultHmac(null);
+    setIsUnlocked(false);
     await clearCachedKeys();
   }, []);
 
   // Logout: wipe keys AND the entire local DB
   const logout = useCallback(async () => {
-    setPrivateKey(null); setPublicKey(null); setMetadataKey(null); setIsUnlocked(false);
+    setPrivateKey(null); setPublicKey(null); setMetadataKey(null);
+    setVaultVersion(null); setVaultHmac(null);
+    setIsUnlocked(false);
     await clearCachedKeys();
     if (userId) await clearLocalDb(userId); // drops IndexedDB + clears lastSync
   }, [userId]);
@@ -152,6 +162,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
     <CryptoContext.Provider value={{
       isInitializing, isUnlocked, needsSetup,
       privateKey, publicKey, metadataKey,
+      vaultVersion, vaultHmac,
       setup, unlock, regenerate, updatePassword, recover,
       lock, logout,
       isModalOpen, setModalOpen,

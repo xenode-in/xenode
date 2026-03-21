@@ -18,6 +18,7 @@ export interface IStorageObject extends Document {
   encryptedDEK?: string; // Base64 RSA-OAEP wrapped AES-256 DEK
   iv?: string; // Base64 12-byte GCM IV (legacy single-blob only)
   encryptedName?: string; // Base64 AES-GCM encrypted original filename
+  cryptoVersion?: number;
   /** Chunked encryption fields — present only on chunked uploads (video/audio) */
   chunkSize?: number; // Plaintext bytes per chunk (e.g. 1 048 576)
   chunkCount?: number; // Total number of chunks
@@ -88,6 +89,10 @@ const StorageObjectSchema = new Schema<IStorageObject>(
     encryptedName: {
       type: String,
       required: false,
+    },
+    cryptoVersion: {
+      type: Number,
+      index: true,
     },
     chunkSize: {
       type: Number,

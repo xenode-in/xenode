@@ -10,8 +10,11 @@ import React, {
 import {
   decryptFile,
   decryptFileChunkedCombined,
-  decryptFileName,
+  decryptMetadataString,
+  buildAad,
 } from "@/lib/crypto/fileEncryption";
+import { CRYPTO_VERSION } from "@/lib/crypto/utils";
+import { useSession } from "@/lib/auth/client";
 import {
   getCachedSize,
   getCachedBytes,
@@ -61,6 +64,7 @@ const DownloadContext = createContext<DownloadContextType | undefined>(
 const abortControllers = new Map<string, AbortController>();
 
 export function DownloadProvider({ children }: { children: React.ReactNode }) {
+  const { data: session } = useSession();
   const [tasks, setTasks] = useState<DownloadTask[]>([]);
   const [pendingResumes, setPendingResumes] = useState<PendingResume[]>([]);
 
@@ -134,11 +138,29 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
       privateKey?: CryptoKey | null,
     ) => {
       let name = obj.key.split("/").pop() || "download";
-      if (isEncrypted && obj.encryptedName) {
+      const isV2 = obj.encryptedName?.startsWith("Ag=="); // Version 2 check if possible before fetch
+
+      // We'll refetch metadata to get userId, bucketId etc for AAD
+      let metadata;
+      try {
+        const mRes = await fetch(`/api/objects/${obj.id}`);
+        if (mRes.ok) metadata = await mRes.json();
+      } catch (e) {
+        console.error("Failed to fetch metadata pre-download", e);
+      }
+
+      const userId = metadata?.userId || session?.user?.id;
+      const bucketId = metadata?.bucketId || (obj as any).bucketId;
+      const objectKey = obj.id;
+
+      if (isEncrypted && obj.encryptedName && userId && bucketId) {
         try {
-          name = await decryptFileName(obj.encryptedName);
+          // Attempt V2 decryption first if it looks like V2, or fallback to legacy logic in decryptMetadataString
+          const aad = buildAad({ userId, bucketId, objectKey, version: CRYPTO_VERSION });
+          name = await decryptMetadataString(obj.encryptedName, (obj as any).metadataKey || null, aad);
         } catch (e) {
           console.error("Failed to decrypt filename for download", e);
+          // If decryption fails and it's mandatory, name stays as ID or key
         }
       }
       const resumeFrom = isEncrypted ? await getCachedSize(obj.id) : 0;
@@ -365,6 +387,12 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         const cachedBytes = await getCachedBytes(obj.id);
         if (!cachedBytes) throw new Error("Cache lost after download");
 
+        const aadBase = {
+          userId,
+          bucketId,
+          objectKey: obj.id,
+        };
+
         let decryptedBlob: Blob;
         if (isChunked) {
           decryptedBlob = await decryptFileChunkedCombined(
@@ -374,15 +402,18 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
             data.chunkSize,
             data.chunkCount,
             privateKey,
-            data.contentType ?? obj.contentType,
+            aadBase,
+            data.contentType ?? obj.contentType
           );
         } else {
+          const fileAad = buildAad({ ...aadBase, chunkIndex: 0, totalChunks: 1 });
           decryptedBlob = await decryptFile(
             cachedBytes.buffer as ArrayBuffer,
             data.encryptedDEK,
             data.iv,
             privateKey,
-            data.contentType ?? obj.contentType,
+            fileAad,
+            data.contentType ?? obj.contentType
           );
         }
 

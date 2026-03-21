@@ -3,19 +3,11 @@
  * Key vault setup and unlock — browser only.
  *
  * Vault passphrase = masterPassword + ":" + recoveryWords
- *
- * This means:
- *   - Master password alone cannot unlock the vault
- *   - Recovery words alone cannot unlock the vault
- *   - Recovery words are only useful when master password is also known
- *     (or when resetting — user sets a new master password + new recovery kit)
- *
- * Normal unlock flow (same device):  IDB cache → silent
- * Normal unlock flow (new device):   Enter master password → done
- * Recovery flow (forgot password):   Enter recovery words + set new password → regenerate vault
  */
 
-import { toB64, fromB64, deriveKey } from "./utils";
+import { toB64, fromB64, deriveKey, hmacSha256 } from "./utils";
+
+export const VAULT_VERSION = 2;
 
 const RSA_PARAMS: RsaHashedKeyGenParams = {
   name: "RSA-OAEP",
@@ -35,8 +27,6 @@ export function buildVaultPassphrase(
 /**
  * setupUserKeyVault
  * Called once during onboarding.
- * masterPassword  = user-chosen password (min 8 chars)
- * recoveryWords   = 12 BIP39 words joined with spaces (from generateRecoveryKit)
  */
 export async function setupUserKeyVault(
   masterPassword: string,
@@ -69,28 +59,24 @@ export async function setupUserKeyVault(
     privateKeyBuf = await crypto.subtle.exportKey("pkcs8", keypair.privateKey);
   }
 
-  const salt = crypto.getRandomValues(
-    new Uint8Array(16),
-  ) as Uint8Array<ArrayBuffer>;
-  const masterKey = await deriveKey(passphrase, salt);
+  const salt = crypto.getRandomValues(new Uint8Array(16)) as Uint8Array<ArrayBuffer>;
+  const masterKey = await deriveKey(passphrase, salt, "AES-GCM");
+  const hmacKey = await deriveKey(passphrase, salt, "HMAC");
 
-  const iv = crypto.getRandomValues(
-    new Uint8Array(12),
-  ) as Uint8Array<ArrayBuffer>;
+  const iv = crypto.getRandomValues(new Uint8Array(12)) as Uint8Array<ArrayBuffer>;
   const encryptedPrivKey = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     masterKey,
     privateKeyBuf,
   );
 
+  // Sign the encrypted private key for integrity
+  const vaultHmac = await hmacSha256(hmacKey, encryptedPrivKey);
+
   // Encrypt recovery words using a key derived ONLY from the master password
-  const recoverySalt = crypto.getRandomValues(
-    new Uint8Array(16),
-  ) as Uint8Array<ArrayBuffer>;
-  const recoveryKey = await deriveKey(masterPassword, recoverySalt);
-  const recoveryIv = crypto.getRandomValues(
-    new Uint8Array(12),
-  ) as Uint8Array<ArrayBuffer>;
+  const recoverySalt = crypto.getRandomValues(new Uint8Array(16)) as Uint8Array<ArrayBuffer>;
+  const recoveryKey = await deriveKey(masterPassword, recoverySalt, "AES-GCM");
+  const recoveryIv = crypto.getRandomValues(new Uint8Array(12)) as Uint8Array<ArrayBuffer>;
 
   const encryptedRecoveryWordsBuf = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv: recoveryIv },
@@ -99,13 +85,9 @@ export async function setupUserKeyVault(
   );
 
   // Encrypt the private key using a key derived ONLY from recovery words (for true recovery)
-  const recoveryWordSalt = crypto.getRandomValues(
-    new Uint8Array(16),
-  ) as Uint8Array<ArrayBuffer>;
-  const recoveryOnlyKey = await deriveKey(recoveryWords, recoveryWordSalt);
-  const recoveryWordIv = crypto.getRandomValues(
-    new Uint8Array(12),
-  ) as Uint8Array<ArrayBuffer>;
+  const recoveryWordSalt = crypto.getRandomValues(new Uint8Array(16)) as Uint8Array<ArrayBuffer>;
+  const recoveryOnlyKey = await deriveKey(recoveryWords, recoveryWordSalt, "AES-GCM");
+  const recoveryWordIv = crypto.getRandomValues(new Uint8Array(12)) as Uint8Array<ArrayBuffer>;
   const encryptedPrivKeyRecoveryBuf = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv: recoveryWordIv },
     recoveryOnlyKey,
@@ -118,6 +100,8 @@ export async function setupUserKeyVault(
     body: JSON.stringify({
       publicKey: toB64(publicKeyBuf),
       encryptedPrivateKey: toB64(encryptedPrivKey),
+      vaultHmac: toB64(vaultHmac),
+      vaultVersion: VAULT_VERSION,
       pbkdf2Salt: toB64(salt),
       iv: toB64(iv),
       encryptedRecoveryWords: toB64(encryptedRecoveryWordsBuf),
@@ -156,14 +140,6 @@ export async function setupUserKeyVault(
 /**
  * unlockVault
  * Called on new device / cleared IDB cache.
- * User only needs to enter their master password — recovery words are NOT needed for normal unlock.
- *
- * Wait — how? The vault was encrypted with masterPassword + recoveryWords.
- * So we DO need both... unless we store the recovery words encrypted server-side too?
- *
- * DECISION: For simplicity, normal unlock uses master password ONLY.
- * We store the recovery words encrypted with the master password on the server (separate field).
- * On unlock: fetch encrypted recovery words → decrypt with master password → rebuild full passphrase → decrypt vault.
  */
 export async function unlockVault(masterPassword: string): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey; metadataKey: CryptoKey }> {
   const res = await fetch("/api/keys/vault");
@@ -176,6 +152,8 @@ export async function unlockVault(masterPassword: string): Promise<{ privateKey:
   const {
     publicKey: publicKeyB64,
     encryptedPrivateKey,
+    vaultHmac,
+    vaultVersion,
     pbkdf2Salt,
     iv,
     encryptedRecoveryWords,
@@ -184,7 +162,7 @@ export async function unlockVault(masterPassword: string): Promise<{ privateKey:
   } = await res.json();
 
   // Step 1: Derive a key from master password alone to decrypt the stored recovery words
-  const recoveryKey = await deriveKey(masterPassword, fromB64(recoverySalt));
+  const recoveryKey = await deriveKey(masterPassword, fromB64(recoverySalt), "AES-GCM");
   let recoveryWordsBuf: ArrayBuffer;
   try {
     recoveryWordsBuf = await crypto.subtle.decrypt(
@@ -197,16 +175,39 @@ export async function unlockVault(masterPassword: string): Promise<{ privateKey:
   }
   const recoveryWords = new TextDecoder().decode(recoveryWordsBuf);
 
-  // Step 2: Rebuild full passphrase and decrypt the private key
+  // Step 2: Rebuild full passphrase
   const passphrase = buildVaultPassphrase(masterPassword, recoveryWords);
-  const masterKey = await deriveKey(passphrase, fromB64(pbkdf2Salt));
+  const salt = fromB64(pbkdf2Salt);
+  const masterKey = await deriveKey(passphrase, salt, "AES-GCM");
+  const hmacKey = await deriveKey(passphrase, salt, "HMAC");
 
+  const encryptedPrivateKeyBuf = fromB64(encryptedPrivateKey);
+
+  // INTEGRITY CHECK (V2+)
+  if (vaultVersion >= 2) {
+    if (!vaultHmac) throw new Error("VAULT_TAMPERED");
+    const computedHmac = await hmacSha256(hmacKey, encryptedPrivateKeyBuf);
+    const storedHmac = fromB64(vaultHmac);
+    
+    // Constant-time check comparison (basic)
+    const computedArr = new Uint8Array(computedHmac);
+    const storedArr = new Uint8Array(storedHmac);
+    if (computedArr.length !== storedArr.length) throw new Error("VAULT_TAMPERED");
+    
+    let mismatch = 0;
+    for (let i = 0; i < computedArr.length; i++) {
+      mismatch |= computedArr[i] ^ storedArr[i];
+    }
+    if (mismatch !== 0) throw new Error("VAULT_TAMPERED");
+  }
+
+  // Step 3: Decrypt the private key
   let privateKeyBuf: ArrayBuffer;
   try {
     privateKeyBuf = await crypto.subtle.decrypt(
       { name: "AES-GCM", iv: fromB64(iv) },
       masterKey,
-      fromB64(encryptedPrivateKey),
+      encryptedPrivateKeyBuf,
     );
   } catch {
     throw new Error("WRONG_PASSWORD");
@@ -240,8 +241,6 @@ export async function unlockVault(masterPassword: string): Promise<{ privateKey:
 
 /**
  * regenerateVault
- * Called when user has their recovery words + sets a new master password.
- * Used in the "forgot master password" recovery flow.
  */
 export async function regenerateVault(
   newMasterPassword: string,
@@ -252,117 +251,61 @@ export async function regenerateVault(
 
 /**
  * updateVaultPassword
- * Re-encrypts the user's existing vault with a new master password, keeping the
- * same keypair and same recovery words.
- * Used during account password change.
  */
 export async function updateVaultPassword(
   currentPassword: string,
   newMasterPassword: string,
 ): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey; metadataKey: CryptoKey }> {
+  // Fetch latest to get recovery words
   const res = await fetch("/api/keys/vault");
-  if (res.status === 404) throw new Error("NO_VAULT");
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || "Failed to fetch vault");
-  }
+  if (!res.ok) throw new Error("VAULT_FETCH_FAILED");
+  const vault = await res.json();
 
-  const {
-    publicKey: publicKeyB64,
-    encryptedPrivateKey,
-    pbkdf2Salt,
-    iv,
-    encryptedRecoveryWords,
-    recoveryIv,
-    recoverySalt,
-  } = await res.json();
-
-  // 1. Decrypt the stored recovery words using the CURRENT password
-  const recoveryKey = await deriveKey(currentPassword, fromB64(recoverySalt));
-  let recoveryWordsBuf: ArrayBuffer;
-  try {
-    recoveryWordsBuf = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: fromB64(recoveryIv) },
-      recoveryKey,
-      fromB64(encryptedRecoveryWords),
-    );
-  } catch {
-    throw new Error("WRONG_PASSWORD");
-  }
+  const recoveryKey = await deriveKey(currentPassword, fromB64(vault.recoverySalt), "AES-GCM");
+  const recoveryWordsBuf = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: fromB64(vault.recoveryIv) },
+    recoveryKey,
+    fromB64(vault.encryptedRecoveryWords),
+  );
   const recoveryWords = new TextDecoder().decode(recoveryWordsBuf);
 
-  // 2. Decrypt the private key using the CURRENT password + recovery words
+  // Decrypt private key
   const passphrase = buildVaultPassphrase(currentPassword, recoveryWords);
-  const masterKey = await deriveKey(passphrase, fromB64(pbkdf2Salt));
-
-  let privateKeyBuf: ArrayBuffer;
-  try {
-    privateKeyBuf = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: fromB64(iv) },
-      masterKey,
-      fromB64(encryptedPrivateKey),
-    );
-  } catch {
-    throw new Error("WRONG_PASSWORD");
-  }
-
-  // 3. Re-encrypt with the NEW password via setupUserKeyVault
-  const publicKeyBuf = fromB64(publicKeyB64).buffer;
+  const masterKey = await deriveKey(passphrase, fromB64(vault.pbkdf2Salt), "AES-GCM");
+  const privateKeyBuf = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: fromB64(vault.iv) },
+    masterKey,
+    fromB64(vault.encryptedPrivateKey),
+  );
 
   return setupUserKeyVault(newMasterPassword, recoveryWords, {
     privateKeyBuf,
-    publicKeyBuf,
+    publicKeyBuf: fromB64(vault.publicKey).buffer,
   });
 }
 
 /**
  * recoverAndResetVault
- * Decrypts the existing vault using ONLY the recovery words, then re-encrypts
- * it with a new master password, keeping the original encrypted files accessible.
  */
 export async function recoverAndResetVault(
   recoveryWords: string,
   newMasterPassword: string,
 ): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey; metadataKey: CryptoKey }> {
   const res = await fetch("/api/keys/vault");
-  if (res.status === 404) throw new Error("NO_VAULT");
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.error || "Failed to fetch vault");
-  }
+  if (!res.ok) throw new Error("VAULT_FETCH_FAILED");
+  const vault = await res.json();
 
-  const {
-    publicKey: publicKeyB64,
-    encryptedPrivateKeyRecovery,
-    recoveryWordSalt,
-    recoveryWordIv,
-  } = await res.json();
+  if (!vault.encryptedPrivateKeyRecovery) throw new Error("RECOVERY_NOT_CONFIGURED");
 
-  if (!encryptedPrivateKeyRecovery || !recoveryWordSalt || !recoveryWordIv) {
-    throw new Error(
-      "Vault is not configured for true recovery. Please refer to support or delete your account to start over.",
-    );
-  }
-
-  const recoveryOnlyKey = await deriveKey(
-    recoveryWords,
-    fromB64(recoveryWordSalt),
+  const recoveryOnlyKey = await deriveKey(recoveryWords, fromB64(vault.recoveryWordSalt), "AES-GCM");
+  const privateKeyBuf = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: fromB64(vault.recoveryWordIv) },
+    recoveryOnlyKey,
+    fromB64(vault.encryptedPrivateKeyRecovery),
   );
-  let privateKeyBuf: ArrayBuffer;
-  try {
-    privateKeyBuf = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: fromB64(recoveryWordIv) },
-      recoveryOnlyKey,
-      fromB64(encryptedPrivateKeyRecovery),
-    );
-  } catch {
-    throw new Error("INVALID_RECOVERY_KIT");
-  }
-
-  const publicKeyBuf = fromB64(publicKeyB64).buffer;
 
   return setupUserKeyVault(newMasterPassword, recoveryWords, {
     privateKeyBuf,
-    publicKeyBuf,
+    publicKeyBuf: fromB64(vault.publicKey).buffer,
   });
 }

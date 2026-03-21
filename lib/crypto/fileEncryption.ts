@@ -2,7 +2,7 @@
  * lib/crypto/fileEncryption.ts
  */
 
-import { toB64, fromB64 } from "./utils";
+import { toB64, fromB64, CRYPTO_VERSION, MetadataEnvelope, packEnvelope, unpackEnvelope } from "./utils";
 
 export interface EncryptedFileResult {
   ciphertext: Blob;
@@ -10,9 +10,35 @@ export interface EncryptedFileResult {
   iv: string;
 }
 
+export interface AADParams {
+  userId: string;
+  bucketId: string;
+  objectKey: string;
+  version?: number;
+  chunkIndex?: number;
+  totalChunks?: number;
+}
+
+/**
+ * Builds a deterministic AAD string for AES-GCM binding.
+ * Format: userId|bucketId|objectKey|version|chunkIndex|totalChunks
+ */
+export function buildAad(params: AADParams): Uint8Array<ArrayBuffer> {
+  const parts = [
+    params.userId,
+    params.bucketId,
+    params.objectKey,
+    params.version ?? CRYPTO_VERSION,
+    params.chunkIndex ?? 0,
+    params.totalChunks ?? 1,
+  ];
+  return new TextEncoder().encode(parts.join("|"));
+}
+
 export async function encryptFile(
   file: File,
   publicKey: CryptoKey,
+  aad: Uint8Array<ArrayBuffer>,
 ): Promise<EncryptedFileResult> {
   const dek = await crypto.subtle.generateKey(
     { name: "AES-GCM", length: 256 },
@@ -22,7 +48,13 @@ export async function encryptFile(
 
   const iv = crypto.getRandomValues(new Uint8Array(12)) as Uint8Array<ArrayBuffer>;
   const plaintext = await file.arrayBuffer();
-  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, dek, plaintext);
+  
+  // Enforce AAD binding
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv, additionalData: aad },
+    dek,
+    plaintext
+  );
 
   const rawDEK = await crypto.subtle.exportKey("raw", dek);
   const wrappedDEK = await crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, rawDEK);
@@ -39,6 +71,7 @@ export async function decryptFile(
   encryptedDEK: string,
   iv: string,
   privateKey: CryptoKey,
+  aad: Uint8Array<ArrayBuffer>,
   contentType: string,
 ): Promise<Blob> {
   const wrappedDEKBytes = fromB64(encryptedDEK);
@@ -49,38 +82,15 @@ export async function decryptFile(
   );
 
   const ivBytes = fromB64(iv) as Uint8Array<ArrayBuffer>;
-  const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ivBytes }, dek, ciphertext);
-  return new Blob([plaintext], { type: contentType });
-}
-
-export async function decryptFileChunkedCombined(
-  ciphertext: ArrayBuffer,
-  encryptedDEK: string,
-  chunkIvsStr: string | string[],
-  chunkSize: number,
-  chunkCount: number,
-  privateKey: CryptoKey,
-  contentType: string,
-): Promise<Blob> {
-  const wrappedDEKBytes = fromB64(encryptedDEK);
-  const rawDEK = await crypto.subtle.decrypt({ name: "RSA-OAEP" }, privateKey, wrappedDEKBytes);
-
-  const dek = await crypto.subtle.importKey(
-    "raw", rawDEK, { name: "AES-GCM", length: 256 }, false, ["decrypt"],
+  
+  // Decryption will fail if AAD doesn't match
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: ivBytes, additionalData: aad },
+    dek,
+    ciphertext
   );
-
-  const chunkIvs: string[] = typeof chunkIvsStr === "string" ? JSON.parse(chunkIvsStr) : chunkIvsStr;
-  const decryptedChunks: ArrayBuffer[] = [];
-
-  for (let i = 0; i < chunkCount; i++) {
-    const cipherChunkSize = chunkSize + 16;
-    const start = i * cipherChunkSize;
-    const end = Math.min(start + cipherChunkSize, ciphertext.byteLength);
-    const slice = ciphertext.slice(start, end);
-    decryptedChunks.push(await decryptChunk(slice, dek, chunkIvs[i]));
-  }
-
-  return new Blob(decryptedChunks, { type: contentType });
+  
+  return new Blob([plaintext], { type: contentType });
 }
 
 export interface EncryptedFileChunkedResult {
@@ -94,6 +104,7 @@ export interface EncryptedFileChunkedResult {
 export async function encryptFileChunked(
   file: File,
   publicKey: CryptoKey,
+  aadBase: Omit<AADParams, "chunkIndex" | "totalChunks">,
   chunkSize = 1_048_576,
 ): Promise<EncryptedFileChunkedResult> {
   const dek = await crypto.subtle.generateKey(
@@ -115,8 +126,16 @@ export async function encryptFileChunked(
       const start = i * chunkSize;
       const end = Math.min(start + chunkSize, plaintext.byteLength);
       const slice = plaintext.slice(start, end);
+      
       const iv = crypto.getRandomValues(new Uint8Array(12));
-      const cipherChunk = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, dek, slice);
+      const chunkAad = buildAad({ ...aadBase, chunkIndex: i, totalChunks: chunkCount });
+      
+      const cipherChunk = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv, additionalData: chunkAad },
+        dek,
+        slice
+      );
+      
       chunkIvs[i] = toB64(iv);
       encryptedChunks[i] = cipherChunk;
     }
@@ -137,102 +156,106 @@ export async function encryptFileChunked(
   };
 }
 
+export async function decryptFileChunkedCombined(
+  ciphertext: ArrayBuffer,
+  encryptedDEK: string,
+  chunkIvsStr: string | string[],
+  chunkSize: number,
+  chunkCount: number,
+  privateKey: CryptoKey,
+  aadBase: Omit<AADParams, "chunkIndex" | "totalChunks">,
+  contentType: string,
+): Promise<Blob> {
+  const wrappedDEKBytes = fromB64(encryptedDEK);
+  const rawDEK = await crypto.subtle.decrypt({ name: "RSA-OAEP" }, privateKey, wrappedDEKBytes);
+
+  const dek = await crypto.subtle.importKey(
+    "raw", rawDEK, { name: "AES-GCM", length: 256 }, false, ["decrypt"],
+  );
+
+  const chunkIvs: string[] = typeof chunkIvsStr === "string" ? JSON.parse(chunkIvsStr) : chunkIvsStr;
+  const decryptedChunks: ArrayBuffer[] = [];
+
+  for (let i = 0; i < chunkCount; i++) {
+    const cipherChunkSize = chunkSize + 16;
+    const start = i * cipherChunkSize;
+    const end = Math.min(start + cipherChunkSize, ciphertext.byteLength);
+    const slice = ciphertext.slice(start, end);
+    
+    const chunkAad = buildAad({ ...aadBase, chunkIndex: i, totalChunks: chunkCount });
+    decryptedChunks.push(await decryptChunk(slice, dek, chunkIvs[i], chunkAad));
+  }
+
+  return new Blob(decryptedChunks, { type: contentType });
+}
+
 export async function decryptChunk(
   cipherChunk: ArrayBuffer,
   dek: CryptoKey,
   ivB64: string,
+  aad: Uint8Array<ArrayBuffer>,
 ): Promise<ArrayBuffer> {
   const iv = fromB64(ivB64) as Uint8Array<ArrayBuffer>;
-  return crypto.subtle.decrypt({ name: "AES-GCM", iv }, dek, cipherChunk);
+  return crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: aad }, dek, cipherChunk);
 }
 
 /**
- * Decrypts a filename that was encrypted during upload.
- * The b64 string contains: [nameKey(32 bytes)] + [nameIV(12 bytes)] + [ciphertext]
- */
-export async function decryptFileName(
-  encryptedNameB64: string,
-): Promise<string> {
-  try {
-    const combined = fromB64(encryptedNameB64);
-    if (combined.byteLength < 44) return "Unknown File";
-
-    const nameKeyBytes = combined.slice(0, 32);
-    const nameIV = combined.slice(32, 44);
-    const ciphertext = combined.slice(44);
-
-    const key = await crypto.subtle.importKey(
-      "raw",
-      nameKeyBytes,
-      { name: "AES-GCM", length: 256 },
-      false,
-      ["decrypt"],
-    );
-
-    const plaintext = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: nameIV },
-      key,
-      ciphertext,
-    );
-
-    return new TextDecoder().decode(plaintext);
-  } catch (err) {
-    console.warn("[E2EE] Failed to decrypt file name", err);
-    return "Encrypted File";
-  }
-}
-
-/**
- * Encrypts a string using the shared metadataKey.
- * Format: [0x02 version byte] + [12 bytes IV] + [ciphertext]
+ * Encrypts metadata (e.g. filename) using the shared metadataKey.
+ * Returns a versioned B64 envelope: [version][iv][ciphertext][tag]
  */
 export async function encryptMetadataString(
   text: string,
   metadataKey: CryptoKey,
+  aad: Uint8Array<ArrayBuffer>,
 ): Promise<string> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encoded = new TextEncoder().encode(text);
+  
   const ciphertextBuffer = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv }, metadataKey, encoded,
+    { name: "AES-GCM", iv, additionalData: aad },
+    metadataKey,
+    encoded,
   );
 
-  // 0x02 = new metadataKey format. Distinguishes from legacy format unambiguously.
-  const combined = new Uint8Array(1 + iv.length + ciphertextBuffer.byteLength);
-  combined[0] = 0x02;
-  combined.set(iv, 1);
-  combined.set(new Uint8Array(ciphertextBuffer), 1 + iv.length);
-  return toB64(combined);
+  const envelope: MetadataEnvelope = {
+    version: CRYPTO_VERSION,
+    iv,
+    ciphertext: new Uint8Array(ciphertextBuffer),
+  };
+
+  return toB64(packEnvelope(envelope));
 }
 
 /**
- * Decrypts a metadata string.
- * Handles:
- *   - New format:    [0x02] + [12 bytes IV] + [ciphertext]  → uses metadataKey
- *   - Legacy format: [32 bytes AES key] + [12 bytes IV] + [ciphertext] → self-contained
+ * Decrypts a versioned metadata envelope.
+ * Handles backward compatibility for legacy formats.
  */
 export async function decryptMetadataString(
   encryptedB64: string,
   metadataKey: CryptoKey | null,
+  aad: Uint8Array<ArrayBuffer>,
 ): Promise<string> {
   try {
-    const combined = fromB64(encryptedB64);
+    const packed = fromB64(encryptedB64);
 
-    // New format: version byte 0x02
-    if (combined[0] === 0x02) {
-      if (!metadataKey) return "Encrypted File";
-      const iv = combined.slice(1, 13);
-      const ciphertext = combined.slice(13);
+    // CRYPTO_VERSION check (0x02)
+    if (packed[0] === CRYPTO_VERSION) {
+      if (!metadataKey) throw new Error("Metadata key missing");
+      const envelope = unpackEnvelope(packed);
       const plaintext = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv }, metadataKey, ciphertext,
+        { name: "AES-GCM", iv: envelope.iv, additionalData: aad },
+        metadataKey,
+        envelope.ciphertext,
       );
       return new TextDecoder().decode(plaintext);
     }
 
-    // Legacy format: first 32 bytes are a raw AES key
-    if (combined.byteLength >= 44) {
-      const nameKeyBytes = combined.slice(0, 32);
-      const nameIV = combined.slice(32, 44);
-      const ciphertext = combined.slice(44);
+    // LEGACY READ-ONLY PATH (no AAD)
+    if (packed.byteLength >= 44) {
+      const nameKeyBytes = packed.slice(0, 32);
+      const nameIV = packed.slice(32, 44);
+      const ciphertext = packed.slice(44);
+      
       const legacyKey = await crypto.subtle.importKey(
         "raw", nameKeyBytes, { name: "AES-GCM", length: 256 }, false, ["decrypt"],
       );
@@ -242,9 +265,9 @@ export async function decryptMetadataString(
       return new TextDecoder().decode(plaintext);
     }
 
-    return "Encrypted File";
+    throw new Error("Unsupported metadata format");
   } catch (err) {
-    console.warn("[E2EE] Failed to decrypt metadata string", err);
-    return "Encrypted File";
+    console.warn("[E2EE] Authentication failed for metadata", err);
+    throw err; // Fail closed
   }
 }

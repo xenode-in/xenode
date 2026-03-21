@@ -23,6 +23,7 @@ export async function POST(request: NextRequest) {
       encryptedDEK,
       iv,
       isEncrypted,
+      cryptoVersion,
       encryptedName,
       chunkSize,
       chunkCount,
@@ -98,6 +99,7 @@ export async function POST(request: NextRequest) {
         if (encryptedDEK) existingObject.encryptedDEK = encryptedDEK;
         if (iv) existingObject.iv = iv;
         if (encryptedName) existingObject.encryptedName = encryptedName;
+        if (cryptoVersion) existingObject.cryptoVersion = cryptoVersion;
         if (chunkSize) existingObject.chunkSize = chunkSize;
         if (chunkCount) existingObject.chunkCount = chunkCount;
         if (chunkIvs) existingObject.chunkIvs = chunkIvs;
@@ -120,6 +122,7 @@ export async function POST(request: NextRequest) {
       b2FileId,
       thumbnail,
       isEncrypted: isEncrypted ?? false,
+      cryptoVersion: cryptoVersion ?? undefined,
       encryptedDEK: encryptedDEK ?? undefined,
       iv: iv ?? undefined,
       encryptedName: encryptedName ?? undefined,

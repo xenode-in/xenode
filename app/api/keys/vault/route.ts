@@ -20,6 +20,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       publicKey: vault.publicKey,
       encryptedPrivateKey: vault.encryptedPrivateKey,
+      vaultVersion: vault.vaultVersion,
+      vaultHmac: vault.vaultHmac,
       pbkdf2Salt: vault.pbkdf2Salt,
       iv: vault.iv,
       encryptedRecoveryWords: vault.encryptedRecoveryWords,
@@ -44,7 +46,7 @@ export async function POST(request: NextRequest) {
     const userId = session.user.id;
 
     const {
-      publicKey, encryptedPrivateKey, pbkdf2Salt, iv,
+      publicKey, encryptedPrivateKey, vaultVersion, vaultHmac, pbkdf2Salt, iv,
       encryptedRecoveryWords, recoveryIv, recoverySalt,
       encryptedPrivateKeyRecovery, recoveryWordSalt, recoveryWordIv,
     } = await request.json();
@@ -57,7 +59,11 @@ export async function POST(request: NextRequest) {
 
     await UserKeyVault.findOneAndUpdate(
       { userId },
-      { userId, publicKey, encryptedPrivateKey, pbkdf2Salt, iv, encryptedRecoveryWords, recoveryIv, recoverySalt, encryptedPrivateKeyRecovery, recoveryWordSalt, recoveryWordIv },
+      { 
+        userId, publicKey, encryptedPrivateKey, vaultVersion, vaultHmac, 
+        pbkdf2Salt, iv, encryptedRecoveryWords, recoveryIv, recoverySalt, 
+        encryptedPrivateKeyRecovery, recoveryWordSalt, recoveryWordIv 
+      },
       { upsert: true, new: true },
     );
 

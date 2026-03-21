@@ -10,8 +10,8 @@ import React, {
 } from "react";
 import { useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { encryptFile, encryptFileChunked } from "@/lib/crypto/fileEncryption";
-import { toB64 } from "@/lib/crypto/utils";
+import { encryptFile, encryptFileChunked, buildAad, encryptMetadataString } from "@/lib/crypto/fileEncryption";
+import { toB64, CRYPTO_VERSION } from "@/lib/crypto/utils";
 
 export interface UploadTask {
   id: string;
@@ -181,6 +181,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
       const chunkSize = getAdaptiveChunkSize(task.file.size, task.file.type);
       let cipherChunkSize = chunkSize;
+      const objectKey = shouldEncryptNow() ? crypto.randomUUID() : (task.file.name);
+      const isEncrypted = shouldEncryptNow();
+
       let uploadBody: File | Blob = task.file;
       let uploadContentType = task.file.type || "application/octet-stream";
       let encryptedDEK: string | undefined;
@@ -188,60 +191,41 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       let chunkCount = Math.ceil(task.file.size / chunkSize);
       let chunkIvs: string | undefined;
 
-      if (shouldEncryptNow()) {
-        try {
-          const enc = await encryptFileChunked(
-            task.file,
-            cryptoPublicKeyRef.current!,
-            chunkSize
-          );
-          uploadBody = enc.ciphertext;
-          uploadContentType = "application/octet-stream";
-          encryptedDEK = enc.encryptedDEK;
-          chunkCount = enc.chunkCount;
-          chunkIvs = JSON.stringify(enc.chunkIvs);
-          cipherChunkSize = chunkSize + 16;
+      if (isEncrypted) {
+        // Build AAD for chunked upload (base params)
+        const aadBase = {
+          userId: sessionRef.current!.user.id,
+          bucketId: task.bucketId,
+          objectKey, // UUID
+        };
 
-          const nameBuf = new TextEncoder().encode(task.file.name);
-          const nameKey = crypto.getRandomValues(new Uint8Array(32));
-          const nameIV = crypto.getRandomValues(new Uint8Array(12));
-          const encNameBuf = await crypto.subtle.encrypt(
-            { name: "AES-GCM", iv: nameIV as Uint8Array<ArrayBuffer> },
-            await crypto.subtle.importKey(
-              "raw",
-              nameKey as Uint8Array<ArrayBuffer>,
-              { name: "AES-GCM", length: 256 },
-              false,
-              ["encrypt"],
-            ),
-            nameBuf,
-          );
-          const combined = new Uint8Array(
-            nameKey.byteLength + nameIV.byteLength + encNameBuf.byteLength,
-          );
-          combined.set(nameKey, 0);
-          combined.set(nameIV, nameKey.byteLength);
-          combined.set(
-            new Uint8Array(encNameBuf),
-            nameKey.byteLength + nameIV.byteLength,
-          );
-          encryptedName = toB64(combined);
-        } catch (err) {
-          console.warn("[E2EE] Encryption failed, falling back to plaintext", err);
-          uploadBody = task.file;
-          uploadContentType = task.file.type || "application/octet-stream";
-          encryptedDEK = undefined;
-          encryptedName = undefined;
-          chunkIvs = undefined;
-          chunkCount = Math.ceil(task.file.size / chunkSize);
-        }
+        const enc = await encryptFileChunked(
+          task.file,
+          cryptoPublicKeyRef.current!,
+          aadBase,
+          chunkSize
+        );
+        uploadBody = enc.ciphertext;
+        uploadContentType = "application/octet-stream";
+        encryptedDEK = enc.encryptedDEK;
+        chunkCount = enc.chunkCount;
+        chunkIvs = JSON.stringify(enc.chunkIvs);
+        cipherChunkSize = chunkSize + 16;
+
+        // Metadata AAD (version 2)
+        const metadataAad = buildAad({ ...aadBase, version: CRYPTO_VERSION });
+        encryptedName = await encryptMetadataString(
+          task.file.name,
+          cryptoMetadataKeyRef.current!,
+          metadataAad,
+        );
       }
 
       const presignResponse = await fetch("/api/objects/presign-upload-multipart", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          fileName: shouldEncryptNow() ? crypto.randomUUID() : task.file.name,
+          fileName: objectKey,
           fileSize: uploadBody.size,
           fileType: uploadContentType,
           bucketId: task.bucketId,
@@ -328,6 +312,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           contentType: task.file.type,
           thumbnail,
           isEncrypted: !!encryptedDEK,
+          cryptoVersion: isEncrypted ? CRYPTO_VERSION : undefined,
           encryptedDEK,
           encryptedName,
           chunkSize: serverChunkSize,
@@ -395,17 +380,17 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         console.warn("Failed to generate thumbnail", err);
       }
 
+      const objectKey = shouldEncryptNow() ? crypto.randomUUID() : task.file.name;
+      const isEncrypted = shouldEncryptNow();
+
       // Step 1: Get presigned URL from server
       const presignResponse = await fetch("/api/objects/presign-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          // For encrypted uploads, use a UUID key so the real name is hidden
-          fileName: shouldEncryptNow() ? crypto.randomUUID() : task.file.name,
+          fileName: objectKey,
           fileSize: task.file.size,
-          fileType: shouldEncryptNow()
-            ? "application/octet-stream"
-            : task.file.type,
+          fileType: isEncrypted ? "application/octet-stream" : task.file.type,
           bucketId: task.bucketId,
           prefix: task.prefix,
         }),
@@ -418,91 +403,64 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
       const {
         uploadUrl,
-        objectKey,
+        objectKey: returnedObjectKey,
         bucketId: returnedBucketId,
       } = await presignResponse.json();
 
-      // Step 2: Encrypt file if vault is unlocked, otherwise upload plaintext
+      // Step 2: Encrypt file if vault is unlocked
       let uploadBody: File | Blob = task.file;
       let uploadContentType = task.file.type || "application/octet-stream";
       let encryptedDEK: string | undefined;
       let encryptedIV: string | undefined;
       let encryptedName: string | undefined;
-      // Chunked encryption fields (video/audio only)
       let chunkSize: number | undefined;
       let chunkCount: number | undefined;
-      let chunkIvs: string | undefined; // JSON string
+      let chunkIvs: string | undefined;
 
-      if (shouldEncryptNow()) {
-        try {
-          const isStreamable =
-            task.file.type.startsWith("video/") ||
-            task.file.type.startsWith("audio/");
+      if (isEncrypted) {
+        // Build base AAD
+        const aadBase = {
+          userId: sessionRef.current!.user.id,
+          bucketId: task.bucketId,
+          objectKey: returnedObjectKey, // UUID
+        };
 
-          if (isStreamable) {
-            // Chunked AES-GCM — enables true browser streaming at preview time
-            const enc = await encryptFileChunked(
-              task.file,
-              cryptoPublicKeyRef.current!,
-            );
-            uploadBody = enc.ciphertext;
-            uploadContentType = "application/octet-stream";
-            encryptedDEK = enc.encryptedDEK;
-            chunkSize = enc.chunkSize;
-            chunkCount = enc.chunkCount;
-            chunkIvs = JSON.stringify(enc.chunkIvs);
-            // No single iv for chunked files
-          } else {
-            // Single-blob AES-GCM for non-streamable files
-            const enc = await encryptFile(
-              task.file,
-              cryptoPublicKeyRef.current!,
-            );
-            uploadBody = enc.ciphertext;
-            uploadContentType = "application/octet-stream";
-            encryptedDEK = enc.encryptedDEK;
-            encryptedIV = enc.iv;
-          }
+        const isStreamable =
+          task.file.type.startsWith("video/") ||
+          task.file.type.startsWith("audio/");
 
-          // Encrypt the original filename (shared by both paths)
-          const nameBuf = new TextEncoder().encode(task.file.name);
-          const nameKey = crypto.getRandomValues(new Uint8Array(32));
-          const nameIV = crypto.getRandomValues(new Uint8Array(12));
-          const encNameBuf = await crypto.subtle.encrypt(
-            { name: "AES-GCM", iv: nameIV as Uint8Array<ArrayBuffer> },
-            await crypto.subtle.importKey(
-              "raw",
-              nameKey as Uint8Array<ArrayBuffer>,
-              { name: "AES-GCM", length: 256 },
-              false,
-              ["encrypt"],
-            ),
-            nameBuf,
+        if (isStreamable) {
+          const enc = await encryptFileChunked(
+            task.file,
+            cryptoPublicKeyRef.current!,
+            aadBase
           );
-          const combined = new Uint8Array(
-            nameKey.byteLength + nameIV.byteLength + encNameBuf.byteLength,
+          uploadBody = enc.ciphertext;
+          uploadContentType = "application/octet-stream";
+          encryptedDEK = enc.encryptedDEK;
+          chunkSize = enc.chunkSize;
+          chunkCount = enc.chunkCount;
+          chunkIvs = JSON.stringify(enc.chunkIvs);
+        } else {
+          const fileAad = buildAad({ ...aadBase, chunkIndex: 0, totalChunks: 1 });
+          const enc = await encryptFile(
+            task.file,
+            cryptoPublicKeyRef.current!,
+            fileAad
           );
-          combined.set(nameKey, 0);
-          combined.set(nameIV, nameKey.byteLength);
-          combined.set(
-            new Uint8Array(encNameBuf),
-            nameKey.byteLength + nameIV.byteLength,
-          );
-          encryptedName = toB64(combined);
-        } catch (err) {
-          console.warn(
-            "[E2EE] Encryption failed, falling back to plaintext",
-            err,
-          );
-          uploadBody = task.file;
-          uploadContentType = task.file.type || "application/octet-stream";
-          encryptedDEK = undefined;
-          encryptedIV = undefined;
-          encryptedName = undefined;
-          chunkSize = undefined;
-          chunkCount = undefined;
-          chunkIvs = undefined;
+          uploadBody = enc.ciphertext;
+          uploadContentType = "application/octet-stream";
+          encryptedDEK = enc.encryptedDEK;
+          encryptedIV = enc.iv;
         }
+
+        // Metadata AAD (version 2)
+        const metadataAad = buildAad({ ...aadBase, version: CRYPTO_VERSION });
+        encryptedName = await encryptMetadataString(
+          task.file.name,
+          cryptoMetadataKeyRef.current!,
+          metadataAad
+        );
       }
 
       // Step 3: Upload to B2 with XHR for progress tracking
@@ -549,12 +507,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          objectKey,
+          objectKey: returnedObjectKey,
           bucketId: returnedBucketId,
           size: uploadBody instanceof Blob ? uploadBody.size : task.file.size,
           contentType: task.file.type,
           thumbnail,
           isEncrypted: !!encryptedDEK,
+          cryptoVersion: isEncrypted ? CRYPTO_VERSION : undefined,
           encryptedDEK,
           iv: encryptedIV,
           encryptedName,
