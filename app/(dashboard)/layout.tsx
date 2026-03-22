@@ -39,8 +39,8 @@ export default async function DashboardLayout({
 
   return (
     <CryptoProvider>
-      <PreviewProvider>
-        <DownloadProvider>
+      <DownloadProvider>
+        <PreviewProvider>
           <UploadProvider>
             <DashboardShell
               user={{
@@ -57,8 +57,8 @@ export default async function DashboardLayout({
               <DownloadProgress />
             </div>
           </UploadProvider>
-        </DownloadProvider>
-      </PreviewProvider>
+        </PreviewProvider>
+      </DownloadProvider>
     </CryptoProvider>
   );
 }

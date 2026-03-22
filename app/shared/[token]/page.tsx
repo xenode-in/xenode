@@ -26,6 +26,8 @@ import {
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { useThumbnail } from "@/hooks/useThumbnail";
+import { Navbar } from "@/components/Navbar";
+import { LandingFooter } from "@/components/landing/LandingFooter";
 
 // Dynamically import DocViewer and Plyr with SSR disabled
 const DocViewer = dynamic(() => import("@cyntler/react-doc-viewer"), {
@@ -335,6 +337,8 @@ export default function SharedFilePage() {
   >(null);
   const [shareKey, setShareKey] = useState("");
   const [shareKeyObj, setShareKeyObj] = useState<CryptoKey | null>(null);
+  const [isKeyValid, setIsKeyValid] = useState(true);
+  const [isKeyMissing, setIsKeyMissing] = useState(false);
 
   const decryptedThumbnailUrl = useThumbnail(meta?.thumbnail, shareKeyObj);
 
@@ -389,8 +393,10 @@ export default function SharedFilePage() {
                 );
                 setDecryptedContentType(type);
               }
+              setIsKeyValid(true);
             } catch (err) {
               console.error("Failed to decrypt shared file metadata", err);
+              setIsKeyValid(false);
             }
           }
         }
@@ -422,6 +428,9 @@ export default function SharedFilePage() {
       const hash = window.location.hash;
       if (hash.startsWith("#key=")) {
         setShareKey(hash.replace("#key=", ""));
+        setIsKeyMissing(false);
+      } else {
+        setIsKeyMissing(true);
       }
     }
   }, []);
@@ -658,22 +667,69 @@ export default function SharedFilePage() {
     }
   }
 
+  if (isKeyMissing) {
+    return (
+      <div className="min-h-screen flex flex-col bg-background">
+        <Navbar />
+        <main className="grow flex items-center justify-center p-4 md:p-8 relative overflow-hidden bg-background">
+          <Card className="w-full max-w-md relative z-10 shadow-2xl border-border/50 backdrop-blur-sm bg-card/90 text-center p-8">
+            <Lock className="mx-auto h-12 w-12 text-muted-foreground mb-4 opacity-50" />
+            <h2 className="text-xl font-semibold tracking-tight">
+              Missing decryption key
+            </h2>
+            <p className="text-sm text-muted-foreground mt-2">
+              This file is end-to-end encrypted. The link must include a key to
+              access it.
+            </p>
+          </Card>
+        </main>
+        <LandingFooter />
+      </div>
+    );
+  }
+
+  if (!isKeyValid) {
+    return (
+      <div className="min-h-screen flex flex-col bg-background">
+        <Navbar />
+        <main className="grow flex items-center justify-center p-4 md:p-8 relative overflow-hidden bg-background">
+          <Card className="w-full max-w-md relative z-10 shadow-2xl border-border/50 backdrop-blur-sm bg-card/90 text-center p-8">
+            <AlertCircle className="mx-auto h-12 w-12 text-destructive mb-4 opacity-80" />
+            <h2 className="text-xl font-semibold tracking-tight">
+              Invalid or broken link
+            </h2>
+            <p className="text-sm text-muted-foreground mt-2">
+              The decryption key is incorrect or the file no longer exists.
+            </p>
+          </Card>
+        </main>
+        <LandingFooter />
+      </div>
+    );
+  }
+
   if (error && !meta)
     return (
-      <div className="min-h-screen flex items-center justify-center p-4 bg-background">
-        <Card className="w-full max-w-md">
-          <CardContent className="pt-6 text-center space-y-3">
-            <AlertCircle className="mx-auto h-10 w-10 text-destructive" />
-            <p className="font-semibold text-foreground">{error}</p>
-          </CardContent>
-        </Card>
+      <div className="min-h-screen flex flex-col bg-background">
+        <Navbar />
+        <main className="grow flex items-center justify-center p-4 md:p-8 relative overflow-hidden bg-background">
+          <Card className="w-full max-w-md relative z-10 shadow-2xl border-border/50 backdrop-blur-sm bg-card/90 text-center p-8">
+            <AlertCircle className="mx-auto h-12 w-12 text-destructive mb-4" />
+            <p className="font-semibold text-foreground text-lg">{error}</p>
+          </Card>
+        </main>
+        <LandingFooter />
       </div>
     );
 
   if (!meta)
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="min-h-screen flex flex-col bg-background">
+        <Navbar />
+        <main className="grow flex items-center justify-center bg-background">
+          <Loader2 className="h-10 w-10 animate-spin text-primary opacity-50" />
+        </main>
+        <LandingFooter />
       </div>
     );
 
@@ -683,46 +739,79 @@ export default function SharedFilePage() {
     "File";
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 overflow-hidden">
-            {decryptedThumbnailUrl ? (
-              <img
-                src={decryptedThumbnailUrl}
-                alt={displayName}
-                className="h-16 w-16 object-cover"
-              />
-            ) : (
-              getFileIcon(decryptedContentType || meta.contentType, "h-8 w-8", meta.mediaCategory)
+    <div className="min-h-screen flex flex-col bg-background">
+      <Navbar />
+      <main className="grow flex items-center justify-center p-4 md:p-8 relative overflow-hidden bg-background">
+        <Card className="w-full max-w-md relative z-10 shadow-2xl border-border/50 backdrop-blur-sm bg-card/90">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-2xl bg-primary/10 overflow-hidden shadow-inner">
+              {decryptedThumbnailUrl ? (
+                <img
+                  src={decryptedThumbnailUrl}
+                  alt={displayName}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                getFileIcon(
+                  decryptedContentType || meta.contentType,
+                  "h-10 w-10",
+                  meta.mediaCategory,
+                )
+              )}
+            </div>
+            <CardTitle className="break-all text-xl font-semibold tracking-tight">
+              {displayName}
+            </CardTitle>
+            <p className="text-sm text-muted-foreground mt-1">
+              {formatBytes(meta.size)}
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4 pt-2">
+            {meta.isPasswordProtected && !done && (
+              <div className="space-y-2">
+                <label className="text-xs font-medium text-muted-foreground ml-1">
+                  Password Protected
+                </label>
+                <Input
+                  type="password"
+                  placeholder="Enter password to access"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="bg-background/50"
+                />
+              </div>
             )}
-          </div>
-          <CardTitle className="break-all text-lg">{displayName}</CardTitle>
-          <p className="text-sm text-muted-foreground">
-            {formatBytes(meta.size)}
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {meta.isPasswordProtected && !done && (
-            <Input
-              type="password"
-              placeholder="Password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          )}
-          <Button
-            className="w-full"
-            onClick={handleDownload}
-            disabled={downloading}
-          >
-            {downloading ? `Downloading ${downloadProgress}%` : "Download"}
-          </Button>
-          <Button variant="outline" className="w-full" onClick={handlePreview}>
-            Preview
-          </Button>
-        </CardContent>
-      </Card>
+            <div className="grid grid-cols-1 gap-3 pt-2">
+              <Button
+                className="w-full h-11 text-base font-medium transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
+                onClick={handleDownload}
+                disabled={downloading}
+              >
+                {downloading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Downloading {downloadProgress}%
+                  </>
+                ) : (
+                  <>
+                    <Download className="mr-2 h-4 w-4" />
+                    Download File
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                className="w-full h-11 text-base font-medium bg-background/50 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
+                onClick={handlePreview}
+              >
+                <Eye className="mr-2 h-4 w-4" />
+                Preview Online
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </main>
+      <LandingFooter />
 
       {/* Preview Modal */}
       {isPreviewOpen && (

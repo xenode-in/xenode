@@ -14,6 +14,7 @@ export interface IStorageObject extends Document {
   position: number;
   createdAt: Date;
   updatedAt: Date;
+  deletedAt?: Date;
   thumbnail?: string;
   /** E2EE fields — undefined on legacy plaintext files */
   isEncrypted: boolean;
@@ -128,6 +129,9 @@ const StorageObjectSchema = new Schema<IStorageObject>(
       ],
       required: false,
     },
+    deletedAt: {
+      type: Date,
+    },
   },
   {
     timestamps: true,
@@ -155,6 +159,7 @@ StorageObjectSchema.index({ userId: 1, _id: 1 });
 StorageObjectSchema.index({ key: 1, bucketId: 1 });
 StorageObjectSchema.index({ bucketId: 1, position: 1 });
 StorageObjectSchema.index({ tags: 1 });
+StorageObjectSchema.index({ deletedAt: 1 }, { expireAfterSeconds: 2592000 }); // 30 days TTL
 
 const StorageObject: Model<IStorageObject> =
   mongoose.models.StorageObject ||

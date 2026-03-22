@@ -84,7 +84,7 @@ self.addEventListener("message", async (e) => {
 
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
-  const match = url.pathname.match(/^\/sw\/objects\/(.+)$/);
+  const match = url.pathname.match(/^\/sw\/objects\/([^/]+)(\/.*)?$/);
   if (!match) return;
 
   const fileId = match[1];
@@ -242,6 +242,7 @@ async function buildResponse(config, request) {
   const isPartial = !!rangeHeader;
   const headers = new Headers({
     "Content-Type": contentType,
+    "Content-Disposition": "inline",
     "Accept-Ranges": "bytes",
     "Content-Length": String(end - start + 1),
     "Cache-Control": "no-store",

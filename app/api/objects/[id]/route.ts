@@ -142,7 +142,12 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       // Continue even if B2 delete fails
     }
 
-    await StorageObject.findByIdAndDelete(object._id);
+    // Soft delete: marks the document as deleted for sync workers, but keeps metadata for 30 days.
+    // The B2 file is still physically deleted above, and storage counts are updated below.
+    await StorageObject.findByIdAndUpdate(object._id, { 
+      $set: { deletedAt: new Date() } 
+    });
+
     await ShareLink.deleteMany({ objectId: object._id });
     await decrementStorage(userId, object.size);
     await updateBucketStats(bucket._id.toString(), -1, -object.size);

@@ -57,7 +57,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    const query: Record<string, unknown> = { bucketId };
+    const query: Record<string, unknown> = { 
+      bucketId,
+      deletedAt: { $exists: false } 
+    };
     if (bucket.userId === "system") {
       const prefix = `users/${userId}/`;
       query.key = { $gte: prefix, $lt: prefix + "\uffff" };
