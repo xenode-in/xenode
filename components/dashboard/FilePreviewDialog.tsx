@@ -26,6 +26,7 @@ import { Plyr } from "plyr-react";
 import "plyr-react/plyr.css";
 
 import DocViewer, { DocViewerRenderers } from "@cyntler/react-doc-viewer";
+import { useDownload } from "@/contexts/DownloadContext";
 import { useCrypto } from "@/contexts/CryptoContext";
 import {
   decryptFile,
@@ -45,6 +46,7 @@ interface ObjectData {
   isEncrypted?: boolean;
   encryptedName?: string;
   name?: string;
+  mediaCategory?: string;
 }
 
 interface FilePreviewDialogProps {
@@ -65,9 +67,14 @@ const ChunkedStreamPlayer = ({
   onReady?: () => void;
 }) => {
   const isAudio = type.startsWith("audio/");
-  const [videoElement, setVideoElement] = useState<HTMLMediaElement | null>(null);
+  const [videoElement, setVideoElement] = useState<HTMLMediaElement | null>(
+    null,
+  );
 
-  const { blobUrl, error, isBuffering, progress } = useVideoStream(opts, videoElement);
+  const { blobUrl, error, isBuffering, progress } = useVideoStream(
+    opts,
+    videoElement,
+  );
 
   useEffect(() => {
     onUrlChange(blobUrl);
@@ -91,7 +98,12 @@ const ChunkedStreamPlayer = ({
   }
 
   return (
-    <div className={cn("relative flex h-full items-center justify-center", isAudio ? "w-full p-4" : "w-full bg-black")}>
+    <div
+      className={cn(
+        "relative flex h-full items-center justify-center",
+        isAudio ? "w-full p-4" : "w-full bg-black",
+      )}
+    >
       {isBuffering && !videoElement?.readyState && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-none gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-white" />
@@ -108,7 +120,7 @@ const ChunkedStreamPlayer = ({
           )}
         </div>
       )}
-      
+
       {/* We use a native video element directly for MediaSource stability */}
       {isAudio ? (
         <audio
@@ -136,7 +148,15 @@ const ChunkedStreamPlayer = ({
   );
 };
 
-const MediaPlayer = ({ url, type, onReady }: { url: string; type: string; onReady?: () => void }) => {
+const MediaPlayer = ({
+  url,
+  type,
+  onReady,
+}: {
+  url: string;
+  type: string;
+  onReady?: () => void;
+}) => {
   const isAudio = type.startsWith("audio/");
   const [isWaiting, setIsWaiting] = useState(true);
   const plyrContainerRef = useRef<HTMLDivElement>(null);
@@ -151,8 +171,14 @@ const MediaPlayer = ({ url, type, onReady }: { url: string; type: string; onRead
     let media: HTMLMediaElement | null = null;
     let disposed = false;
 
-    const onCanPlay = () => { setIsWaiting(false); onReadyRef.current?.(); };
-    const onPlaying = () => { setIsWaiting(false); onReadyRef.current?.(); };
+    const onCanPlay = () => {
+      setIsWaiting(false);
+      onReadyRef.current?.();
+    };
+    const onPlaying = () => {
+      setIsWaiting(false);
+      onReadyRef.current?.();
+    };
     const onWaiting = () => setIsWaiting(true);
 
     const attach = (m: HTMLMediaElement) => {
@@ -160,14 +186,20 @@ const MediaPlayer = ({ url, type, onReady }: { url: string; type: string; onRead
       m.addEventListener("canplay", onCanPlay);
       m.addEventListener("playing", onPlaying);
       m.addEventListener("waiting", onWaiting);
-      if (m.readyState >= 3) { setIsWaiting(false); onReadyRef.current?.(); }
+      if (m.readyState >= 3) {
+        setIsWaiting(false);
+        onReadyRef.current?.();
+      }
     };
 
     // Plyr creates the element asynchronously — poll until it appears
     const interval = setInterval(() => {
       if (disposed) return;
       const found = el.querySelector("video, audio") as HTMLMediaElement | null;
-      if (found) { clearInterval(interval); attach(found); }
+      if (found) {
+        clearInterval(interval);
+        attach(found);
+      }
     }, 100);
 
     return () => {
@@ -186,7 +218,10 @@ const MediaPlayer = ({ url, type, onReady }: { url: string; type: string; onRead
       {/* Overlay — always in DOM, toggled via CSS to avoid React/Plyr DOM conflicts */}
       <div
         className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm gap-3 transition-opacity duration-300"
-        style={{ opacity: isWaiting ? 1 : 0, pointerEvents: isWaiting ? "auto" : "none" }}
+        style={{
+          opacity: isWaiting ? 1 : 0,
+          pointerEvents: isWaiting ? "auto" : "none",
+        }}
       >
         <Loader2 className="h-8 w-8 animate-spin text-white" />
         <p className="text-xs text-white/70">Buffering…</p>
@@ -285,21 +320,24 @@ export function FilePreviewDialog({
   onClose,
 }: FilePreviewDialogProps) {
   const [url, setUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const { privateKey, metadataKey, setModalOpen, isUnlocked } = useCrypto();
+  const { startDownload } = useDownload();
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [isEncrypted, setIsEncrypted] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [streamOpts, setStreamOpts] = useState<VideoStreamOptions | null>(null);
-  const [loadingMessage, setLoadingMessage] = useState<string>("Loading preview...");
+  const [loadingMessage, setLoadingMessage] =
+    useState<string>("Loading preview...");
   const [progress, setProgress] = useState<number | null>(null);
   const [isVideoPreparing, setIsVideoPreparing] = useState(false);
   const [decryptedName, setDecryptedName] = useState<string | null>(null);
-  const [decryptedContentType, setDecryptedContentType] = useState<string | null>(null);
+  const [decryptedContentType, setDecryptedContentType] = useState<
+    string | null
+  >(null);
 
   // Track object URLs we created so we can revoke them on close
   const objectUrlRef = useRef<string | null>(null);
-
-  const { privateKey, metadataKey, setModalOpen, isUnlocked } = useCrypto();
 
   const isLockedOut = file?.isEncrypted && !privateKey;
 
@@ -343,19 +381,17 @@ export function FilePreviewDialog({
     if (!file || !isUnlocked || !file.isEncrypted) {
       return;
     }
-    
+
     let cancelled = false;
     async function decryptMeta() {
       if (!file) return;
       try {
         if (file.encryptedName) {
-           const name = await decryptMetadataString(file.encryptedName, metadataKey);
-           if (!cancelled) setDecryptedName(name);
-        }
-        if (file.contentType === "application/octet-stream" || file.contentType === "") {
-          // If the passed contentType is generic, try to find the real one in DB metadata
-          // But here we only have what FileItem passed. 
-          // The main 'run' effect already fetches more metadata from /api/objects/:id
+          const name = await decryptMetadataString(
+            file.encryptedName,
+            metadataKey,
+          );
+          if (!cancelled) setDecryptedName(name);
         }
       } catch (e) {
         console.error("Failed to decrypt preview metadata", e);
@@ -388,32 +424,69 @@ export function FilePreviewDialog({
         const res = await fetch(`/api/objects/${file.id}`);
         if (!res.ok) throw new Error("Failed to get URL");
         const data = await res.json();
-        if (!data?.url && (!data?.chunkUrls || data.chunkUrls.length === 0)) throw new Error("No URL returned");
+        if (!data?.url && (!data?.chunkUrls || data.chunkUrls.length === 0))
+          throw new Error("No URL returned");
 
         const encrypted: boolean = data.isEncrypted ?? false;
 
         let type = data.contentType ?? file.contentType;
-        if (type === "application/octet-stream" && data.encryptedContentType && metadataKey) {
+        if (
+          type === "application/octet-stream" &&
+          data.encryptedContentType &&
+          metadataKey
+        ) {
           try {
-            type = await decryptMetadataString(data.encryptedContentType, metadataKey);
+            type = await decryptMetadataString(
+              data.encryptedContentType,
+              metadataKey,
+            );
             if (!cancelled) setDecryptedContentType(type);
           } catch (e) {
-            console.warn("Failed to decrypt content type, staying as octet-stream", e);
+            console.warn(
+              "Failed to decrypt content type, staying as octet-stream",
+              e,
+            );
           }
         } else {
-           if (!cancelled) setDecryptedContentType(type);
+          if (!cancelled) setDecryptedContentType(type);
         }
-        const shouldShowPreparingUI = type.startsWith("video/") || type.startsWith("audio/") || type.startsWith("image/") || type === "application/pdf";
+
+        // --- FALLBACK GUESSING (Super Important for Previews) ---
+        if (type === "application/octet-stream" || !type) {
+          const fileName =
+            file.name || decryptedName || fileNameFromKey(file.key);
+          if (fileName.toLowerCase().endsWith(".pdf")) {
+            type = "application/pdf";
+          } else if (
+            fileName.toLowerCase().endsWith(".jpg") ||
+            fileName.toLowerCase().endsWith(".jpeg")
+          ) {
+            type = "image/jpeg";
+          } else if (fileName.toLowerCase().endsWith(".png")) {
+            type = "image/png";
+          } else if (fileName.toLowerCase().endsWith(".mp4")) {
+            type = "video/mp4";
+          } else if (fileName.toLowerCase().endsWith(".mp3")) {
+            type = "audio/mpeg";
+          }
+          if (!cancelled) setDecryptedContentType(type);
+        }
+
+        const shouldShowPreparingUI =
+          type.startsWith("video/") ||
+          type.startsWith("audio/") ||
+          type.startsWith("image/") ||
+          type === "application/pdf";
 
         if (!encrypted) {
           if (data.chunkUrls && data.chunkUrls.length > 0) {
             if (!cancelled) {
-              // Not encrypted but chunked. We should just set streamOpts with null dek 
+              // Not encrypted but chunked. We should just set streamOpts with null dek
               // and handle it in useVideoStream.
               setStreamOpts({
                 urls: data.chunkUrls,
                 dek: null,
-                chunkSize: data.chunkSize || (2 * 1024 * 1024),
+                chunkSize: data.chunkSize || 2 * 1024 * 1024,
                 chunkCount: data.chunkCount || data.chunkUrls.length,
                 chunkIvs: [],
                 contentType: type,
@@ -432,7 +505,6 @@ export function FilePreviewDialog({
           return;
         }
 
-
         // 2. Encrypted file — need private key to decrypt
         setIsEncrypted(true);
 
@@ -449,39 +521,45 @@ export function FilePreviewDialog({
           if (!data.encryptedDEK) {
             throw new Error("Missing encrypted DEK for chunked file.");
           }
-          
+
           if (!cancelled) {
             const rawDEK = await crypto.subtle.decrypt(
               { name: "RSA-OAEP" },
               privateKey,
-              fromB64(data.encryptedDEK)
+              fromB64(data.encryptedDEK),
             );
-          
+
             if ("serviceWorker" in navigator) {
               try {
                 setLoadingMessage("Preparing stream...");
                 // SW was pre-registered on mount — just wait for it to be ready
                 const registration = await navigator.serviceWorker.ready;
                 const sw = registration.active;
-                
+
                 if (sw) {
                   await new Promise<void>((resolve, reject) => {
                     const channel = new MessageChannel();
                     channel.port1.onmessage = (event) => {
                       if (event.data.success) resolve();
-                      else reject(new Error("Failed to register stream with SW"));
+                      else
+                        reject(new Error("Failed to register stream with SW"));
                     };
-                    sw.postMessage({
-                      type: "REGISTER_STREAM",
-                      fileId: file.id,
-                      rawDEK,
-                      chunkSize: data.chunkSize || 2 * 1024 * 1024,
-                      chunkCount: data.chunkCount || data.chunkUrls.length,
-                      chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
-                      urls: data.chunkUrls,
-                      contentType: type,
-                      size: file.size,
-                    }, [channel.port2]);
+                    sw.postMessage(
+                      {
+                        type: "REGISTER_STREAM",
+                        fileId: file.id,
+                        rawDEK,
+                        chunkSize: data.chunkSize || 2 * 1024 * 1024,
+                        chunkCount: data.chunkCount || data.chunkUrls.length,
+                        chunkIvs: data.chunkIvs
+                          ? JSON.parse(data.chunkIvs)
+                          : [],
+                        urls: data.chunkUrls,
+                        contentType: type,
+                        size: file.size,
+                      },
+                      [channel.port2],
+                    );
                   });
 
                   if (!cancelled) {
@@ -502,13 +580,13 @@ export function FilePreviewDialog({
               rawDEK,
               { name: "AES-GCM", length: 256 },
               false,
-              ["decrypt"]
+              ["decrypt"],
             );
 
             setStreamOpts({
               urls: data.chunkUrls,
               dek,
-              chunkSize: data.chunkSize || (2 * 1024 * 1024),
+              chunkSize: data.chunkSize || 2 * 1024 * 1024,
               chunkCount: data.chunkCount || data.chunkUrls.length,
               chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
               contentType: type,
@@ -522,7 +600,9 @@ export function FilePreviewDialog({
 
         // 3. Fetch raw ciphertext directly from CDN
         // Added Cache Storage check (fetchWithProgress) so previously decrypted files load instantly
-        setLoadingMessage(encrypted ? "Downloading encrypted file..." : "Downloading file...");
+        setLoadingMessage(
+          encrypted ? "Downloading encrypted file..." : "Downloading file...",
+        );
         const ciphertextBuf = await fetchWithProgress(
           data.url, // Directly fetch from CDN URL instead of via /content proxy
           (pct) => {
@@ -553,7 +633,7 @@ export function FilePreviewDialog({
             data.chunkSize,
             data.chunkCount,
             privateKey,
-            data.contentType ?? file.contentType,
+            type,
           );
         } else {
           // 4b. Decrypt standard singular payload
@@ -567,7 +647,7 @@ export function FilePreviewDialog({
             data.encryptedDEK,
             data.iv,
             privateKey,
-            data.contentType ?? file.contentType,
+            type,
           );
         }
 
@@ -606,14 +686,25 @@ export function FilePreviewDialog({
   const name = file.name || decryptedName || fileNameFromKey(file.key);
   const type = decryptedContentType || file.contentType;
 
-  // Download handler: for encrypted files, trigger programmatic download
-  // from the decrypted Blob URL instead of opening the ciphertext URL.
-  const handleDownload = () => {
-    if (!url) return;
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = name;
-    a.click();
+  // Download handler: uses the robust DownloadContext to handle decryption/chunking correctly
+  const handleDownload = async () => {
+    if (!file) return;
+    try {
+      await startDownload(
+        {
+          id: file.id,
+          key: file.key,
+          size: file.size,
+          contentType: file.contentType,
+          encryptedName: file.encryptedName,
+        },
+        !!file.isEncrypted,
+        privateKey,
+        metadataKey,
+      );
+    } catch (err: any) {
+      console.error("Download failed:", err);
+    }
   };
 
   const renderContent = () => {
@@ -648,40 +739,46 @@ export function FilePreviewDialog({
         } else if (type.startsWith("video/") || type.startsWith("audio/")) {
           innerContent = (
             <div className="h-full w-full bg-black flex items-center justify-center flex-col">
-              <div className={type.startsWith("video/") ? "aspect-video" : "py-4"}>
-                <MemoizedMediaPlayer url={url} type={type} onReady={() => setIsVideoPreparing(false)} />
+              <div
+                className={type.startsWith("video/") ? "aspect-video" : "py-4"}
+              >
+                <MemoizedMediaPlayer
+                  url={url}
+                  type={type}
+                  onReady={() => setIsVideoPreparing(false)}
+                />
               </div>
             </div>
           );
         } else if (type === "application/pdf") {
           innerContent = (
             <div className="h-full w-full bg-white">
-              <iframe 
-                src={url} 
-                className="h-full w-full border-0" 
-                title={name} 
+              <iframe
+                src={url}
+                className="h-full w-full border-0"
+                title={name}
                 onLoad={() => setIsVideoPreparing(false)}
                 onError={() => setIsVideoPreparing(false)}
               />
             </div>
           );
         } else {
-          // Other docs (DocViewer)
           innerContent = (
-            <div className="h-full w-full bg-white">
-              <DocViewer
-                documents={docs}
-                pluginRenderers={DocViewerRenderers}
-                config={{
-                  header: {
-                    disableHeader: true,
-                    disableFileName: true,
-                    retainURLParams: true,
-                  },
-                  pdfVerticalScrollByDefault: true,
-                }}
-                style={{ height: "100%" }}
-              />
+            <div className="flex h-full flex-col items-center justify-center text-center px-6">
+              <AlertCircle className="h-10 w-10 text-muted-foreground mb-3" />
+              <p className="text-sm font-medium">Preview not available</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                This file type is not supported for preview.
+              </p>
+
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-4"
+                onClick={handleDownload}
+              >
+                Download file
+              </Button>
             </div>
           );
         }
@@ -702,7 +799,9 @@ export function FilePreviewDialog({
               {progress !== null && (
                 <div className="w-full mt-3 flex flex-col items-center">
                   <Progress value={progress} className="h-1.5 w-full" />
-                  <p className="text-xs text-muted-foreground mt-1.5">{progress}%</p>
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    {progress}%
+                  </p>
                 </div>
               )}
             </div>
@@ -779,7 +878,7 @@ export function FilePreviewDialog({
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
-              {url && !isMinimized && !streamOpts && (
+              {url && !isMinimized && (
                 <Button
                   variant="outline"
                   size="sm"

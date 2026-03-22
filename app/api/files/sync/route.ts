@@ -18,7 +18,7 @@ export async function GET(req: Request) {
       updatedAt: { $gt: lastSyncDate }
     })
       .select("_id key size contentType encryptedContentType createdAt updatedAt " +
-              "isEncrypted encryptedName tags thumbnail bucketId encryptedDisplayName")
+              "isEncrypted encryptedName tags thumbnail bucketId encryptedDisplayName deletedAt")
       .sort({ updatedAt: 1 }) // Return oldest first so deltas apply correctly
       .limit(1000) // Chunk results so we don't blow up memory on first sync
       .lean();

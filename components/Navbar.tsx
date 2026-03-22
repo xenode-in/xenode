@@ -18,6 +18,7 @@ export function Navbar() {
   const isBlogPost = pathname?.startsWith("/blog/") && pathname !== "/blog";
   const isPricing = pathname === "/pricing";
   const isChangelog = pathname === "/changelog";
+  const isShared = pathname?.startsWith("/shared/");
 
   const toggleMenu = () => setIsMenuOpen(!isMenuOpen);
   const closeMenu = () => setIsMenuOpen(false);
@@ -90,7 +91,7 @@ export function Navbar() {
         </AnimatedLink>
       )}
 
-      {(isPricing || isChangelog || isBlog) && (
+      {(isPricing || isChangelog || isBlog || isShared) && (
         <>
           {!isPricing && (
             <AnimatedLink

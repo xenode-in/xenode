@@ -31,8 +31,14 @@ export function useSyncManager() {
         if (!files || files.length === 0) break;
 
         const toStore: LocalFile[] = [];
+        const toDelete: string[] = [];
 
         for (const f of files) {
+          if (f.deletedAt) {
+            toDelete.push(String(f._id));
+            continue;
+          }
+
           const fallbackName = f.key.split("/").pop() || f.key;
           toStore.push({
             id: String(f._id),
@@ -55,7 +61,15 @@ export function useSyncManager() {
 
         if (toStore.length > 0) {
           await db.files.bulkPut(toStore);
-          const latestTime = Math.max(...toStore.map((f) => new Date(f.updatedAt).getTime()));
+        }
+
+        if (toDelete.length > 0) {
+          await db.files.bulkDelete(toDelete);
+        }
+
+        const allModified = [...files];
+        if (allModified.length > 0) {
+          const latestTime = Math.max(...allModified.map((f) => new Date(f.updatedAt).getTime()));
           lastSync = new Date(latestTime).toISOString();
           localStorage.setItem("lastSync", lastSync);
         }
