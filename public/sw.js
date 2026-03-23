@@ -254,3 +254,5 @@ async function buildResponse(config, request) {
 
   return new Response(stream, { status: isPartial ? 206 : 200, headers });
 }
+
+// UPDATE CODE
