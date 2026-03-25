@@ -31,6 +31,10 @@ export interface IStorageObject extends Document {
     key: string;
     size: number;
   }[]; // Metadata for individual chunks
+  /** Google Photos Migration Metadata */
+  takenAt?: Date;
+  description?: string;
+  googlePhotosUrl?: string;
 }
 
 const StorageObjectSchema = new Schema<IStorageObject>(
@@ -131,6 +135,20 @@ const StorageObjectSchema = new Schema<IStorageObject>(
     },
     deletedAt: {
       type: Date,
+    },
+    takenAt: {
+      type: Date,
+      required: false,
+    },
+    description: {
+      type: String,
+      required: false,
+      trim: true,
+    },
+    googlePhotosUrl: {
+      type: String,
+      required: false,
+      trim: true,
     },
   },
   {
