@@ -43,19 +43,67 @@ const MAX_CONCURRENT_UPLOADS = 5;
 // Helper to resize image and get base64
 const generateThumbnail = (file: File): Promise<string | undefined> => {
   return new Promise((resolve) => {
-    if (!file.type.startsWith("image/")) {
-      resolve(undefined);
+    // Handle images (existing logic)
+    if (file.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          const MAX_SIZE = 320;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > height) {
+            if (width > MAX_SIZE) {
+              height *= MAX_SIZE / width;
+              width = MAX_SIZE;
+            }
+          } else {
+            if (height > MAX_SIZE) {
+              width *= MAX_SIZE / height;
+              height = MAX_SIZE;
+            }
+          }
+
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = "high";
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL("image/jpeg", 0.8));
+          } else {
+            resolve(undefined);
+          }
+        };
+        img.onerror = () => resolve(undefined);
+        img.src = e.target?.result as string;
+      };
+      reader.onerror = () => resolve(undefined);
+      reader.readAsDataURL(file);
       return;
     }
 
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
+    // Handle videos
+    if (file.type.startsWith("video/")) {
+      const video = document.createElement("video");
+      const url = URL.createObjectURL(file);
+      video.src = url;
+      video.muted = true;
+      video.playsInline = true;
+
+      video.addEventListener("loadedmetadata", () => {
+        // Seek to 10% of duration or 1s, whichever is smaller
+        video.currentTime = Math.min(1, video.duration * 0.1);
+      });
+
+      video.addEventListener("seeked", () => {
         const canvas = document.createElement("canvas");
-        const MAX_SIZE = 320; // Increased from 100 for better quality (Google Drive style)
-        let width = img.width;
-        let height = img.height;
+        const MAX_SIZE = 320;
+        let width = video.videoWidth;
+        let height = video.videoHeight;
 
         if (width > height) {
           if (width > MAX_SIZE) {
@@ -72,20 +120,25 @@ const generateThumbnail = (file: File): Promise<string | undefined> => {
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext("2d");
+        URL.revokeObjectURL(url);
+
         if (ctx) {
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = "high";
-          ctx.drawImage(img, 0, 0, width, height);
+          ctx.drawImage(video, 0, 0, width, height);
           resolve(canvas.toDataURL("image/jpeg", 0.8));
         } else {
           resolve(undefined);
         }
-      };
-      img.onerror = () => resolve(undefined);
-      img.src = e.target?.result as string;
-    };
-    reader.onerror = () => resolve(undefined);
-    reader.readAsDataURL(file);
+      });
+
+      video.addEventListener("error", () => {
+        URL.revokeObjectURL(url);
+        resolve(undefined); // Resolve undefined, don't reject — thumbnail is optional
+      });
+
+      return;
+    }
+
+    resolve(undefined);
   });
 };
 
@@ -107,9 +160,9 @@ function getAdaptiveChunkSize(fileSize: number, mimeType: string): number {
     mimeType.startsWith("video/") || mimeType.startsWith("audio/");
 
   if (isStreamable) {
-    if (fileSize < 100 * 1024 * 1024) return 2 * 1024 * 1024;        // 2 MB
-    if (fileSize < 1024 * 1024 * 1024) return 4 * 1024 * 1024;       // 4 MB
-    return 8 * 1024 * 1024;                                           // 8 MB
+    if (fileSize < 100 * 1024 * 1024) return 2 * 1024 * 1024; // 2 MB
+    if (fileSize < 1024 * 1024 * 1024) return 4 * 1024 * 1024; // 4 MB
+    return 8 * 1024 * 1024; // 8 MB
   }
 
   // Non-streamable: bigger chunks, fewer requests
@@ -121,7 +174,8 @@ function getMediaCategory(mimeType: string): string {
   if (mimeType.startsWith("image/")) return "image";
   if (mimeType.startsWith("video/")) return "video";
   if (mimeType.startsWith("audio/")) return "audio";
-  if (mimeType.includes("pdf") || mimeType.includes("document")) return "document";
+  if (mimeType.includes("pdf") || mimeType.includes("document"))
+    return "document";
   return "other";
 }
 
@@ -134,7 +188,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const [activeUploads, setActiveUploads] = useState(0);
   const uploadingIds = useRef(new Set<string>());
   const uploadXHRs = useRef<Map<string, XMLHttpRequest>>(new Map());
-  const { publicKey: cryptoPublicKey, metadataKey: cryptoMetadataKey } = useCrypto();
+  const { publicKey: cryptoPublicKey, metadataKey: cryptoMetadataKey } =
+    useCrypto();
   // Keep a ref so the useCallback below always reads the latest key
   // without needing to be re-created (avoids stale closure)
   const cryptoPublicKeyRef = useRef<CryptoKey | null>(null);
@@ -217,207 +272,251 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     };
   }, [tasks]);
 
-  const uploadChunkedMediaDirectly = useCallback(async (task: UploadTask) => {
-    uploadingIds.current.add(task.id);
+  const uploadChunkedMediaDirectly = useCallback(
+    async (task: UploadTask) => {
+      uploadingIds.current.add(task.id);
 
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === task.id ? { ...t, status: "uploading", progress: 0 } : t,
-      ),
-    );
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id ? { ...t, status: "uploading", progress: 0 } : t,
+        ),
+      );
 
-    try {
-      const rawThumbnail = await generateThumbnail(task.file).catch(() => undefined);
-      let thumbnail: string | undefined;
-      if (rawThumbnail && cryptoMetadataKeyRef.current && shouldEncryptNow()) {
-        thumbnail = await encryptThumbnail(rawThumbnail, cryptoMetadataKeyRef.current)
-          .catch(() => undefined);
-      } else {
-        thumbnail = rawThumbnail;
-      }
-
-      const chunkSize = getAdaptiveChunkSize(task.file.size, task.file.type);
-      let cipherChunkSize = chunkSize;
-      let uploadBody: File | Blob = task.file;
-      let uploadContentType = task.file.type || "application/octet-stream";
-      let encryptedDEK: string | undefined;
-      let encryptedName: string | undefined;
-      let chunkCount = Math.ceil(task.file.size / chunkSize);
-      let chunkIvs: string | undefined;
-
-      if (shouldEncryptNow()) {
-        try {
-          const enc = await encryptFileChunked(
-            task.file,
-            cryptoPublicKeyRef.current!,
-            chunkSize
-          );
-          uploadBody = enc.ciphertext;
-          uploadContentType = "application/octet-stream";
-          encryptedDEK = enc.encryptedDEK;
-          chunkCount = enc.chunkCount;
-          chunkIvs = JSON.stringify(enc.chunkIvs);
-          cipherChunkSize = chunkSize + 16;
-
-          encryptedName = await encryptMetadataString(
-            task.file.name,
-            cryptoMetadataKeyRef.current!,
-          );
-        } catch (err) {
-          console.warn("[E2EE] Encryption failed, falling back to plaintext", err);
-          uploadBody = task.file;
-          uploadContentType = task.file.type || "application/octet-stream";
-          encryptedDEK = undefined;
-          encryptedName = undefined;
-          chunkIvs = undefined;
-          chunkCount = Math.ceil(task.file.size / chunkSize);
-        }
-      }
-
-      const presignResponse = await fetch("/api/objects/presign-upload-multipart", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileName: shouldEncryptNow() ? crypto.randomUUID() : task.file.name,
-          fileSize: uploadBody.size,
-          fileType: uploadContentType,
-          bucketId: task.bucketId,
-          prefix: task.prefix,
-          chunkCount,
-          chunkSize,
-        }),
-      });
-
-      if (!presignResponse.ok) {
-        const error = await presignResponse.json();
-        throw new Error(error.error || "Failed to get multipart upload URLs");
-      }
-
-      const { fileId, urls, bucketId: returnedBucketId, chunkSize: serverChunkSize } = await presignResponse.json();
-      
-      // Handle thumbnail upload to B2
-      let thumbnailKey: string | undefined;
-      if (thumbnail && thumbnail.startsWith("enc:")) {
-        thumbnailKey = await uploadEncryptedThumbnail(
-          thumbnail,
-          returnedBucketId,
-          fileId
+      try {
+        const rawThumbnail = await generateThumbnail(task.file).catch(
+          () => undefined,
         );
-      }
-
-      const chunkUploads: { index: number; key: string; size: number }[] = [];
-      const loadedBytes = new Array(urls.length).fill(0);
-      const totalSize = uploadBody.size;
-
-      // Limit concurrency
-      const concurrency = 4; // Bump concurrency to 4
-      let urlIndex = 0;
-
-      const uploadWorker = async () => {
-        while (urlIndex < urls.length) {
-          const currentIndex = urlIndex++;
-          const urlObj = urls[currentIndex];
-          const start = currentIndex * cipherChunkSize;
-          const end = Math.min(start + cipherChunkSize, totalSize);
-          const chunkBlob = uploadBody.slice(start, end);
-          
-          await new Promise<void>((resolve, reject) => {
-            const xhr = new XMLHttpRequest();
-            
-            xhr.upload.addEventListener("progress", (e) => {
-              if (e.lengthComputable) {
-                loadedBytes[currentIndex] = e.loaded;
-                const totalLoaded = loadedBytes.reduce((a, b) => a + b, 0);
-                const progress = Math.round((totalLoaded / totalSize) * 100);
-                setTasks((prev) =>
-                  prev.map((t) => (t.id === task.id ? { ...t, progress } : t)),
-                );
-              }
-            });
-
-            xhr.addEventListener("load", () => {
-              if (xhr.status >= 200 && xhr.status < 300) {
-                loadedBytes[currentIndex] = chunkBlob.size;
-                chunkUploads.push({
-                  index: currentIndex,
-                  key: urlObj.key,
-                  size: chunkBlob.size
-                });
-                resolve();
-              } else {
-                reject(new Error(`Chunk upload failed: ${xhr.status} - ${xhr.statusText}`));
-              }
-            });
-
-            xhr.addEventListener("error", () => reject(new Error("Network error during chunk upload")));
-            xhr.addEventListener("abort", () => reject(new Error("Upload aborted")));
-
-            xhr.open("PUT", urlObj.url);
-            xhr.setRequestHeader("Content-Type", uploadContentType);
-            xhr.send(chunkBlob);
-          });
+        let thumbnail: string | undefined;
+        if (
+          rawThumbnail &&
+          cryptoMetadataKeyRef.current &&
+          shouldEncryptNow()
+        ) {
+          thumbnail = await encryptThumbnail(
+            rawThumbnail,
+            cryptoMetadataKeyRef.current,
+          ).catch(() => undefined);
+        } else {
+          thumbnail = rawThumbnail;
         }
-      };
 
-      const workers = Array.from({ length: Math.min(concurrency, urls.length) }, () => uploadWorker());
-      await Promise.all(workers);
+        const chunkSize = getAdaptiveChunkSize(task.file.size, task.file.type);
+        let cipherChunkSize = chunkSize;
+        let uploadBody: File | Blob = task.file;
+        let uploadContentType = task.file.type || "application/octet-stream";
+        let encryptedDEK: string | undefined;
+        let encryptedName: string | undefined;
+        let chunkCount = Math.ceil(task.file.size / chunkSize);
+        let chunkIvs: string | undefined;
 
-      // Sort chunkUploads by index just in case
-      chunkUploads.sort((a, b) => a.index - b.index);
+        if (shouldEncryptNow()) {
+          try {
+            const enc = await encryptFileChunked(
+              task.file,
+              cryptoPublicKeyRef.current!,
+              chunkSize,
+            );
+            uploadBody = enc.ciphertext;
+            uploadContentType = "application/octet-stream";
+            encryptedDEK = enc.encryptedDEK;
+            chunkCount = enc.chunkCount;
+            chunkIvs = JSON.stringify(enc.chunkIvs);
+            cipherChunkSize = chunkSize + 16;
 
-      const completeResponse = await fetch("/api/objects/complete-upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          objectKey: fileId,
+            encryptedName = await encryptMetadataString(
+              task.file.name,
+              cryptoMetadataKeyRef.current!,
+            );
+          } catch (err) {
+            console.warn(
+              "[E2EE] Encryption failed, falling back to plaintext",
+              err,
+            );
+            uploadBody = task.file;
+            uploadContentType = task.file.type || "application/octet-stream";
+            encryptedDEK = undefined;
+            encryptedName = undefined;
+            chunkIvs = undefined;
+            chunkCount = Math.ceil(task.file.size / chunkSize);
+          }
+        }
+
+        const presignResponse = await fetch(
+          "/api/objects/presign-upload-multipart",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              fileName: shouldEncryptNow()
+                ? crypto.randomUUID()
+                : task.file.name,
+              fileSize: uploadBody.size,
+              fileType: uploadContentType,
+              bucketId: task.bucketId,
+              prefix: task.prefix,
+              chunkCount,
+              chunkSize,
+            }),
+          },
+        );
+
+        if (!presignResponse.ok) {
+          const error = await presignResponse.json();
+          throw new Error(error.error || "Failed to get multipart upload URLs");
+        }
+
+        const {
+          fileId,
+          urls,
           bucketId: returnedBucketId,
-          size: totalSize,
-          contentType: shouldEncryptNow() ? "application/octet-stream" : task.file.type,
-          originalContentType: task.file.type,
-          mediaCategory: getMediaCategory(task.file.type),
-          encryptedContentType: shouldEncryptNow() && cryptoMetadataKeyRef.current
-            ? await encryptMetadataString(task.file.type, cryptoMetadataKeyRef.current)
-            : undefined,
-          thumbnail: thumbnailKey || thumbnail, // Use thumbnailKey if available, otherwise original thumbnail
-          isEncrypted: !!encryptedDEK,
-          encryptedDEK,
-          encryptedName,
           chunkSize: serverChunkSize,
-          chunkCount: urls.length,
-          chunkIvs,
-          isChunked: true,
-          chunks: chunkUploads,
-        }),
-      });
+        } = await presignResponse.json();
 
-      if (!completeResponse.ok) {
-        const error = await completeResponse.json();
-        throw new Error(error.error || "Failed to save file metadata");
+        // Handle thumbnail upload to B2
+        let thumbnailKey: string | undefined;
+        if (thumbnail && thumbnail.startsWith("enc:")) {
+          thumbnailKey = await uploadEncryptedThumbnail(
+            thumbnail,
+            returnedBucketId,
+            fileId,
+          );
+        }
+
+        const chunkUploads: { index: number; key: string; size: number }[] = [];
+        const loadedBytes = new Array(urls.length).fill(0);
+        const totalSize = uploadBody.size;
+
+        // Limit concurrency
+        const concurrency = 4; // Bump concurrency to 4
+        let urlIndex = 0;
+
+        const uploadWorker = async () => {
+          while (urlIndex < urls.length) {
+            const currentIndex = urlIndex++;
+            const urlObj = urls[currentIndex];
+            const start = currentIndex * cipherChunkSize;
+            const end = Math.min(start + cipherChunkSize, totalSize);
+            const chunkBlob = uploadBody.slice(start, end);
+
+            await new Promise<void>((resolve, reject) => {
+              const xhr = new XMLHttpRequest();
+
+              xhr.upload.addEventListener("progress", (e) => {
+                if (e.lengthComputable) {
+                  loadedBytes[currentIndex] = e.loaded;
+                  const totalLoaded = loadedBytes.reduce((a, b) => a + b, 0);
+                  const progress = Math.round((totalLoaded / totalSize) * 100);
+                  setTasks((prev) =>
+                    prev.map((t) =>
+                      t.id === task.id ? { ...t, progress } : t,
+                    ),
+                  );
+                }
+              });
+
+              xhr.addEventListener("load", () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                  loadedBytes[currentIndex] = chunkBlob.size;
+                  chunkUploads.push({
+                    index: currentIndex,
+                    key: urlObj.key,
+                    size: chunkBlob.size,
+                  });
+                  resolve();
+                } else {
+                  reject(
+                    new Error(
+                      `Chunk upload failed: ${xhr.status} - ${xhr.statusText}`,
+                    ),
+                  );
+                }
+              });
+
+              xhr.addEventListener("error", () =>
+                reject(new Error("Network error during chunk upload")),
+              );
+              xhr.addEventListener("abort", () =>
+                reject(new Error("Upload aborted")),
+              );
+
+              xhr.open("PUT", urlObj.url);
+              xhr.setRequestHeader("Content-Type", uploadContentType);
+              xhr.send(chunkBlob);
+            });
+          }
+        };
+
+        const workers = Array.from(
+          { length: Math.min(concurrency, urls.length) },
+          () => uploadWorker(),
+        );
+        await Promise.all(workers);
+
+        // Sort chunkUploads by index just in case
+        chunkUploads.sort((a, b) => a.index - b.index);
+
+        const completeResponse = await fetch("/api/objects/complete-upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            objectKey: fileId,
+            bucketId: returnedBucketId,
+            size: totalSize,
+            contentType: shouldEncryptNow()
+              ? "application/octet-stream"
+              : task.file.type,
+            originalContentType: task.file.type,
+            mediaCategory: getMediaCategory(task.file.type),
+            encryptedContentType:
+              shouldEncryptNow() && cryptoMetadataKeyRef.current
+                ? await encryptMetadataString(
+                    task.file.type,
+                    cryptoMetadataKeyRef.current,
+                  )
+                : undefined,
+            thumbnail: thumbnailKey || thumbnail, // Use thumbnailKey if available, otherwise original thumbnail
+            isEncrypted: !!encryptedDEK,
+            encryptedDEK,
+            encryptedName,
+            chunkSize: serverChunkSize,
+            chunkCount: urls.length,
+            chunkIvs,
+            isChunked: true,
+            chunks: chunkUploads,
+          }),
+        });
+
+        if (!completeResponse.ok) {
+          const error = await completeResponse.json();
+          throw new Error(error.error || "Failed to save file metadata");
+        }
+
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.id === task.id ? { ...t, status: "completed", progress: 100 } : t,
+          ),
+        );
+      } catch (error) {
+        console.error("Upload error:", error);
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.id === task.id
+              ? {
+                  ...t,
+                  status: "failed",
+                  error:
+                    error instanceof Error ? error.message : "Upload failed",
+                }
+              : t,
+          ),
+        );
+      } finally {
+        uploadingIds.current.delete(task.id);
+        setActiveUploads((prev) => prev - 1);
       }
-
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === task.id ? { ...t, status: "completed", progress: 100 } : t,
-        ),
-      );
-    } catch (error) {
-      console.error("Upload error:", error);
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === task.id
-            ? {
-                ...t,
-                status: "failed",
-                error: error instanceof Error ? error.message : "Upload failed",
-              }
-            : t,
-        ),
-      );
-    } finally {
-      uploadingIds.current.delete(task.id);
-      setActiveUploads((prev) => prev - 1);
-    }
-  }, [uploadEncryptedThumbnail]);
+    },
+    [uploadEncryptedThumbnail],
+  );
 
   const uploadFileDirectly = useCallback(async (task: UploadTask) => {
     // Prevent double upload (React Strict Mode)
@@ -425,7 +524,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    if (task.file.type.startsWith("video/") || task.file.type.startsWith("audio/")) {
+    if (
+      task.file.type.startsWith("video/") ||
+      task.file.type.startsWith("audio/")
+    ) {
       uploadChunkedMediaDirectly(task);
       return;
     }
@@ -439,11 +541,15 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     );
 
     try {
-      const rawThumbnail = await generateThumbnail(task.file).catch(() => undefined);
+      const rawThumbnail = await generateThumbnail(task.file).catch(
+        () => undefined,
+      );
       let thumbnail: string | undefined;
       if (rawThumbnail && cryptoMetadataKeyRef.current && shouldEncryptNow()) {
-        thumbnail = await encryptThumbnail(rawThumbnail, cryptoMetadataKeyRef.current)
-          .catch(() => undefined);
+        thumbnail = await encryptThumbnail(
+          rawThumbnail,
+          cryptoMetadataKeyRef.current,
+        ).catch(() => undefined);
       } else {
         thumbnail = rawThumbnail;
       }
@@ -544,7 +650,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         thumbnailKey = await uploadEncryptedThumbnail(
           thumbnail,
           returnedBucketId,
-          objectKey
+          objectKey,
         );
       }
 
@@ -595,12 +701,18 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           objectKey,
           bucketId: returnedBucketId,
           size: uploadBody instanceof Blob ? uploadBody.size : task.file.size,
-          contentType: shouldEncryptNow() ? "application/octet-stream" : task.file.type,
+          contentType: shouldEncryptNow()
+            ? "application/octet-stream"
+            : task.file.type,
           originalContentType: task.file.type,
           mediaCategory: getMediaCategory(task.file.type),
-          encryptedContentType: shouldEncryptNow() && cryptoMetadataKeyRef.current
-            ? await encryptMetadataString(task.file.type, cryptoMetadataKeyRef.current)
-            : undefined,
+          encryptedContentType:
+            shouldEncryptNow() && cryptoMetadataKeyRef.current
+              ? await encryptMetadataString(
+                  task.file.type,
+                  cryptoMetadataKeyRef.current,
+                )
+              : undefined,
           thumbnail: thumbnailKey || thumbnail, // Use thumbnailKey if available, otherwise original thumbnail
           isEncrypted: !!encryptedDEK,
           encryptedDEK,
