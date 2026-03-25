@@ -115,7 +115,8 @@ const getMediaCategory = (contentType: string): string => {
   if (contentType.startsWith("image/")) return "image";
   if (contentType.startsWith("video/")) return "video";
   if (contentType.startsWith("audio/")) return "audio";
-  if (contentType.includes("pdf") || contentType.includes("document")) return "document";
+  if (contentType.includes("pdf") || contentType.includes("document"))
+    return "document";
   return "other";
 };
 
@@ -251,7 +252,10 @@ export function StartMigrationDialog({
         uploadContentType = "application/octet-stream";
 
         if (metadataKey) {
-          encryptedName = await encryptMetadataString(rawFile.name, metadataKey);
+          encryptedName = await encryptMetadataString(
+            rawFile.name,
+            metadataKey,
+          );
         }
       } catch (err) {
         console.warn("[E2EE] Encryption failed, uploading plaintext", err);
@@ -261,10 +265,15 @@ export function StartMigrationDialog({
 
     if (signal.aborted) throw new Error("Aborted");
 
-    const rawThumbnail = await generateThumbnail(rawFile).catch(() => undefined);
-    const thumbnail = rawThumbnail && shouldEncryptNow && metadataKey
-      ? await encryptThumbnail(rawThumbnail, metadataKey).catch(() => undefined)
-      : rawThumbnail;
+    const rawThumbnail = await generateThumbnail(rawFile).catch(
+      () => undefined,
+    );
+    const thumbnail =
+      rawThumbnail && shouldEncryptNow && metadataKey
+        ? await encryptThumbnail(rawThumbnail, metadataKey).catch(
+            () => undefined,
+          )
+        : rawThumbnail;
 
     // Get Presigned URLs
     const isStreamableEncrypted =
@@ -389,19 +398,22 @@ export function StartMigrationDialog({
         );
       }
 
-      await fetch("/api/objects/complete-upload", {
+      const res = await fetch("/api/objects/complete-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           objectKey: fileId,
           bucketId: returnedBucketId,
           size: totalSize,
-          contentType: shouldEncryptNow ? "application/octet-stream" : rawFile.type,
+          contentType: shouldEncryptNow
+            ? "application/octet-stream"
+            : rawFile.type,
           originalContentType: rawFile.type,
           mediaCategory: getMediaCategory(rawFile.type),
-          encryptedContentType: shouldEncryptNow && metadataKey
-            ? await encryptMetadataString(rawFile.type, metadataKey)
-            : undefined,
+          encryptedContentType:
+            shouldEncryptNow && metadataKey
+              ? await encryptMetadataString(rawFile.type, metadataKey)
+              : undefined,
           thumbnail: thumbnailKey || thumbnail,
           thumbnailKey,
           isEncrypted: !!encryptedDEK,
@@ -414,6 +426,7 @@ export function StartMigrationDialog({
           chunks: chunkUploadRefs,
         }),
       });
+      return await res.json();
     } else {
       // Single Blob upload
       await new Promise<void>((resolve, reject) => {
@@ -452,19 +465,22 @@ export function StartMigrationDialog({
         );
       }
 
-      await fetch("/api/objects/complete-upload", {
+      const res = await fetch("/api/objects/complete-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           objectKey: pData.objectKey,
           bucketId: pData.bucketId,
           size: uploadBody.size,
-          contentType: shouldEncryptNow ? "application/octet-stream" : rawFile.type,
+          contentType: shouldEncryptNow
+            ? "application/octet-stream"
+            : rawFile.type,
           originalContentType: rawFile.type,
           mediaCategory: getMediaCategory(rawFile.type),
-          encryptedContentType: shouldEncryptNow && metadataKey
-            ? await encryptMetadataString(rawFile.type, metadataKey)
-            : undefined,
+          encryptedContentType:
+            shouldEncryptNow && metadataKey
+              ? await encryptMetadataString(rawFile.type, metadataKey)
+              : undefined,
           thumbnail: thumbnailKey || thumbnail,
           thumbnailKey,
           isEncrypted: !!encryptedDEK,
@@ -476,10 +492,72 @@ export function StartMigrationDialog({
           chunkIvs,
         }),
       });
+      return await res.json();
     }
-  }
+  };
+
+  const processAndUploadFileWithMetadata = async (
+    file: File,
+    metadata: any,
+    signal: AbortSignal,
+  ) => {
+    const uploadResult = await processAndUploadFile(file, signal);
+
+    const objectKey = uploadResult?.object?.key;
+    const bucketId = uploadResult?.bucketId;
+
+    if (!objectKey) {
+      console.error("Missing objectKey — cannot update metadata");
+      return;
+    }
+
+    try {
+      await fetch("/api/objects/update-metadata", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          objectKey,
+          bucketId,
+          takenAt: metadata?.photoTakenTime?.timestamp,
+          createdAt: metadata?.creationTime?.timestamp,
+          description: metadata?.description || "",
+          googlePhotosUrl: metadata?.url,
+        }),
+      });
+    } catch (err) {
+      console.warn("Metadata update failed", err);
+    }
+  };
+
+  const isMetadataFile = (filename: string) => {
+    return (
+      filename.endsWith(".json") &&
+      (filename.includes(".supplemental") ||
+        filename.match(/\.(jpg|jpeg|png|webp|mp4|mov|webm)\.json$/i) ||
+        !filename.match(/\.(jpg|jpeg|png|webp|mp4|mov|webm)$/i))
+    );
+  };
+
+  const getBaseNameFromMetadata = (filename: string) => {
+    return filename
+      .replace(".supplemental-metadata.json", "")
+      .replace(".supplemental-met.json", "")
+      .replace(/\.json$/, "")
+      .trim();
+  };
+
+  const normalize = (name: string) =>
+    name
+      .replace(/\(\d+\)/g, "") // remove (1), (2)
+      .replace(/\s+/g, " ") // normalize spaces
+      .trim()
+      .toLowerCase();
+
   const startExtraction = async () => {
     if (!takeoutFiles.length) return;
+
     setIsProcessing(true);
     setStatusText("Analyzing ZIP files...");
     setStats({ totalFiles: 0, processedFiles: 0 });
@@ -487,50 +565,117 @@ export function StartMigrationDialog({
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
 
+    const normalize = (name: string) => name.replace(/\(\d+\)/, "").trim();
+
     try {
-      // Pass 1: Count total media entries to compute overall progress
+      const metadataMap = new Map<string, any>();
+
       let mediaEntriesTotal = 0;
       const allMediaRefs: {
-        zipFile: File;
         entry: any;
         zipReader: ZipReader<any>;
+        normalizedName: string;
       }[] = [];
 
+      // -------------------------------
+      // PASS 1 → READ ALL FILES
+      // -------------------------------
       for (let i = 0; i < takeoutFiles.length; i++) {
         const zipReader = new ZipReader(new BlobReader(takeoutFiles[i]));
         const entries = await zipReader.getEntries();
+
         for (const entry of entries) {
-          if (!entry.directory && isMedia(entry.filename)) {
+          if (entry.directory) continue;
+
+          const filename = entry.filename.split("/").pop();
+          if (!filename) continue;
+
+          // -------------------------
+          // HANDLE METADATA FILES
+          // -------------------------
+          if (isMetadataFile(filename)) {
+            try {
+              const blob = await entry.getData(
+                new BlobWriter("application/json"),
+              );
+              const text = await blob.text();
+              const parsed = JSON.parse(text);
+
+              const baseName = normalize(getBaseNameFromMetadata(filename));
+
+              metadataMap.set(baseName, parsed);
+            } catch (err) {
+              console.warn("Failed to parse metadata:", filename);
+            }
+
+            continue;
+          }
+
+          // -------------------------
+          // HANDLE MEDIA FILES
+          // -------------------------
+          if (isMedia(filename)) {
             mediaEntriesTotal++;
-            allMediaRefs.push({ zipFile: takeoutFiles[i], entry, zipReader });
+
+            allMediaRefs.push({
+              entry,
+              zipReader,
+              normalizedName: normalize(filename),
+            });
           }
         }
       }
 
       setStats({ totalFiles: mediaEntriesTotal, processedFiles: 0 });
 
-      // Pass 2: Extract & Upload consecutively
+      // -------------------------------
+      // PASS 2 → PROCESS MEDIA
+      // -------------------------------
       let processed = 0;
+
       for (const meta of allMediaRefs) {
         if (signal.aborted) break;
+
+        const filename = meta.entry.filename.split("/").pop() || "file";
+
         setCurrentFileProgress(0);
-        setStatusText(`Processing ${meta.entry.filename.split("/").pop()}...`);
+        setStatusText(`Processing ${filename}...`);
 
-        // Extract Blob into RAM iteratively to avoid crashing the browser
+        let metadata = metadataMap.get(meta.normalizedName);
+
+        // fallback: try partial match (important for weird cases)
+        if (!metadata) {
+          for (const [key, value] of metadataMap.entries()) {
+            if (
+              meta.normalizedName.includes(key) ||
+              key.includes(meta.normalizedName)
+            ) {
+              metadata = value;
+              break;
+            }
+          }
+        }
+
+        // 🔥 Extract file
         const blob = await meta.entry.getData(
-          new BlobWriter(getMimeType(meta.entry.filename)),
-        );
-        const file = new File(
-          [blob],
-          meta.entry.filename.split("/").pop() || "image.jpg",
-          {
-            type: getMimeType(meta.entry.filename),
-            lastModified: meta.entry.lastModDate?.getTime() || Date.now(),
-          },
+          new BlobWriter(getMimeType(filename)),
         );
 
-        // Push through E2EE and S3 logic
-        await processAndUploadFile(file, signal);
+        // ✅ FIX TIMESTAMP (MOST IMPORTANT PART)
+        const takenTime = metadata?.photoTakenTime?.timestamp;
+        const creationTime = metadata?.creationTime?.timestamp;
+
+        const finalTimestamp = takenTime || creationTime;
+
+        const file = new File([blob], filename, {
+          type: getMimeType(filename),
+          lastModified: finalTimestamp
+            ? Number(finalTimestamp) * 1000
+            : meta.entry.lastModDate?.getTime() || Date.now(),
+        });
+
+        // 🔥 Upload with metadata
+        await processAndUploadFileWithMetadata(file, metadata, signal);
 
         processed++;
         setStats((prev) => ({ ...prev, processedFiles: processed }));
@@ -538,13 +683,12 @@ export function StartMigrationDialog({
       }
 
       // Cleanup
-      for (const fileZipReader of new Set(
-        allMediaRefs.map((r) => r.zipReader),
-      )) {
-        await fileZipReader.close();
+      for (const reader of new Set(allMediaRefs.map((r) => r.zipReader))) {
+        await reader.close();
       }
 
       setStatusText("Migration Complete!");
+
       setTimeout(() => {
         onSuccess();
         onOpenChange(false);
