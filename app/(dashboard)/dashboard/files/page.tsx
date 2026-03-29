@@ -59,6 +59,11 @@ import { usePreview } from "@/contexts/PreviewContext";
 import { useDropzone } from "react-dropzone";
 import { FileItem } from "@/components/dashboard/FileItem";
 import { formatBytes, formatDate } from "@/lib/utils";
+import { useSession } from "@/lib/auth/client";
+import { useFileSync } from "@/hooks/useFileSync";
+import { useCryptoWorker } from "@/hooks/useCryptoWorker";
+import { getDb } from "@/lib/db/local";
+import { useLiveQuery } from "dexie-react-hooks";
 import {
   encryptMetadataString,
   decryptMetadataString,
@@ -370,6 +375,8 @@ function EmptyState({ onUpload }: { onUpload: () => void }) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function FilesPage() {
+  useCryptoWorker(); // Bootstrap the background decryptor
+
   const router = useRouter();
   const searchParams = useSearchParams();
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
@@ -386,7 +393,6 @@ export default function FilesPage() {
   const [bucket, setBucket] = useState<BucketData | null>(null);
   const [rootPrefix, setRootPrefix] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
-  const [objects, setObjects] = useState<ObjectData[]>([]);
   const [loading, setLoading] = useState(true);
   const [currentPrefix, setCurrentPrefix] = useState("");
   const [deleteIds, setDeleteIds] = useState<string[]>([]);
@@ -417,67 +423,66 @@ export default function FilesPage() {
   const { privateKey, metadataKey, setModalOpen } = useCrypto();
   const { startDownload } = useDownload();
   const { openPreview, closePreview } = usePreview();
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const { data: session } = useSession();
+  const userId = session?.user?.id || null;
+
+  const {
+    fetchNextPage: fetchNextBatch,
+    hasNextPage: hasMorePages,
+    isFetchingNextPage,
+    refetch,
+  } = useFileSync({
+    bucketId,
+    userId,
+    limit: 50,
+    sortBy: sortField,
+    sortDir: sortDir,
+  });
+
+  const localFiles = useLiveQuery(
+    () => {
+      if (!userId || !bucketId) return [];
+      const db = getDb(userId);
+      return db.files.where("bucketId").equals(bucketId).toArray();
+    },
+    [userId, bucketId]
+  ) || [];
+
+  // Temporarily map Dexie models to the expected ObjectData array to minimize disruptions
+  const objects = useMemo(() => {
+    return localFiles.map((f) => ({
+      ...f,
+      _id: f.id,
+    })) as unknown as ObjectData[];
+  }, [localFiles]);
+
+  const [initialLoading, setInitialLoading] = useState(true);
 
   // ── Data fetching ──────────────────────────────────────────────────────────
 
-  const fetchData = useCallback(async () => {
+  const fetchBucket = useCallback(async () => {
     if (!bucketId) return;
-    setNextCursor(null);
-    setLoading(true);
-
     try {
-      const [bucketRes, objectsRes] = await Promise.all([
-        fetch(`/api/buckets/${bucketId}`),
-        fetch(`/api/objects?bucketId=${bucketId}&limit=50`),
-      ]);
-      const bucketData = await bucketRes.json();
-      const objectsData = await objectsRes.json();
-
-      if (!bucketRes.ok) {
-        setError(bucketData.error || "Bucket not found");
+      const res = await fetch(`/api/buckets/${bucketId}`);
+      if (!res.ok) {
+        const data = await res.json();
+        setError(data.error || "Bucket not found");
         return;
       }
-
-      setBucket(bucketData.bucket);
-      setObjects(
-        (objectsData.objects || []).map((o: any) => ({
-          ...o,
-          id: o._id || o.id,
-        })),
-      );
-      setNextCursor(objectsData.pagination?.nextCursor ?? null);
+      const data = await res.json();
+      setBucket(data.bucket);
     } catch {
       setError("Failed to load bucket data");
     } finally {
-      setLoading(false);
+      setInitialLoading(false);
     }
   }, [bucketId]);
 
   const fetchNextPage = useCallback(async () => {
-    if (!bucketId || !nextCursor || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const res = await fetch(
-        `/api/objects?bucketId=${bucketId}&limit=50&before=${encodeURIComponent(
-          nextCursor,
-        )}`,
-      );
-      const data = await res.json();
-      if (!res.ok) return;
-
-      setObjects((prev) => [
-        ...prev,
-        ...(data.objects || []).map((o: any) => ({ ...o, id: o._id || o.id })),
-      ]);
-      setNextCursor(data.pagination?.nextCursor ?? null);
-    } catch {
-      // handle silently or show toast
-    } finally {
-      setLoadingMore(false);
+    if (hasMorePages && !isFetchingNextPage) {
+      await fetchNextBatch();
     }
-  }, [bucketId, nextCursor, loadingMore]);
+  }, [hasMorePages, isFetchingNextPage, fetchNextBatch]);
 
   useEffect(() => {
     fetch("/api/drive/config")
@@ -537,8 +542,8 @@ export default function FilesPage() {
   }, []);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchBucket();
+  }, [fetchBucket]);
 
   const prevCompletedCountRef = useRef(0);
   const dragStartRects = useRef<Map<string, DOMRect>>(new Map());
@@ -552,9 +557,9 @@ export default function FilesPage() {
         t.prefix === currentPrefix &&
         t.status === "completed",
     ).length;
-    if (count > prevCompletedCountRef.current) fetchData();
+    if (count > prevCompletedCountRef.current) refetch();
     prevCompletedCountRef.current = count;
-  }, [tasks, bucketId, currentPrefix, fetchData]);
+  }, [tasks, bucketId, currentPrefix, refetch]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -735,7 +740,7 @@ export default function FilesPage() {
     if (!files?.length || !bucketId) return;
     addTasks(Array.from(files), bucketId, currentPrefix);
     if (fileInputRef.current) fileInputRef.current.value = "";
-    setTimeout(fetchData, 1000);
+    setTimeout(refetch, 1000);
   };
 
   const handleCreateFolder = async () => {
@@ -765,7 +770,8 @@ export default function FilesPage() {
       if (res.ok) {
         setNewFolderName("");
         setIsCreateFolderOpen(false);
-        fetchData();
+        fetchBucket();
+        refetch();
       } else {
         const d = await res.json();
         setError(d.error || "Failed to create folder");
@@ -801,7 +807,8 @@ export default function FilesPage() {
         }),
       );
       setDeleteIds([]);
-      fetchData();
+      fetchBucket();
+      refetch();
       setSelectedIds((prev) => {
         const n = new Set(prev);
         deleteIds.forEach((id) => n.delete(id));
@@ -848,7 +855,8 @@ export default function FilesPage() {
       });
       if (res.ok) {
         setClipboard(null);
-        fetchData();
+        fetchBucket();
+        refetch();
       } else {
         const d = await res.json();
         setError(d.error || "Failed to move items");
@@ -858,7 +866,7 @@ export default function FilesPage() {
     } finally {
       setProcessingPaste(false);
     }
-  }, [clipboard, bucketId, currentPrefix, fetchData]);
+  }, [clipboard, bucketId, currentPrefix, refetch, fetchBucket]);
 
   const handleAddTag = async () => {
     if (!taggingObj || !newTag.trim()) return;
@@ -879,7 +887,8 @@ export default function FilesPage() {
       if (res.ok) {
         setTaggingObj({ ...taggingObj, tags: [...cur, tagToSave] });
         setNewTag("");
-        fetchData();
+        fetchBucket();
+        refetch();
       }
     } catch {}
   };
@@ -895,7 +904,8 @@ export default function FilesPage() {
       });
       if (res.ok) {
         setTaggingObj({ ...taggingObj, tags: updated });
-        fetchData();
+        fetchBucket();
+        refetch();
       }
     } catch {}
   };
@@ -1040,10 +1050,10 @@ export default function FilesPage() {
     (acceptedFiles: File[]) => {
       if (acceptedFiles.length > 0 && bucketId) {
         addTasks(Array.from(acceptedFiles), bucketId, currentPrefix);
-        setTimeout(fetchData, 1000);
+        setTimeout(refetch, 1000);
       }
     },
-    [addTasks, bucketId, currentPrefix, fetchData],
+    [addTasks, bucketId, currentPrefix, refetch],
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -1110,7 +1120,7 @@ export default function FilesPage() {
 
   // ── Loading / error states ─────────────────────────────────────────────────
 
-  if (loading)
+  if (loading && initialLoading)
     return (
       <div className="flex items-center justify-center py-20">
         <Loader2 className="w-5 h-5 animate-spin text-primary" />
@@ -1485,16 +1495,16 @@ export default function FilesPage() {
       </div>
 
       {/* Load More footer */}
-      {nextCursor && (
+      {hasMorePages && (
         <div className="flex justify-center py-4 border-t border-border">
           <Button
             variant="outline"
             size="sm"
             onClick={fetchNextPage}
-            disabled={loadingMore}
+            disabled={isFetchingNextPage}
             className="gap-2 min-w-[120px]"
           >
-            {loadingMore ? (
+            {isFetchingNextPage ? (
               <>
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 Loading…
@@ -1509,7 +1519,7 @@ export default function FilesPage() {
         </div>
       )}
 
-      {!nextCursor && objects.length > 0 && (
+      {!hasMorePages && objects.length > 0 && (
         <p className="text-center text-xs text-muted-foreground/40 py-3">
           All items loaded
         </p>

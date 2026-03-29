@@ -41,7 +41,19 @@ export async function GET(request: NextRequest) {
       ),
     );
 
-    // Cursor: ISO timestamp of the last item from the previous page
+    // Sort options: "date", "size", "type", "name" (name is functionally handled client-side but we map it here just in case)
+    const sortByParam = searchParams.get("sortBy") || "date";
+    const sortDirParam = searchParams.get("sortDir") || "desc";
+    const sortDir = sortDirParam === "asc" ? 1 : -1;
+
+    let sortField = "createdAt";
+    if (sortByParam === "size") sortField = "size";
+    else if (sortByParam === "type") sortField = "contentType";
+    // For anything else (like "name" which is E2EE), default server sort is createdAt
+
+    const sortConfig: any = { [sortField]: sortDir, _id: -1 };
+
+    // Cursor: base64 encoded JSON { v: lastValue, id: lastId }
     const before = searchParams.get("before");
 
     const contentTypeFilter = searchParams.get("contentType");
@@ -78,35 +90,54 @@ export async function GET(request: NextRequest) {
       query.contentType = { $regex: `^${contentTypeFilter}/`, $options: "i" };
     }
 
-    // Apply cursor — only fetch items older than the last seen createdAt
+    // Apply composite cursor pagination
     if (before) {
-      const cursorDate = new Date(before);
-      if (isNaN(cursorDate.getTime())) {
+      try {
+        const cursorPayload = Buffer.from(before, "base64").toString("utf8");
+        const cursorData = JSON.parse(cursorPayload);
+        const { v, id } = cursorData;
+        
+        let typedV = v;
+        if (sortField === "createdAt" && v) {
+          typedV = new Date(v);
+        }
+
+        const operator = sortDir === 1 ? "$gt" : "$lt";
+
+        // Tie-breaker pagination mapping: value is strictly > / < depending on sortDir,
+        // OR the value is equal but the _id is smaller (since we always sort _id: -1)
+        query.$or = [
+          { [sortField]: { [operator]: typedV } },
+          { [sortField]: typedV, _id: { $lt: id } },
+        ];
+      } catch (err) {
         statusCode = 400;
-        errorMessage = "Invalid cursor: 'before' must be a valid ISO timestamp";
-        return NextResponse.json(
-          { error: errorMessage },
-          { status: statusCode },
-        );
+        errorMessage = "Invalid cursor format";
+        return NextResponse.json({ error: errorMessage }, { status: statusCode });
       }
-      query.createdAt = { $lt: cursorDate };
     }
 
     // Fetch limit + 1 to detect if another page exists — avoids countDocuments
     const rawObjects = await StorageObject.find(query)
       .select(LIST_PROJECTION)
-      .sort({ createdAt: -1 })
+      .sort(sortConfig)
       .limit(limit + 1)
       .lean();
 
     const hasNextPage = rawObjects.length > limit;
     const objects = hasNextPage ? rawObjects.slice(0, limit) : rawObjects;
 
-    // Cursor points to the createdAt of the last item in this page
-    const nextCursor =
-      hasNextPage && objects.length > 0
-        ? (objects[objects.length - 1].createdAt as Date).toISOString()
-        : null;
+    // Cursor points to the last item in this page
+    let nextCursor = null;
+    if (hasNextPage && objects.length > 0) {
+      const lastItem = objects[objects.length - 1];
+      const val = lastItem[sortField as keyof typeof lastItem];
+      const cursorObj = {
+        v: val,
+        id: lastItem._id,
+      };
+      nextCursor = Buffer.from(JSON.stringify(cursorObj)).toString("base64");
+    }
 
     return NextResponse.json({
       objects,

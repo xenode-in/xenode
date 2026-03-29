@@ -1,6 +1,11 @@
 import Dexie, { Table } from "dexie";
 import MiniSearch from "minisearch";
 
+export interface MetadataCache {
+  id: string; // The raw base64 encrypted string acts as the ID
+  plaintext: string; // The decrypted name or tag
+}
+
 export interface LocalFile {
   id: string;
   key: string;
@@ -21,11 +26,16 @@ export interface LocalFile {
 
 export class XenodeDatabase extends Dexie {
   files!: Table<LocalFile, string>;
+  metadataCache!: Table<MetadataCache, string>;
 
   constructor(userId: string) {
     super(`XenodeDB-${userId}`); // scoped per user
     this.version(1).stores({
       files: "id, key, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName, mediaCategory",
+    });
+    this.version(2).stores({
+      files: "id, key, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName, mediaCategory",
+      metadataCache: "id",
     });
   }
 }

@@ -177,6 +177,9 @@ StorageObjectSchema.index({ userId: 1, _id: 1 });
 StorageObjectSchema.index({ key: 1, bucketId: 1 });
 StorageObjectSchema.index({ bucketId: 1, position: 1 });
 StorageObjectSchema.index({ tags: 1 });
+StorageObjectSchema.index({ bucketId: 1, deletedAt: 1, createdAt: -1, _id: -1 });
+StorageObjectSchema.index({ bucketId: 1, deletedAt: 1, size: -1, _id: -1 });
+StorageObjectSchema.index({ bucketId: 1, deletedAt: 1, contentType: 1, _id: -1 });
 StorageObjectSchema.index({ deletedAt: 1 }, { expireAfterSeconds: 2592000 }); // 30 days TTL
 
 const StorageObject: Model<IStorageObject> =
