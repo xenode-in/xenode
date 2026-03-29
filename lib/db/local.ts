@@ -6,6 +6,12 @@ export interface MetadataCache {
   plaintext: string; // The decrypted name or tag
 }
 
+export interface ThumbnailCache {
+  id: string; // The thumbnail key
+  blob: Blob; // The decrypted thumbnail blob
+  lastAccessed: number; // For LRU eviction
+}
+
 export interface LocalFile {
   id: string;
   key: string;
@@ -27,6 +33,7 @@ export interface LocalFile {
 export class XenodeDatabase extends Dexie {
   files!: Table<LocalFile, string>;
   metadataCache!: Table<MetadataCache, string>;
+  thumbnailCache!: Table<ThumbnailCache, string>;
 
   constructor(userId: string) {
     super(`XenodeDB-${userId}`); // scoped per user
@@ -36,6 +43,11 @@ export class XenodeDatabase extends Dexie {
     this.version(2).stores({
       files: "id, key, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName, mediaCategory",
       metadataCache: "id",
+    });
+    this.version(3).stores({
+      files: "id, key, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName, mediaCategory",
+      metadataCache: "id",
+      thumbnailCache: "id, lastAccessed",
     });
   }
 }

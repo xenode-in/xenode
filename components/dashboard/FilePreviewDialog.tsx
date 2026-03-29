@@ -22,9 +22,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-import { Plyr } from "plyr-react";
-import "plyr-react/plyr.css";
-
 import DocViewer, { DocViewerRenderers } from "@cyntler/react-doc-viewer";
 import { useDownload } from "@/contexts/DownloadContext";
 import { useCrypto } from "@/contexts/CryptoContext";
@@ -97,40 +94,22 @@ const ChunkedStreamPlayer = ({
     );
   }
 
+  // We rely on the browser's native buffering indicators to prevent stuck UI overlays
   return (
     <div
       className={cn(
         "relative flex h-full items-center justify-center",
-        isAudio ? "w-full p-4" : "w-full bg-black",
+        isAudio ? "w-full p-4" : "w-full h-full bg-black overflow-hidden",
       )}
     >
-      {isBuffering && !videoElement?.readyState && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm pointer-events-none gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-white" />
-          {progress > 0 && progress < 100 && (
-            <>
-              <div className="w-48 h-1.5 rounded-full bg-white/20 overflow-hidden">
-                <div
-                  className="h-full bg-white rounded-full transition-all duration-300"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-              <p className="text-xs text-white/70">Buffering {progress}%</p>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* We use a native video element directly for MediaSource stability */}
       {isAudio ? (
         <audio
           ref={(node) => setVideoElement(node)}
           controls
           autoPlay
-          className="w-full"
+          className="w-full relative z-20 outline-none"
           src={blobUrl || ""}
-          onCanPlay={onReady}
-          onPlaying={onReady}
+          onLoadedData={onReady}
         />
       ) : (
         <video
@@ -138,10 +117,9 @@ const ChunkedStreamPlayer = ({
           controls
           autoPlay
           playsInline
-          className="max-h-full max-w-full"
+          className="w-full h-full max-h-full object-contain bg-black z-20 outline-none"
           src={blobUrl || ""}
-          onCanPlay={onReady}
-          onPlaying={onReady}
+          onLoadedData={onReady}
         />
       )}
     </div>
@@ -158,84 +136,35 @@ const MediaPlayer = ({
   onReady?: () => void;
 }) => {
   const isAudio = type.startsWith("audio/");
-  const [isWaiting, setIsWaiting] = useState(true);
-  const plyrContainerRef = useRef<HTMLDivElement>(null);
-  const onReadyRef = useRef(onReady);
-  onReadyRef.current = onReady;
 
-  // Poll for Plyr's <video>/<audio> element then attach buffering events
-  useEffect(() => {
-    const el = plyrContainerRef.current;
-    if (!el) return;
-
-    let media: HTMLMediaElement | null = null;
-    let disposed = false;
-
-    const onCanPlay = () => {
-      setIsWaiting(false);
-      onReadyRef.current?.();
-    };
-    const onPlaying = () => {
-      setIsWaiting(false);
-      onReadyRef.current?.();
-    };
-    const onWaiting = () => setIsWaiting(true);
-
-    const attach = (m: HTMLMediaElement) => {
-      media = m;
-      m.addEventListener("canplay", onCanPlay);
-      m.addEventListener("playing", onPlaying);
-      m.addEventListener("waiting", onWaiting);
-      if (m.readyState >= 3) {
-        setIsWaiting(false);
-        onReadyRef.current?.();
-      }
-    };
-
-    // Plyr creates the element asynchronously — poll until it appears
-    const interval = setInterval(() => {
-      if (disposed) return;
-      const found = el.querySelector("video, audio") as HTMLMediaElement | null;
-      if (found) {
-        clearInterval(interval);
-        attach(found);
-      }
-    }, 100);
-
-    return () => {
-      disposed = true;
-      clearInterval(interval);
-      if (media) {
-        media.removeEventListener("canplay", onCanPlay);
-        media.removeEventListener("playing", onPlaying);
-        media.removeEventListener("waiting", onWaiting);
-      }
-    };
-  }, [url]);
+  // Removed custom buffering states (isWaiting) to prevent race conditions.
+  // The native HTML5 element handles loading UI internally without bugs.
 
   return (
-    <div className={cn("relative", isAudio ? "w-full p-4" : "w-full")}>
-      {/* Overlay — always in DOM, toggled via CSS to avoid React/Plyr DOM conflicts */}
-      <div
-        className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm gap-3 transition-opacity duration-300"
-        style={{
-          opacity: isWaiting ? 1 : 0,
-          pointerEvents: isWaiting ? "auto" : "none",
-        }}
-      >
-        <Loader2 className="h-8 w-8 animate-spin text-white" />
-        <p className="text-xs text-white/70">Buffering…</p>
-      </div>
-
-      <div ref={plyrContainerRef}>
-        <Plyr
-          source={{
-            type: isAudio ? "audio" : "video",
-            sources: [{ src: url, type }],
-          }}
-          options={{ autoplay: true }}
+    <div
+      className={cn(
+        "relative w-full h-full flex items-center justify-center bg-black overflow-hidden",
+        isAudio ? "p-4" : "",
+      )}
+    >
+      {isAudio ? (
+        <audio
+          controls
+          autoPlay
+          className="w-full relative z-20 outline-none"
+          src={url}
+          onLoadedData={onReady}
         />
-      </div>
+      ) : (
+        <video
+          controls
+          autoPlay
+          playsInline
+          className="w-full h-full max-h-full object-contain bg-black z-20 outline-none"
+          src={url}
+          onLoadedData={onReady}
+        />
+      )}
     </div>
   );
 };
@@ -350,7 +279,6 @@ export function FilePreviewDialog({
   }, [isOpen, isLockedOut, setModalOpen, onClose]);
 
   // Pre-register the SW on mount so it's already active when a file is opened
-  // — eliminates ~200-500ms activation delay.
   useEffect(() => {
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
@@ -372,12 +300,14 @@ export function FilePreviewDialog({
       setLoadingMessage("Loading preview...");
       setProgress(null);
       setIsVideoPreparing(false);
-      setDecryptedName(null);
-      setDecryptedContentType(null);
     }
   }, [isOpen]);
 
   useEffect(() => {
+    // Clear previous metadata to prevent ghosting when file changes
+    setDecryptedName(null);
+    setDecryptedContentType(null);
+
     if (!file || !isUnlocked || !file.isEncrypted) {
       return;
     }
@@ -385,12 +315,14 @@ export function FilePreviewDialog({
     let cancelled = false;
     async function decryptMeta() {
       if (!file) return;
+
       try {
         if (file.encryptedName) {
           const name = await decryptMetadataString(
             file.encryptedName,
             metadataKey,
           );
+          console.log("Decrypted name", name);
           if (!cancelled) setDecryptedName(name);
         }
       } catch (e) {
@@ -408,7 +340,7 @@ export function FilePreviewDialog({
     let cancelled = false;
 
     async function run() {
-      // Don't run the fetch if we are locked out (prevents unnecessary network requests)
+      // Don't run the fetch if we are locked out
       if (!isOpen || !file || isLockedOut) return;
 
       setLoading(true);
@@ -451,10 +383,10 @@ export function FilePreviewDialog({
           if (!cancelled) setDecryptedContentType(type);
         }
 
-        // --- FALLBACK GUESSING (Super Important for Previews) ---
+        // --- FALLBACK GUESSING ---
         if (type === "application/octet-stream" || !type) {
           const fileName =
-            file.name || decryptedName || fileNameFromKey(file.key);
+            decryptedName || file.name || fileNameFromKey(file.key);
           if (fileName.toLowerCase().endsWith(".pdf")) {
             type = "application/pdf";
           } else if (
@@ -481,8 +413,6 @@ export function FilePreviewDialog({
         if (!encrypted) {
           if (data.chunkUrls && data.chunkUrls.length > 0) {
             if (!cancelled) {
-              // Not encrypted but chunked. We should just set streamOpts with null dek
-              // and handle it in useVideoStream.
               setStreamOpts({
                 urls: data.chunkUrls,
                 dek: null,
@@ -496,7 +426,6 @@ export function FilePreviewDialog({
               setLoading(false);
             }
           } else {
-            // Legacy plaintext file — use the signed URL directly
             if (!cancelled) {
               setUrl(data.url || "");
               setIsEncrypted(false);
@@ -505,7 +434,7 @@ export function FilePreviewDialog({
           return;
         }
 
-        // 2. Encrypted file — need private key to decrypt
+        // 2. Encrypted file
         setIsEncrypted(true);
 
         if (!privateKey) {
@@ -516,7 +445,6 @@ export function FilePreviewDialog({
         }
 
         if (data.chunkUrls && data.chunkUrls.length > 0) {
-          // 3a. New Multi-object streaming
           setLoadingMessage("Preparing decryption...");
           if (!data.encryptedDEK) {
             throw new Error("Missing encrypted DEK for chunked file.");
@@ -532,7 +460,6 @@ export function FilePreviewDialog({
             if ("serviceWorker" in navigator) {
               try {
                 setLoadingMessage("Preparing stream...");
-                // SW was pre-registered on mount — just wait for it to be ready
                 const registration = await navigator.serviceWorker.ready;
                 const sw = registration.active;
 
@@ -599,17 +526,16 @@ export function FilePreviewDialog({
         }
 
         // 3. Fetch raw ciphertext directly from CDN
-        // Added Cache Storage check (fetchWithProgress) so previously decrypted files load instantly
         setLoadingMessage(
           encrypted ? "Downloading encrypted file..." : "Downloading file...",
         );
         const ciphertextBuf = await fetchWithProgress(
-          data.url, // Directly fetch from CDN URL instead of via /content proxy
+          data.url,
           (pct) => {
             if (!cancelled) setProgress(pct);
           },
-          file.id, // Using the file.id as the cache key
-          file.size, // using file.size to enforce the 500MB bypass limit limit
+          file.id,
+          file.size,
         );
 
         if (!cancelled) {
@@ -620,7 +546,6 @@ export function FilePreviewDialog({
         let decryptedBlob: Blob;
 
         if (data.chunkIvs && data.chunkSize && data.chunkCount) {
-          // 4a. Decrypt Chunked payload
           if (!data.encryptedDEK) {
             throw new Error(
               "Missing encrypted DEK for chunked file. File might be corrupted.",
@@ -636,7 +561,6 @@ export function FilePreviewDialog({
             type,
           );
         } else {
-          // 4b. Decrypt standard singular payload
           if (!data.iv || !data.encryptedDEK) {
             throw new Error(
               "Missing encryption parameters (IV or DEK). File might be corrupted.",
@@ -651,7 +575,6 @@ export function FilePreviewDialog({
           );
         }
 
-        // 5. Create object URL from decrypted blob
         const objectUrl = URL.createObjectURL(decryptedBlob);
         objectUrlRef.current = objectUrl;
 
@@ -683,10 +606,9 @@ export function FilePreviewDialog({
 
   if (!file) return null;
 
-  const name = file.name || decryptedName || fileNameFromKey(file.key);
+  const name = decryptedName || file.name || fileNameFromKey(file.key);
   const type = decryptedContentType || file.contentType;
 
-  // Download handler: uses the robust DownloadContext to handle decryption/chunking correctly
   const handleDownload = async () => {
     if (!file) return;
     try {
@@ -738,17 +660,11 @@ export function FilePreviewDialog({
           );
         } else if (type.startsWith("video/") || type.startsWith("audio/")) {
           innerContent = (
-            <div className="h-full w-full bg-black flex items-center justify-center flex-col">
-              <div
-                className={type.startsWith("video/") ? "aspect-video" : "py-4"}
-              >
-                <MemoizedMediaPlayer
-                  url={url}
-                  type={type}
-                  onReady={() => setIsVideoPreparing(false)}
-                />
-              </div>
-            </div>
+            <MemoizedMediaPlayer
+              url={url}
+              type={type}
+              onReady={() => setIsVideoPreparing(false)}
+            />
           );
         } else if (type === "application/pdf") {
           innerContent = (
@@ -858,7 +774,7 @@ export function FilePreviewDialog({
                   isMinimized ? "text-xs" : "text-sm sm:text-base",
                 )}
               >
-                {isEncrypted && (
+                {(isEncrypted || file.isEncrypted) && (
                   <Lock
                     className={cn(
                       "shrink-0 text-primary",
@@ -871,8 +787,8 @@ export function FilePreviewDialog({
               </DialogPrimitive.Title>
               {!isMinimized && (
                 <DialogPrimitive.Description className="truncate text-xs text-muted-foreground mt-0.5">
-                  {formatMB(file.size)} MB • {file.contentType}
-                  {isEncrypted && " • e2e encrypted"}
+                  {formatMB(file.size)} MB • {type}
+                  {(isEncrypted || file.isEncrypted) && " • e2e encrypted"}
                 </DialogPrimitive.Description>
               )}
             </div>
@@ -919,7 +835,7 @@ export function FilePreviewDialog({
           {/* Preview area */}
           <div
             className={cn(
-              "overflow-hidden bg-black/5 dark:bg-black/20",
+              "overflow-hidden bg-black/5 dark:bg-black/20 flex items-center justify-center relative",
               isMinimized ? "h-48" : "flex-1",
             )}
           >

@@ -439,14 +439,12 @@ export default function FilesPage() {
     sortDir: sortDir,
   });
 
-  const localFiles = useLiveQuery(
-    () => {
+  const localFiles =
+    useLiveQuery(() => {
       if (!userId || !bucketId) return [];
       const db = getDb(userId);
       return db.files.where("bucketId").equals(bucketId).toArray();
-    },
-    [userId, bucketId]
-  ) || [];
+    }, [userId, bucketId]) || [];
 
   // Temporarily map Dexie models to the expected ObjectData array to minimize disruptions
   const objects = useMemo(() => {
@@ -1493,37 +1491,6 @@ export default function FilesPage() {
           </div>
         )}
       </div>
-
-      {/* Load More footer */}
-      {hasMorePages && (
-        <div className="flex justify-center py-4 border-t border-border">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={fetchNextPage}
-            disabled={isFetchingNextPage}
-            className="gap-2 min-w-[120px]"
-          >
-            {isFetchingNextPage ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                Loading…
-              </>
-            ) : (
-              <>
-                <ChevronDown className="w-3.5 h-3.5" />
-                Load more
-              </>
-            )}
-          </Button>
-        </div>
-      )}
-
-      {!hasMorePages && objects.length > 0 && (
-        <p className="text-center text-xs text-muted-foreground/40 py-3">
-          All items loaded
-        </p>
-      )}
 
       {/* ── Dialogs ── */}
 

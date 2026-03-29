@@ -1,9 +1,14 @@
 import { useState, useEffect } from "react";
+import { getDb } from "@/lib/db/local";
+import { useSession } from "@/lib/auth/client";
+
+const MAX_THUMBNAILS = 500;
 
 /**
  * useThumbnail hook
- * Handles fetching, decrypting, and providing a Blob URL for a thumbnail.
+ * Handles fetching, decrypting, caching, and providing a Blob URL for a thumbnail.
  * Supports legacy base64, plaintext B2 keys, and encrypted B2 keys.
+ * Uses Dexie for persistent LRU caching.
  *
  * @param thumbnail - The thumbnail data (base64) or B2 key (string)
  * @param decryptionKey - the CryptoKey used for decryption (metadataKey or shareKey)
@@ -13,6 +18,8 @@ export function useThumbnail(
   decryptionKey: CryptoKey | null = null,
 ) {
   const [url, setUrl] = useState<string | null>(null);
+  const { data: session } = useSession();
+  const userId = session?.user?.id;
 
   useEffect(() => {
     if (!thumbnail) {
@@ -26,13 +33,35 @@ export function useThumbnail(
       return;
     }
 
-    // 2. Handle encrypted thumbnails or B2 keys
+    // 2. Handle encrypted thumbnails or B2 keys with Dexie caching
     let cancelled = false;
     let objectUrl: string | null = null;
 
     async function loadThumbnail() {
+      if (!userId) {
+        // Wait for session to be ready
+        return;
+      }
+
+      const db = getDb(userId);
+
       try {
-        // Fetch signed URL from our API
+        // --- CACHE LOOKUP ---
+        const cached = await db.thumbnailCache.get(thumbnail!);
+        if (cached) {
+          // Update lastAccessed for LRU logic (fire and forget)
+          db.thumbnailCache
+            .update(thumbnail!, { lastAccessed: Date.now() })
+            .catch(() => {});
+
+          if (!cancelled) {
+            objectUrl = URL.createObjectURL(cached.blob);
+            setUrl(objectUrl);
+          }
+          return;
+        }
+
+        // --- CACHE MISS: FETCH FROM API ---
         const res = await fetch(
           `/api/objects/thumbnail?key=${encodeURIComponent(thumbnail!)}`,
         );
@@ -49,8 +78,9 @@ export function useThumbnail(
         // Try to decode as text to check for "enc:" prefix
         const text = new TextDecoder().decode(data);
         if (text.startsWith("enc:") && decryptionKey) {
-          const { decryptThumbnail } =
-            await import("@/lib/crypto/fileEncryption");
+          const { decryptThumbnail } = await import(
+            "@/lib/crypto/fileEncryption"
+          );
           const decryptedB64 = await decryptThumbnail(text, decryptionKey);
 
           // decryptedB64 is a data:image/... base64 string
@@ -59,12 +89,28 @@ export function useThumbnail(
           blob = await response.blob();
         } else {
           // Plaintext or missing key - assume it's raw image bytes
-          // If it was meant to be encrypted but we have no key, this will show a broken image
-          // which is correct/expected behavior for unauthorized access.
           blob = new Blob([data], { type: "image/jpeg" });
         }
 
         if (!cancelled) {
+          // --- STORE IN CACHE ---
+          const count = await db.thumbnailCache.count();
+          if (count >= MAX_THUMBNAILS) {
+            // Evict oldest (smallest lastAccessed)
+            const oldest = await db.thumbnailCache
+              .orderBy("lastAccessed")
+              .first();
+            if (oldest) {
+              await db.thumbnailCache.delete(oldest.id);
+            }
+          }
+
+          await db.thumbnailCache.put({
+            id: thumbnail!,
+            blob,
+            lastAccessed: Date.now(),
+          });
+
           objectUrl = URL.createObjectURL(blob);
           setUrl(objectUrl);
         }
@@ -80,7 +126,7 @@ export function useThumbnail(
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [thumbnail, decryptionKey]);
+  }, [thumbnail, decryptionKey, userId]);
 
   return url;
 }
