@@ -11,81 +11,12 @@ import {
 } from "@/components/ui/dialog";
 import { Loader2, UploadCloud, FileArchive, CheckCircle2 } from "lucide-react";
 import { BlobReader, BlobWriter, ZipReader } from "@zip.js/zip.js";
-import { useCrypto } from "@/contexts/CryptoContext";
-import { useSession } from "@/lib/auth/client";
-import {
-  encryptFile,
-  encryptFileChunked,
-  encryptMetadataString,
-  encryptThumbnail,
-} from "@/lib/crypto/fileEncryption";
-import { fromB64, toB64 } from "@/lib/crypto/utils";
+import { useUpload } from "@/contexts/UploadContext";
 
 interface StartMigrationDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess: () => void;
-}
-
-// Helper to resize image and get base64
-const generateThumbnail = (file: File): Promise<string | undefined> => {
-  return new Promise((resolve) => {
-    if (!file.type.startsWith("image/")) {
-      resolve(undefined);
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        const MAX_SIZE = 320;
-        let width = img.width;
-        let height = img.height;
-
-        if (width > height) {
-          if (width > MAX_SIZE) {
-            height *= MAX_SIZE / width;
-            width = MAX_SIZE;
-          }
-        } else {
-          if (height > MAX_SIZE) {
-            width *= MAX_SIZE / height;
-            height = MAX_SIZE;
-          }
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.imageSmoothingEnabled = true;
-          ctx.imageSmoothingQuality = "high";
-          ctx.drawImage(img, 0, 0, width, height);
-          resolve(canvas.toDataURL("image/jpeg", 0.8));
-        } else {
-          resolve(undefined);
-        }
-      };
-      img.onerror = () => resolve(undefined);
-      img.src = e.target?.result as string;
-    };
-    reader.onerror = () => resolve(undefined);
-    reader.readAsDataURL(file);
-  });
-};
-
-function getAdaptiveChunkSize(fileSize: number, mimeType: string): number {
-  const isStreamable =
-    mimeType.startsWith("video/") || mimeType.startsWith("audio/");
-  if (isStreamable) {
-    if (fileSize < 100 * 1024 * 1024) return 2 * 1024 * 1024;
-    if (fileSize < 1024 * 1024 * 1024) return 4 * 1024 * 1024;
-    return 8 * 1024 * 1024;
-  }
-  const adaptive = Math.max(8 * 1024 * 1024, Math.floor(fileSize / 100));
-  return Math.min(adaptive, 64 * 1024 * 1024);
 }
 
 const getMimeType = (filename: string): string => {
@@ -111,15 +42,6 @@ const getMimeType = (filename: string): string => {
   }
 };
 
-const getMediaCategory = (contentType: string): string => {
-  if (contentType.startsWith("image/")) return "image";
-  if (contentType.startsWith("video/")) return "video";
-  if (contentType.startsWith("audio/")) return "audio";
-  if (contentType.includes("pdf") || contentType.includes("document"))
-    return "document";
-  return "other";
-};
-
 const isMedia = (filename: string): boolean => {
   const ext = filename.split(".").pop()?.toLowerCase();
   return (
@@ -133,6 +55,9 @@ export function StartMigrationDialog({
   onOpenChange,
   onSuccess,
 }: StartMigrationDialogProps) {
+  // 1. Grab both addTasks and tasks to monitor the queue
+  const { addTasks, tasks } = useUpload();
+
   const [destinationBucketId, setDestinationBucketId] = useState<string>("");
   const [destinationPath, setDestinationPath] = useState<string>("");
   const [takeoutFiles, setTakeoutFiles] = useState<File[]>([]);
@@ -143,10 +68,13 @@ export function StartMigrationDialog({
   const [currentFileProgress, setCurrentFileProgress] = useState(0);
   const [stats, setStats] = useState({ totalFiles: 0, processedFiles: 0 });
 
-  const { publicKey, metadataKey } = useCrypto();
-  const { data: session } = useSession();
-
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  // 2. REF SYNC: Keep a real-time track of upload tasks to prevent stale closures in the loop
+  const tasksRef = useRef(tasks);
+  useEffect(() => {
+    tasksRef.current = tasks;
+  }, [tasks]);
 
   useEffect(() => {
     if (open) {
@@ -179,358 +107,6 @@ export function StartMigrationDialog({
     }
   };
 
-  const getShouldEncrypt = () => {
-    // @ts-expect-error extra fields
-    return !!(publicKey && session?.user?.encryptByDefault);
-  };
-
-  const processAndUploadFile = async (rawFile: File, signal: AbortSignal) => {
-    if (signal.aborted) throw new Error("Aborted");
-
-    const uploadEncryptedThumbnail = async (
-      encryptedDataUrl: string,
-      bucketId: string,
-      fileStorageKey: string,
-    ): Promise<string | undefined> => {
-      try {
-        const thumbKey = `${fileStorageKey}-thumb`;
-        const bytes = new TextEncoder().encode(encryptedDataUrl);
-        const blob = new Blob([bytes], { type: "application/octet-stream" });
-
-        const presign = await fetch("/api/objects/presign-upload", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fileName: `${fileStorageKey.split("/").pop()}-thumb`,
-            fileSize: blob.size,
-            fileType: "application/octet-stream",
-            bucketId,
-            prefix: fileStorageKey.includes("/")
-              ? fileStorageKey.substring(0, fileStorageKey.lastIndexOf("/") + 1)
-              : `users/${session?.user?.id}/`,
-          }),
-        });
-        const { uploadUrl } = await presign.json();
-        await fetch(uploadUrl, { method: "PUT", body: blob, signal });
-        return thumbKey;
-      } catch (err) {
-        console.error("Failed to upload thumbnail to B2:", err);
-        return undefined;
-      }
-    };
-
-    let uploadBody: File | Blob = rawFile;
-    let uploadContentType = rawFile.type;
-    let encryptedDEK: string | undefined;
-    let encryptedIV: string | undefined;
-    let encryptedName: string | undefined;
-    let chunkSize: number | undefined;
-    let chunkCount: number | undefined;
-    let chunkIvs: string | undefined;
-
-    const shouldEncryptNow = getShouldEncrypt();
-
-    // Attempt Encryption
-    if (shouldEncryptNow && publicKey) {
-      try {
-        const isStreamable =
-          rawFile.type.startsWith("video/") ||
-          rawFile.type.startsWith("audio/");
-        if (isStreamable) {
-          const enc = await encryptFileChunked(rawFile, publicKey);
-          uploadBody = enc.ciphertext;
-          encryptedDEK = enc.encryptedDEK;
-          chunkSize = enc.chunkSize;
-          chunkCount = enc.chunkCount;
-          chunkIvs = JSON.stringify(enc.chunkIvs);
-        } else {
-          const enc = await encryptFile(rawFile, publicKey);
-          uploadBody = enc.ciphertext;
-          encryptedDEK = enc.encryptedDEK;
-          encryptedIV = enc.iv;
-        }
-        uploadContentType = "application/octet-stream";
-
-        if (metadataKey) {
-          encryptedName = await encryptMetadataString(
-            rawFile.name,
-            metadataKey,
-          );
-        }
-      } catch (err) {
-        console.warn("[E2EE] Encryption failed, uploading plaintext", err);
-        uploadBody = rawFile;
-      }
-    }
-
-    if (signal.aborted) throw new Error("Aborted");
-
-    const rawThumbnail = await generateThumbnail(rawFile).catch(
-      () => undefined,
-    );
-    const thumbnail =
-      rawThumbnail && shouldEncryptNow && metadataKey
-        ? await encryptThumbnail(rawThumbnail, metadataKey).catch(
-            () => undefined,
-          )
-        : rawThumbnail;
-
-    // Get Presigned URLs
-    const isStreamableEncrypted =
-      shouldEncryptNow &&
-      (rawFile.type.startsWith("video/") || rawFile.type.startsWith("audio/"));
-
-    const endpoint = isStreamableEncrypted
-      ? "/api/objects/presign-upload-multipart"
-      : "/api/objects/presign-upload";
-
-    const presignReqType = isStreamableEncrypted
-      ? {
-          fileName: shouldEncryptNow ? crypto.randomUUID() : rawFile.name,
-          fileSize: uploadBody.size,
-          fileType: uploadContentType,
-          bucketId: destinationBucketId,
-          prefix: destinationPath,
-          chunkCount,
-          chunkSize,
-        }
-      : {
-          fileName: shouldEncryptNow ? crypto.randomUUID() : rawFile.name,
-          fileSize: uploadBody.size,
-          fileType: uploadContentType,
-          bucketId: destinationBucketId,
-          prefix: destinationPath,
-        };
-
-    const presignResponse = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(presignReqType),
-    });
-
-    if (!presignResponse.ok) throw new Error("Failed to presign upload");
-    const pData = await presignResponse.json();
-
-    if (signal.aborted) throw new Error("Aborted");
-
-    let chunkUploadRefs: { index: number; key: string; size: number }[] = [];
-
-    // XHR Upload execution
-    if (isStreamableEncrypted) {
-      // Multipart upload
-      const {
-        fileId,
-        urls,
-        bucketId: returnedBucketId,
-        chunkSize: serverChunkSize,
-      } = pData;
-      let urlIndex = 0;
-      const totalSize = uploadBody.size;
-      const loadedBytes = new Array(urls.length).fill(0);
-
-      const cipherChunkSize = (chunkSize || 0) + 16;
-      const concurrency = 4;
-
-      const uploadWorker = async () => {
-        while (urlIndex < urls.length) {
-          if (signal.aborted) throw new Error("Aborted");
-          const currentIndex = urlIndex++;
-          const urlObj = urls[currentIndex];
-          const start = currentIndex * cipherChunkSize;
-          const end = Math.min(start + cipherChunkSize, totalSize);
-          const chunkBlob = uploadBody.slice(start, end);
-
-          await new Promise<void>((resolve, reject) => {
-            const xhr = new XMLHttpRequest();
-            const abortHandler = () => {
-              xhr.abort();
-              reject(new Error("Aborted"));
-            };
-            signal.addEventListener("abort", abortHandler);
-
-            xhr.upload.addEventListener("progress", (e) => {
-              if (e.lengthComputable) {
-                loadedBytes[currentIndex] = e.loaded;
-                const totalLoaded = loadedBytes.reduce((a, b) => a + b, 0);
-                setCurrentFileProgress(
-                  Math.round((totalLoaded / totalSize) * 100),
-                );
-              }
-            });
-            xhr.addEventListener("load", () => {
-              signal.removeEventListener("abort", abortHandler);
-              if (xhr.status >= 200 && xhr.status < 300) {
-                loadedBytes[currentIndex] = chunkBlob.size;
-                chunkUploadRefs.push({
-                  index: currentIndex,
-                  key: urlObj.key,
-                  size: chunkBlob.size,
-                });
-                resolve();
-              } else reject(new Error("Upload failed"));
-            });
-            xhr.addEventListener("error", () =>
-              reject(new Error("Network Error")),
-            );
-            xhr.open("PUT", urlObj.url);
-            xhr.setRequestHeader("Content-Type", uploadContentType);
-            xhr.send(chunkBlob);
-          });
-        }
-      };
-      await Promise.all(
-        Array.from(
-          { length: Math.min(concurrency, urls.length) },
-          uploadWorker,
-        ),
-      );
-      chunkUploadRefs.sort((a, b) => a.index - b.index);
-
-      if (signal.aborted) throw new Error("Aborted");
-
-      // Handle thumbnail upload to B2
-      let thumbnailKey: string | undefined;
-      if (thumbnail && thumbnail.startsWith("enc:")) {
-        thumbnailKey = await uploadEncryptedThumbnail(
-          thumbnail,
-          returnedBucketId,
-          fileId,
-        );
-      }
-
-      const res = await fetch("/api/objects/complete-upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          objectKey: fileId,
-          bucketId: returnedBucketId,
-          size: totalSize,
-          contentType: shouldEncryptNow
-            ? "application/octet-stream"
-            : rawFile.type,
-          originalContentType: rawFile.type,
-          mediaCategory: getMediaCategory(rawFile.type),
-          encryptedContentType:
-            shouldEncryptNow && metadataKey
-              ? await encryptMetadataString(rawFile.type, metadataKey)
-              : undefined,
-          thumbnail: thumbnailKey || thumbnail,
-          thumbnailKey,
-          isEncrypted: !!encryptedDEK,
-          encryptedDEK,
-          encryptedName,
-          chunkSize: serverChunkSize,
-          chunkCount: urls.length,
-          chunkIvs,
-          isChunked: true,
-          chunks: chunkUploadRefs,
-        }),
-      });
-      return await res.json();
-    } else {
-      // Single Blob upload
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        const abortHandler = () => {
-          xhr.abort();
-          reject(new Error("Aborted"));
-        };
-        signal.addEventListener("abort", abortHandler);
-
-        xhr.upload.addEventListener("progress", (e) => {
-          if (e.lengthComputable) {
-            setCurrentFileProgress(Math.round((e.loaded / e.total) * 100));
-          }
-        });
-        xhr.addEventListener("load", () => {
-          signal.removeEventListener("abort", abortHandler);
-          if (xhr.status >= 200 && xhr.status < 300) resolve();
-          else reject(new Error(`B2 error ${xhr.status}`));
-        });
-        xhr.addEventListener("error", () => reject(new Error("Network error")));
-        xhr.open("PUT", pData.uploadUrl);
-        xhr.setRequestHeader("Content-Type", uploadContentType);
-        xhr.send(uploadBody);
-      });
-
-      if (signal.aborted) throw new Error("Aborted");
-
-      // Handle thumbnail upload to B2
-      let thumbnailKey: string | undefined;
-      if (thumbnail && thumbnail.startsWith("enc:")) {
-        thumbnailKey = await uploadEncryptedThumbnail(
-          thumbnail,
-          pData.bucketId,
-          pData.objectKey,
-        );
-      }
-
-      const res = await fetch("/api/objects/complete-upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          objectKey: pData.objectKey,
-          bucketId: pData.bucketId,
-          size: uploadBody.size,
-          contentType: shouldEncryptNow
-            ? "application/octet-stream"
-            : rawFile.type,
-          originalContentType: rawFile.type,
-          mediaCategory: getMediaCategory(rawFile.type),
-          encryptedContentType:
-            shouldEncryptNow && metadataKey
-              ? await encryptMetadataString(rawFile.type, metadataKey)
-              : undefined,
-          thumbnail: thumbnailKey || thumbnail,
-          thumbnailKey,
-          isEncrypted: !!encryptedDEK,
-          encryptedDEK,
-          iv: encryptedIV,
-          encryptedName,
-          chunkSize,
-          chunkCount,
-          chunkIvs,
-        }),
-      });
-      return await res.json();
-    }
-  };
-
-  const processAndUploadFileWithMetadata = async (
-    file: File,
-    metadata: any,
-    signal: AbortSignal,
-  ) => {
-    const uploadResult = await processAndUploadFile(file, signal);
-
-    const objectKey = uploadResult?.object?.key;
-    const bucketId = uploadResult?.bucketId;
-
-    if (!objectKey) {
-      console.error("Missing objectKey — cannot update metadata");
-      return;
-    }
-
-    try {
-      await fetch("/api/objects/update-metadata", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          objectKey,
-          bucketId,
-          takenAt: metadata?.photoTakenTime?.timestamp,
-          createdAt: metadata?.creationTime?.timestamp,
-          description: metadata?.description || "",
-          googlePhotosUrl: metadata?.url,
-        }),
-      });
-    } catch (err) {
-      console.warn("Metadata update failed", err);
-    }
-  };
-
   const isMetadataFile = (filename: string) => {
     return (
       filename.endsWith(".json") &&
@@ -548,13 +124,6 @@ export function StartMigrationDialog({
       .trim();
   };
 
-  const normalize = (name: string) =>
-    name
-      .replace(/\(\d+\)/g, "") // remove (1), (2)
-      .replace(/\s+/g, " ") // normalize spaces
-      .trim()
-      .toLowerCase();
-
   const startExtraction = async () => {
     if (!takeoutFiles.length) return;
 
@@ -565,7 +134,12 @@ export function StartMigrationDialog({
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
 
-    const normalize = (name: string) => name.replace(/\(\d+\)/, "").trim();
+    const normalize = (name: string) =>
+      name
+        .replace(/\(\d+\)/g, "") // remove (1), (2)
+        .replace(/\s+/g, " ") // normalize spaces
+        .trim()
+        .toLowerCase();
 
     try {
       const metadataMap = new Map<string, any>();
@@ -578,7 +152,7 @@ export function StartMigrationDialog({
       }[] = [];
 
       // -------------------------------
-      // PASS 1 → READ ALL FILES
+      // PASS 1 → READ ALL FILES (Lightweight)
       // -------------------------------
       for (let i = 0; i < takeoutFiles.length; i++) {
         const zipReader = new ZipReader(new BlobReader(takeoutFiles[i]));
@@ -590,9 +164,7 @@ export function StartMigrationDialog({
           const filename = entry.filename.split("/").pop();
           if (!filename) continue;
 
-          // -------------------------
           // HANDLE METADATA FILES
-          // -------------------------
           if (isMetadataFile(filename)) {
             try {
               const blob = await entry.getData(
@@ -600,23 +172,17 @@ export function StartMigrationDialog({
               );
               const text = await blob.text();
               const parsed = JSON.parse(text);
-
               const baseName = normalize(getBaseNameFromMetadata(filename));
-
               metadataMap.set(baseName, parsed);
             } catch (err) {
               console.warn("Failed to parse metadata:", filename);
             }
-
             continue;
           }
 
-          // -------------------------
-          // HANDLE MEDIA FILES
-          // -------------------------
+          // HANDLE MEDIA FILES (Just store the reference, don't extract yet!)
           if (isMedia(filename)) {
             mediaEntriesTotal++;
-
             allMediaRefs.push({
               entry,
               zipReader,
@@ -629,21 +195,35 @@ export function StartMigrationDialog({
       setStats({ totalFiles: mediaEntriesTotal, processedFiles: 0 });
 
       // -------------------------------
-      // PASS 2 → PROCESS MEDIA
+      // PASS 2 → PROCESS MEDIA (Heavy Lifting with Memory Throttle)
       // -------------------------------
       let processed = 0;
 
       for (const meta of allMediaRefs) {
         if (signal.aborted) break;
 
-        const filename = meta.entry.filename.split("/").pop() || "file";
+        // 🚀 THE MEMORY FIX: BACKPRESSURE THROTTLING
+        // Check how many tasks are currently queued or uploading.
+        // If it's 5 or more, pause extraction to save RAM, and poll every 1 second.
+        while (
+          tasksRef.current.filter(
+            (t) => t.status === "pending" || t.status === "uploading",
+          ).length >= 5
+        ) {
+          if (signal.aborted) break;
+          setStatusText("Waiting for network (Queue full)...");
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
 
+        if (signal.aborted) break;
+
+        const filename = meta.entry.filename.split("/").pop() || "file";
         setCurrentFileProgress(0);
-        setStatusText(`Processing ${filename}...`);
+        setStatusText(`Extracting ${filename}...`);
 
         let metadata = metadataMap.get(meta.normalizedName);
 
-        // fallback: try partial match (important for weird cases)
+        // Fallback: try partial match
         if (!metadata) {
           for (const [key, value] of metadataMap.entries()) {
             if (
@@ -656,15 +236,13 @@ export function StartMigrationDialog({
           }
         }
 
-        // 🔥 Extract file
+        // 🔥 Extract file into RAM (Only happens when queue has space!)
         const blob = await meta.entry.getData(
           new BlobWriter(getMimeType(filename)),
         );
 
-        // ✅ FIX TIMESTAMP (MOST IMPORTANT PART)
         const takenTime = metadata?.photoTakenTime?.timestamp;
         const creationTime = metadata?.creationTime?.timestamp;
-
         const finalTimestamp = takenTime || creationTime;
 
         const file = new File([blob], filename, {
@@ -674,20 +252,44 @@ export function StartMigrationDialog({
             : meta.entry.lastModDate?.getTime() || Date.now(),
         });
 
-        // 🔥 Upload with metadata
-        await processAndUploadFileWithMetadata(file, metadata, signal);
+        // 🚀 Hand off to existing pipeline
+        addTasks([file], destinationBucketId, destinationPath);
+
+        setCurrentFileProgress(100);
+
+        // ⏳ Metadata update (Wait briefly to ensure object is registered backend side)
+        setTimeout(async () => {
+          try {
+            await fetch("/api/objects/update-metadata", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                fileName: file.name,
+                bucketId: destinationBucketId,
+                takenAt: metadata?.photoTakenTime?.timestamp,
+                createdAt: metadata?.creationTime?.timestamp,
+                description: metadata?.description || "",
+                googlePhotosUrl: metadata?.url,
+              }),
+            });
+          } catch (err) {
+            console.warn("Metadata update failed", err);
+          }
+        }, 1500);
 
         processed++;
         setStats((prev) => ({ ...prev, processedFiles: processed }));
         setOverallProgress(Math.round((processed / mediaEntriesTotal) * 100));
       }
 
-      // Cleanup
+      // Cleanup ZIP readers
       for (const reader of new Set(allMediaRefs.map((r) => r.zipReader))) {
         await reader.close();
       }
 
-      setStatusText("Migration Complete!");
+      setStatusText("Migration Enqueued Successfully!");
 
       setTimeout(() => {
         onSuccess();
@@ -825,13 +427,13 @@ export function StartMigrationDialog({
             <div className="text-center w-full px-6 space-y-2">
               <h3 className="font-semibold text-lg">{statusText}</h3>
               <p className="text-sm text-muted-foreground">
-                {stats.processedFiles} of {stats.totalFiles} media files
-                migrated
+                {stats.processedFiles} of {stats.totalFiles} media files queued
+                for upload
               </p>
 
               <div className="w-full space-y-1 mt-6">
                 <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>Overall Progress</span>
+                  <span>Extraction Progress</span>
                   <span>{overallProgress}%</span>
                 </div>
                 <div className="w-full h-2 bg-secondary rounded-full overflow-hidden">
@@ -844,7 +446,7 @@ export function StartMigrationDialog({
 
               <div className="w-full space-y-1 mt-4">
                 <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>Current File Extraction & Upload</span>
+                  <span>Current File Extraction</span>
                   <span>{currentFileProgress}%</span>
                 </div>
                 <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden">

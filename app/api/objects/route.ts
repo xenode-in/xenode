@@ -14,7 +14,7 @@ const LIST_PROJECTION =
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
 
-/** GET /api/objects?bucketId=xxx&page=1&limit=50&contentType=image - List objects in a bucket */
+/** GET /api/objects?bucketId=xxx&limit=50&before=<ISO>&contentType=image */
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -33,12 +33,17 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10));
     const limit = Math.min(
       MAX_PAGE_SIZE,
-      Math.max(1, parseInt(searchParams.get("limit") || String(DEFAULT_PAGE_SIZE), 10)),
+      Math.max(
+        1,
+        parseInt(searchParams.get("limit") || String(DEFAULT_PAGE_SIZE), 10),
+      ),
     );
-    const skip = (page - 1) * limit;
+
+    // Cursor: ISO timestamp of the last item from the previous page
+    const before = searchParams.get("before");
+
     const contentTypeFilter = searchParams.get("contentType");
     const mediaCategoryFilter = searchParams.get("mediaCategory");
 
@@ -57,38 +62,58 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    const query: Record<string, unknown> = { 
+    const query: Record<string, unknown> = {
       bucketId,
-      deletedAt: { $exists: false } 
+      deletedAt: { $exists: false },
     };
+
     if (bucket.userId === "system") {
       const prefix = `users/${userId}/`;
       query.key = { $gte: prefix, $lt: prefix + "\uffff" };
     }
+
     if (mediaCategoryFilter) {
       query.mediaCategory = mediaCategoryFilter;
     } else if (contentTypeFilter) {
       query.contentType = { $regex: `^${contentTypeFilter}/`, $options: "i" };
     }
 
-    const [total, objects] = await Promise.all([
-      StorageObject.countDocuments(query),
-      StorageObject.find(query)
-        .select(LIST_PROJECTION)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-    ]);
+    // Apply cursor — only fetch items older than the last seen createdAt
+    if (before) {
+      const cursorDate = new Date(before);
+      if (isNaN(cursorDate.getTime())) {
+        statusCode = 400;
+        errorMessage = "Invalid cursor: 'before' must be a valid ISO timestamp";
+        return NextResponse.json(
+          { error: errorMessage },
+          { status: statusCode },
+        );
+      }
+      query.createdAt = { $lt: cursorDate };
+    }
+
+    // Fetch limit + 1 to detect if another page exists — avoids countDocuments
+    const rawObjects = await StorageObject.find(query)
+      .select(LIST_PROJECTION)
+      .sort({ createdAt: -1 })
+      .limit(limit + 1)
+      .lean();
+
+    const hasNextPage = rawObjects.length > limit;
+    const objects = hasNextPage ? rawObjects.slice(0, limit) : rawObjects;
+
+    // Cursor points to the createdAt of the last item in this page
+    const nextCursor =
+      hasNextPage && objects.length > 0
+        ? (objects[objects.length - 1].createdAt as Date).toISOString()
+        : null;
 
     return NextResponse.json({
       objects,
       pagination: {
-        page,
         limit,
-        total,
-        totalPages: Math.ceil(total / limit),
-        hasNextPage: page * limit < total,
+        hasNextPage,
+        nextCursor, // pass this as `before=` on the next request
       },
     });
   } catch (error: unknown) {
@@ -98,7 +123,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
     statusCode = 500;
-    errorMessage = error instanceof Error ? error.message : "Internal server error";
+    errorMessage =
+      error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
     logRequest({

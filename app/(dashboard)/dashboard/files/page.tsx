@@ -417,22 +417,29 @@ export default function FilesPage() {
   const { privateKey, metadataKey, setModalOpen } = useCrypto();
   const { startDownload } = useDownload();
   const { openPreview, closePreview } = usePreview();
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   // ── Data fetching ──────────────────────────────────────────────────────────
 
   const fetchData = useCallback(async () => {
     if (!bucketId) return;
+    setNextCursor(null);
+    setLoading(true);
+
     try {
       const [bucketRes, objectsRes] = await Promise.all([
         fetch(`/api/buckets/${bucketId}`),
-        fetch(`/api/objects?bucketId=${bucketId}`),
+        fetch(`/api/objects?bucketId=${bucketId}&limit=50`),
       ]);
       const bucketData = await bucketRes.json();
       const objectsData = await objectsRes.json();
+
       if (!bucketRes.ok) {
         setError(bucketData.error || "Bucket not found");
         return;
       }
+
       setBucket(bucketData.bucket);
       setObjects(
         (objectsData.objects || []).map((o: any) => ({
@@ -440,12 +447,37 @@ export default function FilesPage() {
           id: o._id || o.id,
         })),
       );
+      setNextCursor(objectsData.pagination?.nextCursor ?? null);
     } catch {
       setError("Failed to load bucket data");
     } finally {
       setLoading(false);
     }
   }, [bucketId]);
+
+  const fetchNextPage = useCallback(async () => {
+    if (!bucketId || !nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const res = await fetch(
+        `/api/objects?bucketId=${bucketId}&limit=50&before=${encodeURIComponent(
+          nextCursor,
+        )}`,
+      );
+      const data = await res.json();
+      if (!res.ok) return;
+
+      setObjects((prev) => [
+        ...prev,
+        ...(data.objects || []).map((o: any) => ({ ...o, id: o._id || o.id })),
+      ]);
+      setNextCursor(data.pagination?.nextCursor ?? null);
+    } catch {
+      // handle silently or show toast
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [bucketId, nextCursor, loadingMore]);
 
   useEffect(() => {
     fetch("/api/drive/config")
@@ -1451,6 +1483,37 @@ export default function FilesPage() {
           </div>
         )}
       </div>
+
+      {/* Load More footer */}
+      {nextCursor && (
+        <div className="flex justify-center py-4 border-t border-border">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={fetchNextPage}
+            disabled={loadingMore}
+            className="gap-2 min-w-[120px]"
+          >
+            {loadingMore ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                Loading…
+              </>
+            ) : (
+              <>
+                <ChevronDown className="w-3.5 h-3.5" />
+                Load more
+              </>
+            )}
+          </Button>
+        </div>
+      )}
+
+      {!nextCursor && objects.length > 0 && (
+        <p className="text-center text-xs text-muted-foreground/40 py-3">
+          All items loaded
+        </p>
+      )}
 
       {/* ── Dialogs ── */}
 
