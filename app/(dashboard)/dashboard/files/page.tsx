@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -13,6 +13,12 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Table,
   TableBody,
   TableCell,
@@ -21,18 +27,16 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   ArrowLeft,
   Upload,
   Trash2,
   FileText,
   Loader2,
-  FolderOpen,
-  Folder,
   FolderPlus,
   Home,
   ChevronRight,
-  DownloadCloud,
   LayoutGrid,
   List as ListIcon,
   Tag,
@@ -40,40 +44,29 @@ import {
   ClipboardPaste,
   Search,
   X,
-  Share2,
+  ChevronDown,
+  SortAsc,
+  SortDesc,
+  RefreshCw,
+  AlertTriangle,
+  FolderOpen,
 } from "lucide-react";
-import Link from "next/link";
 import { ShareDialog, ShareableFile } from "@/components/share-dialog";
 import { useUpload } from "@/contexts/UploadContext";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { useDownload } from "@/contexts/DownloadContext";
 import { usePreview } from "@/contexts/PreviewContext";
 import { useDropzone } from "react-dropzone";
-import dynamic from "next/dynamic";
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragStartEvent,
-  DragEndEvent,
-  DragOverlay,
-} from "@dnd-kit/core";
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-  rectSortingStrategy,
-} from "@dnd-kit/sortable";
-import { FileItem, FileRow, FileCard } from "@/components/dashboard/FileItem";
+import { FileItem } from "@/components/dashboard/FileItem";
 import { formatBytes, formatDate } from "@/lib/utils";
-import { encryptMetadataString, decryptMetadataString } from "@/lib/crypto/fileEncryption";
+import {
+  encryptMetadataString,
+  decryptMetadataString,
+} from "@/lib/crypto/fileEncryption";
+import { cn } from "@/lib/utils";
 
 interface ObjectData {
-  id: string; // use id, not _id
+  id: string;
   key: string;
   size: number;
   contentType: string;
@@ -96,85 +89,350 @@ interface BucketData {
   createdAt: string;
 }
 
+type SortField = "name" | "size" | "type" | "date";
+type SortDir = "asc" | "desc";
+
+// ─── Toolbar ──────────────────────────────────────────────────────────────────
+
+function Toolbar({
+  selectedIds,
+  allIds,
+  onSelectAll,
+  onClearSelection,
+  onDelete,
+  onCut,
+  onPaste,
+  clipboard,
+  processingPaste,
+  onUpload,
+  onNewFolder,
+  onSearch,
+  searchTerm,
+  viewMode,
+  onViewMode,
+  sortField,
+  sortDir,
+  onSort,
+}: {
+  selectedIds: Set<string>;
+  allIds: string[];
+  onSelectAll: () => void;
+  onClearSelection: () => void;
+  onDelete: () => void;
+  onCut: () => void;
+  onPaste: () => void;
+  clipboard: { action: "move"; items: ObjectData[] } | null;
+  processingPaste: boolean;
+  onUpload: () => void;
+  onNewFolder: () => void;
+  onSearch: (val: string) => void;
+  searchTerm: string;
+  viewMode: "list" | "grid";
+  onViewMode: (m: "list" | "grid") => void;
+  sortField: SortField;
+  sortDir: SortDir;
+  onSort: (field: SortField) => void;
+}) {
+  const hasSelection = selectedIds.size > 0;
+  const isAllSelected = allIds.length > 0 && selectedIds.size === allIds.length;
+  const isPartialSelected =
+    selectedIds.size > 0 && selectedIds.size < allIds.length;
+
+  return (
+    <div
+      data-no-deselect
+      className="flex items-center gap-2 px-4 py-2 shrink-0 min-h-[52px]"
+    >
+      <Checkbox
+        checked={
+          isAllSelected ? true : isPartialSelected ? "indeterminate" : false
+        }
+        onCheckedChange={(v) => (v ? onSelectAll() : onClearSelection())}
+        aria-label="Select all"
+        className="border-muted-foreground/30 data-[state=checked]:bg-primary data-[state=indeterminate]:bg-primary/60 shrink-0"
+      />
+
+      {hasSelection ? (
+        <div className="flex items-center gap-1 animate-in fade-in slide-in-from-left-2 duration-150">
+          <span className="text-sm font-medium text-foreground/60 mr-1">
+            {selectedIds.size} selected
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onCut}
+            className="h-8 gap-1.5 text-foreground/60 hover:text-foreground hover:bg-secondary/60"
+          >
+            <Scissors className="w-3.5 h-3.5" />
+            Cut
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onDelete}
+            className="h-8 gap-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            Delete
+          </Button>
+          <div className="w-px h-5 bg-border mx-1" />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClearSelection}
+            className="h-8 w-8 text-foreground/40 hover:text-foreground"
+          >
+            <X className="w-3.5 h-3.5" />
+          </Button>
+        </div>
+      ) : (
+        <div className="flex items-center gap-1.5 animate-in fade-in duration-150">
+          {clipboard && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onPaste}
+              disabled={processingPaste}
+              className="h-8 gap-1.5 text-primary hover:bg-primary/10"
+            >
+              {processingPaste ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <ClipboardPaste className="w-3.5 h-3.5" />
+              )}
+              Paste {clipboard.items.length} item
+              {clipboard.items.length !== 1 ? "s" : ""}
+            </Button>
+          )}
+        </div>
+      )}
+
+      <div className="flex-1" />
+
+      {/* Sort dropdown */}
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 gap-1.5 text-muted-foreground/60 hover:text-foreground hover:bg-secondary/60"
+          >
+            {sortDir === "asc" ? (
+              <SortAsc className="w-3.5 h-3.5" />
+            ) : (
+              <SortDesc className="w-3.5 h-3.5" />
+            )}
+            <span className="hidden sm:inline">Sort</span>
+            <ChevronDown className="w-3 h-3" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-40">
+          {(["name", "size", "type", "date"] as SortField[]).map((f) => (
+            <DropdownMenuItem
+              key={f}
+              onClick={() => onSort(f)}
+              className={cn(
+                "capitalize gap-2",
+                sortField === f && "text-primary font-medium",
+              )}
+            >
+              {sortField === f &&
+                (sortDir === "asc" ? (
+                  <SortAsc className="w-3.5 h-3.5" />
+                ) : (
+                  <SortDesc className="w-3.5 h-3.5" />
+                ))}
+              {f === "date" ? "Modified" : f}
+            </DropdownMenuItem>
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      {/* View toggle */}
+      <div className="flex items-center bg-secondary/40 rounded-md border border-border p-0.5">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => onViewMode("list")}
+          className={cn(
+            "h-7 w-7 rounded-sm",
+            viewMode === "list"
+              ? "bg-background shadow-sm text-foreground"
+              : "text-muted-foreground/40 hover:text-foreground",
+          )}
+        >
+          <ListIcon className="w-3.5 h-3.5" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => onViewMode("grid")}
+          className={cn(
+            "h-7 w-7 rounded-sm",
+            viewMode === "grid"
+              ? "bg-background shadow-sm text-foreground"
+              : "text-muted-foreground/40 hover:text-foreground",
+          )}
+        >
+          <LayoutGrid className="w-3.5 h-3.5" />
+        </Button>
+      </div>
+
+      <div className="w-px h-5 bg-border" />
+
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onNewFolder}
+        className="h-8 gap-1.5 text-foreground/60 hover:text-foreground hover:bg-secondary/60"
+      >
+        <FolderPlus className="w-3.5 h-3.5" />
+        <span className="hidden sm:inline">New folder</span>
+      </Button>
+
+      <Button
+        size="sm"
+        onClick={onUpload}
+        className="h-8 gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground font-medium"
+      >
+        <Upload className="w-3.5 h-3.5" />
+        <span className="hidden sm:inline">Upload</span>
+      </Button>
+    </div>
+  );
+}
+
+// ─── Breadcrumbs ──────────────────────────────────────────────────────────────
+
+function Breadcrumbs({
+  breadcrumbs,
+  onNavigateHome,
+  onNavigateTo,
+}: {
+  breadcrumbs: { part: string; display: string }[];
+  onNavigateHome: () => void;
+  onNavigateTo: (i: number) => void;
+}) {
+  return (
+    <div className="flex items-center gap-1 px-4 h-10 border-b border-border text-sm shrink-0 overflow-x-auto scrollbar-hide">
+      <button
+        onClick={onNavigateHome}
+        className="flex items-center gap-1.5 text-muted-foreground/50 hover:text-foreground transition-colors shrink-0 px-1.5 py-1 rounded hover:bg-secondary/40"
+      >
+        <Home className="w-3.5 h-3.5" />
+        <span className="hidden sm:inline">My Drive</span>
+      </button>
+      {breadcrumbs.map((bc, i) => (
+        <span key={i} className="flex items-center gap-1 shrink-0">
+          <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/20" />
+          <button
+            onClick={() => onNavigateTo(i)}
+            className={cn(
+              "px-1.5 py-1 rounded hover:bg-secondary/40 transition-colors whitespace-nowrap",
+              i === breadcrumbs.length - 1
+                ? "text-foreground font-medium"
+                : "text-muted-foreground/50 hover:text-foreground",
+            )}
+          >
+            {bc.display}
+          </button>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ─── Empty State ──────────────────────────────────────────────────────────────
+
+function EmptyState({ onUpload }: { onUpload: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-24 px-4 text-center">
+      <div className="w-16 h-16 rounded-2xl bg-secondary/40 border border-border flex items-center justify-center mb-4">
+        <FolderOpen className="w-7 h-7 text-muted-foreground/30" />
+      </div>
+      <p className="text-sm font-medium text-foreground/60 mb-1">
+        This folder is empty
+      </p>
+      <p className="text-xs text-muted-foreground/30 mb-5">
+        Upload files or create a new folder to get started
+      </p>
+      <Button
+        size="sm"
+        onClick={onUpload}
+        className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground h-8"
+      >
+        <Upload className="w-3.5 h-3.5" /> Upload files
+      </Button>
+    </div>
+  );
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
+
 export default function FilesPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const selectionStartRef = useRef<{ x: number; y: number } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [isSelecting, setIsSelecting] = useState(false);
+  const [selectionBox, setSelectionBox] = useState<{
+    currentX: number;
+    currentY: number;
+  } | null>(null);
 
   const [bucketId, setBucketId] = useState<string | null>(null);
   const [bucket, setBucket] = useState<BucketData | null>(null);
   const [rootPrefix, setRootPrefix] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
-
   const [objects, setObjects] = useState<ObjectData[]>([]);
   const [loading, setLoading] = useState(true);
-
-  // Navigation State
   const [currentPrefix, setCurrentPrefix] = useState("");
-
-  // Actions State
   const [deleteIds, setDeleteIds] = useState<string[]>([]);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
-
-  // Create Folder State
   const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [creatingFolder, setCreatingFolder] = useState(false);
-
-  // Downloading State
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
-
-  // Tagging State
   const [taggingObj, setTaggingObj] = useState<ObjectData | null>(null);
   const [newTag, setNewTag] = useState("");
-
-  // Clipboard State (for Move)
   const [clipboard, setClipboard] = useState<{
     action: "move";
     items: ObjectData[];
   } | null>(null);
   const [processingPaste, setProcessingPaste] = useState(false);
-
-  const [activeId, setActiveId] = useState<string | null>(null);
-
-  // Selection State
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
-  const [isSelecting, setIsSelecting] = useState(false);
-  const [selectionBox, setSelectionBox] = useState<{
-    startX: number;
-    startY: number;
-    currentX: number;
-    currentY: number;
-  } | null>(null);
+  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  const [sortField, setSortField] = useState<SortField>("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [shareFile, setShareFile] = useState<ShareableFile | null>(null);
+  const [decryptedFolderNameMap, setDecryptedFolderNameMap] = useState<
+    Record<string, string>
+  >({});
 
-  // Global context imports
   const { addTasks, tasks } = useUpload();
   const { privateKey, metadataKey, setModalOpen } = useCrypto();
   const { startDownload } = useDownload();
   const { openPreview, closePreview } = usePreview();
 
-  const [shareFile, setShareFile] = useState<ShareableFile | null>(null);
+  // ── Data fetching ──────────────────────────────────────────────────────────
 
   const fetchData = useCallback(async () => {
     if (!bucketId) return;
-
     try {
       const [bucketRes, objectsRes] = await Promise.all([
         fetch(`/api/buckets/${bucketId}`),
         fetch(`/api/objects?bucketId=${bucketId}`),
       ]);
-
       const bucketData = await bucketRes.json();
       const objectsData = await objectsRes.json();
-
       if (!bucketRes.ok) {
         setError(bucketData.error || "Bucket not found");
         return;
       }
-
       setBucket(bucketData.bucket);
       setObjects(
         (objectsData.objects || []).map((o: any) => ({
@@ -189,224 +447,456 @@ export default function FilesPage() {
     }
   }, [bucketId]);
 
-  // Fetch global bucket ID and root prefix
   useEffect(() => {
     fetch("/api/drive/config")
-      .then((res) => res.json())
+      .then((r) => r.json())
       .then((data) => {
         if (data.bucket) {
           setBucketId(data.bucket._id);
           if (data.rootPrefix) {
             const folderParam = searchParams.get("folder");
-            if (folderParam) {
-              setCurrentPrefix(data.rootPrefix + folderParam);
-            } else {
-              setCurrentPrefix(data.rootPrefix);
-            }
+            setCurrentPrefix(
+              folderParam ? data.rootPrefix + folderParam : data.rootPrefix,
+            );
             setRootPrefix(data.rootPrefix);
           }
         } else {
           setError("Failed to initialize drive storage");
         }
       })
-      .catch((err) => {
-        console.error(err);
-        setError("Failed to connect to storage");
-      });
+      .catch(() => setError("Failed to connect to storage"));
   }, [searchParams]);
 
-  const [decryptedFolderNameMap, setDecryptedFolderNameMap] = useState<Record<string, string>>({});
-  
   useEffect(() => {
     if (!metadataKey || !objects.length) return;
-    
-    const decryptFolders = async () => {
+    const run = async () => {
       const newMap: Record<string, string> = {};
       for (const obj of objects) {
-        if (obj.contentType === "application/x-directory" && obj.isEncrypted && obj.encryptedDisplayName && !decryptedFolderNameMap[obj.key]) {
+        if (
+          obj.contentType === "application/x-directory" &&
+          obj.isEncrypted &&
+          obj.encryptedDisplayName &&
+          !decryptedFolderNameMap[obj.key]
+        ) {
           try {
-            const name = await decryptMetadataString(obj.encryptedDisplayName, metadataKey);
-            newMap[obj.key] = name;
-          } catch (e) {
-            console.error("Failed to decrypt folder name", e);
-          }
+            newMap[obj.key] = await decryptMetadataString(
+              obj.encryptedDisplayName,
+              metadataKey,
+            );
+          } catch {}
         }
       }
-      if (Object.keys(newMap).length > 0) {
-        setDecryptedFolderNameMap(prev => ({ ...prev, ...newMap }));
-      }
+      if (Object.keys(newMap).length > 0)
+        setDecryptedFolderNameMap((prev) => ({ ...prev, ...newMap }));
     };
-    
-    decryptFolders();
-  }, [objects, metadataKey, decryptedFolderNameMap]);
+    run();
+  }, [objects, metadataKey]);
 
-  // Sync URL changes to currentPrefix when user uses back/forward buttons
   useEffect(() => {
     if (!rootPrefix) return;
     const folderParam = searchParams.get("folder");
-    const expectedPrefix = folderParam
-      ? `${rootPrefix}${folderParam}`
-      : rootPrefix;
-    if (currentPrefix !== expectedPrefix) {
-      setCurrentPrefix(expectedPrefix);
-    }
+    const expected = folderParam ? `${rootPrefix}${folderParam}` : rootPrefix;
+    if (currentPrefix !== expected) setCurrentPrefix(expected);
   }, [searchParams, rootPrefix]);
+
+  useEffect(() => {
+    const saved = localStorage.getItem("filesViewMode");
+    if (saved === "list" || saved === "grid") setViewMode(saved);
+  }, []);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  const prevCompletedCountRef = useRef(0);
+  const dragStartRects = useRef<Map<string, DOMRect>>(new Map());
+  const rafId = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!bucketId) return;
+    const count = tasks.filter(
+      (t) =>
+        t.bucketId === bucketId &&
+        t.prefix === currentPrefix &&
+        t.status === "completed",
+    ).length;
+    if (count > prevCompletedCountRef.current) fetchData();
+    prevCompletedCountRef.current = count;
+  }, [tasks, bucketId, currentPrefix, fetchData]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { id } = (e as CustomEvent<{ id: string }>).detail;
+      const obj = objects.find((o) => o.id === id);
+      if (obj) handleDownload(obj);
+    };
+    window.addEventListener("xenode:resumeDownload", handler);
+    return () => window.removeEventListener("xenode:resumeDownload", handler);
+  }, [objects, privateKey]);
+
+  // ── Derived view data ──────────────────────────────────────────────────────
+
   const viewObjects = useMemo(() => {
     const folderMap = new Map<string, ObjectData>();
     const files: ObjectData[] = [];
 
     objects.forEach((obj) => {
-      // Must start with current prefix
-      if (!obj.key.startsWith(currentPrefix)) return;
-      // Don't show the directory object itself (if it matches exactly)
-      if (obj.key === currentPrefix) return;
+      if (!obj.key.startsWith(currentPrefix) || obj.key === currentPrefix)
+        return;
 
-      const relativeKey = obj.key.slice(currentPrefix.length);
-      const parts = relativeKey.split("/");
+      const relKey = obj.key.slice(currentPrefix.length);
+      const parts = relKey.split("/").filter(Boolean);
 
-      if (parts.length > 1 || (parts.length === 1 && obj.key.endsWith("/"))) {
-        // It's a folder (or inside one)
-        const folderName = parts[0];
+      // ✅ REAL FOLDERS ONLY
+      if (obj.contentType === "application/x-directory") {
+        const folderKey = obj.key;
 
-        // Check if we already have this folder
-        if (!folderMap.has(folderName)) {
-          // Try to find the actual folder object (endsWith "/")
-          const folderKey = `${currentPrefix}${folderName}/`;
-          const folderObj = objects.find((o) => o.key === folderKey);
-
-          if (folderObj) {
-            folderMap.set(folderName, folderObj);
-          } else {
-            // Virtual folder
-            folderMap.set(folderName, {
-              id: `virtual-${folderName}`,
-              key: folderKey,
-              size: 0,
-              contentType: "application/x-directory",
-              createdAt: new Date().toISOString(), // Mock
-              tags: [],
-            });
-          }
+        if (!folderMap.has(folderKey)) {
+          folderMap.set(folderKey, obj);
         }
-      } else {
-        // It's a file
+
+        return;
+      }
+
+      // ✅ FILES ONLY (no fake folders)
+      if (parts.length === 1) {
         files.push(obj);
       }
     });
 
-    const sortFolders = (a: ObjectData, b: ObjectData) => {
-      if (a.position !== undefined || b.position !== undefined) {
-        const posA = a.position ?? Number.MAX_SAFE_INTEGER;
-        const posB = b.position ?? Number.MAX_SAFE_INTEGER;
-        if (posA !== posB) return posA - posB;
-      }
-      return a.key.localeCompare(b.key);
-    };
+    const applySort = <T extends ObjectData>(arr: T[]): T[] =>
+      [...arr].sort((a, b) => {
+        let cmp = 0;
+        if (sortField === "name") cmp = a.key.localeCompare(b.key);
+        else if (sortField === "size") cmp = a.size - b.size;
+        else if (sortField === "type")
+          cmp = a.contentType.localeCompare(b.contentType);
+        else
+          cmp =
+            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+        return sortDir === "asc" ? cmp : -cmp;
+      });
 
-    const sortFiles = (a: ObjectData, b: ObjectData) => {
-      if (a.position !== undefined || b.position !== undefined) {
-        const posA = a.position ?? Number.MAX_SAFE_INTEGER;
-        const posB = b.position ?? Number.MAX_SAFE_INTEGER;
-        if (posA !== posB) return posA - posB;
-      }
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    const applySearch = <T extends ObjectData>(arr: T[]): T[] => {
+      if (!searchTerm) return arr;
+      const q = searchTerm.toLowerCase();
+      return arr.filter((o) => {
+        const name =
+          decryptedFolderNameMap[o.key] ||
+          o.key.split("/").filter(Boolean).pop() ||
+          o.key;
+        return name.toLowerCase().includes(q);
+      });
     };
 
     return {
-      folders: Array.from(folderMap.values()).sort(sortFolders),
-      files: files.sort(sortFiles),
+      folders: applySearch(applySort(Array.from(folderMap.values()))),
+      files: applySearch(applySort(files)),
     };
-  }, [objects, currentPrefix]);
+  }, [
+    objects,
+    currentPrefix,
+    sortField,
+    sortDir,
+    searchTerm,
+    decryptedFolderNameMap,
+  ]);
 
-  // DnD Sensors
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 8, // Require 8px movement before drag starts (prevents click hijack)
-      },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
+  const allIds = useMemo(
+    () => [
+      ...viewObjects.folders.map((f) => f.id),
+      ...viewObjects.files.map((f) => f.id),
+    ],
+    [viewObjects],
   );
+
+  // ── Selection ──────────────────────────────────────────────────────────────
 
   const handleSelect = useCallback(
     (item: ObjectData, e: React.MouseEvent) => {
       const id = item.id;
       e.stopPropagation();
       e.preventDefault();
-
       const newSelected = new Set(selectedIds);
-
       if (e.ctrlKey || e.metaKey) {
-        // Toggle selection
-        if (newSelected.has(id)) {
-          newSelected.delete(id);
-        } else {
-          newSelected.add(id);
-          setLastSelectedId(id);
-        }
+        newSelected.has(id) ? newSelected.delete(id) : newSelected.add(id);
+        setLastSelectedId(id);
       } else if (e.shiftKey && lastSelectedId) {
-        // Range select
-        const allItems = [...viewObjects.folders, ...viewObjects.files];
-        const lastIndex = allItems.findIndex(
-          (item) => item.id === lastSelectedId,
-        );
-        const currentIndex = allItems.findIndex((item) => item.id === id);
-
-        if (lastIndex !== -1 && currentIndex !== -1) {
-          const start = Math.min(lastIndex, currentIndex);
-          const end = Math.max(lastIndex, currentIndex);
-          const range = allItems.slice(start, end + 1);
-
-          // Add range to existing selection if CTRL is also held? No, standard behavior is clear others.
-          // Unless we want to behave like Windows Explorer which keeps Ctrl pressed.
-          // For simple Shift+Click, we clear and select range.
+        const all = [...viewObjects.folders, ...viewObjects.files];
+        const li = all.findIndex((i) => i.id === lastSelectedId);
+        const ci = all.findIndex((i) => i.id === id);
+        if (li !== -1 && ci !== -1) {
           newSelected.clear();
-          range.forEach((item) => newSelected.add(item.id));
+          all
+            .slice(Math.min(li, ci), Math.max(li, ci) + 1)
+            .forEach((i) => newSelected.add(i.id));
         }
       } else {
-        // Single select
         newSelected.clear();
         newSelected.add(id);
         setLastSelectedId(id);
       }
-
       setSelectedIds(newSelected);
     },
     [selectedIds, lastSelectedId, viewObjects],
   );
 
-  // Clear selection when clicking background
-  const handleBackgroundClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) {
+  // ── Navigation ─────────────────────────────────────────────────────────────
+
+  const handleNavigation = useCallback(
+    (prefix: string) => {
+      const relative = prefix.startsWith(rootPrefix)
+        ? prefix.slice(rootPrefix.length)
+        : prefix;
+      router.push(`?folder=${encodeURIComponent(relative)}`);
+      setCurrentPrefix(prefix);
       setSelectedIds(new Set());
-      setLastSelectedId(null);
+    },
+    [router, rootPrefix],
+  );
+
+  const navigateToFolder = (folderName: string) =>
+    handleNavigation(`${currentPrefix}${folderName}/`);
+
+  const navigateUp = () => {
+    if (currentPrefix === rootPrefix) return;
+    const parts = currentPrefix.split("/").filter(Boolean);
+    parts.pop();
+    const newPath = parts.length > 0 ? `${parts.join("/")}/` : "";
+    handleNavigation(newPath.length < rootPrefix.length ? rootPrefix : newPath);
+  };
+
+  const navigateToBreadcrumb = (index: number) => {
+    const parts = currentPrefix
+      .slice(rootPrefix.length)
+      .split("/")
+      .filter(Boolean);
+    handleNavigation(`${rootPrefix}${parts.slice(0, index + 1).join("/")}/`);
+  };
+
+  const breadcrumbs = useMemo(() => {
+    const parts = currentPrefix
+      .slice(rootPrefix.length)
+      .split("/")
+      .filter(Boolean);
+    let running = rootPrefix;
+    return parts.map((part) => {
+      running += `${part}/`;
+      return { part, display: decryptedFolderNameMap[running] || part };
+    });
+  }, [currentPrefix, rootPrefix, decryptedFolderNameMap]);
+
+  // ── Sort ───────────────────────────────────────────────────────────────────
+
+  const handleSort = (field: SortField) => {
+    if (field === sortField) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortField(field);
+      setSortDir("asc");
     }
   };
 
-  // Cache for item rects to prevent layout thrashing during drag
-  const dragStartRects = useRef<Map<string, DOMRect>>(new Map());
-  const rafId = useRef<number | null>(null);
+  // ── Actions ────────────────────────────────────────────────────────────────
+
+  const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files?.length || !bucketId) return;
+    addTasks(Array.from(files), bucketId, currentPrefix);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    setTimeout(fetchData, 1000);
+  };
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim() || !bucketId) return;
+    setCreatingFolder(true);
+    setError("");
+    try {
+      const isEnc = !!privateKey;
+      const folderName = newFolderName.trim();
+      const storageName = isEnc ? crypto.randomUUID() : folderName;
+      let encryptedDisplayName: string | undefined;
+      if (isEnc && metadataKey)
+        encryptedDisplayName = await encryptMetadataString(
+          folderName,
+          metadataKey,
+        );
+      const res = await fetch("/api/objects/folder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bucketId,
+          name: storageName,
+          encryptedDisplayName,
+          prefix: currentPrefix,
+        }),
+      });
+      if (res.ok) {
+        setNewFolderName("");
+        setIsCreateFolderOpen(false);
+        fetchData();
+      } else {
+        const d = await res.json();
+        setError(d.error || "Failed to create folder");
+      }
+    } catch {
+      setError("Failed to create folder");
+    } finally {
+      setCreatingFolder(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteIds.length) return;
+    setDeleting(true);
+    setError("");
+    try {
+      await Promise.all(
+        deleteIds.map(async (id) => {
+          const folderObj = viewObjects.folders.find((f) => f.id === id);
+          if (id.startsWith("virtual-") || folderObj) {
+            if (folderObj?.key) {
+              const res = await fetch("/api/objects/folder", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ bucketId, prefix: folderObj.key }),
+              });
+              if (!res.ok) throw new Error("Failed to delete folder");
+            }
+          } else {
+            const res = await fetch(`/api/objects/${id}`, { method: "DELETE" });
+            if (!res.ok) throw new Error("Failed to delete item");
+          }
+        }),
+      );
+      setDeleteIds([]);
+      fetchData();
+      setSelectedIds((prev) => {
+        const n = new Set(prev);
+        deleteIds.forEach((id) => n.delete(id));
+        return n;
+      });
+    } catch {
+      setError("Failed to delete item(s)");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleDownload = async (obj: ObjectData) => {
+    try {
+      await startDownload(obj, !!obj.isEncrypted, privateKey);
+    } catch (err: any) {
+      if (err.message?.includes("Vault locked")) setModalOpen(true);
+      setError(err?.message || "Download failed");
+    }
+  };
+
+  const handleCut = () => {
+    if (selectedIds.size === 0) return;
+
+    const items = [...viewObjects.folders, ...viewObjects.files].filter((i) =>
+      selectedIds.has(i.id),
+    );
+
+    setClipboard({ action: "move", items });
+  };
+
+  const handlePaste = useCallback(async () => {
+    if (!clipboard || !bucketId) return;
+    setProcessingPaste(true);
+    try {
+      const res = await fetch("/api/objects/move", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bucketId,
+          sourceKeys: clipboard.items.map((i) => i.key),
+          destinationPrefix: currentPrefix,
+        }),
+      });
+      if (res.ok) {
+        setClipboard(null);
+        fetchData();
+      } else {
+        const d = await res.json();
+        setError(d.error || "Failed to move items");
+      }
+    } catch {
+      setError("Failed to move items");
+    } finally {
+      setProcessingPaste(false);
+    }
+  }, [clipboard, bucketId, currentPrefix, fetchData]);
+
+  const handleAddTag = async () => {
+    if (!taggingObj || !newTag.trim()) return;
+    const cur = taggingObj.tags || [];
+    if (cur.includes(newTag.trim())) {
+      setNewTag("");
+      return;
+    }
+    let tagToSave = newTag.trim();
+    if (privateKey && metadataKey)
+      tagToSave = await encryptMetadataString(tagToSave, metadataKey);
+    try {
+      const res = await fetch(`/api/objects/${taggingObj.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags: [...cur, tagToSave] }),
+      });
+      if (res.ok) {
+        setTaggingObj({ ...taggingObj, tags: [...cur, tagToSave] });
+        setNewTag("");
+        fetchData();
+      }
+    } catch {}
+  };
+
+  const handleRemoveTag = async (tag: string) => {
+    if (!taggingObj) return;
+    const updated = (taggingObj.tags || []).filter((t) => t !== tag);
+    try {
+      const res = await fetch(`/api/objects/${taggingObj.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags: updated }),
+      });
+      if (res.ok) {
+        setTaggingObj({ ...taggingObj, tags: updated });
+        fetchData();
+      }
+    } catch {}
+  };
 
   const handleMouseDown = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
 
-    // If clicked directly on an item, do NOT start box selection
+    // ❗ DO NOT START SELECTION if clicking UI
+    if (
+      target.closest("button") ||
+      target.closest("[role='button']") ||
+      target.closest("[data-no-deselect]") ||
+      target.closest("input") ||
+      target.closest("svg")
+    ) {
+      return;
+    }
+
+    // ❗ DO NOT start selection if clicking on file item (let FileItem handle it)
     if (target.closest(".file-item-selectable")) return;
+
+    selectionStartRef.current = { x: e.clientX, y: e.clientY };
 
     setIsSelecting(true);
     setSelectionBox({
-      startX: e.clientX,
-      startY: e.clientY,
       currentX: e.clientX,
       currentY: e.clientY,
     });
 
-    // Clear selection when starting a new box (unless Ctrl is held)
-    if (!e.ctrlKey) setSelectedIds(new Set());
+    if (!e.ctrlKey && !e.metaKey) {
+      setSelectedIds(new Set());
+    }
 
-    // Cache all item rects once at start of drag
     dragStartRects.current.clear();
     for (const [id, el] of itemRefs.current.entries()) {
       if (document.body.contains(el)) {
@@ -429,342 +919,66 @@ export default function FilesPage() {
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      if (!isSelecting || !selectionBox) return;
+      if (!isSelecting || !selectionStartRef.current) return;
 
       const clientX = e.clientX;
       const clientY = e.clientY;
 
-      // Throttle updates with requestAnimationFrame
-      if (rafId.current) {
-        cancelAnimationFrame(rafId.current);
-      }
+      const { x: startX, y: startY } = selectionStartRef.current;
+
+      // ✅ drag threshold (fix random selection bug)
+      const dx = Math.abs(clientX - startX);
+      const dy = Math.abs(clientY - startY);
+      if (dx < 5 && dy < 5) return;
+
+      if (rafId.current) cancelAnimationFrame(rafId.current);
 
       rafId.current = requestAnimationFrame(() => {
-        setSelectionBox((prev) => {
-          if (!prev) return null;
-          return {
-            ...prev,
-            currentX: clientX,
-            currentY: clientY,
-          };
-        });
-
-        // Use the event coordinates directly for the calculation logic
-        // to avoid waiting for state update cycle
-        const newBox = {
-          startX: selectionBox.startX,
-          startY: selectionBox.startY,
+        setSelectionBox({
           currentX: clientX,
           currentY: clientY,
-        };
+        });
 
         const boxRect = {
-          left: Math.min(newBox.startX, newBox.currentX),
-          right: Math.max(newBox.startX, newBox.currentX),
-          top: Math.min(newBox.startY, newBox.currentY),
-          bottom: Math.max(newBox.startY, newBox.currentY),
+          left: Math.min(startX, clientX),
+          right: Math.max(startX, clientX),
+          top: Math.min(startY, clientY),
+          bottom: Math.max(startY, clientY),
         };
 
         const nextSelected = new Set<string>();
 
-        // Use cached rects instead of querying DOM
         for (const [id, rect] of dragStartRects.current.entries()) {
           if (rectsIntersect(rect, boxRect)) {
             nextSelected.add(id);
           }
         }
 
+        // ✅ ctrl / cmd additive selection (FIXED)
         setSelectedIds((prev) => {
-          // Only update if selection actually changed
-          if (prev.size === nextSelected.size) {
-            let eq = true;
-            for (const id of nextSelected) {
-              if (!prev.has(id)) {
-                eq = false;
-                break;
-              }
-            }
-            if (eq) return prev;
+          if (e.ctrlKey || e.metaKey) {
+            return new Set([...prev, ...nextSelected]);
           }
           return nextSelected;
         });
       });
     },
-    [isSelecting, selectionBox],
+    [isSelecting],
   );
 
   const handleMouseUp = () => {
     if (isSelecting) {
       setIsSelecting(false);
       setSelectionBox(null);
+
       if (rafId.current) {
         cancelAnimationFrame(rafId.current);
         rafId.current = null;
       }
+
       dragStartRects.current.clear();
+      selectionStartRef.current = null;
     }
-  };
-
-  const handleDragStart = (event: DragStartEvent) => {
-    const id = event.active.id as string;
-    setActiveId(id);
-
-    // If dragging an item NOT in selection, select it and clear others
-    if (
-      !selectedIds.has(id) &&
-      !event.active.data.current?.sortable?.items?.includes(id)
-    ) {
-      // Logic: if user drags an unselected item, usually that becomes the selection.
-      // But if CTRL is held? Drag event usually suppresses click.
-      // Let's assume standard behavior: drag unselected = select only that one.
-      setSelectedIds(new Set([id]));
-    }
-  };
-
-  const handleDragEnd = async (event: DragEndEvent) => {
-    const { active, over } = event;
-    setActiveId(null);
-
-    if (!over || active.id === over.id) return;
-
-    // Items to move: all selected IDs
-    // If active ID is not in selected set (shouldn't happen due to DragStart logic, but safety check)
-    // we use just active ID.
-    const itemsToMoveIds = selectedIds.has(active.id as string)
-      ? Array.from(selectedIds)
-      : [active.id as string];
-
-    // Determine context (Folders or Files)
-    // We assume we don't drag mix of folders/files for reordering usually,
-    // or if we do, we handle them in their respective lists.
-    // Simplifying assumption: We only reorder within the same Type since we have two SortableContexts.
-    // If I drag a File, it can only be dropped on a File in this setup usually, unless we unify.
-    // Wait, SortableContext items are separated.
-
-    // Check if active item is folder or file
-    const isFolder = viewObjects.folders.some((f) => f.id === active.id);
-    const isFile = viewObjects.files.some((f) => f.id === active.id);
-
-    const list = isFolder ? viewObjects.folders : viewObjects.files;
-
-    if (
-      (isFolder && !viewObjects.folders.some((f) => f.id === over.id)) ||
-      (isFile && !viewObjects.files.some((f) => f.id === over.id))
-    ) {
-      // Dropped on different type?
-      // If we support mixed reordering, we need a unified list.
-      // Current UI has separate prompts. We'll stick to same-type reordering for now.
-      return;
-    }
-
-    // Filter out items to move from the list to get the "base" list
-    const baseList = list.filter((item) => !itemsToMoveIds.includes(item.id));
-
-    // Find index of `over` item in the original list
-    const overIndexOriginal = list.findIndex((item) => item.id === over.id);
-    // But `over` item might be one of the moving items?
-    // If I drag selection onto itself, usually nothing happens or specific reorder.
-    if (itemsToMoveIds.includes(over.id as string)) return;
-
-    // We need the index of `over` in the *base* list to know where to insert?
-    // Actually, `dnd-kit` gives us `over`.
-    // If we drag A,B to C. C is in base list.
-    // We want to insert A,B after or before C.
-    // Simpler: Find index of `over` in `list`.
-    // If we move down, we insert after. If up, before.
-    // Since we are removing items, indices shift.
-
-    // Let's use `dnd-kit`'s approach:
-    // When dragging, `over` is the target.
-    // New index logic:
-    const overIndex = list.findIndex((f) => f.id === over.id);
-    const activeIndex = list.findIndex((f) => f.id === active.id);
-
-    // Implementation:
-    // 1. Remove items from list.
-    // 2. Insert at new index.
-    // Careful with index shifting.
-
-    let newItems = [...list];
-    // Sort items to move by their current index to maintain relative order?
-    // or just move them as a block? usually block.
-    // But if they are non-contiguous? Explorer usually gathers them.
-
-    const movingItems = itemsToMoveIds
-      .map((id) => list.find((item) => item.id === id))
-      .filter(Boolean) as ObjectData[];
-
-    // Remove
-    newItems = newItems.filter((item) => !itemsToMoveIds.includes(item.id));
-
-    // Find new insertion index
-    // We want to insert where `over` is.
-    // But `over` is in `newItems`? Yes, because we checked `!itemsToMoveIds.includes(over.id)`.
-    const newOverIndex = newItems.findIndex((item) => item.id === over.id);
-
-    // visual quirk: if we drag from top to bottom, usually we insert AFTER over.
-    // if bottom to top, BEFORE over.
-    // But `arrayMove` handles this via indices.
-    // Since we removed items, `newOverIndex` is the spot.
-    // If original activeIndex < overIndex, we moved down.
-
-    const modifier = activeIndex < overIndex ? 1 : 0;
-    // This valid for single item. for multiple?
-    // Let's just insert at `newOverIndex` + modifier.
-
-    newItems.splice(newOverIndex + modifier, 0, ...movingItems);
-
-    // Update global objects state with new positions
-    setObjects((prev) => {
-      const next = [...prev];
-      const positionMap = new Map<string, number>();
-
-      newItems.forEach((item, index) => {
-        positionMap.set(item.id, index);
-      });
-
-      for (let i = 0; i < next.length; i++) {
-        const obj = next[i];
-        if (positionMap.has(obj.id)) {
-          next[i] = { ...obj, position: positionMap.get(obj.id) };
-        }
-      }
-
-      return next;
-    });
-
-    // Persist
-    try {
-      const updates = newItems
-        .map((item, index) => ({
-          id: item.id,
-          position: index,
-        }))
-        .filter((item) => !item.id.startsWith("virtual-"));
-
-      if (updates.length > 0) {
-        const res = await fetch("/api/objects/reorder", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ bucketId, items: updates }),
-        });
-        if (!res.ok) {
-          console.error("Reorder failed");
-        }
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleCut = (obj: ObjectData) => {
-    if (selectedIds.has(obj.id)) {
-      // Cut all selected
-      const items = [...viewObjects.folders, ...viewObjects.files].filter((i) =>
-        selectedIds.has(i.id),
-      );
-      setClipboard({ action: "move", items });
-    } else {
-      setClipboard({ action: "move", items: [obj] });
-    }
-  };
-
-  const handlePaste = async () => {
-    if (!clipboard || !bucketId) return;
-    setProcessingPaste(true);
-
-    try {
-      const res = await fetch("/api/objects/move", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          bucketId,
-          sourceKeys: clipboard.items.map((i) => i.key),
-          destinationPrefix: currentPrefix,
-        }),
-      });
-
-      const data = await res.json();
-
-      if (res.ok) {
-        setClipboard(null);
-        fetchData();
-        // Optional: show toast success
-      } else {
-        console.error("Move failed", data);
-        setError(data.error || "Failed to move items");
-      }
-    } catch (err) {
-      console.error(err);
-      setError("Failed to move items");
-    } finally {
-      setProcessingPaste(false);
-    }
-  };
-
-  const handleAddTag = async () => {
-    if (!taggingObj || !newTag.trim()) return;
-    const currentTags = taggingObj.tags || [];
-    if (currentTags.includes(newTag.trim())) {
-      setNewTag("");
-      return;
-    }
-    let tagToSave = newTag.trim();
-    if (!!privateKey && metadataKey) {
-      tagToSave = await encryptMetadataString(tagToSave, metadataKey);
-    }
-
-    try {
-      const res = await fetch(`/api/objects/${taggingObj.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tags: [...currentTags, tagToSave] }),
-      });
-
-      if (res.ok) {
-        setTaggingObj({ ...taggingObj, tags: [...currentTags, tagToSave] });
-        setNewTag("");
-        fetchData(); // Refresh list headers
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleRemoveTag = async (tagToRemove: string) => {
-    if (!taggingObj) return;
-    const currentTags = taggingObj.tags || [];
-    const updatedTags = currentTags.filter((t) => t !== tagToRemove);
-
-    try {
-      const res = await fetch(`/api/objects/${taggingObj.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tags: updatedTags }),
-      });
-
-      if (res.ok) {
-        setTaggingObj({ ...taggingObj, tags: updatedTags });
-        fetchData();
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  // View Mode State
-  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
-
-  useEffect(() => {
-    const savedView = localStorage.getItem("filesViewMode");
-    if (savedView === "list" || savedView === "grid") {
-      setViewMode(savedView);
-    }
-  }, []);
-
-  const toggleViewMode = (mode: "list" | "grid") => {
-    setViewMode(mode);
-    localStorage.setItem("filesViewMode", mode);
   };
 
   async function getDEKBytes(fileId: string): Promise<Uint8Array> {
@@ -788,134 +1002,13 @@ export default function FilesPage() {
     return new Uint8Array(dekBytes);
   }
 
-  // Track completed uploads to trigger refresh
-  const prevCompletedCountRef = useRef(0);
-
-  // Refresh when uploads complete
-  useEffect(() => {
-    if (!bucketId) return;
-
-    // Count completed uploads for CURRENT folder
-    const completedCount = tasks.filter(
-      (t) =>
-        t.bucketId === bucketId &&
-        t.prefix === currentPrefix &&
-        t.status === "completed",
-    ).length;
-
-    // If count increased, it means a new upload finished
-    if (completedCount > prevCompletedCountRef.current) {
-      fetchData();
-    }
-
-    prevCompletedCountRef.current = completedCount;
-  }, [tasks, bucketId, currentPrefix, fetchData]);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
-
-  // Keyboard Shortcuts
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignore if input/textarea is focused
-      if (
-        document.activeElement instanceof HTMLInputElement ||
-        document.activeElement instanceof HTMLTextAreaElement
-      ) {
-        return;
-      }
-
-      // Delete
-      if (e.key === "Delete" || e.key === "Backspace") {
-        if (
-          selectedIds.size > 0 &&
-          !isCreateFolderOpen &&
-          deleteIds.length === 0
-        ) {
-          e.preventDefault();
-          setDeleteIds(Array.from(selectedIds));
-        }
-      }
-
-      // Ctrl+A / Cmd+A (Select All)
-      if ((e.ctrlKey || e.metaKey) && e.key === "a") {
-        e.preventDefault();
-        const allIds = new Set([
-          ...viewObjects.folders.map((f) => f.id),
-          ...viewObjects.files.map((f) => f.id),
-        ]);
-        setSelectedIds(allIds);
-      }
-
-      // Escape (Clear Selection)
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setClipboard(null);
-        setSelectedIds(new Set());
-        setDownloadingId(null);
-        closePreview();
-        setTaggingObj(null);
-        setIsCreateFolderOpen(false);
-        setDeleteIds([]);
-      }
-
-      // Ctrl+X / Cmd+X (Cut)
-      if ((e.ctrlKey || e.metaKey) && e.key === "x") {
-        e.preventDefault();
-        if (selectedIds.size > 0) {
-          const items = [...viewObjects.folders, ...viewObjects.files].filter(
-            (i) => selectedIds.has(i.id),
-          );
-          setClipboard({ action: "move", items });
-          // Optional: Add some visual feedback or toast
-        }
-      }
-
-      // Ctrl+C / Cmd+C (Copy - placeholder if we implement copy later, currently move only)
-      // For now, let's just leave it or strictly implement what file explorer does?
-      // User only asked specifically for ctrl+x.
-
-      // Ctrl+V / Cmd+V (Paste)
-      if ((e.ctrlKey || e.metaKey) && e.key === "v") {
-        e.preventDefault();
-        if (clipboard) {
-          handlePaste();
-        }
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [
-    selectedIds,
-    viewObjects,
-    isCreateFolderOpen,
-    deleteIds,
-    clipboard,
-    handlePaste,
-  ]);
-
-  // Resume download event — fired by the Resume button in DownloadProgress
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const { id } = (e as CustomEvent<{ id: string }>).detail;
-      const obj = objects.find((o) => o.id === id);
-      if (obj) {
-        handleDownload(obj);
-      }
-    };
-    window.addEventListener("xenode:resumeDownload", handler);
-    return () => window.removeEventListener("xenode:resumeDownload", handler);
-  }, [objects, privateKey]);
+  // ── Dropzone ───────────────────────────────────────────────────────────────
 
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
       if (acceptedFiles.length > 0 && bucketId) {
         addTasks(Array.from(acceptedFiles), bucketId, currentPrefix);
-        setTimeout(() => {
-          fetchData();
-        }, 1000);
+        setTimeout(fetchData, 1000);
       }
     },
     [addTasks, bucketId, currentPrefix, fetchData],
@@ -927,235 +1020,173 @@ export default function FilesPage() {
     noKeyboard: true,
   });
 
-  // Process objects for current view
+  // ── Keyboard shortcuts ─────────────────────────────────────────────────────
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0 || !bucketId) return;
-
-    // Add files to global upload queue
-    addTasks(Array.from(files), bucketId, currentPrefix);
-
-    // Clear the input
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
-
-    // Refresh data after a short delay to show uploaded files
-    setTimeout(() => {
-      fetchData();
-    }, 1000);
-  };
-
-  const handleCreateFolder = async () => {
-    if (!newFolderName.trim() || !bucketId) return;
-    setCreatingFolder(true);
-    setError("");
-    try {
-      const isEncrypted = !!privateKey;
-      const folderName = newFolderName.trim();
-
-      // If encrypted, use a random UUID for the physical storage key
-      // and store the real name in encryptedDisplayName
-      const storageName = isEncrypted ? crypto.randomUUID() : folderName;
-      let encryptedDisplayName: string | undefined;
-
-      if (isEncrypted && metadataKey) {
-        encryptedDisplayName = await encryptMetadataString(
-          folderName,
-          metadataKey,
-        );
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (
+        document.activeElement instanceof HTMLInputElement ||
+        document.activeElement instanceof HTMLTextAreaElement
+      )
+        return;
+      if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        selectedIds.size > 0 &&
+        !isCreateFolderOpen &&
+        !deleteIds.length
+      ) {
+        e.preventDefault();
+        setDeleteIds(Array.from(selectedIds));
       }
-
-      const res = await fetch("/api/objects/folder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          bucketId,
-          name: storageName,
-          encryptedDisplayName,
-          prefix: currentPrefix,
-        }),
-      });
-
-      if (res.ok) {
-        setNewFolderName("");
+      if ((e.ctrlKey || e.metaKey) && e.key === "a") {
+        e.preventDefault();
+        setSelectedIds(new Set(allIds));
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setClipboard(null);
+        setSelectedIds(new Set());
+        closePreview();
+        setTaggingObj(null);
         setIsCreateFolderOpen(false);
-        fetchData();
-      } else {
-        const data = await res.json();
-        setError(data.error || "Failed to create folder");
+        setDeleteIds([]);
       }
-    } catch (err) {
-      setError("Failed to create folder");
-    } finally {
-      setCreatingFolder(false);
-    }
-  };
-
-  const handleDelete = async () => {
-    if (deleteIds.length === 0) return;
-    setDeleting(true);
-    setError("");
-
-    try {
-      // Parallelize deletions
-      await Promise.all(
-        deleteIds.map(async (id) => {
-          // Check if it's a folder (virtual or real)
-          const isVirtual = id.startsWith("virtual-");
-          // Find the object to get its key/prefix
-          const folderObj = viewObjects.folders.find((f) => f.id === id);
-
-          if (isVirtual || folderObj) {
-            // It's a folder. We need to delete by prefix.
-            // For virtual folders, the ID is virtual-[name], we need the key.
-            // folderObj should exist in viewObjects if it's selected from there.
-            const prefix = folderObj?.key;
-
-            if (prefix) {
-              const res = await fetch("/api/objects/folder", {
-                method: "DELETE",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ bucketId, prefix }),
-              });
-              if (!res.ok) throw new Error("Failed to delete folder");
-            }
-          } else {
-            // It's a file (or we couldn't find the folder obj)
-            const res = await fetch(`/api/objects/${id}`, { method: "DELETE" });
-            if (!res.ok) throw new Error("Failed to delete item");
-          }
-        }),
-      );
-
-      setDeleteIds([]);
-      fetchData();
-      // If deleted items were selected, clear selection
-      const newSelected = new Set(selectedIds);
-      deleteIds.forEach((id) => newSelected.delete(id));
-      setSelectedIds(newSelected);
-    } catch (err) {
-      console.error(err);
-      setError("Failed to delete object(s)");
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const handleNavigation = useCallback(
-    (prefix: string) => {
-      // breadcrumbs derived relative to rootPrefix
-      const relative = prefix.startsWith(rootPrefix)
-        ? prefix.slice(rootPrefix.length)
-        : prefix;
-      router.push(`?folder=${encodeURIComponent(relative)}`);
-      setCurrentPrefix(prefix);
-      setSelectedIds(new Set());
-    },
-    [router, rootPrefix],
-  );
-
-  const handleDownload = async (obj: ObjectData) => {
-    try {
-      await startDownload(obj, !!obj.isEncrypted, privateKey);
-    } catch (err: any) {
-      if (err.message.includes("Vault locked")) {
-        setModalOpen(true);
+      if ((e.ctrlKey || e.metaKey) && e.key === "x" && selectedIds.size > 0) {
+        e.preventDefault();
+        const items = [...viewObjects.folders, ...viewObjects.files].filter(
+          (i) => selectedIds.has(i.id),
+        );
+        setClipboard({ action: "move", items });
       }
-      setError(err?.message || "Download failed");
-    }
-  };
+      if ((e.ctrlKey || e.metaKey) && e.key === "v" && clipboard) {
+        e.preventDefault();
+        handlePaste();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [
+    selectedIds,
+    allIds,
+    isCreateFolderOpen,
+    deleteIds,
+    clipboard,
+    viewObjects,
+    closePreview,
+    handlePaste,
+  ]);
 
-  const navigateToFolder = (folderName: string) => {
-    handleNavigation(`${currentPrefix}${folderName}/`);
-  };
+  // ── Loading / error states ─────────────────────────────────────────────────
 
-  const navigateUp = () => {
-    if (currentPrefix === rootPrefix) return;
-    const parts = currentPrefix.split("/").filter(Boolean);
-    parts.pop();
-    const newPath = parts.length > 0 ? `${parts.join("/")}/` : "";
-    // Ensure we don't go below rootPrefix
-    if (newPath.length < rootPrefix.length) {
-      handleNavigation(rootPrefix);
-    } else {
-      handleNavigation(newPath);
-    }
-  };
-
-  const navigateToBreadcrumb = (index: number) => {
-    // breadcrumbs derived relative to rootPrefix
-    const relativePrefix = currentPrefix.slice(rootPrefix.length);
-    const parts = relativePrefix.split("/").filter(Boolean);
-    const newRelativePath = parts.slice(0, index + 1).join("/");
-    handleNavigation(`${rootPrefix}${newRelativePath}/`);
-  };
-
-  const breadcrumbs = useMemo(() => {
-    const relativePrefix = currentPrefix.startsWith(rootPrefix)
-      ? currentPrefix.slice(rootPrefix.length)
-      : currentPrefix;
-    const parts = relativePrefix.split("/").filter(Boolean);
-
-    // Attempt to map UUIDs in breadcrumbs to decrypted names
-    let runningPrefix = rootPrefix;
-    return parts.map((part) => {
-      runningPrefix += `${part}/`;
-      const decrypted = decryptedFolderNameMap[runningPrefix];
-      return { part, display: decrypted || part };
-    });
-  }, [currentPrefix, rootPrefix, decryptedFolderNameMap]);
-
-  if (loading) {
+  if (loading)
     return (
       <div className="flex items-center justify-center py-20">
-        <Loader2 className="w-6 h-6 animate-spin text-primary" />
+        <Loader2 className="w-5 h-5 animate-spin text-primary" />
       </div>
     );
-  }
 
-  if (!bucket) {
-    if (loading || !bucketId) {
-      return (
-        <div className="flex items-center justify-center py-20">
-          <Loader2 className="w-6 h-6 animate-spin text-[#7cb686]" />
-        </div>
-      );
-    }
+  if (!bucket)
     return (
-      <div className="text-center py-20">
-        <p className="text-muted-foreground/50 mb-4">
+      <div
+        className="flex flex-col h-full min-h-[calc(100vh-100px)] relative select-none outline-none"
+        {...getRootProps()}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onClick={(e) => {
+          const target = e.target as HTMLElement;
+
+          // ❗ DO NOT clear selection if clicking on buttons, toolbar, or UI
+          if (
+            target.closest("button") ||
+            target.closest("[role='button']") ||
+            target.closest(".file-item-selectable") ||
+            target.closest("[data-no-deselect]")
+          ) {
+            return;
+          }
+
+          if (e.target === e.currentTarget) {
+            setSelectedIds(new Set());
+            setLastSelectedId(null);
+          }
+        }}
+      >
+        <AlertTriangle className="w-8 h-8 text-muted-foreground/30" />
+        <p className="text-sm text-muted-foreground/50">
           {error || "Drive inaccessible"}
         </p>
         <Button
+          variant="outline"
+          size="sm"
           onClick={() => window.location.reload()}
-          variant="ghost"
-          className="text-primary hover:bg-primary/10"
+          className="gap-2"
         >
-          Retry
+          <RefreshCw className="w-3.5 h-3.5" /> Retry
         </Button>
       </div>
     );
-  }
-  const folderIds = viewObjects.folders.map((f) => f.id);
-  const fileIds = viewObjects.files.map((f) => f.id);
+
+  const isEmpty =
+    viewObjects.folders.length === 0 && viewObjects.files.length === 0;
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div
-      className="space-y-6 relative h-full min-h-[calc(100vh-100px)] outline-none select-none"
+      className="flex flex-col h-full min-h-[calc(100vh-100px)] relative select-none outline-none"
       {...getRootProps()}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
-      onClick={handleBackgroundClick}
+      onClick={(e) => {
+        const target = e.target as HTMLElement;
+
+        // ❗ DO NOT clear selection if clicking on buttons, toolbar, or UI
+        if (
+          target.closest("button") ||
+          target.closest("[role='button']") ||
+          target.closest(".file-item-selectable") ||
+          target.closest("[data-no-deselect]")
+        ) {
+          return;
+        }
+
+        if (e.target === e.currentTarget) {
+          setSelectedIds(new Set());
+          setLastSelectedId(null);
+        }
+      }}
     >
       <input {...getInputProps()} />
+      {/* Drag-select rubber-band box */}
+      {isSelecting && selectionBox && selectionStartRef.current && (
+        <div
+          className="fixed z-[60] pointer-events-none border border-primary/60 bg-primary/10"
+          style={{
+            left: Math.min(selectionStartRef.current.x, selectionBox.currentX),
+            top: Math.min(selectionStartRef.current.y, selectionBox.currentY),
+            width: Math.abs(
+              selectionBox.currentX - selectionStartRef.current.x,
+            ),
+            height: Math.abs(
+              selectionBox.currentY - selectionStartRef.current.y,
+            ),
+          }}
+        />
+      )}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        onChange={handleUpload}
+        className="hidden"
+      />
 
-      {/* Drop Zone Overlay */}
+      {/* Drop overlay */}
       {isDragActive && (
-        <div className="absolute inset-0 z-50 bg-background/90 backdrop-blur-sm flex items-center justify-center border-2 border-dashed border-primary rounded-xl transition-all duration-200">
-          <div className="flex flex-col items-center gap-4">
+        <div className="absolute inset-0 z-50 bg-background/90 backdrop-blur-sm flex items-center justify-center border-2 border-dashed border-primary/50 rounded-xl transition-all duration-200">
+          <div className="flex flex-col items-center gap-3">
             <div className="p-6 bg-primary/10 rounded-full animate-bounce">
               <Upload className="w-12 h-12 text-primary" />
             </div>
@@ -1169,388 +1200,263 @@ export default function FilesPage() {
         </div>
       )}
 
-      {/* ... Drag Overlay ... */}
+      {/* Breadcrumbs */}
+      <Breadcrumbs
+        breadcrumbs={breadcrumbs}
+        onNavigateHome={() => handleNavigation(rootPrefix)}
+        onNavigateTo={navigateToBreadcrumb}
+      />
 
-      {/* Header */}
-      <div className="flex lg:flex-row items-start lg:items-start justify-between gap-4">
-        <div className="w-full lg:w-auto">
-          {/* ... */}
+      {/* Toolbar */}
+      <Toolbar
+        selectedIds={selectedIds}
+        allIds={allIds}
+        onSelectAll={() => setSelectedIds(new Set(allIds))}
+        onClearSelection={() => setSelectedIds(new Set())}
+        onDelete={() => setDeleteIds(Array.from(selectedIds))}
+        onCut={handleCut}
+        onPaste={handlePaste}
+        clipboard={clipboard}
+        processingPaste={processingPaste}
+        onUpload={() => fileInputRef.current?.click()}
+        onNewFolder={() => setIsCreateFolderOpen(true)}
+        onSearch={setSearchTerm}
+        searchTerm={searchTerm}
+        viewMode={viewMode}
+        onViewMode={(m) => {
+          setViewMode(m);
+          localStorage.setItem("filesViewMode", m);
+        }}
+        sortField={sortField}
+        sortDir={sortDir}
+        onSort={handleSort}
+      />
 
-          {/* Breadcrumbs */}
-          <div className="flex items-center gap-2 ml-3 lg:ml-7 mt-3 text-sm overflow-x-auto scrollbar-hide">
-            <button
-              onClick={() => handleNavigation(rootPrefix)}
-              className={`flex items-center hover:text-primary transition-colors shrink-0 ${
-                currentPrefix === rootPrefix
-                  ? "text-foreground"
-                  : "text-muted-foreground/60"
-              }`}
-            >
-              <Home className="w-4 h-4" />
-            </button>{" "}
-            {breadcrumbs.map((bc, i) => (
-              <div key={i} className="flex items-center gap-2 shrink-0">
-                <ChevronRight className="w-4 h-4 text-muted-foreground/30" />
-                <button
-                  onClick={() => navigateToBreadcrumb(i)}
-                  className={`hover:text-primary transition-colors whitespace-nowrap ${
-                    i === breadcrumbs.length - 1
-                      ? "text-foreground font-medium"
-                      : "text-muted-foreground/60"
-                  }`}
-                >
-                  {bc.display}
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="flex items-center justify-end gap-2 lg:gap-3 w-full lg:w-auto">
-          {/* View Mode Toggle - Hidden on mobile */}
-          <div className="flex items-center bg-secondary/50 rounded-lg p-1 mr-2 border border-border">
-            <Button
-              variant="ghost"
-              size="sm"
-              className={`h-7 w-7 p-0 ${
-                viewMode === "list"
-                  ? "bg-secondary text-foreground"
-                  : "text-muted-foreground/40 hover:text-foreground"
-              }`}
-              onClick={() => toggleViewMode("list")}
-            >
-              <ListIcon className="w-4 h-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className={`h-7 w-7 p-0 ${
-                viewMode === "grid"
-                  ? "bg-secondary text-foreground"
-                  : "text-muted-foreground/40 hover:text-foreground"
-              }`}
-              onClick={() => toggleViewMode("grid")}
-            >
-              <LayoutGrid className="w-4 h-4" />
-            </Button>
-          </div>
-
-          {/* Selection Indicator */}
-          {selectedIds.size > 0 && (
-            <div className="flex items-center gap-2 mr-2 animate-in fade-in slide-in-from-right-4 duration-200 bg-primary/10 px-2 py-1 rounded-lg border border-primary/20">
-              <span className="text-sm font-medium text-primary ml-1">
-                {selectedIds.size} selected
-              </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setSelectedIds(new Set())}
-                className="h-6 w-6 text-primary/60 hover:text-primary hover:bg-primary/20 rounded-md"
-              >
-                <X className="w-3 h-3" />
-              </Button>
-            </div>
-          )}
-
-          {/* Paste Button */}
-          {clipboard && (
-            <Button
-              onClick={handlePaste}
-              disabled={processingPaste}
-              className="bg-primary text-primary-foreground hover:bg-primary/90 shrink-0"
-              size="sm"
-            >
-              {processingPaste ? (
-                <Loader2 className="w-4 h-4 sm:mr-2 animate-spin" />
-              ) : (
-                <ClipboardPaste className="w-4 h-4 sm:mr-2" />
-              )}
-              <span className="hidden sm:inline">
-                Paste {clipboard.items.length} Item(s)
-              </span>
-            </Button>
-          )}
-
-          {/* New Folder Button */}
-          <Button
-            onClick={() => setIsCreateFolderOpen(true)}
-            className="bg-secondary text-secondary-foreground hover:bg-secondary/80 shrink-0"
-            size="sm"
-          >
-            <FolderPlus className="w-4 h-4 sm:mr-2" />
-            <span className="hidden sm:inline">New Folder</span>
-          </Button>
-
-          {/* Upload Files Button */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            onChange={handleUpload}
-            className="hidden"
-          />
-          <Button
-            onClick={() => fileInputRef.current?.click()}
-            className="bg-primary text-primary-foreground hover:bg-primary/90 font-medium shrink-0"
-            size="sm"
-          >
-            <Upload className="w-4 h-4 sm:mr-2" />
-            <span className="hidden sm:inline">Upload Files</span>
-          </Button>
-        </div>
-      </div>
-
+      {/* Error banner */}
       {error && (
-        <div className="text-sm text-red-400 bg-red-400/10 border border-red-400/20 rounded-lg px-4 py-2">
+        <div className="mx-0 mt-0 flex items-center gap-2 text-xs text-red-400 bg-red-500/8 border-b border-red-500/15 px-4 py-2">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
           {error}
+          <button
+            onClick={() => setError("")}
+            className="ml-auto text-red-400/60 hover:text-red-400"
+          >
+            <X className="w-3 h-3" />
+          </button>
         </div>
       )}
 
-      {/* Table / Grid */}
-      <div className="bg-card/50 border border-border rounded-xl overflow-hidden min-h-[500px]">
-        <DndContext
-          sensors={sensors}
-          collisionDetection={closestCenter}
-          onDragStart={handleDragStart}
-          onDragEnd={handleDragEnd}
-        >
-          {viewObjects.folders.length === 0 &&
-          viewObjects.files.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 px-4 h-full">
-              <FileText className="w-12 h-12 text-muted-foreground/10 mb-4" />
-              <p className="text-muted-foreground/40 text-sm mb-4">
-                {currentPrefix
-                  ? "This folder is empty."
-                  : "This bucket is empty."}
-              </p>
-              <Button
-                onClick={() => fileInputRef.current?.click()}
-                variant="link"
-                className="text-primary"
-              >
-                Upload files here
-              </Button>
-            </div>
-          ) : viewMode === "list" ? (
-            <Table>
-              <TableHeader>
-                <TableRow className="border-border hover:bg-transparent">
-                  <TableHead className="text-muted-foreground/50 w-[50%]">
+      {/* Main content */}
+      <div className="bg-card/50 border border-border rounded-xl overflow-hidden min-h-[500px] mt-4">
+        {isEmpty ? (
+          <EmptyState onUpload={() => fileInputRef.current?.click()} />
+        ) : viewMode === "list" ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="border-border hover:bg-transparent">
+                {/* Checkbox column — matches the w-10 pl-4 pr-0 cell in FileRow */}
+                <TableHead className="w-10 pl-4 pr-0" />
+                <TableHead
+                  className="text-muted-foreground/50 w-[45%] cursor-pointer hover:text-foreground"
+                  onClick={() => handleSort("name")}
+                >
+                  <span className="flex items-center gap-1">
                     Name
-                  </TableHead>
-                  <TableHead className="text-muted-foreground/50">
-                    Size
-                  </TableHead>
-                  <TableHead className="text-muted-foreground/50">
-                    Type
-                  </TableHead>
-                  <TableHead className="text-muted-foreground/50">
-                    Last Modified
-                  </TableHead>
-                  <TableHead className="text-muted-foreground/50 text-right">
-                    Actions
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {currentPrefix && currentPrefix !== rootPrefix && (
-                  <TableRow
-                    className="border-border hover:bg-secondary/50 cursor-pointer"
-                    onClick={navigateUp}
-                  >
-                    <TableCell colSpan={5}>
-                      <div className="flex items-center gap-2 text-muted-foreground/70">
-                        <ArrowLeft className="w-4 h-4" />
-                        <span>..</span>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )}
-
-                <SortableContext
-                  items={folderIds}
-                  strategy={verticalListSortingStrategy}
-                >
-                  {viewObjects.folders.map((folder) => (
-                    <FileItem
-                      key={folder.id}
-                      item={folder}
-                      viewMode="list"
-                      currentPrefix={currentPrefix}
-                      onNavigate={navigateToFolder}
-                      onTag={() => setTaggingObj(folder)}
-                      onCut={handleCut}
-                      onShare={setShareFile}
-                      onDelete={(item) => {
-                        if (selectedIds.has(item.id)) {
-                          setDeleteIds(Array.from(selectedIds));
-                        } else {
-                          setDeleteIds([item.id]);
-                        }
-                      }}
-                      isSelected={selectedIds.has(folder.id)}
-                      onSelect={handleSelect}
-                      registerItemRef={(id, el) => {
-                        if (!el) itemRefs.current.delete(id);
-                        else itemRefs.current.set(id, el);
-                      }}
-                    />
-                  ))}
-                </SortableContext>
-
-                <SortableContext
-                  items={fileIds}
-                  strategy={verticalListSortingStrategy}
-                >
-                  {viewObjects.files.map((file) => (
-                    <FileItem
-                      key={file.id}
-                      item={file}
-                      viewMode="list"
-                      currentPrefix={currentPrefix}
-                      onPreview={openPreview}
-                      onDownload={handleDownload}
-                      onCut={handleCut}
-                      onShare={setShareFile}
-                      onDelete={(item) => {
-                        if (selectedIds.has(item.id)) {
-                          setDeleteIds(Array.from(selectedIds));
-                        } else {
-                          setDeleteIds([item.id]);
-                        }
-                      }}
-                      isDownloading={downloadingId === file.id}
-                      isSelected={selectedIds.has(file.id)}
-                      onSelect={handleSelect}
-                      registerItemRef={(id, el) => {
-                        if (!el) itemRefs.current.delete(id);
-                        else itemRefs.current.set(id, el);
-                      }}
-                    />
-                  ))}
-                </SortableContext>
-              </TableBody>
-            </Table>
-          ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 p-4">
-              {/* Back Button for Subfolders */}
-              {currentPrefix && currentPrefix !== rootPrefix && (
-                <div
-                  onClick={navigateUp}
-                  className="aspect-square bg-white/5 rounded-xl border border-white/5 flex flex-col items-center justify-center cursor-pointer hover:bg-white/10 transition-all hover:scale-[1.02]"
-                >
-                  <ArrowLeft className="w-8 h-8 text-[#e8e4d9]/50 mb-2" />
-                  <span className="text-[#e8e4d9]/70 font-medium text-sm">
-                    Back
+                    {sortField === "name" &&
+                      (sortDir === "asc" ? (
+                        <SortAsc className="w-3 h-3" />
+                      ) : (
+                        <SortDesc className="w-3 h-3" />
+                      ))}
                   </span>
-                </div>
+                </TableHead>
+                <TableHead
+                  className="text-muted-foreground/50 cursor-pointer hover:text-foreground"
+                  onClick={() => handleSort("size")}
+                >
+                  <span className="flex items-center gap-1">
+                    Size
+                    {sortField === "size" &&
+                      (sortDir === "asc" ? (
+                        <SortAsc className="w-3 h-3" />
+                      ) : (
+                        <SortDesc className="w-3 h-3" />
+                      ))}
+                  </span>
+                </TableHead>
+                <TableHead
+                  className="text-muted-foreground/50 cursor-pointer hover:text-foreground"
+                  onClick={() => handleSort("type")}
+                >
+                  <span className="flex items-center gap-1">
+                    Type
+                    {sortField === "type" &&
+                      (sortDir === "asc" ? (
+                        <SortAsc className="w-3 h-3" />
+                      ) : (
+                        <SortDesc className="w-3 h-3" />
+                      ))}
+                  </span>
+                </TableHead>
+                <TableHead
+                  className="text-muted-foreground/50 cursor-pointer hover:text-foreground hidden md:table-cell"
+                  onClick={() => handleSort("date")}
+                >
+                  <span className="flex items-center gap-1">
+                    Last Modified
+                    {sortField === "date" &&
+                      (sortDir === "asc" ? (
+                        <SortAsc className="w-3 h-3" />
+                      ) : (
+                        <SortDesc className="w-3 h-3" />
+                      ))}
+                  </span>
+                </TableHead>
+                <TableHead className="text-muted-foreground/50 text-right">
+                  Actions
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {/* Back row — colSpan=6 accounts for the checkbox column */}
+              {currentPrefix && currentPrefix !== rootPrefix && (
+                <TableRow
+                  className="border-border hover:bg-secondary/50 cursor-pointer"
+                  onClick={navigateUp}
+                >
+                  <TableCell colSpan={6} className="py-2 pl-4">
+                    <div className="flex items-center gap-2 text-muted-foreground/70">
+                      <ArrowLeft className="w-4 h-4" />
+                      <span>..</span>
+                    </div>
+                  </TableCell>
+                </TableRow>
               )}
 
-              <SortableContext items={folderIds} strategy={rectSortingStrategy}>
-                {viewObjects.folders.map((folder) => (
-                  <FileItem
-                    key={folder.id}
-                    item={folder}
-                    viewMode="grid"
-                    currentPrefix={currentPrefix}
-                    onNavigate={navigateToFolder}
-                    onTag={() => setTaggingObj(folder)}
-                    onCut={handleCut}
-                    onShare={setShareFile}
-                    onDelete={(item) => {
-                      if (selectedIds.has(item.id)) {
-                        setDeleteIds(Array.from(selectedIds));
-                      } else {
-                        setDeleteIds([item.id]);
-                      }
-                    }}
-                    isSelected={selectedIds.has(folder.id)}
-                    onSelect={handleSelect}
-                    registerItemRef={(id, el) => {
-                      if (!el) itemRefs.current.delete(id);
-                      else itemRefs.current.set(id, el);
-                    }}
-                  />
-                ))}
-              </SortableContext>
+              {/* Folders */}
+              {viewObjects.folders.map((folder) => (
+                <FileItem
+                  key={folder.id}
+                  item={folder}
+                  viewMode="list"
+                  currentPrefix={currentPrefix}
+                  onNavigate={navigateToFolder}
+                  onTag={() => setTaggingObj(folder)}
+                  onCut={handleCut}
+                  onShare={setShareFile}
+                  onDelete={(item) =>
+                    selectedIds.has(item.id) && selectedIds.size > 1
+                      ? setDeleteIds(Array.from(selectedIds))
+                      : setDeleteIds([item.id])
+                  }
+                  isSelected={selectedIds.has(folder.id)}
+                  onSelect={handleSelect}
+                  registerItemRef={(id, el) => {
+                    if (!el) itemRefs.current.delete(id);
+                    else itemRefs.current.set(id, el);
+                  }}
+                />
+              ))}
 
-              <SortableContext items={fileIds} strategy={rectSortingStrategy}>
-                {viewObjects.files.map((file) => (
-                  <FileItem
-                    key={file.id}
-                    item={file}
-                    viewMode="grid"
-                    currentPrefix={currentPrefix}
-                    onPreview={openPreview}
-                    onDownload={handleDownload}
-                    onCut={handleCut}
-                    onShare={setShareFile}
-                    onDelete={(item) => {
-                      if (selectedIds.has(item.id)) {
-                        setDeleteIds(Array.from(selectedIds));
-                      } else {
-                        setDeleteIds([item.id]);
-                      }
-                    }}
-                    isDownloading={downloadingId === file.id}
-                    isSelected={selectedIds.has(file.id)}
-                    onSelect={handleSelect}
-                    registerItemRef={(id, el) => {
-                      if (!el) itemRefs.current.delete(id);
-                      else itemRefs.current.set(id, el);
-                    }}
-                  />
-                ))}
-              </SortableContext>
-            </div>
-          )}
-          <DragOverlay>
-            {activeId
-              ? (() => {
-                  const item =
-                    viewObjects.folders.find((f) => f.id === activeId) ||
-                    viewObjects.files.find((f) => f.id === activeId);
-                  if (!item) return null;
-                  if (viewMode === "list")
-                    return (
-                      <div className="relative">
-                        <FileRow
-                          item={item}
-                          viewMode="list"
-                          currentPrefix={currentPrefix}
-                          isOverlay={true}
-                        />
-                        {selectedIds.size > 1 && (
-                          <Badge className="absolute -top-2 -right-2 bg-primary text-primary-foreground border-border z-50">
-                            {selectedIds.size}
-                          </Badge>
-                        )}
-                      </div>
-                    );
-                  return (
-                    <div className="relative">
-                      <FileCard
-                        item={item}
-                        viewMode="grid"
-                        currentPrefix={currentPrefix}
-                        isOverlay={true}
-                      />
-                      {selectedIds.size > 1 && (
-                        <Badge className="absolute -top-2 -right-2 bg-primary text-primary-foreground border-border z-50">
-                          {selectedIds.size}
-                        </Badge>
-                      )}
-                    </div>
-                  );
-                })()
-              : null}
-          </DragOverlay>
-        </DndContext>
+              {/* Files */}
+              {viewObjects.files.map((file) => (
+                <FileItem
+                  key={file.id}
+                  item={file}
+                  viewMode="list"
+                  currentPrefix={currentPrefix}
+                  onPreview={openPreview}
+                  onDownload={handleDownload}
+                  onCut={handleCut}
+                  onShare={setShareFile}
+                  onDelete={(item) =>
+                    selectedIds.has(item.id) && selectedIds.size > 1
+                      ? setDeleteIds(Array.from(selectedIds))
+                      : setDeleteIds([item.id])
+                  }
+                  isDownloading={downloadingId === file.id}
+                  isSelected={selectedIds.has(file.id)}
+                  onSelect={handleSelect}
+                  registerItemRef={(id, el) => {
+                    if (!el) itemRefs.current.delete(id);
+                    else itemRefs.current.set(id, el);
+                  }}
+                />
+              ))}
+            </TableBody>
+          </Table>
+        ) : (
+          /* Grid view */
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 p-4">
+            {currentPrefix && currentPrefix !== rootPrefix && (
+              <div
+                onClick={navigateUp}
+                className="aspect-square bg-white/5 rounded-xl border border-white/5 flex flex-col items-center justify-center cursor-pointer hover:bg-white/10 transition-all hover:scale-[1.02]"
+              >
+                <ArrowLeft className="w-8 h-8 text-[#e8e4d9]/50 mb-2" />
+                <span className="text-[#e8e4d9]/70 font-medium text-sm">
+                  Back
+                </span>
+              </div>
+            )}
+
+            {viewObjects.folders.map((folder) => (
+              <FileItem
+                key={folder.id}
+                item={folder}
+                viewMode="grid"
+                currentPrefix={currentPrefix}
+                onNavigate={navigateToFolder}
+                onTag={() => setTaggingObj(folder)}
+                onCut={handleCut}
+                onShare={setShareFile}
+                onDelete={(item) =>
+                  selectedIds.has(item.id) && selectedIds.size > 1
+                    ? setDeleteIds(Array.from(selectedIds))
+                    : setDeleteIds([item.id])
+                }
+                isSelected={selectedIds.has(folder.id)}
+                onSelect={handleSelect}
+                registerItemRef={(id, el) => {
+                  if (!el) itemRefs.current.delete(id);
+                  else itemRefs.current.set(id, el);
+                }}
+              />
+            ))}
+
+            {viewObjects.files.map((file) => (
+              <FileItem
+                key={file.id}
+                item={file}
+                viewMode="grid"
+                currentPrefix={currentPrefix}
+                onPreview={openPreview}
+                onDownload={handleDownload}
+                onCut={handleCut}
+                onShare={setShareFile}
+                onDelete={(item) =>
+                  selectedIds.has(item.id) && selectedIds.size > 1
+                    ? setDeleteIds(Array.from(selectedIds))
+                    : setDeleteIds([item.id])
+                }
+                isDownloading={downloadingId === file.id}
+                isSelected={selectedIds.has(file.id)}
+                onSelect={handleSelect}
+                registerItemRef={(id, el) => {
+                  if (!el) itemRefs.current.delete(id);
+                  else itemRefs.current.set(id, el);
+                }}
+              />
+            ))}
+          </div>
+        )}
       </div>
+
+      {/* ── Dialogs ── */}
 
       <Dialog
         open={!!taggingObj}
-        onOpenChange={(open) => !open && setTaggingObj(null)}
+        onOpenChange={(o) => !o && setTaggingObj(null)}
       >
         <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
@@ -1559,7 +1465,6 @@ export default function FilesPage() {
               Add or remove tags for this item.
             </DialogDescription>
           </DialogHeader>
-
           <div className="flex gap-2 mb-4">
             <Input
               value={newTag}
@@ -1580,9 +1485,8 @@ export default function FilesPage() {
               Add
             </Button>
           </div>
-
           <div className="flex flex-wrap gap-2 min-h-[50px] bg-secondary/20 rounded-lg p-3">
-            {taggingObj?.tags && taggingObj.tags.length > 0 ? (
+            {taggingObj?.tags?.length ? (
               taggingObj.tags.map((tag) => (
                 <TagItem
                   key={tag}
@@ -1600,7 +1504,6 @@ export default function FilesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Create Folder Dialog */}
       <Dialog open={isCreateFolderOpen} onOpenChange={setIsCreateFolderOpen}>
         <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
@@ -1618,6 +1521,7 @@ export default function FilesPage() {
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleCreateFolder();
               }}
+              autoFocus
             />
           </div>
           <DialogFooter>
@@ -1642,10 +1546,9 @@ export default function FilesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
       <Dialog
         open={deleteIds.length > 0}
-        onOpenChange={(open) => !open && setDeleteIds([])}
+        onOpenChange={(o) => !o && setDeleteIds([])}
       >
         <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
@@ -1684,19 +1587,6 @@ export default function FilesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Selection Box */}
-      {selectionBox && (
-        <div
-          className="fixed border border-primary bg-primary/10 z-50 pointer-events-none"
-          style={{
-            left: Math.min(selectionBox.startX, selectionBox.currentX),
-            top: Math.min(selectionBox.startY, selectionBox.currentY),
-            width: Math.abs(selectionBox.currentX - selectionBox.startX),
-            height: Math.abs(selectionBox.currentY - selectionBox.startY),
-          }}
-        />
-      )}
-
       <ShareDialog
         open={!!shareFile}
         onOpenChange={(o) => !o && setShareFile(null)}
@@ -1706,6 +1596,8 @@ export default function FilesPage() {
     </div>
   );
 }
+
+// ─── Tag Item ─────────────────────────────────────────────────────────────────
 
 function TagItem({
   encryptedTag,

@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/context-menu";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { TableRow, TableCell } from "@/components/ui/table";
 import {
   Folder,
@@ -65,7 +66,8 @@ interface ItemProps {
   onShare?: (item: ObjectData) => void;
 }
 
-// Presentational Component for List View
+// ─── Presentational Component — List View ─────────────────────────────────────
+
 export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
   (
     {
@@ -96,7 +98,6 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
 
     useEffect(() => {
       if (isUnlocked && metadataKey) {
-        // Name
         const isFolder =
           item.contentType === "application/x-directory" ||
           item.key.endsWith("/");
@@ -114,7 +115,6 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
           setDecryptedName(null);
         }
 
-        // Tags
         if (item.tags && item.tags.length > 0 && metadataKey) {
           Promise.all(
             item.tags.map((t) => decryptMetadataString(t, metadataKey)),
@@ -135,7 +135,6 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
       metadataKey,
     ]);
 
-    // Virtual folder fallback name
     let baseName = item.key;
     if (item.id.startsWith("virtual-")) {
       baseName = item.id.replace("virtual-", "");
@@ -221,7 +220,34 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
           }
         }}
       >
-        <TableCell className="w-[50%] min-w-0">
+        {/* ── Checkbox cell ── */}
+        <TableCell className="w-10 pl-4 pr-0">
+          <div
+            className={cn(
+              "transition-opacity duration-150",
+              isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+            )}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Checkbox
+              checked={!!isSelected}
+              onCheckedChange={() => {}}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSelect?.(item, {
+                  ...e,
+                  ctrlKey: true,
+                  stopPropagation: () => e.stopPropagation(),
+                  preventDefault: () => e.preventDefault(),
+                } as unknown as React.MouseEvent);
+              }}
+              className="border-muted-foreground/30 data-[state=checked]:bg-primary"
+            />
+          </div>
+        </TableCell>
+
+        {/* ── Name cell ── */}
+        <TableCell className="w-[45%] min-w-0">
           <div className="flex items-center gap-3 text-foreground font-medium">
             {isFolder ? (
               <Folder className="w-5 h-5 text-primary fill-primary/20" />
@@ -237,9 +263,9 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
 
             <span className="truncate block max-w-[300px]">{name}</span>
 
-            {item.isEncrypted && (
+            {/* {item.isEncrypted && (
               <Lock className="h-3 w-3 shrink-0 text-primary/60" />
-            )}
+            )} */}
 
             {(decryptedTags || item.tags) &&
               (decryptedTags || item.tags)!.length > 0 && (
@@ -275,7 +301,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
           )}
         </TableCell>
 
-        <TableCell className="text-muted-foreground/40 text-sm w-[20%]">
+        <TableCell className="text-muted-foreground/40 text-sm w-[20%] hidden md:table-cell">
           {formatDate(item.createdAt)}
         </TableCell>
 
@@ -305,7 +331,14 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
                 <Link2 className="w-4 h-4 text-muted-foreground/40 hover:text-primary" />
               </Button>
             )}
-            <Button size="icon" variant="ghost">
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={(e) => {
+                e.stopPropagation();
+                onTag?.(item);
+              }}
+            >
               <Tag className="w-4 h-4" />
             </Button>
           </div>
@@ -314,7 +347,6 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     );
 
     if (isOverlay) {
-      // Render simplified row for overlay (since TableRow needs Table)
       return (
         <div className="flex items-center bg-card border border-border p-2 rounded-lg shadow-xl w-[600px]">
           <div className="flex items-center gap-3 text-foreground font-medium flex-1">
@@ -373,7 +405,8 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
 );
 FileRow.displayName = "FileRow";
 
-// Presentational Component for Grid View
+// ─── Presentational Component — Grid View ─────────────────────────────────────
+
 export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
   (
     {
@@ -421,7 +454,6 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
           setDecryptedName(null);
         }
 
-        // Tags
         if (item.tags && item.tags.length > 0 && metadataKey) {
           Promise.all(
             item.tags.map((t) => decryptMetadataString(t, metadataKey)),
@@ -527,7 +559,31 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
               : "bg-card border-border hover:bg-card/80"
         }`}
       >
-        {/* Content */}
+        {/* ── Checkbox — top-left, fades in on hover or stays when selected ── */}
+        <div
+          className={cn(
+            "absolute top-2 left-2 z-10 transition-opacity duration-150",
+            isSelected ? "opacity-100" : "opacity-0 group-hover:opacity-100",
+          )}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Checkbox
+            checked={!!isSelected}
+            onCheckedChange={() => {}}
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelect?.(item, {
+                ...e,
+                ctrlKey: true,
+                stopPropagation: () => e.stopPropagation(),
+                preventDefault: () => e.preventDefault(),
+              } as unknown as React.MouseEvent);
+            }}
+            className="border-muted-foreground/40 data-[state=checked]:bg-primary bg-black/30 backdrop-blur-sm"
+          />
+        </div>
+
+        {/* ── Content ── */}
         {isFolder ? (
           <>
             <Folder className="w-12 h-12 text-primary mb-3 fill-primary/20 transition-transform group-hover:scale-110" />
@@ -571,17 +627,17 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
           </>
         )}
 
-        {/* Encrypted badge */}
-        {item.isEncrypted && !isFolder && (
-          <div className="absolute top-2 left-2">
+        {/* ── Encrypted badge — bottom-left (no longer overlaps with checkbox) ── */}
+        {/* {item.isEncrypted && !isFolder && (
+          <div className="absolute bottom-2 left-2">
             <Lock className="h-3 w-3 text-primary/70" aria-label="Encrypted" />
           </div>
-        )}
+        )} */}
 
-        {/* Tags Indicator */}
+        {/* ── Tag dots — bottom-right ── */}
         {(decryptedTags || item.tags) &&
           (decryptedTags || item.tags)!.length > 0 && (
-            <div className="flex gap-1 mt-2 flex-wrap justify-center absolute top-2 left-2">
+            <div className="flex gap-1 absolute bottom-2 right-2">
               {(decryptedTags || item.tags)!.slice(0, 3).map((tag) => (
                 <div
                   key={tag}
@@ -592,7 +648,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
             </div>
           )}
 
-        {/* Action Overlay (Hover) */}
+        {/* ── Action overlay (hover, top-right) ── */}
         <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex-col gap-1.5 hidden md:flex">
           <Button
             size="icon"
@@ -695,6 +751,8 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
 );
 FileCard.displayName = "FileCard";
 
+// ─── DnD + Long Press wrapper ─────────────────────────────────────────────────
+
 export function FileItem(props: ItemProps) {
   const { registerItemRef } = props;
 
@@ -733,16 +791,15 @@ export function FileItem(props: ItemProps) {
 
     const start = useCallback(
       (e: React.TouchEvent | React.MouseEvent) => {
-        // Prevent long press if context menu is triggered or multiple touches
         if (
           (e.type === "touchstart" &&
             (e as React.TouchEvent).touches.length > 1) ||
-          (e as React.MouseEvent).button !== 0 // Only left click (or touch)
+          (e as React.MouseEvent).button !== 0
         ) {
           return;
         }
 
-        e.persist(); // Persist event for async usage if needed
+        e.persist();
         timerRef.current = setTimeout(() => {
           callback(e);
         }, ms);
@@ -763,17 +820,12 @@ export function FileItem(props: ItemProps) {
       onMouseLeave: stop,
       onTouchStart: start,
       onTouchEnd: stop,
-      onTouchMove: stop, // Cancel on scroll/move
+      onTouchMove: stop,
     };
   };
 
   const onLongPress = (e: React.TouchEvent | React.MouseEvent) => {
-    // Simulate Ctrl+Click for toggle selection
     if (props.onSelect) {
-      // Create a synthetic event-like object or modify the real one if possible.
-      // Since we can't easily modify React synthetic events, we'll pass a mock.
-      // But props.onSelect expects React.MouseEvent.
-      // We can cast a custom object.
       const mockEvent = {
         ...e,
         ctrlKey: true,
@@ -783,7 +835,6 @@ export function FileItem(props: ItemProps) {
 
       props.onSelect(props.item, mockEvent);
 
-      // Optional: Vibration
       if (typeof navigator !== "undefined" && navigator.vibrate) {
         navigator.vibrate(50);
       }
@@ -792,31 +843,9 @@ export function FileItem(props: ItemProps) {
 
   const longPressProps = useLongPress(onLongPress);
 
-  // Combine DnD props with Long Press props
-  // We need to be careful not to override DnD listeners if they overlap.
-  // DnD uses Pointer events usually. useSortable gives listeners.
-  // We might need to merge them.
-  // Actually, useSortable listeners (onPointerDown) handle dragging.
-  // Long press should strictly trigger IF drag hasn't started?
-  // Or maybe we treat long press as the drag initiator?
-  // Wait, if we long press -> select. If we drag -> move.
-  // They can conflict.
-  // Dnd-kit usually handles delay or activation constraint.
-  // For selection, if we long press and hold, we select.
-  // If we start moving immediately, it's a drag (handled by sensors).
-
   const mergedHandleProps = {
     ...handleProps,
-    // We attach long press handlers to the container,
-    // but DnD `listeners` are usually attached to the drag handle.
-    // Here we pass `dragHandleProps` to the row/card root.
-    // Let's merge properly.
     ...longPressProps,
-    // If listeners has onKeyDown etc, they are preserved.
-    // If listeners has onPointerDown (which it does), we need to ensure functionality.
-    // onPointerDown vs onTouchStart/onMouseDown:
-    // React events bubble.
-    // We probably want long press specifically for logic, independent of DnD activation.
   };
 
   if (props.viewMode === "list") {
