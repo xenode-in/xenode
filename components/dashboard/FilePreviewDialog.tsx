@@ -22,7 +22,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-import DocViewer, { DocViewerRenderers } from "@cyntler/react-doc-viewer";
 import { useDownload } from "@/contexts/DownloadContext";
 import { useCrypto } from "@/contexts/CryptoContext";
 import {
@@ -68,10 +67,7 @@ const ChunkedStreamPlayer = ({
     null,
   );
 
-  const { blobUrl, error, isBuffering, progress } = useVideoStream(
-    opts,
-    videoElement,
-  );
+  const { blobUrl, error } = useVideoStream(opts, videoElement);
 
   useEffect(() => {
     onUrlChange(blobUrl);
@@ -94,7 +90,6 @@ const ChunkedStreamPlayer = ({
     );
   }
 
-  // We rely on the browser's native buffering indicators to prevent stuck UI overlays
   return (
     <div
       className={cn(
@@ -136,9 +131,6 @@ const MediaPlayer = ({
   onReady?: () => void;
 }) => {
   const isAudio = type.startsWith("audio/");
-
-  // Removed custom buffering states (isWaiting) to prevent race conditions.
-  // The native HTML5 element handles loading UI internally without bugs.
 
   return (
     <div
@@ -221,7 +213,7 @@ async function fetchWithProgress(
   let received = 0;
 
   if (fromCache && onProgress) {
-    onProgress(100); // instant jump
+    onProgress(100);
   }
 
   while (true) {
@@ -265,12 +257,10 @@ export function FilePreviewDialog({
     string | null
   >(null);
 
-  // Track object URLs we created so we can revoke them on close
   const objectUrlRef = useRef<string | null>(null);
 
   const isLockedOut = file?.isEncrypted && !privateKey;
 
-  // If locked out, prevent dialog from opening, trigger modal, and close preview
   useEffect(() => {
     if (isOpen && isLockedOut) {
       setModalOpen(true);
@@ -278,14 +268,36 @@ export function FilePreviewDialog({
     }
   }, [isOpen, isLockedOut, setModalOpen, onClose]);
 
-  // Pre-register the SW on mount so it's already active when a file is opened
   useEffect(() => {
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
   }, []);
 
-  // Revoke any object URL when the dialog closes or file changes
+  // Listen to Service Worker broadcast messages for real-time chunk download progress
+  useEffect(() => {
+    if (!isOpen || !("serviceWorker" in navigator)) return;
+
+    const handleMessage = (event: MessageEvent) => {
+      if (
+        event.data?.type === "CHUNK_PROGRESS" &&
+        event.data?.fileId === file?.id
+      ) {
+        setProgress(event.data.progress);
+        if (event.data.progress >= 100) {
+          setLoadingMessage("Decrypting stream...");
+        } else {
+          setLoadingMessage("Buffering initial stream...");
+        }
+      }
+    };
+
+    navigator.serviceWorker.addEventListener("message", handleMessage);
+    return () => {
+      navigator.serviceWorker.removeEventListener("message", handleMessage);
+    };
+  }, [isOpen, file?.id]);
+
   useEffect(() => {
     if (!isOpen) {
       if (objectUrlRef.current) {
@@ -304,7 +316,6 @@ export function FilePreviewDialog({
   }, [isOpen]);
 
   useEffect(() => {
-    // Clear previous metadata to prevent ghosting when file changes
     setDecryptedName(null);
     setDecryptedContentType(null);
 
@@ -322,7 +333,6 @@ export function FilePreviewDialog({
             file.encryptedName,
             metadataKey,
           );
-          console.log("Decrypted name", name);
           if (!cancelled) setDecryptedName(name);
         }
       } catch (e) {
@@ -340,7 +350,6 @@ export function FilePreviewDialog({
     let cancelled = false;
 
     async function run() {
-      // Don't run the fetch if we are locked out
       if (!isOpen || !file || isLockedOut) return;
 
       setLoading(true);
@@ -352,7 +361,6 @@ export function FilePreviewDialog({
       setIsVideoPreparing(false);
 
       try {
-        // 1. Fetch metadata + signed URL from our API
         const res = await fetch(`/api/objects/${file.id}`);
         if (!res.ok) throw new Error("Failed to get URL");
         const data = await res.json();
@@ -383,7 +391,6 @@ export function FilePreviewDialog({
           if (!cancelled) setDecryptedContentType(type);
         }
 
-        // --- FALLBACK GUESSING ---
         if (type === "application/octet-stream" || !type) {
           const fileName =
             decryptedName || file.name || fileNameFromKey(file.key);
@@ -434,7 +441,6 @@ export function FilePreviewDialog({
           return;
         }
 
-        // 2. Encrypted file
         setIsEncrypted(true);
 
         if (!privateKey) {
@@ -490,7 +496,9 @@ export function FilePreviewDialog({
                   });
 
                   if (!cancelled) {
-                    setLoadingMessage("Fetching initial chunks...");
+                    setLoadingMessage("Buffering initial stream...");
+                    // Ensure the progress bar visibly mounts instantly
+                    setProgress(0);
                     if (shouldShowPreparingUI) setIsVideoPreparing(true);
                     setUrl(`/sw/objects/${file.id}`);
                     setLoading(false);
@@ -525,7 +533,6 @@ export function FilePreviewDialog({
           return;
         }
 
-        // 3. Fetch raw ciphertext directly from CDN
         setLoadingMessage(
           encrypted ? "Downloading encrypted file..." : "Downloading file...",
         );
@@ -598,11 +605,6 @@ export function FilePreviewDialog({
       cancelled = true;
     };
   }, [isOpen, file, privateKey, isLockedOut, setModalOpen, metadataKey]);
-
-  const docs = useMemo(() => {
-    if (!url || !file) return [];
-    return [{ uri: url, fileType: decryptedContentType || file.contentType }];
-  }, [url, file, decryptedContentType]);
 
   if (!file) return null;
 
