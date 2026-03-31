@@ -9,7 +9,8 @@ import StorageObject from "@/models/StorageObject";
 
 const LIST_PROJECTION =
   "key size contentType encryptedContentType thumbnail tags position createdAt " +
-  "isEncrypted encryptedName encryptedDisplayName mediaCategory";
+  "isEncrypted encryptedName encryptedDisplayName mediaCategory " +
+  "optimizedKey optimizedEncryptedDEK optimizedIV optimizedSize";
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;

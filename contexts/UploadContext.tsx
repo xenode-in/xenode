@@ -651,7 +651,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         ].includes(task.file.name.split(".").pop()?.toLowerCase() ?? "")
       ) {
         try {
-          const { preview, original } = await generatePreview(task.file);
+          const { preview, original, aspectRatio } = await generatePreview(
+            task.file,
+          );
 
           if (preview !== original && preview.size < task.file.size) {
             optimizedFile = preview;

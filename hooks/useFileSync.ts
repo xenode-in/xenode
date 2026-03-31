@@ -20,7 +20,8 @@ export function useFileSync({
     queryKey: ["files", bucketId, sortBy, sortDir],
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }) => {
-      if (!bucketId || !userId) return { objects: [], hasNextPage: false, nextCursor: null };
+      if (!bucketId || !userId)
+        return { objects: [], hasNextPage: false, nextCursor: null };
 
       let url = `/api/objects?bucketId=${bucketId}&limit=${limit}&sortBy=${sortBy}&sortDir=${sortDir}`;
       if (pageParam) {
@@ -31,7 +32,7 @@ export function useFileSync({
       if (!res.ok) throw new Error("Failed to fetch objects");
 
       const data = await res.json();
-      
+
       // Upsert into Dexie
       if (data.objects && data.objects.length > 0) {
         const db = getDb(userId);
@@ -51,8 +52,12 @@ export function useFileSync({
           encryptedContentType: o.encryptedContentType,
           encryptedDisplayName: o.encryptedDisplayName,
           mediaCategory: o.mediaCategory,
+          optimizedKey: o.optimizedKey,
+          optimizedEncryptedDEK: o.optimizedEncryptedDEK,
+          optimizedIV: o.optimizedIV,
+          optimizedSize: o.optimizedSize,
         }));
-        
+
         await db.files.bulkPut(mappedFiles);
       }
 

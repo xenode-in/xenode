@@ -15,8 +15,8 @@ export interface ThumbnailCache {
 export interface LocalFile {
   id: string;
   key: string;
-  encryptedName: string | null; // raw encrypted b64 — never store plaintext
-  name: string;                 // ONLY used transiently in the MiniSearch index (in-memory)
+  encryptedName: string | null;
+  name: string;
   size: number;
   contentType: string;
   createdAt: string;
@@ -28,8 +28,12 @@ export interface LocalFile {
   encryptedContentType?: string;
   encryptedDisplayName?: string;
   mediaCategory?: string;
+  // Preview/optimized version
+  optimizedKey?: string;
+  optimizedEncryptedDEK?: string;
+  optimizedIV?: string;
+  optimizedSize?: number;
 }
-
 export class XenodeDatabase extends Dexie {
   files!: Table<LocalFile, string>;
   metadataCache!: Table<MetadataCache, string>;
@@ -38,14 +42,8 @@ export class XenodeDatabase extends Dexie {
   constructor(userId: string) {
     super(`XenodeDB-${userId}`); // scoped per user
     this.version(1).stores({
-      files: "id, key, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName, mediaCategory",
-    });
-    this.version(2).stores({
-      files: "id, key, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName, mediaCategory",
-      metadataCache: "id",
-    });
-    this.version(3).stores({
-      files: "id, key, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName, mediaCategory",
+      files:
+        "id, key, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName, mediaCategory, optimizedKey",
       metadataCache: "id",
       thumbnailCache: "id, lastAccessed",
     });
@@ -55,7 +53,17 @@ export class XenodeDatabase extends Dexie {
 // In-memory search index — no sensitive data ever hits disk through this
 export const searchIndex = new MiniSearch<LocalFile>({
   fields: ["name", "tags", "contentType"],
-  storeFields: ["id", "name", "size", "contentType", "createdAt", "isEncrypted", "thumbnail", "key", "mediaCategory"],
+  storeFields: [
+    "id",
+    "name",
+    "size",
+    "contentType",
+    "createdAt",
+    "isEncrypted",
+    "thumbnail",
+    "key",
+    "mediaCategory",
+  ],
   searchOptions: {
     prefix: true,
     fuzzy: 0.2,

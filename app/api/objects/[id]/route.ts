@@ -1,26 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
 import { logRequest } from "@/lib/logRequest";
-
-export const dynamic = "force-dynamic";
-
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
-import {
-  deleteObject as deleteB2Object,
-  getDownloadUrl,
-} from "@/lib/b2/objects";
+import { deleteObject as deleteB2Object, getDownloadUrl } from "@/lib/b2/objects";
 import { decrementStorage, updateBucketStats } from "@/lib/metering/usage";
 import ShareLink from "@/models/ShareLink";
+
+export const dynamic = "force-dynamic";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-/** =========================
- * GET /api/objects/[id]
- * ========================= */
+/** 
+ * GET /api/objects/[id] - Get download URL for an object 
+ */
 export async function GET(request: NextRequest, { params }: RouteParams) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -56,43 +52,24 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    /** =========================
-     * Decide which version to use
-     * ========================= */
-    const hasOptimizedVersion =
-      !!object.optimizedKey && !!object.optimizedEncryptedDEK;
-
+    const hasOptimizedVersion = !!object.optimizedKey && !!object.optimizedEncryptedDEK;
     const useOptimized = isPreview && hasOptimizedVersion;
 
     const keyToUse = useOptimized ? object.optimizedKey : object.key;
-    const dekToUse = useOptimized
-      ? object.optimizedEncryptedDEK
-      : object.encryptedDEK;
+    const dekToUse = useOptimized ? object.optimizedEncryptedDEK : object.encryptedDEK;
     const ivToUse = useOptimized ? object.optimizedIV : object.iv;
-    const contentTypeToUse = useOptimized
-      ? object.optimizedContentType
-      : object.contentType;
+    const contentTypeToUse = useOptimized ? object.optimizedContentType : object.contentType;
     const sizeToUse = useOptimized ? object.optimizedSize : object.size;
 
-    /** =========================
-     * Streaming logic (FIXED)
-     * ========================= */
     let url = "";
     let chunkUrls: string[] | undefined = undefined;
 
-    const isChunked = object.chunks && object.chunks.length > 0;
+    const isChunked = !useOptimized && object.chunks && object.chunks.length > 0;
 
-    // 🔥 CRITICAL FIX:
-    // If chunked → ALWAYS return chunks (preview should NOT break streaming)
     if (isChunked) {
-      const sortedChunks = [...(object.chunks || [])].sort(
-        (a, b) => a.index - b.index,
-      );
-
+      const sortedChunks = [...(object.chunks || [])].sort((a, b) => a.index - b.index);
       chunkUrls = await Promise.all(
-        sortedChunks.map((chunk) =>
-          getDownloadUrl(bucket.b2BucketId, chunk.key),
-        ),
+        sortedChunks.map((chunk) => getDownloadUrl(bucket.b2BucketId, chunk.key))
       );
     } else {
       url = await getDownloadUrl(bucket.b2BucketId, keyToUse!);
@@ -101,20 +78,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({
       url,
       chunkUrls,
-
       isEncrypted: object.isEncrypted ?? false,
       encryptedDEK: dekToUse ?? null,
       iv: ivToUse ?? null,
-
       encryptedName: object.encryptedName ?? null,
       encryptedContentType: object.encryptedContentType ?? null,
       encryptedDisplayName: object.encryptedDisplayName ?? null,
-
       mediaCategory: object.mediaCategory ?? null,
-
       contentType: contentTypeToUse,
       size: sizeToUse,
-
       chunkSize: object.chunkSize ?? null,
       chunkCount: object.chunkCount ?? null,
       chunkIvs: object.chunkIvs ?? null,
@@ -127,8 +99,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     statusCode = 500;
-    errorMessage =
-      error instanceof Error ? error.message : "Internal server error";
+    errorMessage = error instanceof Error ? error.message : "Internal server error";
 
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
@@ -145,9 +116,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-/** =========================
- * DELETE /api/objects/[id]
- * ========================= */
+/** 
+ * DELETE /api/objects/[id] - Delete an object 
+ */
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -188,6 +159,10 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       if (object.thumbnail && object.thumbnail.startsWith("users/")) {
         await deleteB2Object(bucket.b2BucketId, object.thumbnail);
       }
+      
+      if (object.optimizedKey) {
+        await deleteB2Object(bucket.b2BucketId, object.optimizedKey);
+      }
     } catch {
       // ignore B2 errors
     }
@@ -210,8 +185,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     }
 
     statusCode = 500;
-    errorMessage =
-      error instanceof Error ? error.message : "Internal server error";
+    errorMessage = error instanceof Error ? error.message : "Internal server error";
 
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
@@ -228,9 +202,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-/** =========================
- * PATCH /api/objects/[id]
- * ========================= */
+/** 
+ * PATCH /api/objects/[id] - Update object metadata (tags, position) 
+ */
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -277,8 +251,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     }
 
     statusCode = 500;
-    errorMessage =
-      error instanceof Error ? error.message : "Internal server error";
+    errorMessage = error instanceof Error ? error.message : "Internal server error";
 
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {

@@ -5,7 +5,10 @@ import { usePreview } from "@/contexts/PreviewContext";
 import { Loader2, ImageOff, LayoutGrid, Grid3x3, Rows3 } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
+import {
+  decryptMetadataString,
+  decryptFile,
+} from "@/lib/crypto/fileEncryption";
 import { useThumbnail } from "@/hooks/useThumbnail";
 
 import { useSession } from "@/lib/auth/client";
@@ -25,6 +28,10 @@ interface ObjectData {
   position?: number;
   encryptedName?: string;
   encryptedDisplayName?: string;
+  optimizedKey?: string;
+  optimizedIV?: string;
+  optimizedEncryptedDEK?: string;
+  optimizedSize?: number;
 }
 
 type GridDensity = "large" | "medium" | "small";
@@ -59,34 +66,181 @@ function PhotoThumbnail({
   onPhotoClick,
   decryptedName,
   metadataKey,
+  privateKey,
   className = "",
 }: {
   photo: ObjectData;
   onPhotoClick: (p: ObjectData) => void;
   decryptedName?: string;
   metadataKey: CryptoKey | null;
+  privateKey: CryptoKey | null;
   className?: string;
 }) {
-  const displayUrl = useThumbnail(photo.thumbnail, metadataKey);
+  const [optimizedUrl, setOptimizedUrl] = useState<string | null>(null);
+  const [loadingOptimized, setLoadingOptimized] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const thumbUrl = useThumbnail(photo.thumbnail, metadataKey);
+
+  const observerRef = useRef<HTMLDivElement>(null);
+  const [hasBeenVisible, setHasBeenVisible] = useState(false);
+  const loadedForId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const current = observerRef.current;
+    if (!current) return;
+    const obs = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setHasBeenVisible(true);
+          obs.disconnect();
+        }
+      },
+      { rootMargin: "400px" },
+    );
+    obs.observe(current);
+    return () => obs.disconnect();
+  }, []);
+
+  // Quick debug — add this temporarily
+  useEffect(() => {
+    if (hasBeenVisible) {
+      console.log("[Debug] photo fields:", {
+        id: photo.id,
+        optimizedKey: photo.optimizedKey,
+        optimizedEncryptedDEK: photo.optimizedEncryptedDEK,
+        optimizedIV: photo.optimizedIV,
+      });
+    }
+  }, [hasBeenVisible]);
+
+  useEffect(() => {
+    // Skip if not visible, no keys, no optimized version, already loaded, or failed
+    if (
+      !hasBeenVisible ||
+      !metadataKey ||
+      !privateKey ||
+      !photo.optimizedKey ||
+      failed ||
+      loadedForId.current === photo.id
+    )
+      return;
+
+    let cancelled = false;
+
+    const load = async () => {
+      setLoadingOptimized(true);
+      try {
+        const res = await fetch(`/api/objects/${photo.id}?preview=true`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        // Must have encrypted DEK and IV to decrypt
+        if (!data.encryptedDEK || !data.iv) {
+          throw new Error("Missing decryption params");
+        }
+
+        const fileRes = await fetch(data.url);
+        if (!fileRes.ok)
+          throw new Error(`File fetch failed: ${fileRes.status}`);
+        const ciphertext = await fileRes.arrayBuffer();
+
+        // Preview is always WebP — don't trust data.contentType
+        // which will be "application/octet-stream" for encrypted files
+        const blob = await decryptFile(
+          ciphertext,
+          data.encryptedDEK,
+          data.iv,
+          privateKey,
+          "image/webp",
+        );
+
+        if (!cancelled) {
+          const url = URL.createObjectURL(blob);
+          setOptimizedUrl(url);
+          loadedForId.current = photo.id;
+        }
+      } catch (err) {
+        console.error(
+          `[PhotoThumbnail] Failed to load optimized for ${photo.id}:`,
+          err,
+        );
+        if (!cancelled) setFailed(true);
+      } finally {
+        if (!cancelled) setLoadingOptimized(false);
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    hasBeenVisible,
+    photo.id,
+    photo.optimizedKey,
+    metadataKey,
+    privateKey,
+    failed,
+  ]);
+
+  // Cleanup blob URL on unmount or when url changes
+  useEffect(() => {
+    return () => {
+      if (optimizedUrl) URL.revokeObjectURL(optimizedUrl);
+    };
+  }, [optimizedUrl]);
+
+  const displayUrl = optimizedUrl || thumbUrl;
+  const isReady = !!optimizedUrl;
 
   return (
     <div
+      ref={observerRef}
       onClick={() => onPhotoClick(photo)}
       className={`relative rounded-2xl overflow-hidden bg-secondary border border-border/50 cursor-pointer group transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/5 hover:border-primary/30 hover:z-10 ${className}`}
     >
-      {displayUrl ? (
+      {/* Blurred thumbnail placeholder — always rendered, fades out */}
+      <div className="absolute inset-0 z-0">
+        {thumbUrl ? (
+          <img
+            src={thumbUrl}
+            alt=""
+            className={`w-full h-full object-cover blur-lg scale-110 transition-opacity duration-700 ${isReady ? "opacity-0" : "opacity-100"}`}
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center bg-secondary/50">
+            {loadingOptimized && (
+              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground/20" />
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Main image — optimized WebP */}
+      {optimizedUrl && (
         <img
-          src={displayUrl}
+          src={optimizedUrl}
           alt={decryptedName || getFileName(photo.key)}
-          className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-          loading="lazy"
+          className="relative z-10 w-full h-full object-cover transition-all duration-700 group-hover:scale-105"
         />
-      ) : (
-        <div className="w-full aspect-square flex items-center justify-center bg-secondary transition-transform duration-700 group-hover:scale-105">
+      )}
+
+      {/* No thumbnail and no optimized and not loading — show placeholder */}
+      {!displayUrl && !loadingOptimized && (
+        <div className="relative z-10 w-full aspect-square flex items-center justify-center">
           <ImageOff className="w-8 h-8 text-muted-foreground/20" />
         </div>
       )}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
+
+      {/* Loading spinner overlay when no thumb yet */}
+      {loadingOptimized && !thumbUrl && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center">
+          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground/30" />
+        </div>
+      )}
+
+      {/* Hover overlay */}
+      <div className="absolute inset-0 z-20 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
         <p className="text-white text-sm font-medium truncate drop-shadow-md">
           {decryptedName || photo.encryptedName || getFileName(photo.key)}
         </p>
@@ -103,11 +257,13 @@ function MasonryGrid({
   onPhotoClick,
   decryptedNames,
   metadataKey,
+  privateKey,
 }: {
   photos: ObjectData[];
   onPhotoClick: (p: ObjectData) => void;
   decryptedNames: Record<string, string>;
   metadataKey: CryptoKey | null;
+  privateKey: CryptoKey | null;
 }) {
   return (
     <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 sm:gap-4 space-y-3 sm:space-y-4">
@@ -118,6 +274,7 @@ function MasonryGrid({
           onPhotoClick={onPhotoClick}
           decryptedName={decryptedNames[photo.id]}
           metadataKey={metadataKey}
+          privateKey={privateKey}
           className="break-inside-avoid"
         />
       ))}
@@ -131,16 +288,18 @@ function UniformGrid({
   onPhotoClick,
   decryptedNames,
   metadataKey,
+  privateKey,
 }: {
   photos: ObjectData[];
   density: GridDensity;
   onPhotoClick: (p: ObjectData) => void;
   decryptedNames: Record<string, string>;
   metadataKey: CryptoKey | null;
+  privateKey: CryptoKey | null;
 }) {
   return (
     <div
-      className={`grid ${DENSITY_COLS[density]} gap-3 sm:gap-4 auto-rows-[140px]`}
+      className={`grid ${DENSITY_COLS[density]} gap-3 sm:gap-4 auto-rows-[180px] sm:auto-rows-[220px]`}
     >
       {photos.map((photo) => (
         <PhotoThumbnail
@@ -149,6 +308,7 @@ function UniformGrid({
           onPhotoClick={onPhotoClick}
           decryptedName={decryptedNames[photo.id]}
           metadataKey={metadataKey}
+          privateKey={privateKey}
         />
       ))}
     </div>
@@ -166,7 +326,7 @@ export function PhotosGrid() {
   );
 
   const { openPreview } = usePreview();
-  const { isUnlocked, metadataKey } = useCrypto();
+  const { isUnlocked, metadataKey, privateKey } = useCrypto();
   const { data: session } = useSession();
   const userId = session?.user?.id || null;
 
@@ -396,6 +556,7 @@ export function PhotosGrid() {
               onPhotoClick={openPreview}
               decryptedNames={decryptedNames}
               metadataKey={metadataKey}
+              privateKey={privateKey}
             />
           ) : (
             <UniformGrid
@@ -404,6 +565,7 @@ export function PhotosGrid() {
               onPhotoClick={openPreview}
               decryptedNames={decryptedNames}
               metadataKey={metadataKey}
+              privateKey={privateKey}
             />
           )}
         </div>
