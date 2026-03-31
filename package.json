@@ -48,6 +48,7 @@
     "clsx": "^2.1.1",
     "dexie": "^4.3.0",
     "dexie-react-hooks": "^4.2.0",
+    "exifreader": "^4.37.0",
     "framer-motion": "^12.36.0",
     "googleapis": "^171.4.0",
     "gray-matter": "^4.0.3",

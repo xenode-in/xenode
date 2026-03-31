@@ -14,8 +14,10 @@ import {
   encryptFile,
   encryptFileChunked,
   encryptMetadataString,
+  encryptMetadataObject,
   encryptThumbnail,
 } from "@/lib/crypto/fileEncryption";
+import { extractMetadata } from "@/lib/metadata/extractor";
 import { toB64 } from "@/lib/crypto/utils";
 import { optimizeVideoForStreaming } from "@/lib/video/faststart";
 
@@ -290,7 +292,14 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         if (task.file.type.startsWith("video/")) {
           setTasks((prev) =>
             prev.map((t) =>
-              t.id === task.id ? { ...t, status: "uploading", progress: 0, error: "Optimizing video..." } : t,
+              t.id === task.id
+                ? {
+                    ...t,
+                    status: "uploading",
+                    progress: 0,
+                    error: "Optimizing video...",
+                  }
+                : t,
             ),
           );
           uploadFile = await optimizeVideoForStreaming(task.file);
@@ -313,7 +322,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           thumbnail = rawThumbnail;
         }
 
-        const chunkSize = getAdaptiveChunkSize(uploadFile.size, uploadFile.type);
+        const chunkSize = getAdaptiveChunkSize(
+          uploadFile.size,
+          uploadFile.type,
+        );
         let cipherChunkSize = chunkSize;
         let uploadBody: File | Blob = uploadFile;
         let uploadContentType = uploadFile.type || "application/octet-stream";
@@ -322,8 +334,32 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         let chunkCount = Math.ceil(uploadFile.size / chunkSize);
         let chunkIvs: string | undefined;
 
+        let encryptedMetadata: string | undefined;
+
         if (shouldEncryptNow()) {
           try {
+            // Extract all metadata sources
+            const metadata = await extractMetadata(uploadFile, {
+              thumbnail: rawThumbnail,
+              chunkSize,
+              chunkCount,
+              chunkIvs: JSON.parse(chunkIvs || "[]"),
+            });
+
+            console.log("METADATA", metadata);
+
+            // Encrypt standardized metadata object
+            encryptedMetadata = await encryptMetadataObject(
+              metadata,
+              cryptoMetadataKeyRef.current!,
+            );
+
+            // Legacy backward-compatibility headers (optional but kept for safety)
+            encryptedName = await encryptMetadataString(
+              uploadFile.name,
+              cryptoMetadataKeyRef.current!,
+            );
+
             const enc = await encryptFileChunked(
               uploadFile,
               cryptoPublicKeyRef.current!,
@@ -335,11 +371,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             chunkCount = enc.chunkCount;
             chunkIvs = JSON.stringify(enc.chunkIvs);
             cipherChunkSize = chunkSize + 16;
-
-            encryptedName = await encryptMetadataString(
-              uploadFile.name,
-              cryptoMetadataKeyRef.current!,
-            );
           } catch (err) {
             console.warn(
               "[E2EE] Encryption failed, falling back to plaintext",
@@ -496,6 +527,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             chunkIvs,
             isChunked: true,
             chunks: chunkUploads,
+            encryptedMetadata,
           }),
         });
 
@@ -605,14 +637,20 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       let chunkCount: number | undefined;
       let chunkIvs: string | undefined; // JSON string
 
+      let encryptedMetadata: string | undefined;
+
       if (shouldEncryptNow()) {
         try {
           const isStreamable =
             task.file.type.startsWith("video/") ||
             task.file.type.startsWith("audio/");
 
+          // Common Metadata Extraction
+          const metadata = await extractMetadata(task.file, {
+            thumbnail: rawThumbnail,
+          });
+
           if (isStreamable) {
-            // Chunked AES-GCM — enables true browser streaming at preview time
             const enc = await encryptFileChunked(
               task.file,
               cryptoPublicKeyRef.current!,
@@ -623,9 +661,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             chunkSize = enc.chunkSize;
             chunkCount = enc.chunkCount;
             chunkIvs = JSON.stringify(enc.chunkIvs);
-            // No single iv for chunked files
+
+            // Update metadata with chunk info
+            metadata.chunkSize = chunkSize;
+            metadata.chunkCount = chunkCount;
+            metadata.chunkIvs = enc.chunkIvs;
           } else {
-            // Single-blob AES-GCM for non-streamable files
             const enc = await encryptFile(
               task.file,
               cryptoPublicKeyRef.current!,
@@ -636,7 +677,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             encryptedIV = enc.iv;
           }
 
-          // Encrypt the original filename (shared by both paths)
+          // Encrypt standardized metadata object
+          encryptedMetadata = await encryptMetadataObject(
+            metadata,
+            cryptoMetadataKeyRef.current!,
+          );
+
+          // Legacy fields for backward compatibility
           encryptedName = await encryptMetadataString(
             task.file.name,
             cryptoMetadataKeyRef.current!,
@@ -734,6 +781,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           chunkSize,
           chunkCount,
           chunkIvs,
+          encryptedMetadata,
         }),
       });
 

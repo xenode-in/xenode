@@ -40,6 +40,7 @@ export async function POST(request: NextRequest) {
       chunkIvs,
       isChunked,
       chunks,
+      encryptedMetadata,
     } = await request.json();
 
     if (!objectKey || !bucketId || !size) {
@@ -142,6 +143,7 @@ export async function POST(request: NextRequest) {
         if (chunkCount) existingObject.chunkCount = chunkCount;
         if (chunkIvs) existingObject.chunkIvs = chunkIvs;
         if (isChunked && chunks) existingObject.chunks = chunks;
+        if (encryptedMetadata) existingObject.encryptedMetadata = encryptedMetadata;
       }
       await existingObject.save();
       if (sizeDiff !== 0) {
@@ -169,6 +171,7 @@ export async function POST(request: NextRequest) {
       chunkCount: chunkCount ?? undefined,
       chunkIvs: chunkIvs ?? undefined,
       chunks: isChunked && chunks ? chunks : undefined,
+      encryptedMetadata: encryptedMetadata ?? undefined,
     });
 
     await incrementStorage(userId, size, {
