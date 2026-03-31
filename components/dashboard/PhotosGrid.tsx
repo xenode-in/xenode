@@ -15,6 +15,7 @@ import { useSession } from "@/lib/auth/client";
 import { useFileSync } from "@/hooks/useFileSync";
 import { getDb } from "@/lib/db/local";
 import { useLiveQuery } from "dexie-react-hooks";
+import { motion, AnimatePresence } from "framer-motion";
 
 interface ObjectData {
   id: string;
@@ -110,6 +111,7 @@ function PhotoThumbnail({
         optimizedKey: photo.optimizedKey,
         optimizedEncryptedDEK: photo.optimizedEncryptedDEK,
         optimizedIV: photo.optimizedIV,
+        aspectRatio: photo.aspectRatio,
       });
     }
   }, [hasBeenVisible]);
@@ -198,8 +200,12 @@ function PhotoThumbnail({
     <div
       ref={observerRef}
       onClick={() => onPhotoClick(photo)}
-      className={`relative rounded-2xl overflow-hidden bg-secondary border border-border/50 cursor-pointer group transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/5 hover:border-primary/30 hover:z-10 ${className}`}
-      style={photo.aspectRatio ? { aspectRatio: photo.aspectRatio } : {}}
+      className={`relative w-full rounded-2xl overflow-hidden bg-secondary border border-border/50 cursor-pointer group ${className}`}
+      style={
+        photo.aspectRatio && photo.aspectRatio > 0
+          ? { aspectRatio: `${photo.aspectRatio}` }
+          : { aspectRatio: "1/1" }
+      }
     >
       {/* Blurred thumbnail placeholder — always rendered, fades out */}
       <div className="absolute inset-0 z-0">
@@ -220,16 +226,19 @@ function PhotoThumbnail({
 
       {/* Main image — optimized WebP */}
       {optimizedUrl && (
-        <img
+        <motion.img
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
           src={optimizedUrl}
+          loading="lazy"
           alt={decryptedName || getFileName(photo.key)}
-          className="relative z-10 w-full h-full object-cover transition-all duration-700 group-hover:scale-105"
+          className="relative z-10 w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
         />
       )}
 
       {/* No thumbnail and no optimized and not loading — show placeholder */}
       {!displayUrl && !loadingOptimized && (
-        <div className="relative z-10 w-full flex items-center justify-center aspect-square">
+        <div className="relative z-10 w-full flex items-center justify-center aspect-square bg-secondary-900/50">
           <ImageOff className="w-8 h-8 text-muted-foreground/20" />
         </div>
       )}
@@ -241,14 +250,18 @@ function PhotoThumbnail({
         </div>
       )}
 
-      {/* Hover overlay */}
-      <div className="absolute inset-0 z-20 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-4">
-        <p className="text-white text-sm font-medium truncate drop-shadow-md">
-          {decryptedName || photo.encryptedName || getFileName(photo.key)}
-        </p>
-        <p className="text-white/80 text-xs font-medium drop-shadow-md mt-0.5">
-          {formatBytes(photo.size)}
-        </p>
+      {/* Hover overlay — refined Pinterest style */}
+      <div className="absolute inset-0 z-20 bg-black/0 group-hover:bg-black/10 transition-all duration-300 flex flex-col justify-end">
+        <div className="p-4 translate-y-2 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500 bg-gradient-to-t from-black/60 via-black/20 to-transparent">
+          <p className="text-white text-sm font-medium truncate drop-shadow-md">
+            {decryptedName || photo.encryptedName || getFileName(photo.key)}
+          </p>
+          <div className="flex items-center gap-2 mt-0.5">
+            <span className="text-white/60 text-[10px] uppercase tracking-wider font-bold">
+              {formatBytes(photo.size)}
+            </span>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -267,18 +280,54 @@ function MasonryGrid({
   metadataKey: CryptoKey | null;
   privateKey: CryptoKey | null;
 }) {
+  const [columnCount, setColumnCount] = useState(2);
+
+  useEffect(() => {
+    const updateColumns = () => {
+      if (window.innerWidth >= 1280) setColumnCount(5);
+      else if (window.innerWidth >= 1024) setColumnCount(4);
+      else if (window.innerWidth >= 768) setColumnCount(3);
+      else setColumnCount(2);
+    };
+
+    updateColumns();
+    window.addEventListener("resize", updateColumns);
+    return () => window.removeEventListener("resize", updateColumns);
+  }, []);
+
+  const columns = useMemo(() => {
+    const cols: ObjectData[][] = Array.from({ length: columnCount }, () => []);
+    photos.forEach((photo, i) => {
+      cols[i % columnCount].push(photo);
+    });
+    return cols;
+  }, [photos, columnCount]);
+
   return (
-    <div className="columns-2 sm:columns-3 md:columns-4 lg:columns-5 gap-3 sm:gap-4 space-y-3 sm:space-y-4">
-      {photos.map((photo) => (
-        <PhotoThumbnail
-          key={photo.id}
-          photo={photo}
-          onPhotoClick={onPhotoClick}
-          decryptedName={decryptedNames[photo.id]}
-          metadataKey={metadataKey}
-          privateKey={privateKey}
-          className="break-inside-avoid"
-        />
+    <div className="flex gap-4">
+      {columns.map((column, i) => (
+        <div key={i} className="flex-1 flex flex-col gap-4">
+          <AnimatePresence initial={false}>
+            {column.map((photo) => (
+              <motion.div
+                key={photo.id}
+                layout
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                transition={{ duration: 0.4, ease: [0.23, 1, 0.32, 1] }}
+              >
+                <PhotoThumbnail
+                  photo={photo}
+                  onPhotoClick={onPhotoClick}
+                  decryptedName={decryptedNames[photo.id]}
+                  metadataKey={metadataKey}
+                  privateKey={privateKey}
+                />
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
       ))}
     </div>
   );
@@ -464,16 +513,16 @@ export function PhotosGrid() {
 
         <div className="flex items-center gap-2">
           {/* Search */}
-          <div className="relative">
+          <div className="relative group/search">
             <input
               type="text"
               placeholder="Search Photos"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="h-9 pl-8 pr-4 rounded-lg bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/60 transition-colors w-48"
+              className="h-10 pl-10 pr-4 rounded-xl bg-secondary/50 backdrop-blur-md border border-border/50 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/40 focus:ring-4 focus:ring-primary/5 transition-all w-48 sm:w-64"
             />
             <svg
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/40"
+              className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/30 group-focus-within/search:text-primary/60 transition-colors"
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -488,7 +537,7 @@ export function PhotosGrid() {
           </div>
 
           {/* Grid density toggle */}
-          <div className="flex items-center bg-secondary/50 rounded-lg p-1 border border-border">
+          <div className="flex items-center bg-secondary/30 backdrop-blur-md rounded-xl p-1 border border-border/50">
             {(["masonry", "large", "medium", "small"] as const).map((mode) => {
               const icons: Record<string, React.ReactNode> = {
                 masonry: <LayoutGrid className="w-3.5 h-3.5" />,
@@ -523,35 +572,45 @@ export function PhotosGrid() {
 
       {/* Empty */}
       {filteredPhotos.length === 0 && !error && (
-        <div className="flex flex-col items-center justify-center py-24 text-center">
-          <div className="w-16 h-16 rounded-2xl bg-primary/5 border border-border flex items-center justify-center mb-4">
-            <ImageOff className="w-7 h-7 text-muted-foreground/20" />
+        <div className="flex flex-col items-center justify-center py-32 text-center animate-in fade-in slide-in-from-bottom-4 duration-1000">
+          <div className="relative mb-6">
+            <div className="w-24 h-24 rounded-3xl bg-primary/5 border border-primary/10 flex items-center justify-center rotate-6 scale-110">
+              <ImageOff className="w-10 h-10 text-primary/20 -rotate-6" />
+            </div>
+            <div className="absolute -top-2 -right-2 w-8 h-8 rounded-full bg-background border border-border flex items-center justify-center shadow-lg">
+              <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+            </div>
           </div>
-          <p className="text-sm text-muted-foreground">
-            {search ? "No photos match your search" : "No photos yet"}
+          <h3 className="text-lg font-semibold text-foreground mb-1">
+            {search ? "No matches found" : "Your gallery is empty"}
+          </h3>
+          <p className="text-sm text-muted-foreground max-w-xs mx-auto mb-8">
+            {search
+              ? "We couldn't find any photos matching your search. Try different keywords."
+              : "Start building your visual library by uploading images to your vault."}
           </p>
           {!search && (
-            <p className="text-xs text-muted-foreground/50 mt-1">
-              Upload images in{" "}
-              <a
-                href="/dashboard/files"
-                className="text-primary hover:underline"
-              >
-                My Files
-              </a>{" "}
-              to see them here.
-            </p>
+            <a
+              href="/dashboard/files"
+              className="inline-flex items-center justify-center px-6 h-11 rounded-full bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-all shadow-lg shadow-primary/20 hover:-translate-y-0.5 active:translate-y-0"
+            >
+              Upload First Photo
+            </a>
           )}
         </div>
       )}
-
       {/* Photo Groups */}
       {groupEntries.map(([dateLabel, groupPhotos]) => (
-        <div key={dateLabel}>
-          <p className="text-sm font-medium text-muted-foreground mb-2">
-            {dateLabel} &middot; {groupPhotos.length} image
-            {groupPhotos.length !== 1 ? "s" : ""}
-          </p>
+        <div key={dateLabel} className="space-y-4">
+          <div className="sticky top-0 z-30 py-2 -mx-4 px-4 bg-background/80 backdrop-blur-md border-b border-border/0 data-stuck:border-border/50 transition-colors">
+            <p className="text-sm font-semibold text-foreground/70 flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-primary/40" />
+              {dateLabel}
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-bold ml-auto">
+                {groupPhotos.length} item{groupPhotos.length !== 1 ? "s" : ""}
+              </span>
+            </p>
+          </div>
           {gridMode === "masonry" ? (
             <MasonryGrid
               photos={groupPhotos}
