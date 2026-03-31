@@ -20,12 +20,22 @@ export async function encryptFile(
     ["encrypt", "decrypt"],
   );
 
-  const iv = crypto.getRandomValues(new Uint8Array(12)) as Uint8Array<ArrayBuffer>;
+  const iv = crypto.getRandomValues(
+    new Uint8Array(12),
+  ) as Uint8Array<ArrayBuffer>;
   const plaintext = await file.arrayBuffer();
-  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, dek, plaintext);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    dek,
+    plaintext,
+  );
 
   const rawDEK = await crypto.subtle.exportKey("raw", dek);
-  const wrappedDEK = await crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, rawDEK);
+  const wrappedDEK = await crypto.subtle.encrypt(
+    { name: "RSA-OAEP" },
+    publicKey,
+    rawDEK,
+  );
 
   return {
     ciphertext: new Blob([ciphertext], { type: "application/octet-stream" }),
@@ -42,14 +52,26 @@ export async function decryptFile(
   contentType: string,
 ): Promise<Blob> {
   const wrappedDEKBytes = fromB64(encryptedDEK);
-  const rawDEK = await crypto.subtle.decrypt({ name: "RSA-OAEP" }, privateKey, wrappedDEKBytes);
+  const rawDEK = await crypto.subtle.decrypt(
+    { name: "RSA-OAEP" },
+    privateKey,
+    wrappedDEKBytes,
+  );
 
   const dek = await crypto.subtle.importKey(
-    "raw", rawDEK, { name: "AES-GCM", length: 256 }, false, ["decrypt"],
+    "raw",
+    rawDEK,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["decrypt"],
   );
 
   const ivBytes = fromB64(iv) as Uint8Array<ArrayBuffer>;
-  const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ivBytes }, dek, ciphertext);
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: ivBytes },
+    dek,
+    ciphertext,
+  );
   return new Blob([plaintext], { type: contentType });
 }
 
@@ -63,13 +85,22 @@ export async function decryptFileChunkedCombined(
   contentType: string,
 ): Promise<Blob> {
   const wrappedDEKBytes = fromB64(encryptedDEK);
-  const rawDEK = await crypto.subtle.decrypt({ name: "RSA-OAEP" }, privateKey, wrappedDEKBytes);
-
-  const dek = await crypto.subtle.importKey(
-    "raw", rawDEK, { name: "AES-GCM", length: 256 }, false, ["decrypt"],
+  const rawDEK = await crypto.subtle.decrypt(
+    { name: "RSA-OAEP" },
+    privateKey,
+    wrappedDEKBytes,
   );
 
-  const chunkIvs: string[] = typeof chunkIvsStr === "string" ? JSON.parse(chunkIvsStr) : chunkIvsStr;
+  const dek = await crypto.subtle.importKey(
+    "raw",
+    rawDEK,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["decrypt"],
+  );
+
+  const chunkIvs: string[] =
+    typeof chunkIvsStr === "string" ? JSON.parse(chunkIvsStr) : chunkIvsStr;
   const decryptedChunks: ArrayBuffer[] = [];
 
   for (let i = 0; i < chunkCount; i++) {
@@ -97,7 +128,9 @@ export async function encryptFileChunked(
   chunkSize = 1_048_576,
 ): Promise<EncryptedFileChunkedResult> {
   const dek = await crypto.subtle.generateKey(
-    { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"],
+    { name: "AES-GCM", length: 256 },
+    true,
+    ["encrypt", "decrypt"],
   );
 
   const plaintext = await file.arrayBuffer();
@@ -116,17 +149,28 @@ export async function encryptFileChunked(
       const end = Math.min(start + chunkSize, plaintext.byteLength);
       const slice = plaintext.slice(start, end);
       const iv = crypto.getRandomValues(new Uint8Array(12));
-      const cipherChunk = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, dek, slice);
+      const cipherChunk = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv },
+        dek,
+        slice,
+      );
       chunkIvs[i] = toB64(iv);
       encryptedChunks[i] = cipherChunk;
     }
   };
 
-  const workers = Array.from({ length: Math.min(concurrency, chunkCount) }, () => encryptWorker());
+  const workers = Array.from(
+    { length: Math.min(concurrency, chunkCount) },
+    () => encryptWorker(),
+  );
   await Promise.all(workers);
 
   const rawDEK = await crypto.subtle.exportKey("raw", dek);
-  const wrappedDEK = await crypto.subtle.encrypt({ name: "RSA-OAEP" }, publicKey, rawDEK);
+  const wrappedDEK = await crypto.subtle.encrypt(
+    { name: "RSA-OAEP" },
+    publicKey,
+    rawDEK,
+  );
 
   return {
     ciphertext: new Blob(encryptedChunks, { type: "application/octet-stream" }),
@@ -273,7 +317,9 @@ export async function encryptMetadataString(
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encoded = new TextEncoder().encode(text);
   const ciphertextBuffer = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv }, metadataKey, encoded,
+    { name: "AES-GCM", iv },
+    metadataKey,
+    encoded,
   );
 
   // 0x02 = new metadataKey format. Distinguishes from legacy format unambiguously.
@@ -303,7 +349,9 @@ export async function decryptMetadataString(
       const iv = combined.slice(1, 13);
       const ciphertext = combined.slice(13);
       const plaintext = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv }, metadataKey, ciphertext,
+        { name: "AES-GCM", iv },
+        metadataKey,
+        ciphertext,
       );
       return new TextDecoder().decode(plaintext);
     }
@@ -314,10 +362,16 @@ export async function decryptMetadataString(
       const nameIV = combined.slice(32, 44);
       const ciphertext = combined.slice(44);
       const legacyKey = await crypto.subtle.importKey(
-        "raw", nameKeyBytes, { name: "AES-GCM", length: 256 }, false, ["decrypt"],
+        "raw",
+        nameKeyBytes,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["decrypt"],
       );
       const plaintext = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv: nameIV }, legacyKey, ciphertext,
+        { name: "AES-GCM", iv: nameIV },
+        legacyKey,
+        ciphertext,
       );
       return new TextDecoder().decode(plaintext);
     }
@@ -327,4 +381,51 @@ export async function decryptMetadataString(
     console.warn("[E2EE] Failed to decrypt metadata string", err);
     return "Encrypted File";
   }
+}
+
+export async function encryptMetadataObject(
+  metadata: Record<string, any>,
+  metadataKey: CryptoKey,
+): Promise<string> {
+  const json = JSON.stringify(metadata);
+
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(json);
+
+  const cipher = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    metadataKey,
+    encoded,
+  );
+
+  // 0x03 = standardized FileMetadata object
+  const combined = new Uint8Array(1 + iv.length + cipher.byteLength);
+  combined[0] = 0x03;
+  combined.set(iv, 1);
+  combined.set(new Uint8Array(cipher), 1 + iv.length);
+
+  return toB64(combined);
+}
+
+export async function decryptMetadataObject(
+  encryptedB64: string,
+  metadataKey: CryptoKey,
+): Promise<any> {
+  const combined = fromB64(encryptedB64);
+
+  // Supports both 0x02 (experimental) and 0x03 (standardized)
+  if (combined[0] !== 0x02 && combined[0] !== 0x03) {
+    throw new Error("Invalid metadata version: " + combined[0]);
+  }
+
+  const iv = combined.slice(1, 13);
+  const cipher = combined.slice(13);
+
+  const plain = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv },
+    metadataKey,
+    cipher,
+  );
+
+  return JSON.parse(new TextDecoder().decode(plain));
 }

@@ -40,6 +40,12 @@ export async function POST(request: NextRequest) {
       chunkIvs,
       isChunked,
       chunks,
+      encryptedMetadata,
+      optimizedKey,
+      optimizedSize,
+      optimizedContentType,
+      optimizedIV,
+      optimizedEncryptedDEK,
     } = await request.json();
 
     if (!objectKey || !bucketId || !size) {
@@ -142,6 +148,12 @@ export async function POST(request: NextRequest) {
         if (chunkCount) existingObject.chunkCount = chunkCount;
         if (chunkIvs) existingObject.chunkIvs = chunkIvs;
         if (isChunked && chunks) existingObject.chunks = chunks;
+        if (encryptedMetadata) existingObject.encryptedMetadata = encryptedMetadata;
+        if (optimizedKey) existingObject.optimizedKey = optimizedKey;
+        if (optimizedSize) existingObject.optimizedSize = optimizedSize;
+        if (optimizedContentType) existingObject.optimizedContentType = optimizedContentType;
+        if (optimizedIV) existingObject.optimizedIV = optimizedIV;
+        if (optimizedEncryptedDEK) existingObject.optimizedEncryptedDEK = optimizedEncryptedDEK;
       }
       await existingObject.save();
       if (sizeDiff !== 0) {
@@ -149,6 +161,18 @@ export async function POST(request: NextRequest) {
         await updateBucketStats(bucketId, 0, sizeDiff);
       }
       return NextResponse.json({ object: existingObject });
+    }
+
+    if (optimizedKey) {
+      try {
+        const command = new HeadObjectCommand({
+          Bucket: bucket.b2BucketId,
+          Key: optimizedKey,
+        });
+        await getS3Client().send(command);
+      } catch (err) {
+        console.warn(`Optimized file ${optimizedKey} not found in storage, continuing anyway.`);
+      }
     }
 
     const storageObject = await StorageObject.create({
@@ -169,6 +193,12 @@ export async function POST(request: NextRequest) {
       chunkCount: chunkCount ?? undefined,
       chunkIvs: chunkIvs ?? undefined,
       chunks: isChunked && chunks ? chunks : undefined,
+      encryptedMetadata: encryptedMetadata ?? undefined,
+      optimizedKey: optimizedKey ?? undefined,
+      optimizedSize: optimizedSize ?? undefined,
+      optimizedContentType: optimizedContentType ?? undefined,
+      optimizedIV: optimizedIV ?? undefined,
+      optimizedEncryptedDEK: optimizedEncryptedDEK ?? undefined,
     });
 
     await incrementStorage(userId, size, {

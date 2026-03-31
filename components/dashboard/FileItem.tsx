@@ -20,6 +20,7 @@ import {
   FileText,
   Link2,
   DownloadCloud,
+  Info,
 } from "lucide-react";
 import { formatBytes, formatDate, cn } from "@/lib/utils";
 import { getFileIcon } from "@/lib/file-icons";
@@ -30,6 +31,7 @@ import {
   decryptMetadataString,
 } from "@/lib/crypto/fileEncryption";
 import { useThumbnail } from "@/hooks/useThumbnail";
+import { MetadataDialog } from "./MetadataDialog";
 
 interface ObjectData {
   id: string; // use id, not _id
@@ -44,6 +46,7 @@ interface ObjectData {
   mediaCategory?: string;
   encryptedName?: string;
   encryptedDisplayName?: string;
+  encryptedMetadata?: string;
 }
 
 interface ItemProps {
@@ -95,6 +98,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     const [decryptedName, setDecryptedName] = useState<string | null>(null);
     const [decryptedTags, setDecryptedTags] = useState<string[] | null>(null);
     const decryptedThumbnail = useThumbnail(item.thumbnail, metadataKey);
+    const [isMetaOpen, setIsMetaOpen] = useState(false);
 
     useEffect(() => {
       if (isUnlocked && metadataKey) {
@@ -341,7 +345,23 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
             >
               <Tag className="w-4 h-4" />
             </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsMetaOpen(true);
+              }}
+            >
+              <Info className="w-4 h-4 text-muted-foreground/40 hover:text-primary" />
+            </Button>
           </div>
+          <MetadataDialog
+            item={item}
+            isOpen={isMetaOpen}
+            onOpenChange={setIsMetaOpen}
+            metadataKey={metadataKey}
+          />
         </TableCell>
       </TableRow>
     );
@@ -434,6 +454,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
     const [decryptedName, setDecryptedName] = useState<string | null>(null);
     const [decryptedTags, setDecryptedTags] = useState<string[] | null>(null);
     const decryptedThumbnail = useThumbnail(item.thumbnail, metadataKey);
+    const [isMetaOpen, setIsMetaOpen] = useState(false);
 
     useEffect(() => {
       if (isUnlocked && metadataKey) {
@@ -701,6 +722,25 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
           >
             <Trash2 className="w-3.5 h-3.5" />
           </Button>
+
+          <Button
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7 rounded-md bg-black/50 hover:bg-primary hover:text-primary-foreground text-foreground backdrop-blur-sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsMetaOpen(true);
+            }}
+          >
+            <Info className="w-3.5 h-3.5" />
+          </Button>
+
+          <MetadataDialog
+            item={item}
+            isOpen={isMetaOpen}
+            onOpenChange={setIsMetaOpen}
+            metadataKey={metadataKey}
+          />
         </div>
       </div>
     );

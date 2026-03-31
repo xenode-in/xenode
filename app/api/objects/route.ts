@@ -96,7 +96,7 @@ export async function GET(request: NextRequest) {
         const cursorPayload = Buffer.from(before, "base64").toString("utf8");
         const cursorData = JSON.parse(cursorPayload);
         const { v, id } = cursorData;
-        
+
         let typedV = v;
         if (sortField === "createdAt" && v) {
           typedV = new Date(v);
@@ -113,7 +113,10 @@ export async function GET(request: NextRequest) {
       } catch (err) {
         statusCode = 400;
         errorMessage = "Invalid cursor format";
-        return NextResponse.json({ error: errorMessage }, { status: statusCode });
+        return NextResponse.json(
+          { error: errorMessage },
+          { status: statusCode },
+        );
       }
     }
 

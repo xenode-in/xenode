@@ -1,28 +1,31 @@
 /**
  * public/sw.js
  *
- * Service Worker that intercepts /sw/objects/<fileId> requests and returns
- * a ReadableStream of decrypted plaintext.
- *
- * Key optimisation: a 3-chunk prefetch pipeline. While chunk N is being
- * enqueued into the response stream, chunks N+1 … N+3 are already being
- * fetched + decrypted concurrently, hiding network + crypto latency.
+ * High-Throughput Service Worker with Aggressive Unbounded Prefetching.
  */
 
 const streamRegistry = new Map();
 
-// ── Registry limits ───────────────────────────────────────────────────────────
-// Each entry is ~60 KB for a typical 1 GB / 2 MB-chunk file (urls + ivs).
-// 20 entries ≈ 1.2 MB max — safe on low-end devices.
+// ── Registry & Cache Limits ──────────────────────────────────────────────────
 const MAX_REGISTRATIONS = 20;
-
-// Signed URLs expire after 1 hour (3600 s). Reject requests against
-// registrations older than 55 min so the player gets a clean error
-// rather than mysterious 403s mid-stream.
 const REGISTRATION_TTL_MS = 55 * 60 * 1000;
+const MAX_CACHED_CHUNKS = 30;
+const PREFETCH_COUNT = 4;
 
 self.addEventListener("install", () => self.skipWaiting());
 self.addEventListener("activate", (e) => e.waitUntil(self.clients.claim()));
+
+// ── Broadcaster ──────────────────────────────────────────────────────────────
+async function broadcastProgress(fileId, progress) {
+  try {
+    const clientsArr = await self.clients.matchAll();
+    clientsArr.forEach((client) => {
+      client.postMessage({ type: "CHUNK_PROGRESS", fileId, progress });
+    });
+  } catch (e) {
+    // Safely ignore if no clients are listening
+  }
+}
 
 // ── Registration ─────────────────────────────────────────────────────────────
 
@@ -39,7 +42,6 @@ self.addEventListener("message", async (e) => {
       size,
     } = e.data;
 
-    // Evict the least-recently-accessed entry when at capacity
     if (streamRegistry.size >= MAX_REGISTRATIONS) {
       let lruKey,
         lruTime = Infinity;
@@ -60,10 +62,10 @@ self.addEventListener("message", async (e) => {
       ["decrypt"],
     );
 
-    // Exact plaintext size = ciphertext – (16-byte GCM tag per chunk)
     const plainSize = size - chunkCount * 16;
 
     streamRegistry.set(fileId, {
+      fileId, // Ensure we save the fileId for the broadcaster
       dek,
       chunkSize,
       chunkCount,
@@ -71,6 +73,7 @@ self.addEventListener("message", async (e) => {
       urls,
       contentType,
       plainSize,
+      chunkCache: new Map(),
       registeredAt: Date.now(),
       lastAccessedAt: Date.now(),
     });
@@ -80,7 +83,7 @@ self.addEventListener("message", async (e) => {
   }
 });
 
-// ── Fetch interception ───────────────────────────────────────────────────────
+// ── Fetch Interception ───────────────────────────────────────────────────────
 
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
@@ -99,11 +102,8 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
-  // Bump access time so LRU eviction keeps actively-watched files alive
   config.lastAccessedAt = Date.now();
 
-  // Signed chunk URLs expire after 1 hour. Return 410 with a clear message
-  // so the player surfaces a human-readable error instead of a silent 403.
   if (Date.now() - config.registeredAt > REGISTRATION_TTL_MS) {
     streamRegistry.delete(fileId);
     e.respondWith(
@@ -118,8 +118,6 @@ self.addEventListener("fetch", (e) => {
   e.respondWith(buildResponse(config, e.request));
 });
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
 function fromB64(b64) {
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
@@ -127,13 +125,91 @@ function fromB64(b64) {
   return bytes;
 }
 
-// ── Response builder with prefetch pipeline ──────────────────────────────────
+// ── Global Chunk Fetcher & Cache Manager ─────────────────────────────────────
+
+function getOrFetchChunk(config, chunkIndex) {
+  if (chunkIndex >= config.chunkCount) return Promise.reject("Out of bounds");
+
+  if (config.chunkCache.has(chunkIndex)) {
+    const promise = config.chunkCache.get(chunkIndex);
+    config.chunkCache.delete(chunkIndex);
+    config.chunkCache.set(chunkIndex, promise);
+    return promise;
+  }
+
+  const fetchPromise = (async () => {
+    try {
+      const res = await fetch(config.urls[chunkIndex], {
+        priority: "high",
+        cache: "force-cache",
+      });
+
+      if (!res.ok)
+        throw new Error(`Failed to fetch chunk ${chunkIndex}: ${res.status}`);
+
+      let cipher;
+
+      // ⚡ Extract precise byte-level progress for the first chunk to power the UI progress bar
+      if (chunkIndex === 0 && res.body) {
+        const total = +(res.headers.get("Content-Length") || config.chunkSize);
+        let loaded = 0;
+        const reader = res.body.getReader();
+        const chunks = [];
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+          loaded += value.byteLength;
+
+          // Emit progress (capped at 99% until decryption finishes)
+          const pct = Math.min(99, Math.round((loaded / total) * 100));
+          broadcastProgress(config.fileId, pct);
+        }
+
+        // Stitch the array buffers together natively
+        const combined = new Uint8Array(loaded);
+        let offset = 0;
+        for (const c of chunks) {
+          combined.set(c, offset);
+          offset += c.byteLength;
+        }
+        cipher = combined.buffer;
+        broadcastProgress(config.fileId, 100); // 100% Downloaded
+      } else {
+        // For background chunks (index > 0), load silently without blocking UI thread
+        cipher = await res.arrayBuffer();
+      }
+
+      const iv = fromB64(config.chunkIvs[chunkIndex]);
+      const plain = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv },
+        config.dek,
+        cipher,
+      );
+
+      return new Uint8Array(plain);
+    } catch (err) {
+      config.chunkCache.delete(chunkIndex);
+      throw err;
+    }
+  })();
+
+  config.chunkCache.set(chunkIndex, fetchPromise);
+
+  if (config.chunkCache.size > MAX_CACHED_CHUNKS) {
+    const oldestKey = config.chunkCache.keys().next().value;
+    config.chunkCache.delete(oldestKey);
+  }
+
+  return fetchPromise;
+}
+
+// ── Response Builder ─────────────────────────────────────────────────────────
 
 async function buildResponse(config, request) {
-  const { dek, chunkSize, chunkCount, chunkIvs, urls, contentType, plainSize } =
-    config;
+  const { chunkSize, chunkCount, plainSize } = config;
 
-  // ── Parse Range header ─────────────────────────────────────────────────────
   let start = 0;
   let end = plainSize - 1;
   const rangeHeader = request.headers.get("Range");
@@ -146,40 +222,18 @@ async function buildResponse(config, request) {
     }
   }
 
-  // Cap at 8 MB per response to avoid large memory buffering
   const MAX_BYTES = 8 * 1024 * 1024;
   end = Math.min(end, start + MAX_BYTES - 1, plainSize - 1);
 
   const startChunk = Math.floor(start / chunkSize);
   const endChunk = Math.floor(end / chunkSize);
 
-  // ── Prefetch pipeline ──────────────────────────────────────────────────────
-  const PREFETCH = 3;
-  const inflight = new Map(); // chunkIndex → Promise<Uint8Array>
-
-  const fetchAndDecrypt = async (i) => {
-    const res = await fetch(urls[i], {
-      signal: request.signal,
-      priority: i < startChunk + 2 ? "high" : "auto",
-    });
-    if (!res.ok) throw new Error(`Failed to fetch chunk ${i}: ${res.status}`);
-    const cipher = await res.arrayBuffer();
-    const iv = fromB64(chunkIvs[i]);
-    const plain = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
-      dek,
-      cipher,
-    );
-    return new Uint8Array(plain);
-  };
-
-  // Warm up: kick off the first N fetches immediately
   for (
     let i = startChunk;
-    i < Math.min(startChunk + PREFETCH, chunkCount);
+    i <= startChunk + PREFETCH_COUNT && i < chunkCount;
     i++
   ) {
-    inflight.set(i, fetchAndDecrypt(i));
+    getOrFetchChunk(config, i).catch(() => {});
   }
 
   let nextServe = startChunk;
@@ -189,29 +243,17 @@ async function buildResponse(config, request) {
       async pull(controller) {
         if (nextServe > endChunk) {
           controller.close();
-
-          // Speculatively prefetch the next chunk beyond the range for future
-          // range requests — fire-and-forget
-          const nextBeyond = endChunk + 1;
-          if (nextBeyond < chunkCount && !inflight.has(nextBeyond)) {
-            fetch(urls[nextBeyond]).catch(() => {});
-          }
           return;
         }
 
         const i = nextServe++;
-
-        // Kick off the next prefetch ahead of the playhead
-        const ahead = i + PREFETCH;
-        if (ahead <= endChunk && ahead < chunkCount && !inflight.has(ahead)) {
-          inflight.set(ahead, fetchAndDecrypt(ahead));
+        const ahead = i + PREFETCH_COUNT;
+        if (ahead < chunkCount) {
+          getOrFetchChunk(config, ahead).catch(() => {});
         }
 
         try {
-          let chunk = await inflight.get(i);
-          inflight.delete(i);
-
-          // Slice boundary chunks to honour the byte range
+          let chunk = await getOrFetchChunk(config, i);
           const chunkStartOffset = i * chunkSize;
           let sliceStart = 0;
           let sliceEnd = chunk.length;
@@ -222,6 +264,7 @@ async function buildResponse(config, request) {
           if (i === endChunk) {
             sliceEnd = Math.min(chunk.length, end - chunkStartOffset + 1);
           }
+
           if (sliceStart > 0 || sliceEnd < chunk.length) {
             chunk = chunk.slice(sliceStart, sliceEnd);
           }
@@ -231,17 +274,14 @@ async function buildResponse(config, request) {
           controller.error(err);
         }
       },
-      cancel() {
-        inflight.clear();
-      },
+      cancel() {},
     },
-    new CountQueuingStrategy({ highWaterMark: 2 }),
+    new CountQueuingStrategy({ highWaterMark: 1 }),
   );
 
-  // ── Build response ─────────────────────────────────────────────────────────
   const isPartial = !!rangeHeader;
   const headers = new Headers({
-    "Content-Type": contentType,
+    "Content-Type": config.contentType,
     "Content-Disposition": "inline",
     "Accept-Ranges": "bytes",
     "Content-Length": String(end - start + 1),
@@ -254,5 +294,3 @@ async function buildResponse(config, request) {
 
   return new Response(stream, { status: isPartial ? 206 : 200, headers });
 }
-
-// UPDATE CODE

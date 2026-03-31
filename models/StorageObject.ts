@@ -35,6 +35,13 @@ export interface IStorageObject extends Document {
   takenAt?: Date;
   description?: string;
   googlePhotosUrl?: string;
+  encryptedMetadata?: string; // Standardized metadata object (v0x03)
+  /** Optimized image fields */
+  optimizedKey?: string; // B2 key for the optimized version
+  optimizedSize?: number; // Size of the optimized version
+  optimizedContentType?: string; // Content type of the optimized version (e.g. image/webp)
+  optimizedIV?: string; // IV for the encrypted optimized version
+  optimizedEncryptedDEK?: string; // Wrapped DEK for the optimized version
 }
 
 const StorageObjectSchema = new Schema<IStorageObject>(
@@ -150,6 +157,30 @@ const StorageObjectSchema = new Schema<IStorageObject>(
       required: false,
       trim: true,
     },
+    encryptedMetadata: {
+      type: String,
+      required: false,
+    },
+    optimizedKey: {
+      type: String,
+      required: false,
+    },
+    optimizedSize: {
+      type: Number,
+      required: false,
+    },
+    optimizedContentType: {
+      type: String,
+      required: false,
+    },
+    optimizedIV: {
+      type: String,
+      required: false,
+    },
+    optimizedEncryptedDEK: {
+      type: String,
+      required: false,
+    },
   },
   {
     timestamps: true,
@@ -177,9 +208,19 @@ StorageObjectSchema.index({ userId: 1, _id: 1 });
 StorageObjectSchema.index({ key: 1, bucketId: 1 });
 StorageObjectSchema.index({ bucketId: 1, position: 1 });
 StorageObjectSchema.index({ tags: 1 });
-StorageObjectSchema.index({ bucketId: 1, deletedAt: 1, createdAt: -1, _id: -1 });
+StorageObjectSchema.index({
+  bucketId: 1,
+  deletedAt: 1,
+  createdAt: -1,
+  _id: -1,
+});
 StorageObjectSchema.index({ bucketId: 1, deletedAt: 1, size: -1, _id: -1 });
-StorageObjectSchema.index({ bucketId: 1, deletedAt: 1, contentType: 1, _id: -1 });
+StorageObjectSchema.index({
+  bucketId: 1,
+  deletedAt: 1,
+  contentType: 1,
+  _id: -1,
+});
 StorageObjectSchema.index({ deletedAt: 1 }, { expireAfterSeconds: 2592000 }); // 30 days TTL
 
 const StorageObject: Model<IStorageObject> =

@@ -13,7 +13,7 @@ export function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
-export function formatDate(date: string): string {
+export function formatDate(date: string | number | Date): string {
   return new Date(date).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",

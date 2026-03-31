@@ -3,10 +3,14 @@ import { requireAuth } from "@/lib/auth/session";
 import { logRequest } from "@/lib/logRequest";
 
 export const dynamic = "force-dynamic";
+
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
-import { deleteObject as deleteB2Object, getDownloadUrl } from "@/lib/b2/objects";
+import {
+  deleteObject as deleteB2Object,
+  getDownloadUrl,
+} from "@/lib/b2/objects";
 import { decrementStorage, updateBucketStats } from "@/lib/metering/usage";
 import ShareLink from "@/models/ShareLink";
 
@@ -14,7 +18,9 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-/** GET /api/objects/[id] - Get download URL for an object */
+/** =========================
+ * GET /api/objects/[id]
+ * ========================= */
 export async function GET(request: NextRequest, { params }: RouteParams) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -24,7 +30,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const session = await requireAuth(request);
     userId = session.user.id;
+
     const { id } = await params;
+    const isPreview = request.nextUrl.searchParams.get("preview") === "true";
 
     await dbConnect();
 
@@ -48,29 +56,65 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
+    /** =========================
+     * Decide which version to use
+     * ========================= */
+    const hasOptimizedVersion =
+      !!object.optimizedKey && !!object.optimizedEncryptedDEK;
+
+    const useOptimized = isPreview && hasOptimizedVersion;
+
+    const keyToUse = useOptimized ? object.optimizedKey : object.key;
+    const dekToUse = useOptimized
+      ? object.optimizedEncryptedDEK
+      : object.encryptedDEK;
+    const ivToUse = useOptimized ? object.optimizedIV : object.iv;
+    const contentTypeToUse = useOptimized
+      ? object.optimizedContentType
+      : object.contentType;
+    const sizeToUse = useOptimized ? object.optimizedSize : object.size;
+
+    /** =========================
+     * Streaming logic (FIXED)
+     * ========================= */
     let url = "";
     let chunkUrls: string[] | undefined = undefined;
 
-    if (object.chunks && object.chunks.length > 0) {
-      const sortedChunks = [...object.chunks].sort((a, b) => a.index - b.index);
+    const isChunked = object.chunks && object.chunks.length > 0;
+
+    // 🔥 CRITICAL FIX:
+    // If chunked → ALWAYS return chunks (preview should NOT break streaming)
+    if (isChunked) {
+      const sortedChunks = [...(object.chunks || [])].sort(
+        (a, b) => a.index - b.index,
+      );
+
       chunkUrls = await Promise.all(
-        sortedChunks.map((chunk) => getDownloadUrl(bucket.b2BucketId, chunk.key))
+        sortedChunks.map((chunk) =>
+          getDownloadUrl(bucket.b2BucketId, chunk.key),
+        ),
       );
     } else {
-      url = await getDownloadUrl(bucket.b2BucketId, object.key);
+      url = await getDownloadUrl(bucket.b2BucketId, keyToUse!);
     }
 
     return NextResponse.json({
       url,
       chunkUrls,
+
       isEncrypted: object.isEncrypted ?? false,
-      encryptedDEK: object.encryptedDEK ?? null,
-      iv: object.iv ?? null,
+      encryptedDEK: dekToUse ?? null,
+      iv: ivToUse ?? null,
+
       encryptedName: object.encryptedName ?? null,
       encryptedContentType: object.encryptedContentType ?? null,
       encryptedDisplayName: object.encryptedDisplayName ?? null,
+
       mediaCategory: object.mediaCategory ?? null,
-      contentType: object.contentType,
+
+      contentType: contentTypeToUse,
+      size: sizeToUse,
+
       chunkSize: object.chunkSize ?? null,
       chunkCount: object.chunkCount ?? null,
       chunkIvs: object.chunkIvs ?? null,
@@ -81,8 +125,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       errorMessage = "Unauthorized";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
+
     statusCode = 500;
-    errorMessage = error instanceof Error ? error.message : "Internal server error";
+    errorMessage =
+      error instanceof Error ? error.message : "Internal server error";
+
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
     logRequest({
@@ -98,7 +145,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-/** DELETE /api/objects/[id] - Delete an object */
+/** =========================
+ * DELETE /api/objects/[id]
+ * ========================= */
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -108,6 +157,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     const session = await requireAuth(request);
     userId = session.user.id;
+
     const { id } = await params;
 
     await dbConnect();
@@ -134,21 +184,20 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     try {
       await deleteB2Object(bucket.b2BucketId, object.key);
-      // Delete thumbnail if it's stored in B2
+
       if (object.thumbnail && object.thumbnail.startsWith("users/")) {
         await deleteB2Object(bucket.b2BucketId, object.thumbnail);
       }
     } catch {
-      // Continue even if B2 delete fails
+      // ignore B2 errors
     }
 
-    // Soft delete: marks the document as deleted for sync workers, but keeps metadata for 30 days.
-    // The B2 file is still physically deleted above, and storage counts are updated below.
-    await StorageObject.findByIdAndUpdate(object._id, { 
-      $set: { deletedAt: new Date() } 
+    await StorageObject.findByIdAndUpdate(object._id, {
+      $set: { deletedAt: new Date() },
     });
 
     await ShareLink.deleteMany({ objectId: object._id });
+
     await decrementStorage(userId, object.size);
     await updateBucketStats(bucket._id.toString(), -1, -object.size);
 
@@ -159,8 +208,11 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       errorMessage = "Unauthorized";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
+
     statusCode = 500;
-    errorMessage = error instanceof Error ? error.message : "Internal server error";
+    errorMessage =
+      error instanceof Error ? error.message : "Internal server error";
+
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
     logRequest({
@@ -176,7 +228,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-/** PATCH /api/objects/[id] - Update object metadata (tags, position) */
+/** =========================
+ * PATCH /api/objects/[id]
+ * ========================= */
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -186,6 +240,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
     const session = await requireAuth(request);
     userId = session.user.id;
+
     const { id } = await params;
 
     let body;
@@ -210,6 +265,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     if (tags !== undefined) object.tags = tags;
     if (position !== undefined) object.position = position;
+
     await object.save();
 
     return NextResponse.json({ object });
@@ -219,8 +275,11 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       errorMessage = "Unauthorized";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
+
     statusCode = 500;
-    errorMessage = error instanceof Error ? error.message : "Internal server error";
+    errorMessage =
+      error instanceof Error ? error.message : "Internal server error";
+
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
     logRequest({

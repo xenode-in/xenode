@@ -1,12 +1,17 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { usePreview } from "@/contexts/PreviewContext";
 import { Loader2, ImageOff, LayoutGrid, Grid3x3, Rows3 } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
 import { useThumbnail } from "@/hooks/useThumbnail";
+
+import { useSession } from "@/lib/auth/client";
+import { useFileSync } from "@/hooks/useFileSync";
+import { getDb } from "@/lib/db/local";
+import { useLiveQuery } from "dexie-react-hooks";
 
 interface ObjectData {
   id: string;
@@ -49,14 +54,14 @@ function groupByDate(photos: ObjectData[]) {
   return groups;
 }
 
-function PhotoThumbnail({ 
-  photo, 
-  onPhotoClick, 
+function PhotoThumbnail({
+  photo,
+  onPhotoClick,
   decryptedName,
   metadataKey,
-  className = ""
-}: { 
-  photo: ObjectData; 
+  className = "",
+}: {
+  photo: ObjectData;
   onPhotoClick: (p: ObjectData) => void;
   decryptedName?: string;
   metadataKey: CryptoKey | null;
@@ -85,7 +90,9 @@ function PhotoThumbnail({
         <p className="text-white text-sm font-medium truncate drop-shadow-md">
           {decryptedName || photo.encryptedName || getFileName(photo.key)}
         </p>
-        <p className="text-white/80 text-xs font-medium drop-shadow-md mt-0.5">{formatBytes(photo.size)}</p>
+        <p className="text-white/80 text-xs font-medium drop-shadow-md mt-0.5">
+          {formatBytes(photo.size)}
+        </p>
       </div>
     </div>
   );
@@ -132,7 +139,9 @@ function UniformGrid({
   metadataKey: CryptoKey | null;
 }) {
   return (
-    <div className={`grid ${DENSITY_COLS[density]} gap-3 sm:gap-4 auto-rows-[140px]`}>
+    <div
+      className={`grid ${DENSITY_COLS[density]} gap-3 sm:gap-4 auto-rows-[140px]`}
+    >
       {photos.map((photo) => (
         <PhotoThumbnail
           key={photo.id}
@@ -147,42 +156,88 @@ function UniformGrid({
 }
 
 export function PhotosGrid() {
-  const [photos, setPhotos] = useState<ObjectData[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [bucketId, setBucketId] = useState<string | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [gridMode, setGridMode] = useState<"masonry" | GridDensity>("masonry");
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({});
+  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>(
+    {},
+  );
 
   const { openPreview } = usePreview();
   const { isUnlocked, metadataKey } = useCrypto();
+  const { data: session } = useSession();
+  const userId = session?.user?.id || null;
+
+  useEffect(() => {
+    fetch("/api/drive/config")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.bucket) {
+          setBucketId(data.bucket._id);
+        } else {
+          setError("Failed to initialize drive storage");
+        }
+      })
+      .catch(() => setError("Failed to connect to storage"))
+      .finally(() => setInitialLoading(false));
+  }, []);
+
+  const {
+    fetchNextPage: fetchNextBatch,
+    hasNextPage: hasMorePages,
+    isFetchingNextPage: loadingMore,
+  } = useFileSync({
+    bucketId,
+    userId,
+    limit: 50,
+  });
+
+  const localFiles =
+    useLiveQuery(() => {
+      if (!userId || !bucketId) return [];
+      const db = getDb(userId);
+      return db.files.where("bucketId").equals(bucketId).toArray();
+    }, [userId, bucketId]) || [];
+
+  const photos = useMemo(() => {
+    return localFiles
+      .filter(
+        (f) =>
+          f.contentType?.startsWith("image/") || f.mediaCategory === "image",
+      )
+      .map((f) => ({ ...f, _id: f.id }) as unknown as ObjectData)
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+  }, [localFiles]);
 
   useEffect(() => {
     if (!isUnlocked || !photos.length) {
-      setDecryptedNames((prev) => Object.keys(prev).length ? {} : prev);
+      setDecryptedNames((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
 
     const decryptMetadata = async () => {
       const newNames: Record<string, string> = {};
-      
+
       for (const photo of photos) {
-        // Name
         const nameToDecrypt = photo.encryptedDisplayName || photo.encryptedName;
         if (photo.isEncrypted && nameToDecrypt && !decryptedNames[photo.id]) {
           try {
-            const name = await decryptMetadataString(nameToDecrypt, metadataKey);
+            const name = await decryptMetadataString(
+              nameToDecrypt,
+              metadataKey,
+            );
             newNames[photo.id] = name;
           } catch (e) {
             console.error("Failed to decrypt name", e);
           }
         }
-        
       }
-      
+
       if (Object.keys(newNames).length > 0) {
         setDecryptedNames((prev) => ({ ...prev, ...newNames }));
       }
@@ -191,64 +246,28 @@ export function PhotosGrid() {
     decryptMetadata();
   }, [photos, isUnlocked, metadataKey, decryptedNames]);
 
-  const fetchPhotos = useCallback(
-    async (pageNum = 1, append = false) => {
-      try {
-        if (pageNum === 1) setLoading(true);
-        else setLoadingMore(true);
+  // ⚡ INFINITE SCROLL OBSERVER LOGIC
+  const observer = useRef<IntersectionObserver | null>(null);
+  const lastElementRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (loadingMore) return;
+      if (observer.current) observer.current.disconnect();
 
-        const configRes = await fetch("/api/drive/config");
-        const configData = await configRes.json();
+      observer.current = new IntersectionObserver(
+        (entries) => {
+          // If the invisible div intersects the viewport and we have more pages, fetch!
+          if (entries[0].isIntersecting && hasMorePages) {
+            fetchNextBatch();
+          }
+        },
+        // Trigger the fetch when the user is 400px away from the bottom for a seamless experience
+        { rootMargin: "400px" },
+      );
 
-        if (!configData.bucket) {
-          setError("Could not access storage.");
-          return;
-        }
-
-        const bucketId = configData.bucket._id;
-        const res = await fetch(
-          `/api/objects?bucketId=${bucketId}&mediaCategory=image&limit=50&page=${pageNum}`
-        );
-        const data = await res.json();
-
-        if (!res.ok) {
-          setError(data.error || "Failed to load photos");
-          return;
-        }
-
-        const mapped = (data.objects || []).map((o: Record<string, unknown>) => ({
-          ...o,
-          id: (o._id as string) || (o.id as string),
-        }));
-
-        if (append) {
-          setPhotos((prev) => [...prev, ...mapped]);
-        } else {
-          setPhotos(mapped);
-        }
-
-        setHasMore(
-          (data.pagination as { hasNextPage?: boolean })?.hasNextPage || false
-        );
-      } catch {
-        setError("Failed to load photos.");
-      } finally {
-        setLoading(false);
-        setLoadingMore(false);
-      }
+      if (node) observer.current.observe(node);
     },
-    []
+    [loadingMore, hasMorePages, fetchNextBatch],
   );
-
-  useEffect(() => {
-    fetchPhotos(1);
-  }, [fetchPhotos]);
-
-  const handleLoadMore = () => {
-    const next = page + 1;
-    setPage(next);
-    fetchPhotos(next, true);
-  };
 
   const filteredPhotos = search.trim()
     ? photos.filter((p) => {
@@ -261,7 +280,7 @@ export function PhotosGrid() {
   const grouped = groupByDate(filteredPhotos);
   const groupEntries = Object.entries(grouped);
 
-  if (loading) {
+  if (initialLoading) {
     return (
       <div className="flex items-center justify-center py-24">
         <Loader2 className="w-6 h-6 animate-spin text-primary" />
@@ -390,17 +409,15 @@ export function PhotosGrid() {
         </div>
       ))}
 
-      {/* Load More */}
-      {hasMore && (
-        <div className="flex justify-center pt-4">
-          <button
-            onClick={handleLoadMore}
-            disabled={loadingMore}
-            className="px-6 py-2 rounded-lg bg-secondary border border-border text-sm text-foreground hover:bg-secondary/80 transition-colors disabled:opacity-50 flex items-center gap-2"
-          >
-            {loadingMore && <Loader2 className="w-4 h-4 animate-spin" />}
-            Load more
-          </button>
+      {/* ⚡ The Infinite Scroll Sentinel */}
+      {hasMorePages && (
+        <div
+          ref={lastElementRef}
+          className="flex justify-center pt-8 pb-8 w-full"
+        >
+          {loadingMore && (
+            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+          )}
         </div>
       )}
     </div>
