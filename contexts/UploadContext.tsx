@@ -20,6 +20,7 @@ import {
 import { extractMetadata } from "@/lib/metadata/extractor";
 import { toB64 } from "@/lib/crypto/utils";
 import { optimizeVideoForStreaming } from "@/lib/video/faststart";
+import { optimizeImage } from "@/lib/images/optimizer";
 
 export interface UploadTask {
   id: string;
@@ -626,7 +627,41 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         bucketId: returnedBucketId,
       } = await presignResponse.json();
 
-      // Step 2: Encrypt file if vault is unlocked, otherwise upload plaintext
+      // Step 2: Optimize image if applicable
+      let optimizedFile: File | null = null;
+      let optimizedObjectKey: string | undefined;
+      let optimizedUploadUrl: string | undefined;
+
+      if (task.file.type.startsWith("image/") && task.file.type !== "image/webp" && task.file.type !== "image/gif") {
+        try {
+          optimizedFile = await optimizeImage(task.file);
+          
+          if (optimizedFile !== task.file) {
+            // Get presigned URL for optimized version
+            const optPresignRes = await fetch("/api/objects/presign-upload", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                fileName: shouldEncryptNow() ? crypto.randomUUID() : optimizedFile.name,
+                fileSize: optimizedFile.size,
+                fileType: shouldEncryptNow() ? "application/octet-stream" : optimizedFile.type,
+                bucketId: task.bucketId,
+                prefix: task.prefix,
+              }),
+            });
+            
+            if (optPresignRes.ok) {
+              const optData = await optPresignRes.json();
+              optimizedObjectKey = optData.objectKey;
+              optimizedUploadUrl = optData.uploadUrl;
+            }
+          }
+        } catch (err) {
+          console.warn("Image optimization failed, skipping optimized version", err);
+        }
+      }
+
+      // Step 3: Encrypt file if vault is unlocked, otherwise upload plaintext
       let uploadBody: File | Blob = task.file;
       let uploadContentType = task.file.type || "application/octet-stream";
       let encryptedDEK: string | undefined;
@@ -704,7 +739,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // Step 3: Handle thumbnail upload to B2
+      // Step 4: Handle thumbnail upload to B2
       let thumbnailKey: string | undefined;
       if (thumbnail && thumbnail.startsWith("enc:")) {
         thumbnailKey = await uploadEncryptedThumbnail(
@@ -714,7 +749,30 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         );
       }
 
-      // Step 4: Upload to B2 with XHR for progress tracking
+      // Step 5: Encrypt and Upload optimized version if exists
+      let optimizedIV: string | undefined;
+      let optimizedSize: number | undefined;
+      let optimizedEncryptedDEK: string | undefined;
+
+      if (optimizedFile && optimizedUploadUrl && optimizedObjectKey) {
+        let optBody: Blob = optimizedFile;
+        optimizedSize = optimizedFile.size;
+
+        if (shouldEncryptNow()) {
+          const enc = await encryptFile(optimizedFile, cryptoPublicKeyRef.current!);
+          optBody = enc.ciphertext;
+          optimizedIV = enc.iv;
+          optimizedEncryptedDEK = enc.encryptedDEK;
+        }
+
+        await fetch(optimizedUploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": shouldEncryptNow() ? "application/octet-stream" : optimizedFile.type },
+          body: optBody,
+        });
+      }
+
+      // Step 6: Upload main file to B2 with XHR for progress tracking
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         uploadXHRs.current.set(task.id, xhr);
@@ -782,6 +840,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           chunkCount,
           chunkIvs,
           encryptedMetadata,
+          optimizedKey: optimizedObjectKey,
+          optimizedSize,
+          optimizedContentType: optimizedFile?.type,
+          optimizedIV,
+          optimizedEncryptedDEK,
         }),
       });
 

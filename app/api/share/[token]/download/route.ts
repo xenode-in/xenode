@@ -68,7 +68,9 @@ export async function POST(req: NextRequest, { params }: Params) {
   let chunkUrls: string[] | undefined = undefined;
 
   if (object.chunks && object.chunks.length > 0) {
-    const sortedChunks = [...object.chunks].sort((a, b) => a.index - b.index);
+    const sortedChunks = [...(object.chunks || [])].sort(
+      (a, b) => a.index - b.index,
+    );
     chunkUrls = await Promise.all(
       sortedChunks.map((chunk) =>
         getSignedFileUrl(bucket.b2BucketId, chunk.key, 3600),

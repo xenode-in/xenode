@@ -361,7 +361,7 @@ export function FilePreviewDialog({
       setIsVideoPreparing(false);
 
       try {
-        const res = await fetch(`/api/objects/${file.id}`);
+        const res = await fetch(`/api/objects/${file.id}?preview=true`);
         if (!res.ok) throw new Error("Failed to get URL");
         const data = await res.json();
         if (!data?.url && (!data?.chunkUrls || data.chunkUrls.length === 0))

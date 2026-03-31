@@ -36,6 +36,12 @@ export interface IStorageObject extends Document {
   description?: string;
   googlePhotosUrl?: string;
   encryptedMetadata?: string; // Standardized metadata object (v0x03)
+  /** Optimized image fields */
+  optimizedKey?: string; // B2 key for the optimized version
+  optimizedSize?: number; // Size of the optimized version
+  optimizedContentType?: string; // Content type of the optimized version (e.g. image/webp)
+  optimizedIV?: string; // IV for the encrypted optimized version
+  optimizedEncryptedDEK?: string; // Wrapped DEK for the optimized version
 }
 
 const StorageObjectSchema = new Schema<IStorageObject>(
@@ -152,6 +158,26 @@ const StorageObjectSchema = new Schema<IStorageObject>(
       trim: true,
     },
     encryptedMetadata: {
+      type: String,
+      required: false,
+    },
+    optimizedKey: {
+      type: String,
+      required: false,
+    },
+    optimizedSize: {
+      type: Number,
+      required: false,
+    },
+    optimizedContentType: {
+      type: String,
+      required: false,
+    },
+    optimizedIV: {
+      type: String,
+      required: false,
+    },
+    optimizedEncryptedDEK: {
       type: String,
       required: false,
     },
