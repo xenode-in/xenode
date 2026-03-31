@@ -45,7 +45,9 @@ const UploadContext = createContext<UploadContextType | undefined>(undefined);
 const MAX_CONCURRENT_UPLOADS = 5;
 
 // Helper to resize image and get base64
-const generateThumbnail = (file: File): Promise<string | undefined> => {
+const generateThumbnail = (
+  file: File,
+): Promise<{ thumbnail: string; aspectRatio: number } | undefined> => {
   return new Promise((resolve) => {
     // Handle images (existing logic)
     if (file.type.startsWith("image/")) {
@@ -54,6 +56,7 @@ const generateThumbnail = (file: File): Promise<string | undefined> => {
         const img = new Image();
         img.onload = () => {
           const canvas = document.createElement("canvas");
+          const aspectRatio = img.width / img.height;
           const MAX_SIZE = 320;
           let width = img.width;
           let height = img.height;
@@ -77,7 +80,10 @@ const generateThumbnail = (file: File): Promise<string | undefined> => {
             ctx.imageSmoothingEnabled = true;
             ctx.imageSmoothingQuality = "high";
             ctx.drawImage(img, 0, 0, width, height);
-            resolve(canvas.toDataURL("image/jpeg", 0.8));
+            resolve({
+              thumbnail: canvas.toDataURL("image/jpeg", 0.8),
+              aspectRatio,
+            });
           } else {
             resolve(undefined);
           }
@@ -126,12 +132,15 @@ const generateThumbnail = (file: File): Promise<string | undefined> => {
         const ctx = canvas.getContext("2d");
         URL.revokeObjectURL(url);
 
-        if (ctx) {
-          ctx.drawImage(video, 0, 0, width, height);
-          resolve(canvas.toDataURL("image/jpeg", 0.8));
-        } else {
-          resolve(undefined);
-        }
+          if (ctx) {
+            ctx.drawImage(video, 0, 0, width, height);
+            resolve({
+              thumbnail: canvas.toDataURL("image/jpeg", 0.8),
+              aspectRatio: video.videoWidth / video.videoHeight,
+            });
+          } else {
+            resolve(undefined);
+          }
       });
 
       video.addEventListener("error", () => {
@@ -306,9 +315,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           uploadFile = await optimizeVideoForStreaming(task.file);
         }
 
-        const rawThumbnail = await generateThumbnail(uploadFile).catch(
+        const thumbResult = await generateThumbnail(uploadFile).catch(
           () => undefined,
         );
+        const rawThumbnail = thumbResult?.thumbnail;
+        const aspectRatio = thumbResult?.aspectRatio;
         let thumbnail: string | undefined;
         if (
           rawThumbnail &&
@@ -342,6 +353,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             // Extract all metadata sources
             const metadata = await extractMetadata(uploadFile, {
               thumbnail: rawThumbnail,
+              aspectRatio,
               chunkSize,
               chunkCount,
               chunkIvs: JSON.parse(chunkIvs || "[]"),
@@ -529,6 +541,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             isChunked: true,
             chunks: chunkUploads,
             encryptedMetadata,
+            aspectRatio,
           }),
         });
 
@@ -587,9 +600,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     );
 
     try {
-      const rawThumbnail = await generateThumbnail(task.file).catch(
+      const thumbResult = await generateThumbnail(task.file).catch(
         () => undefined,
       );
+      const rawThumbnail = thumbResult?.thumbnail;
+      const aspectRatioFromThumb = thumbResult?.aspectRatio;
+
       let thumbnail: string | undefined;
       if (rawThumbnail && cryptoMetadataKeyRef.current && shouldEncryptNow()) {
         thumbnail = await encryptThumbnail(
@@ -631,6 +647,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       let optimizedFile: File | null = null;
       let optimizedObjectKey: string | undefined;
       let optimizedUploadUrl: string | undefined;
+      let aspectRatio = aspectRatioFromThumb;
 
       if (
         task.file.type.startsWith("image/") ||
@@ -651,9 +668,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         ].includes(task.file.name.split(".").pop()?.toLowerCase() ?? "")
       ) {
         try {
-          const { preview, original, aspectRatio } = await generatePreview(
+          const { preview, original, aspectRatio: previewAR } = await generatePreview(
             task.file,
           );
+          if (previewAR) aspectRatio = previewAR;
 
           if (preview !== original && preview.size < task.file.size) {
             optimizedFile = preview;
@@ -741,7 +759,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
           // Encrypt standardized metadata object
           encryptedMetadata = await encryptMetadataObject(
-            metadata,
+            {
+              ...metadata,
+              aspectRatio,
+            },
             cryptoMetadataKeyRef.current!,
           );
 
@@ -879,6 +900,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           optimizedContentType: optimizedFile?.type,
           optimizedIV,
           optimizedEncryptedDEK,
+          aspectRatio,
         }),
       });
 

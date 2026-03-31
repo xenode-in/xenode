@@ -56,6 +56,7 @@ export function useFileSync({
           optimizedEncryptedDEK: o.optimizedEncryptedDEK,
           optimizedIV: o.optimizedIV,
           optimizedSize: o.optimizedSize,
+          aspectRatio: o.aspectRatio,
         }));
 
         await db.files.bulkPut(mappedFiles);

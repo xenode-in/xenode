@@ -46,6 +46,7 @@ export async function POST(request: NextRequest) {
       optimizedContentType,
       optimizedIV,
       optimizedEncryptedDEK,
+      aspectRatio,
     } = await request.json();
 
     if (!objectKey || !bucketId || !size) {
@@ -154,6 +155,7 @@ export async function POST(request: NextRequest) {
         if (optimizedContentType) existingObject.optimizedContentType = optimizedContentType;
         if (optimizedIV) existingObject.optimizedIV = optimizedIV;
         if (optimizedEncryptedDEK) existingObject.optimizedEncryptedDEK = optimizedEncryptedDEK;
+        if (aspectRatio) existingObject.aspectRatio = aspectRatio;
       }
       await existingObject.save();
       if (sizeDiff !== 0) {
@@ -199,6 +201,7 @@ export async function POST(request: NextRequest) {
       optimizedContentType: optimizedContentType ?? undefined,
       optimizedIV: optimizedIV ?? undefined,
       optimizedEncryptedDEK: optimizedEncryptedDEK ?? undefined,
+      aspectRatio: aspectRatio ?? undefined,
     });
 
     await incrementStorage(userId, size, {

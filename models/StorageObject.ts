@@ -42,6 +42,7 @@ export interface IStorageObject extends Document {
   optimizedContentType?: string; // Content type of the optimized version (e.g. image/webp)
   optimizedIV?: string; // IV for the encrypted optimized version
   optimizedEncryptedDEK?: string; // Wrapped DEK for the optimized version
+  aspectRatio?: number; // width / height
 }
 
 const StorageObjectSchema = new Schema<IStorageObject>(
@@ -159,6 +160,10 @@ const StorageObjectSchema = new Schema<IStorageObject>(
     },
     encryptedMetadata: {
       type: String,
+      required: false,
+    },
+    aspectRatio: {
+      type: Number,
       required: false,
     },
     optimizedKey: {

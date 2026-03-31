@@ -33,6 +33,7 @@ export interface LocalFile {
   optimizedEncryptedDEK?: string;
   optimizedIV?: string;
   optimizedSize?: number;
+  aspectRatio?: number;
 }
 export class XenodeDatabase extends Dexie {
   files!: Table<LocalFile, string>;

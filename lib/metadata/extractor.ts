@@ -42,6 +42,7 @@ export async function extractMetadata(
   file: File,
   options: {
     thumbnail?: string | null;
+    aspectRatio?: number | null;
     chunkSize?: number | null;
     chunkCount?: number | null;
     chunkIvs?: string[] | null;
@@ -84,7 +85,7 @@ export async function extractMetadata(
     // Dimensions/Duration
     width: exifData.width ?? ffmpegData.width ?? null,
     height: exifData.height ?? ffmpegData.height ?? null,
-    aspectRatio: exifData.aspectRatio ?? ffmpegData.aspectRatio ?? null,
+    aspectRatio: options.aspectRatio ?? exifData.aspectRatio ?? ffmpegData.aspectRatio ?? null,
     duration: ffmpegData.duration ?? null,
 
     // EXIF

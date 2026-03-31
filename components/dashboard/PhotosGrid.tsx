@@ -32,6 +32,7 @@ interface ObjectData {
   optimizedIV?: string;
   optimizedEncryptedDEK?: string;
   optimizedSize?: number;
+  aspectRatio?: number;
 }
 
 type GridDensity = "large" | "medium" | "small";
@@ -198,6 +199,7 @@ function PhotoThumbnail({
       ref={observerRef}
       onClick={() => onPhotoClick(photo)}
       className={`relative rounded-2xl overflow-hidden bg-secondary border border-border/50 cursor-pointer group transition-all duration-300 hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/5 hover:border-primary/30 hover:z-10 ${className}`}
+      style={photo.aspectRatio ? { aspectRatio: photo.aspectRatio } : {}}
     >
       {/* Blurred thumbnail placeholder — always rendered, fades out */}
       <div className="absolute inset-0 z-0">
@@ -227,7 +229,7 @@ function PhotoThumbnail({
 
       {/* No thumbnail and no optimized and not loading — show placeholder */}
       {!displayUrl && !loadingOptimized && (
-        <div className="relative z-10 w-full aspect-square flex items-center justify-center">
+        <div className="relative z-10 w-full flex items-center justify-center aspect-square">
           <ImageOff className="w-8 h-8 text-muted-foreground/20" />
         </div>
       )}
