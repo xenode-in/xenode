@@ -31,11 +31,11 @@ BETTER_AUTH_URL=http://localhost:3000
 ## Backblaze B2 Storage
 
 ```bash
-B2_APPLICATION_KEY_ID=your-key-id
-B2_APPLICATION_KEY=your-application-key
-B2_BUCKET_NAME=your-bucket-name
-B2_ENDPOINT=https://s3.us-west-002.backblazeb2.com
-B2_REGION=us-west-002
+S3_APPLICATION_KEY_ID=your-key-id
+S3_APPLICATION_KEY=your-application-key
+S3_BUCKET_NAME=your-bucket-name
+S3_ENDPOINT=https://s3.us-west-002.backblazeb2.com
+S3_REGION=us-west-002
 ```
 
 - The B2 bucket must have CORS configured to allow PUT requests from your domain

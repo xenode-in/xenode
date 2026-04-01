@@ -8,7 +8,7 @@ import { getPublicB2Url } from "@/lib/b2/cdn";
 import { getPublicS3Client } from "@/lib/b2/client";
 
 const PUBLIC_BUCKET_NAME = process.env.PUBLIC_S3_BUCKET || "xenopublic";
-const GLOBAL_BUCKET_NAME = process.env.B2_BUCKET_NAME || "xenode-drive-storage";
+const GLOBAL_BUCKET_NAME = process.env.S3_BUCKET_NAME || "xenode-drive-storage";
 
 function slugify(text: string): string {
   return text
@@ -104,8 +104,15 @@ export async function PUT(req: NextRequest) {
       const key = `blog/${filename}`;
 
       // Upload to Public Storage (Zata.ai)
-      await uploadObject(PUBLIC_BUCKET_NAME, key, buffer, imageFile.type, imageFile.size, getPublicS3Client());
-      
+      await uploadObject(
+        PUBLIC_BUCKET_NAME,
+        key,
+        buffer,
+        imageFile.type,
+        imageFile.size,
+        getPublicS3Client(),
+      );
+
       // Generate URL
       imageUrl = getPublicB2Url(PUBLIC_BUCKET_NAME, key);
     }
@@ -222,7 +229,14 @@ export async function POST(req: NextRequest) {
       const filename = `${Date.now()}-${slugify(imageFile.name.replace(/\.[^.]+$/, ""))}.${imageFile.name.split(".").pop()}`;
       const key = `blog/${filename}`;
 
-      await uploadObject(PUBLIC_BUCKET_NAME, key, buffer, imageFile.type, imageFile.size, getPublicS3Client());
+      await uploadObject(
+        PUBLIC_BUCKET_NAME,
+        key,
+        buffer,
+        imageFile.type,
+        imageFile.size,
+        getPublicS3Client(),
+      );
       imageUrl = getPublicB2Url(PUBLIC_BUCKET_NAME, key);
     }
 

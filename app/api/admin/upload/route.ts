@@ -6,7 +6,7 @@ import { getPublicS3Client } from "@/lib/b2/client";
 
 const PUBLIC_BUCKET_NAME = process.env.PUBLIC_S3_BUCKET || "xenopublic";
 
-const GLOBAL_BUCKET_NAME = process.env.B2_BUCKET_NAME || "xenode-drive-storage";
+const GLOBAL_BUCKET_NAME = process.env.S3_BUCKET_NAME || "xenode-drive-storage";
 
 export async function POST(req: NextRequest) {
   const session = await getAdminSession();
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
       buffer,
       file.type || "application/octet-stream",
       file.size,
-      getPublicS3Client()
+      getPublicS3Client(),
     );
 
     // Generate a direct public URL

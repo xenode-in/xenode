@@ -11,7 +11,7 @@ The `lib/` directory contains all server-side utilities, service integrations, a
 Mongoose connection singleton. Uses global caching to avoid re-connecting on every hot reload in development.
 
 ```typescript
-import dbConnect from '@/lib/mongodb';
+import dbConnect from "@/lib/mongodb";
 await dbConnect(); // Call at the top of any API route that needs DB
 ```
 
@@ -34,10 +34,11 @@ better-auth configuration and server-side session helpers.
 - **`lib/auth/auth-client.ts`** — Client-side better-auth hooks (`useSession`, `signIn`, `signOut`)
 
 Usage in API routes:
+
 ```typescript
-import { auth } from '@/lib/auth/auth';
+import { auth } from "@/lib/auth/auth";
 const session = await auth.api.getSession({ headers: request.headers });
-if (!session) return new Response('Unauthorized', { status: 401 });
+if (!session) return new Response("Unauthorized", { status: 401 });
 const userId = session.user.id;
 ```
 
@@ -56,12 +57,13 @@ All S3-compatible operations against Backblaze B2.
   - `listObjects(prefix, bucketName)` — Lists objects with a path prefix
 
 **Environment variables needed:**
+
 ```
-B2_APPLICATION_KEY_ID=
-B2_APPLICATION_KEY=
-B2_BUCKET_NAME=
-B2_ENDPOINT=https://s3.us-west-002.backblazeb2.com
-B2_REGION=us-west-002
+S3_APPLICATION_KEY_ID=
+S3_APPLICATION_KEY=
+S3_BUCKET_NAME=
+S3_ENDPOINT=https://s3.us-west-002.backblazeb2.com
+S3_REGION=us-west-002
 ```
 
 ---
@@ -75,6 +77,7 @@ Client-side encryption using the **Web Crypto API**. Files are encrypted in the 
 - **`lib/crypto/keyUtils.ts`** — Key derivation (PBKDF2 → AES-GCM key), key wrap/unwrap utilities
 
 **Flow:**
+
 1. User unlocks vault with password → PBKDF2 derives a wrapping key → Unwraps AES key from `UserKeyVault`
 2. On upload: file encrypted in browser → encrypted bytes sent to B2 → `isEncrypted: true` + `encryptionIv` saved to `StorageObject`
 3. On download: encrypted bytes fetched from B2 → decrypted in browser using the AES key from vault
@@ -94,7 +97,7 @@ In-memory cache (Map-based) for server-side data that is expensive to recompute.
 Presigned download URLs from B2 are expensive to generate and are valid for a configurable period. This module caches them per `objectId` to avoid redundant B2 API calls.
 
 ```typescript
-import { getCachedDownloadUrl } from '@/lib/downloadCache';
+import { getCachedDownloadUrl } from "@/lib/downloadCache";
 const url = await getCachedDownloadUrl(objectId, b2Key, bucketName);
 // Returns cached URL if valid, otherwise generates new one
 ```
@@ -119,8 +122,16 @@ Updates the `Usage` model when files are uploaded or downloaded.
 Middleware helper called at the end of API key-authenticated routes.
 
 ```typescript
-import { logRequest } from '@/lib/logRequest';
-await logRequest({ apiKeyId, userId, endpoint, method, statusCode, responseTimeMs, request });
+import { logRequest } from "@/lib/logRequest";
+await logRequest({
+  apiKeyId,
+  userId,
+  endpoint,
+  method,
+  statusCode,
+  responseTimeMs,
+  request,
+});
 ```
 
 Writes to `ApiLog` via the logs DB connection.
@@ -141,11 +152,12 @@ Helpers for admin API routes.
 Reads `.mdx` files from `content/blog/` and parses frontmatter.
 
 ```typescript
-getAllBlogPosts()     // Returns array of { slug, title, date, excerpt, readingTime }
-getBlogPost(slug)     // Returns full MDX content + frontmatter
+getAllBlogPosts(); // Returns array of { slug, title, date, excerpt, readingTime }
+getBlogPost(slug); // Returns full MDX content + frontmatter
 ```
 
 Frontmatter schema:
+
 ```yaml
 ---
 title: "Post Title"
@@ -169,8 +181,12 @@ Same pattern as `lib/blog.ts` but reads from `content/changelog/`.
 Server-side PostHog client for tracking events from API routes.
 
 ```typescript
-import { posthog } from '@/lib/posthog';
-posthog.capture({ distinctId: userId, event: 'file_uploaded', properties: { size, mimeType } });
+import { posthog } from "@/lib/posthog";
+posthog.capture({
+  distinctId: userId,
+  event: "file_uploaded",
+  properties: { size, mimeType },
+});
 ```
 
 - Client-side PostHog is initialized in `providers/PostHogProvider.tsx`
@@ -180,7 +196,7 @@ posthog.capture({ distinctId: userId, event: 'file_uploaded', properties: { size
 ## `lib/utils.ts` — General Utilities
 
 ```typescript
-cn(...classes)  // tailwind-merge + clsx — use this for all className merging
+cn(...classes); // tailwind-merge + clsx — use this for all className merging
 ```
 
 ---
@@ -190,8 +206,8 @@ cn(...classes)  // tailwind-merge + clsx — use this for all className merging
 Shared Zod schemas for validating API request bodies. Import these in both API routes and client-side forms.
 
 ```typescript
-createBucketSchema
-createApiKeySchema
-shareObjectSchema
+createBucketSchema;
+createApiKeySchema;
+shareObjectSchema;
 // etc.
 ```

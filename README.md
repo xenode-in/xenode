@@ -239,11 +239,11 @@ BETTER_AUTH_SECRET=your_secret_key
 BETTER_AUTH_URL=http://localhost:3000
 
 # Backblaze B2 (S3 API)
-B2_ENDPOINT=your_b2_s3_endpoint
-B2_REGION=your_b2_region
-B2_APPLICATION_KEY_ID=your_key_id
-B2_APPLICATION_KEY=your_app_key
-B2_BUCKET_NAME=your_b2_bucket_name
+S3_ENDPOINT=your_b2_s3_endpoint
+S3_REGION=your_S3_REGION
+S3_APPLICATION_KEY_ID=your_key_id
+S3_APPLICATION_KEY=your_app_key
+S3_BUCKET_NAME=your_S3_BUCKET_NAME
 ```
 
 ### Running Locally

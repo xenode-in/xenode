@@ -5,7 +5,12 @@
  * when the user's storage is at or over their plan limit.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { makeUserId, createUsage, PRO_100_BYTES, FREE_TIER_BYTES } from "../helpers/factories";
+import {
+  makeUserId,
+  createUsage,
+  PRO_100_BYTES,
+  FREE_TIER_BYTES,
+} from "../helpers/factories";
 import mongoose from "mongoose";
 import Bucket from "@/models/Bucket";
 
@@ -21,12 +26,17 @@ async function seedBucket(userId: string) {
 describe("CVE-5 — Quota Enforcement at Presign", () => {
   beforeEach(() => {
     // Mock B2 S3 client to prevent real network calls
-    vi.mock("@aws-sdk/client-s3", () => ({ S3Client: vi.fn(), PutObjectCommand: vi.fn() }));
-    vi.mock("@aws-sdk/s3-request-presigner", () => ({
-      getSignedUrl: vi.fn().mockResolvedValue("https://b2.example.com/presigned-url"),
+    vi.mock("@aws-sdk/client-s3", () => ({
+      S3Client: vi.fn(),
+      PutObjectCommand: vi.fn(),
     }));
-    process.env.B2_KEY_ID = "test-key";
-    process.env.B2_APPLICATION_KEY = "test-app-key";
+    vi.mock("@aws-sdk/s3-request-presigner", () => ({
+      getSignedUrl: vi
+        .fn()
+        .mockResolvedValue("https://b2.example.com/presigned-url"),
+    }));
+    process.env.S3_KEY_ID = "test-key";
+    process.env.S3_APPLICATION_KEY = "test-app-key";
   });
 
   it("issues presigned URL when user is under quota", async () => {
@@ -34,12 +44,20 @@ describe("CVE-5 — Quota Enforcement at Presign", () => {
     const { requireAuth } = await import("@/lib/auth/session");
     vi.mocked(requireAuth).mockResolvedValue({ user: { id: userId } } as any);
 
-    await createUsage({ userId, totalStorageBytes: 1_000_000, storageLimitBytes: FREE_TIER_BYTES });
+    await createUsage({
+      userId,
+      totalStorageBytes: 1_000_000,
+      storageLimitBytes: FREE_TIER_BYTES,
+    });
     const bucket = await seedBucket(userId);
 
     const req = new Request("http://localhost/api/objects/presign-upload", {
       method: "POST",
-      body: JSON.stringify({ fileSize: 1_000_000, fileType: "image/jpeg", bucketId: bucket._id.toString() }),
+      body: JSON.stringify({
+        fileSize: 1_000_000,
+        fileType: "image/jpeg",
+        bucketId: bucket._id.toString(),
+      }),
       headers: { "Content-Type": "application/json" },
     });
 
@@ -57,12 +75,20 @@ describe("CVE-5 — Quota Enforcement at Presign", () => {
     vi.mocked(requireAuth).mockResolvedValue({ user: { id: userId } } as any);
 
     const nearLimit = FREE_TIER_BYTES - 100;
-    await createUsage({ userId, totalStorageBytes: nearLimit, storageLimitBytes: FREE_TIER_BYTES });
+    await createUsage({
+      userId,
+      totalStorageBytes: nearLimit,
+      storageLimitBytes: FREE_TIER_BYTES,
+    });
     const bucket = await seedBucket(userId);
 
     const req = new Request("http://localhost/api/objects/presign-upload", {
       method: "POST",
-      body: JSON.stringify({ fileSize: 1_000, fileType: "image/jpeg", bucketId: bucket._id.toString() }),
+      body: JSON.stringify({
+        fileSize: 1_000,
+        fileType: "image/jpeg",
+        bucketId: bucket._id.toString(),
+      }),
       headers: { "Content-Type": "application/json" },
     });
 
