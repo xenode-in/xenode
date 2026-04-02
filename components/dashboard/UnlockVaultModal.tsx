@@ -55,6 +55,7 @@ export function UnlockVaultModal({ open, onClose }: UnlockVaultModalProps) {
       setPassword("");
       onClose();
     } catch (err) {
+      console.log(err);
       if (err instanceof Error && err.message === "WRONG_PASSWORD") {
         setError("Incorrect password. Please try again.");
       } else {

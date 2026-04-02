@@ -25,6 +25,22 @@ export function fromB64(b64: string): Uint8Array<ArrayBuffer> {
   return bytes as Uint8Array<ArrayBuffer>;
 }
 
+/** Decode a hex string to a Uint8Array */
+export function hexToBytes(hex: string): Uint8Array {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+  }
+  return bytes;
+}
+
+/** Encode a Uint8Array to a hex string */
+export function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 /**
  * Derive an AES-256-GCM CryptoKey from a password + salt using PBKDF2-SHA256.
  * 600,000 iterations as recommended by OWASP (2023).

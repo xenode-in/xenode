@@ -161,16 +161,16 @@ function LoginForm() {
           </Link>
 
           {/* Bottom tagline */}
-          <div className="backdrop-blur-md bg-background/40 p-8 rounded-3xl border border-border/50 max-w-lg min-h-[140px] flex flex-col justify-center">
+          <div className="backdrop-blur-md bg-background/40 p-8 rounded-3xl border border-border/50 max-w-lg min-h-16 flex flex-col justify-center">
             <p className="text-base text-foreground/80 mb-3 font-medium tracking-wide uppercase">
               Clarity and productivity
             </p>
-            <div className="min-h-[4rem] flex items-center justify-start overflow-hidden">
+            <div className="min-h-16 flex items-center justify-start overflow-hidden">
               {/* Force re-render of GradualSpacing to restart animation on index change */}
               <GradualSpacing
                 key={taglineIndex}
                 text={taglines[taglineIndex]}
-                className="text-3xl font-semibold leading-tight text-foreground text-left break-words"
+                className="text-3xl font-semibold leading-tight text-foreground text-left wrap-break-word"
               />
             </div>
           </div>
@@ -242,6 +242,14 @@ function LoginForm() {
                 <Label htmlFor="password" className="text-sm font-medium">
                   Password
                 </Label>
+                {isLogin && (
+                  <Link
+                    href="/recover"
+                    className="text-sm font-medium text-primary hover:underline"
+                  >
+                    Forgot password?
+                  </Link>
+                )}
               </div>
               <div className="relative">
                 <Input
