@@ -2103,3 +2103,19 @@ export function formatRecoveryKitDownload(words: string[]): string {
     `Generated: ${new Date().toISOString()}`,
   ].join("\n");
 }
+
+/**
+ * Derives a CryptoKey from the 12 recovery words using PBKDF2-SHA256.
+ * Used only during the "forgot password" recovery flow to unlock the
+ * recovery-specific private key vault.
+ */
+import { deriveKey, fromB64 } from "./utils";
+
+export async function deriveRecoveryKey(
+  words: string[],
+  saltB64: string
+): Promise<CryptoKey> {
+  const passphrase = words.join(" ");
+  const salt = fromB64(saltB64);
+  return deriveKey(passphrase, salt as any);
+}

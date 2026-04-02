@@ -385,6 +385,22 @@ a[href^="mailto"], a[href^="tel"], a[href^="sms"] { color: inherit; text-decorat
           required: false,
           defaultValue: false,
         },
+        authVerifier: {
+          type: "string",
+          required: false,
+        },
+        authSalt: {
+          type: "string",
+          required: false,
+        },
+        passwordChangedAt: {
+          type: "date",
+          required: false,
+        },
+        credentialEpoch: {
+          type: "date",
+          required: false,
+        },
       },
     },
   });
