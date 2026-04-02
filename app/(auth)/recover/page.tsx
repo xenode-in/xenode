@@ -345,7 +345,7 @@ export default function RecoveryPage() {
                           {i + 1}
                         </span>
                         <Input
-                          ref={(el) => (inputRefs.current[i] = el)}
+                          ref={(el) => { inputRefs.current[i] = el; }}
                           value={word}
                           onChange={(e) => {
                             const newWords = [...keywords];
