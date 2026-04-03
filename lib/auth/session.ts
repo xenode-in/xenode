@@ -17,6 +17,14 @@ export async function getServerSession(request?: NextRequest) {
     : await headers();               // frozen copy — for Server Components / Server Actions only
 
   const session = await getAuth().api.getSession({ headers: h });
+  
+  if (process.env.NODE_ENV === "development") {
+    console.log(`[getServerSession] Session: ${!!session}`);
+    if (!session) {
+      console.log(`[getServerSession] Cookies present: ${!!h.get("cookie")}`);
+    }
+  }
+
   return session;
 }
 

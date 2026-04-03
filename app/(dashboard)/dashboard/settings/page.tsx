@@ -7,6 +7,7 @@ import { EncryptionSettingsSection } from "@/components/settings/EncryptionSetti
 import { PreviewCacheSection } from "@/components/settings/PreviewCacheSection";
 import { VaultRecoverySection } from "@/components/settings/VaultRecoverySection";
 import { PasswordSettingsSection } from "@/components/settings/PasswordSettingsSection";
+import { TwoFactorSettingsSection } from "@/components/settings/TwoFactorSettingsSection";
 
 export default async function SettingsPage() {
   const session = await requireAuth();
@@ -77,21 +78,9 @@ export default async function SettingsPage() {
         </h3>
         <div className="space-y-4">
           <VaultRecoverySection />
-          <EncryptionSettingsSection />
+          {/* <EncryptionSettingsSection /> */}
           <PasswordSettingsSection />
-          <div className="flex items-center justify-between py-3 border-b border-border">
-            <div>
-              <p className="text-sm text-foreground">
-                Two-Factor Authentication
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Add an extra layer of security
-              </p>
-            </div>
-            <span className="text-xs text-muted-foreground bg-secondary px-3 py-1.5 rounded-lg">
-              Coming Soon
-            </span>
-          </div>
+          <TwoFactorSettingsSection />
           {/* <Suspense fallback={<div className="h-14 animate-pulse bg-muted rounded-lg w-full"></div>}>
             <ConnectedAccounts />
           </Suspense> */}

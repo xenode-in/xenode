@@ -36,9 +36,13 @@ function LoginForm() {
   // Handle URL errors (like expired tokens)
   useEffect(() => {
     if (errorParam === "TOKEN_EXPIRED") {
-      setError("Your verification link has expired. Please sign in to request a new one.");
+      setError(
+        "Your verification link has expired. Please sign in to request a new one.",
+      );
     } else if (errorParam === "INVALID_TOKEN") {
-      setError("Invalid verification link. Please sign in to request a new one.");
+      setError(
+        "Invalid verification link. Please sign in to request a new one.",
+      );
     }
   }, [errorParam]);
 
@@ -73,23 +77,35 @@ function LoginForm() {
           email: formData.email,
           password: formData.password,
         });
+
         if (result.error) {
-          if (result.error.code === "EMAIL_NOT_VERIFIED" || result.error.message?.toLowerCase().includes("not verified")) {
-            router.push(`/verify-email?email=${encodeURIComponent(formData.email)}`);
+          if (
+            result.error.code === "EMAIL_NOT_VERIFIED" ||
+            result.error.message?.toLowerCase().includes("not verified")
+          ) {
+            router.push(
+              `/verify-email?email=${encodeURIComponent(formData.email)}`,
+            );
             return;
           }
           setError(result.error.message || "Invalid credentials");
           return;
         }
+
+        if ((result.data as any)?.twoFactorRedirect) {
+          sessionStorage.setItem("xenode-vault-pw", formData.password);
+          router.push("/two-factor");
+          return;
+        }
       } else {
         const sanitizedEmail = formData.email.trim().toLowerCase();
-        
+
         const checkRes = await fetch(`/api/auth/check-email`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: sanitizedEmail })
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: sanitizedEmail }),
         });
-      
+
         if (checkRes.ok) {
           const { exists } = await checkRes.json();
           if (exists) {
@@ -111,17 +127,21 @@ function LoginForm() {
       }
 
       sessionStorage.setItem("xenode-vault-pw", formData.password);
-      
+
       // If logging in, check if verified. Otherwise, newly signed up users go to verify-email
       if (isLogin) {
         const { data } = await authClient.getSession();
         if (data?.user?.emailVerified === false) {
-          router.push(`/verify-email?email=${encodeURIComponent(formData.email)}`);
+          router.push(
+            `/verify-email?email=${encodeURIComponent(formData.email)}`,
+          );
         } else {
           router.push("/dashboard");
         }
       } else {
-        router.push(`/verify-email?email=${encodeURIComponent(formData.email)}`);
+        router.push(
+          `/verify-email?email=${encodeURIComponent(formData.email)}`,
+        );
       }
     } catch {
       setError("Something went wrong. Please try again.");
@@ -342,11 +362,13 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={
-      <div className="flex h-screen w-full items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    }>
+    <Suspense
+      fallback={
+        <div className="flex h-screen w-full items-center justify-center bg-background">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      }
+    >
       <LoginForm />
     </Suspense>
   );

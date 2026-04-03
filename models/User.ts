@@ -15,6 +15,11 @@ export interface IUser extends Document {
   authSalt?: string;
   passwordChangedAt?: Date;
   credentialEpoch?: Date;
+
+  // 2FA Fields
+  twoFactorEnabled?: boolean;
+  twoFactorSecret?: string;
+  twoFactorBackupCodes?: string;
 }
 
 const UserSchema = new Schema<IUser>(
@@ -30,6 +35,11 @@ const UserSchema = new Schema<IUser>(
     authSalt: { type: String },
     passwordChangedAt: { type: Date },
     credentialEpoch: { type: Date },
+
+    // 2FA Fields
+    twoFactorEnabled: { type: Boolean, default: false },
+    twoFactorSecret: { type: String },
+    twoFactorBackupCodes: { type: String },
   },
   { 
     timestamps: true,

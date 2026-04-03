@@ -3,6 +3,8 @@ import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import { MongoClient } from "mongodb";
 import { expo } from "@better-auth/expo";
 import { Resend } from "resend";
+import { twoFactor } from "better-auth/plugins";
+import { nextCookies } from "better-auth/next-js";
 
 function createAuth() {
   const MONGODB_URI = process.env.MONGODB_URI;
@@ -20,7 +22,19 @@ function createAuth() {
       usePlural: false,
       transaction: false,
     }),
-    plugins: [expo()],
+    plugins: [
+      expo(),
+      nextCookies(),
+      twoFactor({
+        issuer: "Xenode",
+        // Optional: also support email OTP alongside TOTP
+        // otpOptions: {
+        //   async sendOTP({ user, otp }) {
+        //     await sendEmail(user.email, `Your Xenode code: ${otp}`)
+        //   }
+        // }
+      }),
+    ],
     emailVerification: {
       sendOnSignUp: true,
       autoSignInAfterVerification: true,
@@ -343,8 +357,7 @@ a[href^="mailto"], a[href^="tel"], a[href^="sms"] { color: inherit; text-decorat
       expiresIn: 60 * 60 * 24 * 7,
       updateAge: 60 * 60 * 24,
       cookieCache: {
-        enabled: true,
-        maxAge: 5 * 60,
+        enabled: false,
       },
     },
     rateLimit: {
