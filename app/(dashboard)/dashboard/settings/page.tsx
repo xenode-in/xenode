@@ -8,6 +8,7 @@ import { PreviewCacheSection } from "@/components/settings/PreviewCacheSection";
 import { VaultRecoverySection } from "@/components/settings/VaultRecoverySection";
 import { PasswordSettingsSection } from "@/components/settings/PasswordSettingsSection";
 import { TwoFactorSettingsSection } from "@/components/settings/TwoFactorSettingsSection";
+import { PasskeySettingsSection } from "@/components/settings/PasskeySettingsSection";
 
 export default async function SettingsPage() {
   const session = await requireAuth();
@@ -81,6 +82,7 @@ export default async function SettingsPage() {
           {/* <EncryptionSettingsSection /> */}
           <PasswordSettingsSection />
           <TwoFactorSettingsSection />
+          <PasskeySettingsSection />
           {/* <Suspense fallback={<div className="h-14 animate-pulse bg-muted rounded-lg w-full"></div>}>
             <ConnectedAccounts />
           </Suspense> */}
