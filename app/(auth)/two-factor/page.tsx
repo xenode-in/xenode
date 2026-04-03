@@ -124,9 +124,6 @@ function TwoFactorForm() {
               Back to login
             </Link>
             <div className="space-y-2">
-              <div className="inline-flex items-center justify-center p-2 rounded-lg bg-primary/10 mb-2">
-                <ShieldCheck className="w-6 h-6 text-primary" />
-              </div>
               <h1 className="text-4xl font-semibold tracking-tight text-foreground">
                 Two-factor Check
               </h1>
