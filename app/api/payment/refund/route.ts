@@ -88,9 +88,10 @@ export async function POST(req: Request) {
       ? "https://test.payu.in/merchant/postservice.php?form=2"
       : "https://info.payu.in/merchant/postservice.php?form=2";
 
-    const proto = req.headers.get("x-forwarded-proto") || "http";
-    const host = req.headers.get("host");
-    const baseUrl = `${proto}://${host}`;
+    const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL;
+    if (!appBaseUrl) {
+      return NextResponse.json({ error: "Refund service unavailable" }, { status: 500 });
+    }
 
     const formData = new URLSearchParams();
     formData.append("key", key);
@@ -98,7 +99,7 @@ export async function POST(req: Request) {
     formData.append("var1", var1); // mihpayid
     formData.append("var2", refundId); // unique token id
     formData.append("var3", amount); // amount to refund
-    formData.append("var5", `${baseUrl}/api/payment/payu/refund-callback`); // required callback url
+    formData.append("var5", new URL("/api/payment/payu/refund-callback", appBaseUrl).toString());
     formData.append("hash", hash);
 
     const response = await fetch(payuUrl, {
@@ -109,10 +110,10 @@ export async function POST(req: Request) {
 
     const resultText = await response.text();
     // PayU postservice returns JSON string or sometimes a status message
-    let result: any;
+    let result: { status?: number; msg?: string; [key: string]: unknown };
     try {
       result = JSON.parse(resultText);
-    } catch (e) {
+    } catch {
       console.error("Failed to parse PayU refund response:", resultText);
       return NextResponse.json({ error: "Invalid response from payment gateway" }, { status: 502 });
     }

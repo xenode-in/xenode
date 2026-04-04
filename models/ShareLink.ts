@@ -13,6 +13,8 @@ export interface IShareLink extends Document {
   isRevoked: boolean;
   isPasswordProtected: boolean;
   passwordHash?: string;
+  passwordFailureCount: number;
+  passwordLockedUntil?: Date | null;
   /** For E2EE files: DEK re-wrapped with per-share AES-GCM key */
   shareEncryptedDEK?: string;
   shareKeyIv?: string;
@@ -52,6 +54,8 @@ const ShareLinkSchema = new Schema<IShareLink>(
     isRevoked: { type: Boolean, default: false },
     isPasswordProtected: { type: Boolean, default: false },
     passwordHash: { type: String, required: false },
+    passwordFailureCount: { type: Number, default: 0 },
+    passwordLockedUntil: { type: Date, default: null },
     shareEncryptedDEK: { type: String, required: false },
     shareKeyIv: { type: String, required: false },
     shareEncryptedName: { type: String, required: false },

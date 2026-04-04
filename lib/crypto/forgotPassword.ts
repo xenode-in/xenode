@@ -26,12 +26,14 @@ export async function recoverPassword({
   recoverySaltB64,
   recoveryWordIvB64,
   encryptedPrivateKeyB64,
+  encryptedChallengeB64,
   newPassword,
 }: {
   recoveryKeywords: string[];
   recoverySaltB64: string;
   recoveryWordIvB64: string;
   encryptedPrivateKeyB64: string;
+  encryptedChallengeB64?: string;
   newPassword: string;
 }) {
   // 1. Derive recovery key from keywords and the recovery-specific salt
@@ -44,7 +46,7 @@ export async function recoverPassword({
   const iv = fromB64(recoveryWordIvB64);
   const ciphertext = fromB64(encryptedPrivateKeyB64);
 
-  let privateKeyBytes = new Uint8Array(
+  const privateKeyBytes = new Uint8Array(
     await crypto.subtle.decrypt(
       { name: "AES-GCM", iv },
       recoveryKey,
@@ -53,6 +55,30 @@ export async function recoverPassword({
   );
 
   try {
+    let recoveryProofB64: string | undefined;
+    if (encryptedChallengeB64) {
+      const recoveryPrivateKey = await crypto.subtle.importKey(
+        "pkcs8",
+        privateKeyBytes.buffer.slice(
+          privateKeyBytes.byteOffset,
+          privateKeyBytes.byteOffset + privateKeyBytes.byteLength,
+        ) as ArrayBuffer,
+        {
+          name: "RSA-OAEP",
+          hash: "SHA-256",
+        },
+        false,
+        ["decrypt"],
+      );
+
+      const decryptedChallenge = await crypto.subtle.decrypt(
+        { name: "RSA-OAEP" },
+        recoveryPrivateKey,
+        fromB64(encryptedChallengeB64),
+      );
+      recoveryProofB64 = toB64(new Uint8Array(decryptedChallenge));
+    }
+
     // 4. Re-encrypt the original private key with the NEW password key (Main Vault)
     // IMPORTANT: Xenode vaults use a combined passphrase: masterPassword + recoveryWords
     const vaultPassphrase = buildVaultPassphrase(
@@ -132,6 +158,7 @@ export async function recoverPassword({
       // Auth
       authVerifierHex: bytesToHex(new Uint8Array(verifierBits)),
       authSaltB64: toB64(authSalt),
+      recoveryProofB64,
     };
   } finally {
     // 🔥 CRITICAL: wipe sensitive private key from memory immediately

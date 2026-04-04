@@ -267,11 +267,12 @@ export async function POST(req: Request) {
     const email = session.user.email;
     const udf1 = session.user.id;
 
-    const proto = req.headers.get("x-forwarded-proto") || "http";
-    const host = req.headers.get("host");
-    const baseUrl = `${proto}://${host}`;
-    const surl = `${baseUrl}/api/payment/payu/success`;
-    const furl = `${baseUrl}/api/payment/payu/failure`;
+    const appBaseUrl = process.env.NEXT_PUBLIC_APP_URL;
+    if (!appBaseUrl) {
+      throw new Error("NEXT_PUBLIC_APP_URL is not configured");
+    }
+    const surl = new URL("/api/payment/payu/success", appBaseUrl).toString();
+    const furl = new URL("/api/payment/payu/failure", appBaseUrl).toString();
 
     let params: Record<string, string>;
     let hash: string;

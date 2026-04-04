@@ -1,6 +1,4 @@
 import { NextResponse } from "next/server";
-import dbConnect from "@/lib/mongodb";
-import Payment from "@/models/Payment";
 
 /**
  * app/api/payment/payu/refund-callback/route.ts
@@ -18,22 +16,12 @@ export async function POST(req: Request) {
     console.log("[PayU Refund Webhook]:", data);
 
     const { txnid, mihpayid, status, refund_id } = data;
-
-    if (status === "success" || status === "refunded") {
-      await dbConnect();
-      // Update payment record if it was previously in refund_pending
-      // or just ensure it is marked as refunded.
-      await Payment.findOneAndUpdate(
-        { 
-          $or: [
-            { txnid: txnid },
-            { "payuResponse.mihpayid": mihpayid },
-            { "payuResponse.refundId": refund_id }
-          ]
-        },
-        { $set: { status: "refunded" } }
-      );
-    }
+    console.warn("[PayU Refund Webhook] Ignoring unauthenticated callback", {
+      txnid,
+      mihpayid,
+      status,
+      refund_id,
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {

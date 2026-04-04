@@ -48,10 +48,11 @@ export default function RecoveryPage() {
 
   // Recovery Metadata (from Bootstrap)
   const [recoveryMetadata, setRecoveryMetadata] = useState<{
-    userId: string;
     recoverySaltB64: string;
     recoveryWordIvB64: string;
     encryptedPrivateKeyB64: string;
+    encryptedChallengeB64: string;
+    recoveryToken: string;
   } | null>(null);
 
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
@@ -80,7 +81,7 @@ export default function RecoveryPage() {
       if (index < 11) {
         inputRefs.current[index + 1]?.focus();
       } else {
-        handleVerifyKeywords(e as any);
+        void verifyRecoveryKeywords();
       }
     } else if (e.key === "Backspace" && !keywords[index] && index > 0) {
       inputRefs.current[index - 1]?.focus();
@@ -110,7 +111,7 @@ export default function RecoveryPage() {
 
       setRecoveryMetadata(data);
       setStep("KEYWORDS");
-    } catch (err) {
+    } catch {
       setError("Failed to verify email. Please try again.");
     } finally {
       setIsLoading(false);
@@ -120,8 +121,7 @@ export default function RecoveryPage() {
   /**
    * STEP 2: Verify Keywords & Step to Reset
    */
-  const handleVerifyKeywords = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const verifyRecoveryKeywords = async () => {
     if (keywords.some(k => !k.trim())) {
       setError("Please fill in all 12 keywords.");
       return;
@@ -151,12 +151,17 @@ export default function RecoveryPage() {
 
       // Success!
       setStep("RESET");
-    } catch (err) {
-      console.error("Keyword verification failed:", err);
+    } catch {
+      console.error("Keyword verification failed");
       setError("Invalid recovery keywords. Please check and try again.");
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleVerifyKeywords = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await verifyRecoveryKeywords();
   };
 
   /**
@@ -185,6 +190,7 @@ export default function RecoveryPage() {
         recoverySaltB64: recoveryMetadata.recoverySaltB64,
         recoveryWordIvB64: recoveryMetadata.recoveryWordIvB64,
         encryptedPrivateKeyB64: recoveryMetadata.encryptedPrivateKeyB64,
+        encryptedChallengeB64: recoveryMetadata.encryptedChallengeB64,
         newPassword: passwordData.newPassword,
       });
 
@@ -193,8 +199,8 @@ export default function RecoveryPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userId: recoveryMetadata.userId,
           newPassword: passwordData.newPassword, // Pass to sync with login
+          recoveryToken: recoveryMetadata.recoveryToken,
           ...recoveryResult,
         }),
       });
@@ -211,9 +217,13 @@ export default function RecoveryPage() {
 
       setStep("SUCCESS");
       toast.success("Account successfully recovered!");
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Recovery error:", err);
-      setError(err.message || "Invalid recovery keywords or vault error.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Invalid recovery keywords or vault error.",
+      );
     } finally {
       setIsLoading(false);
     }

@@ -4,6 +4,10 @@ import crypto from "node:crypto";
 import dbConnect from "@/lib/mongodb";
 import { User } from "@/models/User";
 import UserKeyVault from "@/models/UserKeyVault";
+import {
+  hashRecoveryProof,
+  verifyRecoveryToken,
+} from "@/lib/auth/recovery-proof";
 
 /**
  * app/api/auth/recovery/complete/route.ts
@@ -14,7 +18,6 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
 
     const {
-      userId,
       // Main Vault
       encryptedPrivateKeyB64,
       ivB64,
@@ -31,14 +34,34 @@ export async function POST(req: NextRequest) {
       authVerifierHex,
       authSaltB64,
       newPassword,
+      recoveryToken,
+      recoveryProofB64,
     } = body;
 
-    if (!userId || !encryptedPrivateKeyB64 || !authVerifierHex) {
+    if (
+      !encryptedPrivateKeyB64 ||
+      !authVerifierHex ||
+      !recoveryToken ||
+      !recoveryProofB64
+    ) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 },
       );
     }
+
+    const recoveryPayload = verifyRecoveryToken(recoveryToken);
+    if (
+      !recoveryPayload ||
+      hashRecoveryProof(recoveryProofB64) !== recoveryPayload.challengeHash
+    ) {
+      return NextResponse.json(
+        { error: "Invalid or expired recovery proof" },
+        { status: 401 },
+      );
+    }
+
+    const userId = recoveryPayload.userId;
 
     await dbConnect();
 
@@ -65,7 +88,7 @@ export async function POST(req: NextRequest) {
         const credentialEpoch = now;
 
         // 2. Update Vault (ALL THREE LAYERS)
-        await UserKeyVault.updateOne(
+        const vaultResult = await UserKeyVault.updateOne(
           { userId: userId },
           {
             $set: {
@@ -86,9 +109,12 @@ export async function POST(req: NextRequest) {
           },
           { session },
         );
+        if (vaultResult.matchedCount !== 1) {
+          throw new Error("Recovery vault not found");
+        }
 
         // 3. Update User (Auth verifiers and Session invalidation epoch)
-        await User.updateOne(
+        const userResult = await User.updateOne(
           { _id: new mongoose.Types.ObjectId(userId) },
           {
             $set: {
@@ -100,6 +126,9 @@ export async function POST(req: NextRequest) {
           },
           { session },
         );
+        if (userResult.matchedCount !== 1) {
+          throw new Error("User not found");
+        }
 
         // 4. Update Account (Better-Auth Login)
         if (hashedPassword) {
