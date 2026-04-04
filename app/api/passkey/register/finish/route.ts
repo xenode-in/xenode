@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
       expectedChallenge: challengeObj.challenge,
       expectedOrigin: getPasskeyExpectedOrigin(),
       expectedRPID: getPasskeyRpId(),
+      requireUserVerification: false,
     })
 
     if (!verification.verified || !verification.registrationInfo) {
