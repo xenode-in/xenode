@@ -570,8 +570,8 @@ export default function BucketDetailPage() {
                 <TableRow
                   key={obj.id}
                   className="border-border hover:bg-secondary/50 cursor-pointer"
-                  onClick={() => openPreview(obj)}
-                  onDoubleClick={() => openPreview(obj)}
+                  onClick={() => openPreview(obj, viewObjects.files)}
+                  onDoubleClick={() => openPreview(obj, viewObjects.files)}
                 >
                   <TableCell>
                     <div className="flex items-center gap-3 text-foreground">
@@ -602,7 +602,7 @@ export default function BucketDetailPage() {
                         size="icon"
                         onClick={(e) => {
                           e.stopPropagation();
-                          openPreview(obj);
+                          openPreview(obj, viewObjects.files);
                         }}
                         className="text-muted-foreground hover:text-primary hover:bg-primary/10"
                         title="Preview"
@@ -680,8 +680,8 @@ export default function BucketDetailPage() {
             {viewObjects.files.map((obj) => (
               <div
                 key={obj.id}
-                onDoubleClick={() => openPreview(obj)}
-                onClick={() => openPreview(obj)}
+                onDoubleClick={() => openPreview(obj, viewObjects.files)}
+                onClick={() => openPreview(obj, viewObjects.files)}
                 className="group relative aspect-square bg-card rounded-xl border border-border flex flex-col items-center justify-center cursor-pointer hover:bg-secondary/50 transition-all hover:scale-[1.02] overflow-hidden"
               >
                 {/* Icon/Thumbnail */}
@@ -717,7 +717,7 @@ export default function BucketDetailPage() {
                     className="h-7 w-7 rounded-md bg-black/50 hover:bg-primary hover:text-primary-foreground text-foreground backdrop-blur-sm"
                     onClick={(e) => {
                       e.stopPropagation();
-                      openPreview(obj);
+                      openPreview(obj, viewObjects.files);
                     }}
                     title="Preview"
                   >

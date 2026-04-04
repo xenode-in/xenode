@@ -1405,7 +1405,7 @@ export default function FilesPage() {
                   item={file}
                   viewMode="list"
                   currentPrefix={currentPrefix}
-                  onPreview={openPreview}
+                  onPreview={(file) => openPreview(file, viewObjects.files)}
                   onDownload={handleDownload}
                   onCut={handleCut}
                   onShare={setShareFile}
@@ -1470,7 +1470,7 @@ export default function FilesPage() {
                 item={file}
                 viewMode="grid"
                 currentPrefix={currentPrefix}
-                onPreview={openPreview}
+                onPreview={(file) => openPreview(file, viewObjects.files)}
                 onDownload={handleDownload}
                 onCut={handleCut}
                 onShare={setShareFile}

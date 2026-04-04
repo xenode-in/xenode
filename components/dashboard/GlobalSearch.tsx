@@ -85,6 +85,20 @@ export function GlobalSearch() {
                 if (isFolder) return; // let Link handle folder navigation
                 e.preventDefault();
                 setOpen(false);
+
+                const fileResults = results
+                  .filter((r) => r.contentType !== "application/x-directory")
+                  .map((r) => ({
+                    id: r.id,
+                    key: r.key,
+                    size: r.size,
+                    contentType: r.contentType,
+                    createdAt: r.createdAt,
+                    isEncrypted: r.isEncrypted,
+                    encryptedName: r.encryptedName,
+                    name: r.name,
+                  }));
+
                 openPreview({
                   id: result.id,
                   key: result.key,
@@ -94,7 +108,7 @@ export function GlobalSearch() {
                   isEncrypted: result.isEncrypted,
                   encryptedName: result.encryptedName,
                   name: result.name,
-                });
+                }, fileResults);
               };
 
               return (

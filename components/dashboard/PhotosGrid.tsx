@@ -614,7 +614,7 @@ export function PhotosGrid() {
           {gridMode === "masonry" ? (
             <MasonryGrid
               photos={groupPhotos}
-              onPhotoClick={openPreview}
+              onPhotoClick={(photo) => openPreview(photo, filteredPhotos)}
               decryptedNames={decryptedNames}
               metadataKey={metadataKey}
               privateKey={privateKey}
@@ -623,7 +623,7 @@ export function PhotosGrid() {
             <UniformGrid
               photos={groupPhotos}
               density={gridMode as GridDensity}
-              onPhotoClick={openPreview}
+              onPhotoClick={(photo) => openPreview(photo, filteredPhotos)}
               decryptedNames={decryptedNames}
               metadataKey={metadataKey}
               privateKey={privateKey}
