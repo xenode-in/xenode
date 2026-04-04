@@ -4,7 +4,7 @@ import ShareLink from "@/models/ShareLink";
 import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
 import { getSignedFileUrl } from "@/lib/b2/cdn";
-import bcrypt from "bcryptjs";
+import { verifySharePassword } from "@/lib/share/password-protection";
 
 export const dynamic = "force-dynamic";
 
@@ -42,15 +42,12 @@ export async function POST(req: NextRequest, { params }: Params) {
       { status: 410 },
     );
 
-  if (link.isPasswordProtected) {
-    if (!password)
-      return NextResponse.json({ error: "Password required" }, { status: 401 });
-    const valid = await bcrypt.compare(password, link.passwordHash!);
-    if (!valid)
-      return NextResponse.json(
-        { error: "Incorrect password" },
-        { status: 401 },
-      );
+  const passwordCheck = await verifySharePassword(link, password);
+  if (!passwordCheck.ok) {
+    return NextResponse.json(
+      { error: passwordCheck.error },
+      { status: passwordCheck.status },
+    );
   }
 
   const object = await StorageObject.findById(link.objectId).lean();

@@ -6,6 +6,7 @@ import PasskeyChallenge from "@/models/PasskeyChallenge"
 import Passkey from "@/models/Passkey"
 import { randomBytes } from "crypto"
 import { PRF_DOMAIN_SEP } from "@/lib/passkey-support"
+import { fromStoredCredentialId } from "@/lib/passkey-credential-id"
 
 export async function POST(req: NextRequest) {
   try {
@@ -18,7 +19,7 @@ export async function POST(req: NextRequest) {
     if (userId) {
       const existingPasskeys = await Passkey.find({ userId })
       allowCredentials = existingPasskeys.map(p => ({
-        id: p.credentialId,
+        id: fromStoredCredentialId(p.credentialId),
         type: "public-key" as const,
         transports: p.transports as AuthenticatorTransport[],
       }))
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest) {
             first: Buffer.from(PRF_DOMAIN_SEP).toString("base64url"),
           },
         },
-      } as any,
+      } as unknown as Parameters<typeof generateAuthenticationOptions>[0]["extensions"],
     })
 
     // 2. Save challenge with a nonce (to track it for non-logged in users)
@@ -50,8 +51,9 @@ export async function POST(req: NextRequest) {
     })
 
     return NextResponse.json({ ...options, nonce })
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Login start error:", err)
-    return NextResponse.json({ error: err.message || "Internal error" }, { status: 500 })
+    const message = err instanceof Error ? err.message : "Internal error"
+    return NextResponse.json({ error: message }, { status: 500 })
   }
 }

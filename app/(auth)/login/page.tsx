@@ -9,7 +9,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { GradualSpacing } from "@/components/ui/gradual-spacing";
-import { toast } from "sonner";
 import { PasskeySignInButton } from "@/components/auth/PasskeySignInButton";
 
 const Dithering = lazy(() =>
@@ -93,27 +92,16 @@ function LoginForm() {
           return;
         }
 
-        if ((result.data as any)?.twoFactorRedirect) {
+        if (
+          (result.data as { twoFactorRedirect?: boolean } | null)
+            ?.twoFactorRedirect
+        ) {
           sessionStorage.setItem("xenode-vault-pw", formData.password);
           router.push("/two-factor");
           return;
         }
       } else {
         const sanitizedEmail = formData.email.trim().toLowerCase();
-
-        const checkRes = await fetch(`/api/auth/check-email`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: sanitizedEmail }),
-        });
-
-        if (checkRes.ok) {
-          const { exists } = await checkRes.json();
-          if (exists) {
-            setError("An account with this email already exists.");
-            return;
-          }
-        }
 
         const result = await signUp.email({
           name: formData.name.trim(),
@@ -122,7 +110,12 @@ function LoginForm() {
           callbackURL: `${window.location.origin}/onboarding`, // Optional redirect after verification
         });
         if (result.error) {
-          setError(result.error.message || "Failed to create account");
+          const message = result.error.message || "Failed to create account";
+          setError(
+            /already exists|duplicate|taken/i.test(message)
+              ? "An account with this email already exists."
+              : message,
+          );
           return;
         }
       }

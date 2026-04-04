@@ -4,25 +4,27 @@ import { requireAuth } from "@/lib/auth/session"
 import dbConnect from "@/lib/mongodb"
 import PasskeyChallenge from "@/models/PasskeyChallenge"
 import Passkey from "@/models/Passkey"
+import { toStoredCredentialId } from "@/lib/passkey-credential-id"
 
 export async function POST(req: NextRequest) {
   try {
     const session = await requireAuth(req)
     const userId = session.user.id
 
-    const { credential, encryptedVaultKey, vaultKeyIV } = await req.json()
+    const { credential, encryptedVaultKey, vaultKeyIV, nonce } = await req.json()
 
-    if (!credential || !encryptedVaultKey || !vaultKeyIV) {
+    if (!credential || !encryptedVaultKey || !vaultKeyIV || !nonce) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 })
     }
 
     await dbConnect()
 
-    // 1. Get and delete challenge
+    // 1. Get the exact challenge for this registration ceremony
     const challengeObj = await PasskeyChallenge.findOne({
       userId: userId,
+      nonce,
       type: "registration",
-    }).sort({ createdAt: -1 })
+    })
 
     if (!challengeObj || challengeObj.expiresAt < new Date()) {
       return NextResponse.json({ error: "Challenge not found or expired" }, { status: 400 })
@@ -42,10 +44,15 @@ export async function POST(req: NextRequest) {
 
     // 3. Save new passkey
     const { credential: regCred } = verification.registrationInfo
+    const storedCredentialId = toStoredCredentialId(regCred.id)
+
+    if (!storedCredentialId) {
+      return NextResponse.json({ error: "Invalid credential ID" }, { status: 400 })
+    }
 
     await Passkey.create({
       userId: userId,
-      credentialId: Buffer.from(regCred.id).toString("base64url"),
+      credentialId: storedCredentialId,
       publicKey: Buffer.from(regCred.publicKey),
       counter: regCred.counter,
       transports: regCred.transports || [],
@@ -58,8 +65,9 @@ export async function POST(req: NextRequest) {
     await PasskeyChallenge.deleteOne({ _id: challengeObj._id })
 
     return NextResponse.json({ success: true })
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("Register finish error:", err)
-    return NextResponse.json({ error: err.message || "Internal error" }, { status: err.message === "Unauthorized" ? 401 : 500 })
+    const message = err instanceof Error ? err.message : "Internal error"
+    return NextResponse.json({ error: message }, { status: message === "Unauthorized" ? 401 : 500 })
   }
 }
