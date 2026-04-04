@@ -1,17 +1,21 @@
 import bcrypt from "bcryptjs";
 import ShareLink from "@/models/ShareLink";
+import type { IShareLink } from "@/models/ShareLink";
 
 const MAX_FAILED_PASSWORD_ATTEMPTS = 5;
 const PASSWORD_LOCK_WINDOW_MS = 15 * 60 * 1000;
 
+type PasswordProtectedShareLink = Pick<
+  IShareLink,
+  | "_id"
+  | "isPasswordProtected"
+  | "passwordHash"
+  | "passwordFailureCount"
+  | "passwordLockedUntil"
+>;
+
 export async function verifySharePassword(
-  link: {
-    _id: unknown;
-    isPasswordProtected: boolean;
-    passwordHash?: string;
-    passwordFailureCount?: number;
-    passwordLockedUntil?: Date | null;
-  },
+  link: PasswordProtectedShareLink,
   password?: string,
 ) {
   if (!link.isPasswordProtected) {
