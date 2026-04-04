@@ -7,6 +7,7 @@ import Passkey from "@/models/Passkey"
 import { randomBytes } from "crypto"
 import { PRF_DOMAIN_SEP } from "@/lib/passkey-support"
 import { fromStoredCredentialId } from "@/lib/passkey-credential-id"
+import { getPasskeyRpId } from "@/lib/passkey-rp"
 
 export async function POST(req: NextRequest) {
   try {
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
 
     // 1. Generate authentication options
     const options = await generateAuthenticationOptions({
-      rpID: req.nextUrl.hostname,
+      rpID: getPasskeyRpId(),
       allowCredentials,
       userVerification: "preferred",
       extensions: {

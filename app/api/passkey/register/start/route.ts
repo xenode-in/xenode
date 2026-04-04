@@ -7,6 +7,7 @@ import Passkey from "@/models/Passkey"
 import { PRF_DOMAIN_SEP } from "@/lib/passkey-support"
 import { randomBytes } from "crypto"
 import { fromStoredCredentialId } from "@/lib/passkey-credential-id"
+import { getPasskeyRpId } from "@/lib/passkey-rp"
 
 export async function POST(req: NextRequest) {
   try {
@@ -22,7 +23,7 @@ export async function POST(req: NextRequest) {
     // 2. Generate registration options
     const options = await generateRegistrationOptions({
       rpName: "Xenode",
-      rpID: req.nextUrl.hostname,
+      rpID: getPasskeyRpId(),
       userID: Buffer.from(userId),
       userName: userEmail,
       userDisplayName: session.user.name || userEmail,

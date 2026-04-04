@@ -5,6 +5,10 @@ import dbConnect from "@/lib/mongodb"
 import PasskeyChallenge from "@/models/PasskeyChallenge"
 import Passkey from "@/models/Passkey"
 import { toStoredCredentialId } from "@/lib/passkey-credential-id"
+import {
+  getPasskeyExpectedOrigin,
+  getPasskeyRpId,
+} from "@/lib/passkey-rp"
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,8 +38,8 @@ export async function POST(req: NextRequest) {
     const verification = await verifyRegistrationResponse({
       response: credential,
       expectedChallenge: challengeObj.challenge,
-      expectedOrigin: req.nextUrl.origin,
-      expectedRPID: req.nextUrl.hostname,
+      expectedOrigin: getPasskeyExpectedOrigin(),
+      expectedRPID: getPasskeyRpId(),
     })
 
     if (!verification.verified || !verification.registrationInfo) {
