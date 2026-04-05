@@ -33,12 +33,8 @@ function VerifyEmailContent() {
   const [resendCount, setResendCount] = useState(0);
 
   const targetEmail = session?.user?.email || emailParam;
-  const hasVaultBootstrap =
-    typeof window !== "undefined" &&
-    !!window.sessionStorage.getItem("xenode-vault-pw");
   const isVerified = !!session?.user?.emailVerified;
   const isOnboarded = getOnboardedFlag(session?.user);
-  const shouldResumeOnboarding = isVerified && !isOnboarded && hasVaultBootstrap;
 
   // Handle errors from the email link
   useEffect(() => {
@@ -55,7 +51,7 @@ function VerifyEmailContent() {
   useEffect(() => {
     if (!targetEmail) return;
 
-    if (shouldResumeOnboarding) {
+    if (isVerified && !isOnboarded) {
       toast.success("Email verified successfully!");
       router.push("/onboarding");
       return;
@@ -75,17 +71,15 @@ function VerifyEmailContent() {
       }
 
       const onboarded = getOnboardedFlag(data.user);
-      const canResumeOnboarding =
-        !!window.sessionStorage.getItem("xenode-vault-pw") && !onboarded;
 
-      if (canResumeOnboarding || onboarded) {
+      if (onboarded || data.user.emailVerified) {
         toast.success("Email verified successfully!");
         router.push(onboarded ? "/dashboard" : "/onboarding");
       }
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [isOnboarded, isVerified, router, shouldResumeOnboarding, targetEmail]);
+  }, [isOnboarded, isVerified, router, targetEmail]);
 
   const handleResend = async () => {
     if (!targetEmail) return;
@@ -99,7 +93,7 @@ function VerifyEmailContent() {
     try {
       const { error } = await authClient.sendVerificationEmail({
         email: targetEmail,
-        callbackURL: `${window.location.origin}/verify-email?verified=1`,
+        callbackURL: `${window.location.origin}/onboarding`,
       });
       
       if (error) {
@@ -120,25 +114,19 @@ function VerifyEmailContent() {
       if (!isPending) {
         if (!session && !emailParam) {
           router.push("/login");
-        } else if (shouldResumeOnboarding) {
+        } else if (isVerified && !isOnboarded) {
           router.push("/onboarding");
         } else if (isVerified && isOnboarded) {
           router.push("/dashboard");
-        } else if (isVerified && !hasVaultBootstrap) {
-          toast.info(
-            "Email verified. Return to the tab where you signed up to finish secure vault setup, or sign in again if that tab is closed.",
-          );
         }
       }
   }, [
     emailParam,
-    hasVaultBootstrap,
     isOnboarded,
     isPending,
     isVerified,
     router,
     session,
-    shouldResumeOnboarding,
   ]);
 
   if (isPending) {
@@ -149,7 +137,7 @@ function VerifyEmailContent() {
     );
   }
 
-  if ((!session && !emailParam) || shouldResumeOnboarding || (isVerified && isOnboarded)) {
+  if ((!session && !emailParam) || (isVerified && isOnboarded)) {
     return null;
   }
 
@@ -236,11 +224,11 @@ function VerifyEmailContent() {
             </div>
             <div>
               <h3 className="font-medium text-foreground">
-                {isVerified ? "Continue in your original tab" : "Waiting for verification"}
+                {isVerified ? "Continuing to setup" : "Waiting for verification"}
               </h3>
               <p className="text-sm text-muted-foreground mt-1">
                 {isVerified
-                  ? "Vault setup depends on the password kept only in the tab where you signed up. If that tab is closed, sign in again to resume onboarding securely."
+                  ? "Your account is verified. We'll take you back to onboarding and securely ask for your password again if vault setup still needs it."
                   : "This page will automatically update once you click the link in your email."}
               </p>
             </div>
@@ -264,17 +252,12 @@ function VerifyEmailContent() {
             <p className="text-sm text-muted-foreground flex flex-col gap-2">
               {isVerified ? (
                 <span>
-                  Original tab closed?{" "}
+                  Need to continue on this device?{" "}
                   <button
-                    onClick={async () => {
-                      if (session) {
-                        await authClient.signOut();
-                      }
-                      router.push("/login");
-                    }}
+                    onClick={() => router.push("/onboarding")}
                     className="text-primary hover:underline font-medium"
                   >
-                    Sign in again to resume onboarding
+                    Continue to onboarding
                   </button>
                 </span>
               ) : (
