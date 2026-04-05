@@ -19,6 +19,8 @@ import {
   Lock,
   Minimize2,
   Maximize2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -49,6 +51,10 @@ interface FilePreviewDialogProps {
   file: ObjectData | null;
   isOpen: boolean;
   onClose: () => void;
+  onNext?: () => void;
+  onPrevious?: () => void;
+  hasNext?: boolean;
+  hasPrevious?: boolean;
 }
 
 const ChunkedStreamPlayer = ({
@@ -239,6 +245,10 @@ export function FilePreviewDialog({
   file,
   isOpen,
   onClose,
+  onNext,
+  onPrevious,
+  hasNext,
+  hasPrevious,
 }: FilePreviewDialogProps) {
   const [url, setUrl] = useState<string | null>(null);
   const { privateKey, metadataKey, setModalOpen, isUnlocked } = useCrypto();
@@ -750,10 +760,18 @@ export function FilePreviewDialog({
       <DialogPortal>
         <DialogOverlay className={isMinimized ? "hidden" : ""} />
         <DialogPrimitive.Content
-          onInteractOutside={(e) => {
+          onPointerDownOutside={(e) => {
             if (isMinimized) {
               e.preventDefault();
+              return;
             }
+            const target = e.detail?.originalEvent?.target as HTMLElement;
+            if (target && !document.contains(target)) {
+              e.preventDefault();
+            }
+          }}
+          onFocusOutside={(e) => {
+            e.preventDefault();
           }}
           className={cn(
             "bg-card outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 flex flex-col overflow-hidden border",
@@ -796,6 +814,26 @@ export function FilePreviewDialog({
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
+              {hasPrevious && !isMinimized && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                  onClick={onPrevious}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+              )}
+              {hasNext && !isMinimized && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                  onClick={onNext}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              )}
               {url && !isMinimized && (
                 <Button
                   variant="outline"

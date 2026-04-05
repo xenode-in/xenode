@@ -396,21 +396,24 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
             <>
               <ContextMenuItem
                 className="hover:bg-accent cursor-pointer"
-                onClick={() => onPreview?.(item)}
+                onSelect={() => {
+                  setTimeout(() => onPreview?.(item), 50);
+                }}
               >
                 <FileText className="w-4 h-4 mr-2" /> Preview
               </ContextMenuItem>
               <ContextMenuItem
                 className="hover:bg-accent cursor-pointer"
-                onClick={() => onDownload?.(item)}
+                onSelect={() => {
+                  setTimeout(() => onDownload?.(item), 50);
+                }}
               >
                 <DownloadCloud className="w-4 h-4 mr-2" /> Download
               </ContextMenuItem>
               <ContextMenuItem
                 className="hover:bg-accent cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onShare?.(item);
+                onSelect={() => {
+                  setTimeout(() => onShare?.(item), 50);
                 }}
               >
                 <Link2 className="w-4 h-4 mr-2" /> Share
@@ -762,21 +765,24 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
             <>
               <ContextMenuItem
                 className="hover:bg-accent cursor-pointer"
-                onClick={() => onPreview?.(item)}
+                onSelect={() => {
+                  setTimeout(() => onPreview?.(item), 50);
+                }}
               >
                 <FileText className="w-4 h-4 mr-2" /> Preview
               </ContextMenuItem>
               <ContextMenuItem
                 className="hover:bg-accent cursor-pointer"
-                onClick={() => onDownload?.(item)}
+                onSelect={() => {
+                  setTimeout(() => onDownload?.(item), 50);
+                }}
               >
                 <DownloadCloud className="w-4 h-4 mr-2" /> Download
               </ContextMenuItem>
               <ContextMenuItem
                 className="hover:bg-accent cursor-pointer"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onShare?.(item);
+                onSelect={() => {
+                  setTimeout(() => onShare?.(item), 50);
                 }}
               >
                 <Link2 className="w-4 h-4 mr-2" /> Share

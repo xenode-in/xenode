@@ -28,7 +28,7 @@ interface ObjectData {
 interface PreviewContextType {
   previewFile: ObjectData | null;
   isPreviewOpen: boolean;
-  openPreview: (file: ObjectData) => void;
+  openPreview: (file: ObjectData, fileList?: ObjectData[]) => void;
   closePreview: () => void;
 }
 
@@ -36,15 +36,33 @@ const PreviewContext = createContext<PreviewContextType | undefined>(undefined);
 
 export function PreviewProvider({ children }: { children: ReactNode }) {
   const [previewFile, setPreviewFile] = useState<ObjectData | null>(null);
+  const [currentFileList, setCurrentFileList] = useState<ObjectData[]>([]);
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
-  const openPreview = (file: ObjectData) => {
+  const openPreview = (file: ObjectData, fileList?: ObjectData[]) => {
     setPreviewFile(file);
+    setCurrentFileList(fileList || []);
     setIsPreviewOpen(true);
   };
 
   const closePreview = () => {
     setIsPreviewOpen(false);
+  };
+
+  const currentIndex = previewFile && currentFileList ? currentFileList.findIndex(f => f.id === previewFile.id) : -1;
+  const hasNext = currentIndex !== -1 && currentIndex < currentFileList.length - 1;
+  const hasPrevious = currentIndex !== -1 && currentIndex > 0;
+
+  const handleNext = () => {
+    if (hasNext) {
+      setPreviewFile(currentFileList[currentIndex + 1]);
+    }
+  };
+
+  const handlePrevious = () => {
+    if (hasPrevious) {
+      setPreviewFile(currentFileList[currentIndex - 1]);
+    }
   };
 
   return (
@@ -57,6 +75,10 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
           file={previewFile}
           isOpen={isPreviewOpen}
           onClose={closePreview}
+          onNext={handleNext}
+          onPrevious={handlePrevious}
+          hasNext={hasNext}
+          hasPrevious={hasPrevious}
         />
       )}
     </PreviewContext.Provider>
