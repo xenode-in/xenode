@@ -81,6 +81,7 @@ export function OnboardingForm() {
   // Vault password (read from session storage invisibly)
   const [kit] = useState(() => generateRecoveryKit());
   const [vaultPassword, setVaultPassword] = useState("");
+  const [missingVaultBootstrap, setMissingVaultBootstrap] = useState(false);
 
   // Step 2: recovery kit
   const [kitSaved, setKitSaved] = useState(false);
@@ -95,6 +96,8 @@ export function OnboardingForm() {
     const pw = sessionStorage.getItem("xenode-vault-pw");
     if (pw) {
       setVaultPassword(pw);
+    } else {
+      setMissingVaultBootstrap(true);
     }
   }, []);
 
@@ -161,6 +164,11 @@ export function OnboardingForm() {
 
     startTransition(async () => {
       try {
+        if (!vaultPassword) {
+          setMissingVaultBootstrap(true);
+          throw new Error("Missing vault bootstrap password");
+        }
+
         // 1. Apply theme
         setTheme(data.theme);
 
@@ -209,6 +217,26 @@ export function OnboardingForm() {
   }
 
   if (!mounted) return null;
+
+  if (missingVaultBootstrap) {
+    return (
+      <Card className="border-none shadow-none md:border-solid md:shadow-md bg-transparent md:bg-card">
+        <CardContent className="pt-6 space-y-4">
+          <div className="space-y-2 text-center">
+            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+              Resume onboarding securely
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Vault setup can only continue from the tab where you entered your password. Sign in again to restore that state before finishing onboarding.
+            </p>
+          </div>
+          <Button className="w-full" onClick={() => router.push("/login")}>
+            Go to login
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
 
   const slideVariants = {
     hidden: { opacity: 0, x: 20 },

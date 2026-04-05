@@ -107,7 +107,7 @@ function LoginForm() {
           name: formData.name.trim(),
           email: sanitizedEmail,
           password: formData.password,
-          callbackURL: `${window.location.origin}/onboarding`, // Optional redirect after verification
+          callbackURL: `${window.location.origin}/verify-email?verified=1`,
         });
         if (result.error) {
           const message = result.error.message || "Failed to create account";

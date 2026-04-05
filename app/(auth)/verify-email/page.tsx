@@ -14,6 +14,14 @@ const Dithering = lazy(() =>
   })),
 );
 
+function getOnboardedFlag(user: unknown): boolean {
+  if (!user || typeof user !== "object" || !("onboarded" in user)) {
+    return false;
+  }
+
+  return !!(user as { onboarded?: boolean }).onboarded;
+}
+
 function VerifyEmailContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -25,6 +33,12 @@ function VerifyEmailContent() {
   const [resendCount, setResendCount] = useState(0);
 
   const targetEmail = session?.user?.email || emailParam;
+  const hasVaultBootstrap =
+    typeof window !== "undefined" &&
+    !!window.sessionStorage.getItem("xenode-vault-pw");
+  const isVerified = !!session?.user?.emailVerified;
+  const isOnboarded = getOnboardedFlag(session?.user);
+  const shouldResumeOnboarding = isVerified && !isOnboarded && hasVaultBootstrap;
 
   // Handle errors from the email link
   useEffect(() => {
@@ -41,23 +55,37 @@ function VerifyEmailContent() {
   useEffect(() => {
     if (!targetEmail) return;
 
-    if (session?.user?.emailVerified) {
+    if (shouldResumeOnboarding) {
       toast.success("Email verified successfully!");
-      router.push((session.user as any).onboarded ? "/dashboard" : "/onboarding");
+      router.push("/onboarding");
+      return;
+    }
+
+    if (isVerified && isOnboarded) {
+      toast.success("Email verified successfully!");
+      router.push("/dashboard");
       return;
     }
 
     const interval = setInterval(async () => {
       // Refresh session data to check for verification update
       const { data } = await authClient.getSession();
-      if (data?.user?.emailVerified) {
+      if (!data?.user?.emailVerified) {
+        return;
+      }
+
+      const onboarded = getOnboardedFlag(data.user);
+      const canResumeOnboarding =
+        !!window.sessionStorage.getItem("xenode-vault-pw") && !onboarded;
+
+      if (canResumeOnboarding || onboarded) {
         toast.success("Email verified successfully!");
-        router.push((data.user as any).onboarded ? "/dashboard" : "/onboarding");
+        router.push(onboarded ? "/dashboard" : "/onboarding");
       }
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [session, targetEmail, router]);
+  }, [isOnboarded, isVerified, router, shouldResumeOnboarding, targetEmail]);
 
   const handleResend = async () => {
     if (!targetEmail) return;
@@ -71,7 +99,7 @@ function VerifyEmailContent() {
     try {
       const { error } = await authClient.sendVerificationEmail({
         email: targetEmail,
-        callbackURL: `${window.location.origin}/onboarding`, // default to onboarding, if they are onboarded they will be redirected anyway
+        callbackURL: `${window.location.origin}/verify-email?verified=1`,
       });
       
       if (error) {
@@ -89,14 +117,29 @@ function VerifyEmailContent() {
 
   // If there's no session and no email param, user shouldn't be here
   useEffect(() => {
-    if (!isPending) {
-      if (!session && !emailParam) {
-        router.push("/login");
-      } else if (session?.user?.emailVerified) {
-        router.push((session.user as any).onboarded ? "/dashboard" : "/onboarding");
+      if (!isPending) {
+        if (!session && !emailParam) {
+          router.push("/login");
+        } else if (shouldResumeOnboarding) {
+          router.push("/onboarding");
+        } else if (isVerified && isOnboarded) {
+          router.push("/dashboard");
+        } else if (isVerified && !hasVaultBootstrap) {
+          toast.info(
+            "Email verified. Return to the tab where you signed up to finish secure vault setup, or sign in again if that tab is closed.",
+          );
+        }
       }
-    }
-  }, [session, isPending, emailParam, router]);
+  }, [
+    emailParam,
+    hasVaultBootstrap,
+    isOnboarded,
+    isPending,
+    isVerified,
+    router,
+    session,
+    shouldResumeOnboarding,
+  ]);
 
   if (isPending) {
     return (
@@ -106,7 +149,7 @@ function VerifyEmailContent() {
     );
   }
 
-  if ((!session && !emailParam) || session?.user?.emailVerified) {
+  if ((!session && !emailParam) || shouldResumeOnboarding || (isVerified && isOnboarded)) {
     return null;
   }
 
@@ -166,13 +209,24 @@ function VerifyEmailContent() {
 
           <div className="space-y-3">
             <h1 className="text-4xl font-semibold tracking-tight text-foreground">
-              Check your email
+              {isVerified ? "Email verified" : "Check your email"}
             </h1>
             <p className="text-base text-muted-foreground">
-              We&apos;ve sent a verification link to{" "}
-              <span className="font-medium text-foreground">
-                {targetEmail}
-              </span>
+              {isVerified ? (
+                <>
+                  Your email has been verified for{" "}
+                  <span className="font-medium text-foreground">
+                    {targetEmail}
+                  </span>
+                </>
+              ) : (
+                <>
+                  We&apos;ve sent a verification link to{" "}
+                  <span className="font-medium text-foreground">
+                    {targetEmail}
+                  </span>
+                </>
+              )}
             </p>
           </div>
 
@@ -181,39 +235,61 @@ function VerifyEmailContent() {
               <CheckCircle2 className="w-5 h-5 text-primary" />
             </div>
             <div>
-              <h3 className="font-medium text-foreground">Waiting for verification</h3>
+              <h3 className="font-medium text-foreground">
+                {isVerified ? "Continue in your original tab" : "Waiting for verification"}
+              </h3>
               <p className="text-sm text-muted-foreground mt-1">
-                This page will automatically update once you click the link in your email.
+                {isVerified
+                  ? "Vault setup depends on the password kept only in the tab where you signed up. If that tab is closed, sign in again to resume onboarding securely."
+                  : "This page will automatically update once you click the link in your email."}
               </p>
             </div>
           </div>
 
           <div className="pt-8 space-y-4">
-            <Button
-              variant="outline"
-              onClick={handleResend}
-              disabled={isResending}
-              className="w-full h-12"
-            >
-              {isResending ? (
-                <Loader2 className="w-5 h-5 animate-spin mr-2" />
-              ) : null}
-              Resend verification email
-            </Button>
+            {!isVerified ? (
+              <Button
+                variant="outline"
+                onClick={handleResend}
+                disabled={isResending}
+                className="w-full h-12"
+              >
+                {isResending ? (
+                  <Loader2 className="w-5 h-5 animate-spin mr-2" />
+                ) : null}
+                Resend verification email
+              </Button>
+            ) : null}
             
             <p className="text-sm text-muted-foreground flex flex-col gap-2">
-              <span>
-                Verified on another device?{" "}
-                <button
-                  onClick={() => {
-                    router.refresh();
-                    router.push("/dashboard");
-                  }}
-                  className="text-primary hover:underline font-medium"
-                >
-                  Click to continue
-                </button>
-              </span>
+              {isVerified ? (
+                <span>
+                  Original tab closed?{" "}
+                  <button
+                    onClick={async () => {
+                      if (session) {
+                        await authClient.signOut();
+                      }
+                      router.push("/login");
+                    }}
+                    className="text-primary hover:underline font-medium"
+                  >
+                    Sign in again to resume onboarding
+                  </button>
+                </span>
+              ) : (
+                <span>
+                  Verified on this device?{" "}
+                  <button
+                    onClick={() => {
+                      router.refresh();
+                    }}
+                    className="text-primary hover:underline font-medium"
+                  >
+                    Refresh status
+                  </button>
+                </span>
+              )}
               <span>
                 Need to use a different email?{" "}
                 <button

@@ -43,6 +43,13 @@ export async function setupUserKeyVault(
   recoveryWords: string,
   existingKeys?: { privateKeyBuf: ArrayBuffer; publicKeyBuf: ArrayBuffer },
 ): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey; metadataKey: CryptoKey; privateKeyBuf: ArrayBuffer }> {
+  if (masterPassword.trim().length < 8) {
+    throw new Error("Vault password is missing or invalid");
+  }
+  if (!recoveryWords.trim()) {
+    throw new Error("Recovery words are required");
+  }
+
   const passphrase = buildVaultPassphrase(masterPassword, recoveryWords);
 
   let publicKeyBuf: ArrayBuffer;
