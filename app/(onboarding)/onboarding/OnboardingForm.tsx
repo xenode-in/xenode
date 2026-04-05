@@ -32,6 +32,7 @@ import {
   HardDrive,
   Lock,
   Zap,
+  Loader2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { WelcomeBalloons } from "@/components/onboarding/WelcomeBalloons";
@@ -255,9 +256,7 @@ export function OnboardingForm() {
         toast.success("Password confirmed. Continue with vault setup.");
       } catch (error) {
         const message =
-          error instanceof Error
-            ? error.message
-            : "Failed to verify password";
+          error instanceof Error ? error.message : "Failed to verify password";
         setResumeError(message);
       } finally {
         setIsVerifyingPassword(false);
@@ -272,7 +271,8 @@ export function OnboardingForm() {
               Resume onboarding securely
             </h1>
             <p className="text-sm text-muted-foreground">
-              Your email is verified. To finish vault setup on this tab or device, confirm the same password you use to sign in to Xenode.
+              Your email is verified. To finish vault setup on this tab or
+              device, confirm the same password you use to sign in to Xenode.
             </p>
           </div>
 
