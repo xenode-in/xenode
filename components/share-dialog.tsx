@@ -1,4 +1,5 @@
 "use client";
+
 import { useState } from "react";
 import {
   Copy,
@@ -11,8 +12,13 @@ import {
   AlertCircle,
   Users,
 } from "lucide-react";
+import { toast } from "sonner";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptMetadataString, encryptWithShareKey } from "@/lib/crypto/fileEncryption";
+import {
+  decryptMetadataString,
+  encryptWithShareKey,
+} from "@/lib/crypto/fileEncryption";
+import { fromB64 } from "@/lib/crypto/utils";
 import {
   Dialog,
   DialogContent,
@@ -48,11 +54,13 @@ interface ShareDialogProps {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   file: ShareableFile | null;
-  /**
-   * For E2EE files: called to get the raw 32-byte DEK (Uint8Array).
-   * The caller should RSA-OAEP-decrypt the file's encryptedDEK using privateKey.
-   */
   getDEKBytes?: (fileId: string) => Promise<Uint8Array>;
+}
+
+interface RecipientLookup {
+  userId: string;
+  email: string;
+  publicKey: string;
 }
 
 function bytesToB64(buf: ArrayBuffer | Uint8Array): string {
@@ -62,6 +70,7 @@ function bytesToB64(buf: ArrayBuffer | Uint8Array): string {
     ),
   );
 }
+
 function bytesToB64url(bytes: Uint8Array): string {
   return bytesToB64(bytes)
     .replace(/\+/g, "-")
@@ -76,6 +85,7 @@ export function ShareDialog({
   getDEKBytes,
 }: ShareDialogProps) {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [directShareSummary, setDirectShareSummary] = useState<string | null>(null);
   const { metadataKey } = useCrypto();
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -90,41 +100,50 @@ export function ShareDialog({
     if (!file) return;
     setCreating(true);
     setError(null);
+
     try {
+      const recipientEmails = Array.from(
+        new Set(
+          sharedWithInput
+            .split(",")
+            .map((value) => value.trim().toLowerCase())
+            .filter(Boolean),
+        ),
+      );
+
       let shareEncryptedDEK: string | undefined;
       let shareKeyIv: string | undefined;
       let shareEncryptedName: string | undefined;
       let shareEncryptedContentType: string | undefined;
       let shareEncryptedThumbnail: string | undefined;
       let fragment: string | undefined;
+      let shareKeyRaw: Uint8Array | undefined;
 
       const body: Record<string, unknown> = {
         objectId: file.id,
         accessType: "download",
-        ...(expiresIn !== "never" && { expiresIn: parseInt(expiresIn) }),
-        ...(maxDl && { maxDownloads: parseInt(maxDl) }),
+        ...(expiresIn !== "never" && { expiresIn: parseInt(expiresIn, 10) }),
+        ...(maxDl && { maxDownloads: parseInt(maxDl, 10) }),
         ...(usePass && pass && { password: pass }),
-        ...(sharedWithInput && { sharedWith: sharedWithInput.split(",").map(s => s.trim()).filter(Boolean) }),
       };
 
       if (file.isEncrypted && getDEKBytes) {
         const dekBytes = await getDEKBytes(file.id);
-
-        // 1. Generate a fresh random 256-bit share key
-        const shareKeyRaw = crypto.getRandomValues(new Uint8Array(32));
+        shareKeyRaw = crypto.getRandomValues(new Uint8Array(32));
         const shareKeyObj = await crypto.subtle.importKey(
           "raw",
-          shareKeyRaw,
+          shareKeyRaw.buffer.slice(
+            shareKeyRaw.byteOffset,
+            shareKeyRaw.byteOffset + shareKeyRaw.byteLength,
+          ) as ArrayBuffer,
           { name: "AES-GCM" },
           false,
           ["wrapKey", "encrypt", "decrypt"],
         );
 
-        // 2. Generate the token locally so we can use it for the B2 path
         const tokenBytes = crypto.getRandomValues(new Uint8Array(32));
         const token = bytesToB64url(tokenBytes);
 
-        // 3. Import the DEK so we can wrap it
         const dekKey = await crypto.subtle.importKey(
           "raw",
           dekBytes.buffer.slice(
@@ -136,7 +155,6 @@ export function ShareDialog({
           ["encrypt", "decrypt"],
         );
 
-        // 4. Wrap DEK with share key
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const wrapped = await crypto.subtle.wrapKey(
           "raw",
@@ -147,28 +165,46 @@ export function ShareDialog({
 
         shareEncryptedDEK = bytesToB64(wrapped);
         shareKeyIv = bytesToB64(iv);
-        // The raw share key goes ONLY in the URL fragment (never to server)
         fragment = bytesToB64url(shareKeyRaw);
 
-        // 5. Re-encrypt metadata with share key
         if (metadataKey) {
           const nameToDecrypt = file.encryptedDisplayName || file.encryptedName;
           if (nameToDecrypt) {
-            const plaintextName = await decryptMetadataString(nameToDecrypt, metadataKey);
-            shareEncryptedName = await encryptWithShareKey(plaintextName, shareKeyObj);
+            const plaintextName = await decryptMetadataString(
+              nameToDecrypt,
+              metadataKey,
+            );
+            shareEncryptedName = await encryptWithShareKey(
+              plaintextName,
+              shareKeyObj,
+            );
           }
+
           if (file.encryptedContentType) {
-            const plaintextType = await decryptMetadataString(file.encryptedContentType, metadataKey);
-            shareEncryptedContentType = await encryptWithShareKey(plaintextType, shareKeyObj);
+            const plaintextType = await decryptMetadataString(
+              file.encryptedContentType,
+              metadataKey,
+            );
+            shareEncryptedContentType = await encryptWithShareKey(
+              plaintextType,
+              shareKeyObj,
+            );
           }
+
           if (file.thumbnail && file.thumbnail.startsWith("enc:")) {
-            const { decryptThumbnail } = await import("@/lib/crypto/fileEncryption");
-            const plaintextThumb = await decryptThumbnail(file.thumbnail, metadataKey);
-            const shareEncThumbB64 = await encryptWithShareKey(plaintextThumb, shareKeyObj);
-            
-            // OPTION B: Store in B2 at shares/{token}-thumb
+            const { decryptThumbnail } = await import(
+              "@/lib/crypto/fileEncryption"
+            );
+            const plaintextThumb = await decryptThumbnail(
+              file.thumbnail,
+              metadataKey,
+            );
+            const encryptedThumb = await encryptWithShareKey(
+              plaintextThumb,
+              shareKeyObj,
+            );
+
             try {
-              // Get user's config for bucketId
               const configRes = await fetch("/api/drive/config");
               const config = await configRes.json();
               if (config.bucket) {
@@ -179,34 +215,121 @@ export function ShareDialog({
                     prefix: "shares/",
                     fileName: `${token}-thumb`,
                     fileType: "application/octet-stream",
-                    fileSize: shareEncThumbB64.length,
+                    fileSize: encryptedThumb.length,
                   }),
                 });
                 const { uploadUrl, objectKey } = await presignRes.json();
-                
+
                 await fetch(uploadUrl, {
                   method: "PUT",
-                  body: shareEncThumbB64,
+                  body: encryptedThumb,
                   headers: { "Content-Type": "application/octet-stream" },
                 });
-                
+
                 shareEncryptedThumbnail = objectKey;
               }
-            } catch (err) {
-              console.error("Failed to upload shared thumbnail to B2", err);
-              // Fallback to legacy inline if B2 fails? No, requirement is Option B.
+            } catch (thumbnailError) {
+              console.error(
+                "Failed to upload shared thumbnail to B2",
+                thumbnailError,
+              );
             }
           }
         }
-        
-        // Pass the token we generated
-        (body as any).token = token;
+
+        (body as { token?: string }).token = token;
         if (shareEncryptedDEK) body.shareEncryptedDEK = shareEncryptedDEK;
         if (shareKeyIv) body.shareKeyIv = shareKeyIv;
         if (shareEncryptedName) body.shareEncryptedName = shareEncryptedName;
-        if (shareEncryptedContentType) body.shareEncryptedContentType = shareEncryptedContentType;
-        if (shareEncryptedThumbnail) body.shareEncryptedThumbnail = shareEncryptedThumbnail;
+        if (shareEncryptedContentType) {
+          body.shareEncryptedContentType = shareEncryptedContentType;
+        }
+        if (shareEncryptedThumbnail) {
+          body.shareEncryptedThumbnail = shareEncryptedThumbnail;
+        }
       }
+
+      if (recipientEmails.length > 0) {
+        const lookupRes = await fetch("/api/direct-shares/recipients", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ emails: recipientEmails }),
+        });
+        const lookupData = await lookupRes.json();
+        if (!lookupRes.ok) throw new Error(lookupData.error);
+
+        if (lookupData.unavailable?.length) {
+          throw new Error(
+            lookupData.unavailable
+              .map(
+                (item: { email: string; reason: string }) =>
+                  `${item.email}: ${item.reason}`,
+              )
+              .join(" | "),
+          );
+        }
+
+        const recipients = await Promise.all(
+          (lookupData.recipients as RecipientLookup[]).map(async (recipient) => {
+            let wrappedShareKey = "";
+
+            if (file.isEncrypted) {
+              if (!shareKeyRaw) {
+                throw new Error("Missing encrypted share key package");
+              }
+
+              const recipientPublicKey = await crypto.subtle.importKey(
+                "spki",
+                fromB64(recipient.publicKey).buffer as ArrayBuffer,
+                { name: "RSA-OAEP", hash: "SHA-256" },
+                false,
+                ["encrypt"],
+              );
+
+              const wrapped = await crypto.subtle.encrypt(
+                { name: "RSA-OAEP" },
+                recipientPublicKey,
+                shareKeyRaw.buffer.slice(
+                  shareKeyRaw.byteOffset,
+                  shareKeyRaw.byteOffset + shareKeyRaw.byteLength,
+                ) as ArrayBuffer,
+              );
+              wrappedShareKey = bytesToB64(wrapped);
+            }
+
+            return {
+              recipientUserId: recipient.userId,
+              recipientEmail: recipient.email,
+              wrappedShareKey,
+              accessType: "download",
+            };
+          }),
+        );
+
+        const directShareRes = await fetch("/api/direct-shares", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            objectId: file.id,
+            shareEncryptedDEK,
+            shareKeyIv,
+            shareEncryptedName,
+            shareEncryptedContentType,
+            shareEncryptedThumbnail,
+            recipients,
+          }),
+        });
+        const directShareData = await directShareRes.json();
+        if (!directShareRes.ok) throw new Error(directShareData.error);
+
+        setShareUrl(null);
+        setDirectShareSummary(
+          `Shared securely with ${directShareData.recipientCount} recipient${directShareData.recipientCount === 1 ? "" : "s"}.`,
+        );
+        toast.success("Direct share created");
+        return;
+      }
+
       const res = await fetch("/api/share", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -215,11 +338,10 @@ export function ShareDialog({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      setShareUrl(
-        fragment ? `${data.shareUrl}#key=${fragment}` : data.shareUrl,
-      );
+      setDirectShareSummary(null);
+      setShareUrl(fragment ? `${data.shareUrl}#key=${fragment}` : data.shareUrl);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to create link");
+      setError(e instanceof Error ? e.message : "Failed to create share");
     } finally {
       setCreating(false);
     }
@@ -234,6 +356,7 @@ export function ShareDialog({
 
   function reset() {
     setShareUrl(null);
+    setDirectShareSummary(null);
     setCopied(false);
     setError(null);
     setExpiresIn("never");
@@ -268,38 +391,43 @@ export function ShareDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {shareUrl ? (
+        {shareUrl || directShareSummary ? (
           <div className="space-y-4">
-            <div className="rounded-lg bg-secondary/40 border border-border p-3 space-y-2">
-              <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                Share Link
-              </p>
-              <div className="flex gap-2">
-                <Input
-                  readOnly
-                  value={shareUrl}
-                  className="h-8 font-mono text-[11px] bg-secondary/50 border-border"
-                />
-                <Button
-                  size="icon"
-                  variant="outline"
-                  className="h-8 w-8 shrink-0 border-border"
-                  onClick={copy}
-                >
-                  {copied ? (
-                    <Check className="h-3 w-3 text-green-500" />
-                  ) : (
-                    <Copy className="h-3 w-3" />
-                  )}
-                </Button>
+            {shareUrl ? (
+              <div className="rounded-lg bg-secondary/40 border border-border p-3 space-y-2">
+                <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                  Share Link
+                </p>
+                <div className="flex gap-2">
+                  <Input
+                    readOnly
+                    value={shareUrl}
+                    className="h-8 font-mono text-[11px] bg-secondary/50 border-border"
+                  />
+                  <Button
+                    size="icon"
+                    variant="outline"
+                    className="h-8 w-8 shrink-0 border-border"
+                    onClick={copy}
+                  >
+                    {copied ? (
+                      <Check className="h-3 w-3 text-green-500" />
+                    ) : (
+                      <Copy className="h-3 w-3" />
+                    )}
+                  </Button>
+                </div>
               </div>
-            </div>
+            ) : (
+              <div className="rounded-lg bg-secondary/40 border border-border p-3 text-sm">
+                {directShareSummary}
+              </div>
+            )}
 
-            {file?.isEncrypted && (
+            {shareUrl && file?.isEncrypted && (
               <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 p-3 text-xs text-amber-400">
-                ⚠️ The decryption key is embedded in the URL fragment. Share
-                this link only with people you trust — anyone with the full URL
-                can decrypt the file.
+                The decryption key is embedded in the URL fragment. Share this
+                link only with people you trust.
               </div>
             )}
 
@@ -310,12 +438,13 @@ export function ShareDialog({
                 className="flex-1 border-border"
                 onClick={reset}
               >
-                <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> New Link
+                <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> New Share
               </Button>
               <Button
                 size="sm"
                 className="flex-1 bg-primary hover:bg-primary/90"
                 onClick={copy}
+                disabled={!shareUrl}
               >
                 {copied ? (
                   <>
@@ -331,11 +460,10 @@ export function ShareDialog({
           </div>
         ) : (
           <div className="space-y-4">
-            {/* Shared With */}
             <div className="space-y-1.5">
               <Label className="flex items-center gap-1.5 text-sm font-medium">
                 <Users className="h-3.5 w-3.5 text-muted-foreground" /> Share
-                with users (optional)
+                with users
               </Label>
               <Input
                 type="text"
@@ -345,12 +473,11 @@ export function ShareDialog({
                 className="h-9 bg-secondary/50 border-border"
               />
               <p className="text-[10px] text-muted-foreground">
-                Specifying emails allows these users to see the file in their
-                &quot;Shared with me&quot; dashboard.
+                Adding emails creates an authenticated direct share. Leave this
+                empty to generate a public link instead.
               </p>
             </div>
 
-            {/* Expiry */}
             <div className="space-y-1.5">
               <Label className="flex items-center gap-1.5 text-sm font-medium">
                 <Clock className="h-3.5 w-3.5 text-muted-foreground" /> Link
@@ -370,7 +497,6 @@ export function ShareDialog({
               </Select>
             </div>
 
-            {/* Max downloads */}
             <div className="space-y-1.5">
               <Label className="text-sm font-medium">
                 Max Downloads (optional)
@@ -385,7 +511,6 @@ export function ShareDialog({
               />
             </div>
 
-            {/* Password protect */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label className="flex items-center gap-1.5 text-sm font-medium">
@@ -418,12 +543,15 @@ export function ShareDialog({
             >
               {creating ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating
-                  Link…
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Creating Share…
                 </>
               ) : (
                 <>
-                  <Link2 className="mr-2 h-4 w-4" /> Create Share Link
+                  <Link2 className="mr-2 h-4 w-4" />
+                  {sharedWithInput.trim()
+                    ? "Create Secure Share"
+                    : "Create Share Link"}
                 </>
               )}
             </Button>

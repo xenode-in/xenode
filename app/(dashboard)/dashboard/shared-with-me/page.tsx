@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { formatBytes } from "@/lib/utils";
 import {
   Table,
@@ -18,78 +19,116 @@ import {
   Users,
   AlertCircle,
   ExternalLink,
-  Lock,
 } from "lucide-react";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
+import { decryptWithShareKey } from "@/lib/crypto/fileEncryption";
+import { fromB64 } from "@/lib/crypto/utils";
 
-interface RawShareLink {
+interface DirectShare {
   _id: string;
-  token: string;
   objectId: {
     _id: string;
     key: string;
     size: number;
     contentType: string;
     isEncrypted?: boolean;
-    encryptedName?: string;
   };
-  bucketId?: {
-    name: string;
+  owner?: {
+    id: string;
+    name?: string;
+    email?: string;
+  } | null;
+  recipient?: {
+    recipientUserId: string;
+    recipientEmail: string;
+    wrappedShareKey: string;
+    accessType: "view" | "download";
+    downloadCount: number;
   };
-  createdBy: string;
-  expiresAt?: string;
-  isPasswordProtected: boolean;
+  shareEncryptedName?: string;
   createdAt: string;
 }
 
+async function decryptSharedName(
+  shareEncryptedName: string,
+  wrappedShareKey: string,
+  privateKey: CryptoKey,
+) {
+  const rawShareKey = await crypto.subtle.decrypt(
+    { name: "RSA-OAEP" },
+    privateKey,
+    fromB64(wrappedShareKey).buffer as ArrayBuffer,
+  );
+
+  const shareKey = await crypto.subtle.importKey(
+    "raw",
+    rawShareKey,
+    { name: "AES-GCM" },
+    false,
+    ["decrypt"],
+  );
+
+  return decryptWithShareKey(shareEncryptedName, shareKey);
+}
+
 export default function SharedWithMePage() {
-  const [links, setLinks] = useState<RawShareLink[]>([]);
+  const [shares, setShares] = useState<DirectShare[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({});
-  const { isUnlocked, metadataKey } = useCrypto();
-
-  const fetchLinks = async () => {
-    try {
-      const res = await fetch("/api/share/shared-with-me");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to fetch links");
-      setLinks(data.shareLinks || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load links");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>(
+    {},
+  );
+  const { isUnlocked, privateKey } = useCrypto();
 
   useEffect(() => {
-    fetchLinks();
+    const fetchShares = async () => {
+      try {
+        const res = await fetch("/api/direct-shares/shared-with-me");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to fetch shares");
+        setShares(data.directShares || []);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load shares");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchShares();
   }, []);
 
   useEffect(() => {
-    if (!isUnlocked) {
+    if (!isUnlocked || !privateKey) {
       setDecryptedNames({});
       return;
     }
 
-    const decryptNames = async () => {
-      const newNames: Record<string, string> = {};
-      for (const link of links) {
-        if (link.objectId.isEncrypted && link.objectId.encryptedName && metadataKey) {
+    const run = async () => {
+      const nextNames: Record<string, string> = {};
+
+      for (const share of shares) {
+        if (
+          share.objectId.isEncrypted &&
+          share.shareEncryptedName &&
+          share.recipient?.wrappedShareKey
+        ) {
           try {
-            const name = await decryptMetadataString(link.objectId.encryptedName, metadataKey);
-            newNames[link._id] = name;
-          } catch (e) {
-            console.error("Failed to decrypt name", e);
+            nextNames[share._id] = await decryptSharedName(
+              share.shareEncryptedName,
+              share.recipient.wrappedShareKey,
+              privateKey,
+            );
+          } catch (decryptError) {
+            console.error("Failed to decrypt direct share name", decryptError);
           }
         }
       }
-      setDecryptedNames((prev) => ({ ...prev, ...newNames }));
+
+      setDecryptedNames(nextNames);
     };
 
-    decryptNames();
-  }, [links, isUnlocked]);
+    run();
+  }, [shares, isUnlocked, privateKey]);
 
   if (loading) {
     return (
@@ -113,19 +152,18 @@ export default function SharedWithMePage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Shared with me</h1>
         <p className="text-muted-foreground">
-          Files that other users have explicitly shared with your account
+          Authenticated direct shares sent to your Xenode account
         </p>
       </div>
 
-      {links.length === 0 ? (
+      {shares.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed p-12 text-center mt-8">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 mb-4">
             <Users className="h-6 w-6 text-primary" />
           </div>
           <h3 className="text-lg font-medium">No files shared with you</h3>
           <p className="text-sm text-muted-foreground mt-2 max-w-sm">
-            When someone explicitly adds your email to a shared file, it will
-            appear here.
+            Files shared directly to your account will appear here.
           </p>
         </div>
       ) : (
@@ -136,22 +174,19 @@ export default function SharedWithMePage() {
                 <TableHead>File</TableHead>
                 <TableHead>Shared By</TableHead>
                 <TableHead>Security</TableHead>
-                <TableHead className="hidden md:table-cell">Expires</TableHead>
+                <TableHead className="hidden md:table-cell">Access</TableHead>
                 <TableHead className="w-[100px] text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {links.map((link) => {
-                const isExpired =
-                  link.expiresAt && new Date(link.expiresAt) < new Date();
+              {shares.map((share) => {
                 const displayName =
-                  decryptedNames[link._id] ||
-                  link.objectId.encryptedName ||
-                  link.objectId.key.split("/").pop() ||
-                  link.objectId.key;
+                  decryptedNames[share._id] ||
+                  share.objectId.key.split("/").pop() ||
+                  share.objectId.key;
 
                 return (
-                  <TableRow key={link._id}>
+                  <TableRow key={share._id}>
                     <TableCell>
                       <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-secondary text-secondary-foreground">
@@ -162,28 +197,23 @@ export default function SharedWithMePage() {
                             {displayName}
                           </span>
                           <span className="text-xs text-muted-foreground">
-                            {formatBytes(link.objectId.size)} •{" "}
-                            {new Date(link.createdAt).toLocaleDateString()}
+                            {formatBytes(share.objectId.size)} •{" "}
+                            {new Date(share.createdAt).toLocaleDateString()}
                           </span>
                         </div>
                       </div>
                     </TableCell>
                     <TableCell>
                       <span className="text-sm text-muted-foreground">
-                        {link.createdBy}
+                        {share.owner?.name || share.owner?.email || "Unknown"}
                       </span>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        {link.isPasswordProtected && (
-                          <Badge
-                            variant="outline"
-                            className="text-amber-500 border-amber-500/20 bg-amber-500/10 px-1 py-0 h-5"
-                          >
-                            <Lock className="h-3 w-3 mr-1" /> Pass
-                          </Badge>
-                        )}
-                        {link.objectId.isEncrypted && (
+                        <Badge variant="secondary" className="text-[10px]">
+                          Direct Share
+                        </Badge>
+                        {share.objectId.isEncrypted && (
                           <Badge
                             variant="outline"
                             className="text-green-500 border-green-500/20 bg-green-500/10 px-1 py-0 h-5"
@@ -194,30 +224,15 @@ export default function SharedWithMePage() {
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
-                      {link.expiresAt ? (
-                        <span
-                          className={`text-sm ${isExpired ? "text-destructive" : ""}`}
-                        >
-                          {new Date(link.expiresAt).toLocaleDateString()}
-                        </span>
-                      ) : (
-                        <span className="text-muted-foreground text-sm">—</span>
-                      )}
+                      <span className="text-sm text-muted-foreground capitalize">
+                        {share.recipient?.accessType || "download"}
+                      </span>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        disabled={!!isExpired}
-                        asChild
-                      >
-                        <a
-                          href={`/shared/${link.token}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
+                      <Button variant="outline" size="sm" asChild>
+                        <Link href={`/dashboard/shared-with-me/${share._id}`}>
                           Open <ExternalLink className="ml-2 h-3 w-3" />
-                        </a>
+                        </Link>
                       </Button>
                     </TableCell>
                   </TableRow>

@@ -79,6 +79,7 @@ function PhotoThumbnail({
   className?: string;
 }) {
   const [optimizedUrl, setOptimizedUrl] = useState<string | null>(null);
+  const [rawUrl, setRawUrl] = useState<string | null>(null);
   const [loadingOptimized, setLoadingOptimized] = useState(false);
   const [failed, setFailed] = useState(false);
   const thumbUrl = useThumbnail(photo.thumbnail, metadataKey);
@@ -186,15 +187,79 @@ function PhotoThumbnail({
     failed,
   ]);
 
-  // Cleanup blob URL on unmount or when url changes
+  useEffect(() => {
+    // Only run if no optimizedKey and we're visible
+    if (!hasBeenVisible || photo.optimizedKey || !metadataKey || failed) return;
+    if (photo.isEncrypted && !privateKey) return;
+
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/objects/${photo.id}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        const fileRes = await fetch(data.url);
+        if (!fileRes.ok) throw new Error(`File fetch failed: ${fileRes.status}`);
+        const ciphertext = await fileRes.arrayBuffer();
+
+        let blob: Blob;
+
+        if (photo.isEncrypted && data.encryptedDEK && data.iv && privateKey) {
+          blob = await decryptFile(
+            ciphertext,
+            data.encryptedDEK,
+            data.iv,
+            privateKey,
+            photo.contentType || "image/png",
+          );
+        } else {
+          blob = new Blob([ciphertext], {
+            type: photo.contentType || "image/png",
+          });
+        }
+
+        if (!cancelled) {
+          setRawUrl(URL.createObjectURL(blob));
+        }
+      } catch (err) {
+        console.error(
+          `[PhotoThumbnail] Failed to load raw file for ${photo.id}:`,
+          err,
+        );
+      }
+    };
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    hasBeenVisible,
+    photo.id,
+    photo.optimizedKey,
+    photo.isEncrypted,
+    metadataKey,
+    privateKey,
+    failed,
+  ]);
+
+  // Cleanup blob URLs on unmount or when urls change
   useEffect(() => {
     return () => {
       if (optimizedUrl) URL.revokeObjectURL(optimizedUrl);
     };
   }, [optimizedUrl]);
 
-  const displayUrl = optimizedUrl || thumbUrl;
-  const isReady = !!optimizedUrl;
+  useEffect(() => {
+    return () => {
+      if (rawUrl) URL.revokeObjectURL(rawUrl);
+    };
+  }, [rawUrl]);
+
+  const displayUrl = optimizedUrl || rawUrl || thumbUrl;
+  const isReady = !!optimizedUrl || !!rawUrl;
 
   return (
     <div
@@ -224,12 +289,12 @@ function PhotoThumbnail({
         )}
       </div>
 
-      {/* Main image — optimized WebP */}
-      {optimizedUrl && (
+      {/* Main image — optimized WebP or raw fallback */}
+      {(optimizedUrl || rawUrl) && (
         <motion.img
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          src={optimizedUrl}
+          src={optimizedUrl || rawUrl || ""}
           loading="lazy"
           alt={decryptedName || getFileName(photo.key)}
           className="relative z-10 w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
