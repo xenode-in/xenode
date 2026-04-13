@@ -96,11 +96,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ moved: movedObjects.length, errors });
-  } catch (error: any) {
-    if (error.message === "Unauthorized") {
+    return NextResponse.json({
+      moved: movedObjects.length,
+      movedObjects,
+      errors,
+    });
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    return NextResponse.json({ error: error.message || "Failed to move objects" }, { status: 500 });
+    const message =
+      error instanceof Error ? error.message : "Failed to move objects";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

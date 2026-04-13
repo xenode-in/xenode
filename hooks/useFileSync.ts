@@ -1,5 +1,9 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { getDb, LocalFile } from "@/lib/db/local";
+import { getDb } from "@/lib/db/local";
+import {
+  mapServerObjectToLocalFile,
+  ServerObject,
+} from "@/lib/db/object-cache";
 
 interface FetchObjectsParams {
   bucketId: string | null;
@@ -36,28 +40,9 @@ export function useFileSync({
       // Upsert into Dexie
       if (data.objects && data.objects.length > 0) {
         const db = getDb(userId);
-        const mappedFiles: LocalFile[] = data.objects.map((o: any) => ({
-          id: o._id || o.id,
-          key: o.key,
-          encryptedName: o.encryptedName || o.encryptedDisplayName || null,
-          name: o.key.split("/").pop() || "", // Temporary fallback
-          size: o.size || 0,
-          contentType: o.contentType || "",
-          createdAt: o.createdAt || new Date().toISOString(),
-          updatedAt: o.updatedAt || new Date().toISOString(),
-          isEncrypted: o.isEncrypted || false,
-          tags: o.tags || [],
-          thumbnail: o.thumbnail,
-          bucketId: bucketId,
-          encryptedContentType: o.encryptedContentType,
-          encryptedDisplayName: o.encryptedDisplayName,
-          mediaCategory: o.mediaCategory,
-          optimizedKey: o.optimizedKey,
-          optimizedEncryptedDEK: o.optimizedEncryptedDEK,
-          optimizedIV: o.optimizedIV,
-          optimizedSize: o.optimizedSize,
-          aspectRatio: o.aspectRatio,
-        }));
+        const mappedFiles = (data.objects as ServerObject[]).map((o) =>
+          mapServerObjectToLocalFile(o, bucketId),
+        );
 
         await db.files.bulkPut(mappedFiles);
       }

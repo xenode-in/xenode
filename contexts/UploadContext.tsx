@@ -21,6 +21,7 @@ import { extractMetadata } from "@/lib/metadata/extractor";
 import { toB64 } from "@/lib/crypto/utils";
 import { optimizeVideoForStreaming } from "@/lib/video/faststart";
 import { generatePreview } from "@/lib/images/optimizer";
+import { upsertLocalObject } from "@/lib/db/object-cache";
 
 export interface UploadTask {
   id: string;
@@ -550,6 +551,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           throw new Error(error.error || "Failed to save file metadata");
         }
 
+        const completeData = await completeResponse.json();
+        await upsertLocalObject(
+          sessionRef.current?.user?.id,
+          completeData.object,
+          returnedBucketId,
+        );
+
         setTasks((prev) =>
           prev.map((t) =>
             t.id === task.id ? { ...t, status: "completed", progress: 100 } : t,
@@ -908,6 +916,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         const error = await completeResponse.json();
         throw new Error(error.error || "Failed to save file metadata");
       }
+
+      const completeData = await completeResponse.json();
+      await upsertLocalObject(
+        sessionRef.current?.user?.id,
+        completeData.object,
+        returnedBucketId,
+      );
 
       // Mark as completed
       setTasks((prev) =>

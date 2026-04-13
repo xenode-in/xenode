@@ -8,12 +8,12 @@ import {
   ArrowLeft,
   Download,
   Eye,
-  FileText,
   Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { FilePreviewDialog } from "@/components/dashboard/FilePreviewDialog";
 import { useCrypto } from "@/contexts/CryptoContext";
 import {
   decryptChunk,
@@ -101,8 +101,7 @@ export default function SharedWithMeDetailPage() {
   const [share, setShare] = useState<ShareDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [resolvedName, setResolvedName] = useState("");
   const [resolvedContentType, setResolvedContentType] = useState("");
@@ -176,20 +175,24 @@ export default function SharedWithMeDetailPage() {
     };
   }, [share, privateKey]);
 
-  useEffect(() => {
-    return () => {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-    };
-  }, [previewUrl]);
+  const previewFile = useMemo(() => {
+    if (!share) return null;
 
-  const previewKind = useMemo(() => {
-    const type = resolvedContentType || share?.objectId.contentType || "";
-    if (type.startsWith("image/")) return "image";
-    if (type.startsWith("video/")) return "video";
-    if (type.startsWith("audio/")) return "audio";
-    if (type === "application/pdf") return "pdf";
-    return "other";
-  }, [resolvedContentType, share?.objectId.contentType]);
+    return {
+      id: share.objectId._id,
+      key: share.objectId.key,
+      size: share.objectId.size,
+      contentType: resolvedContentType || share.objectId.contentType,
+      createdAt: share.createdAt,
+      isEncrypted: share.objectId.isEncrypted,
+      encryptedName: undefined,
+      name:
+        resolvedName ||
+        share.objectId.key.split("/").pop() ||
+        share.objectId.key,
+      mediaCategory: share.objectId.mediaCategory,
+    };
+  }, [share, resolvedContentType, resolvedName]);
 
   const fetchBlob = async (mode: "stream" | "download") => {
     if (!share) throw new Error("Share is not loaded");
@@ -256,19 +259,8 @@ export default function SharedWithMeDetailPage() {
       return;
     }
 
-    setIsPreviewing(true);
     setError(null);
-    try {
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      const blob = await fetchBlob("stream");
-      setPreviewUrl(URL.createObjectURL(blob));
-    } catch (previewError) {
-      setError(
-        previewError instanceof Error ? previewError.message : "Preview failed",
-      );
-    } finally {
-      setIsPreviewing(false);
-    }
+    setIsPreviewOpen(true);
   };
 
   const handleDownload = async () => {
@@ -317,8 +309,8 @@ export default function SharedWithMeDetailPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <div className="mb-2">
             <Button variant="ghost" size="sm" asChild className="px-0">
               <Link href="/dashboard/shared-with-me">
@@ -333,13 +325,9 @@ export default function SharedWithMeDetailPage() {
             Shared by {share.owner?.name || share.owner?.email || "Unknown"}
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={handlePreview} disabled={isPreviewing}>
-            {isPreviewing ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Eye className="mr-2 h-4 w-4" />
-            )}
+        <div className="flex shrink-0 gap-2">
+          <Button variant="outline" onClick={handlePreview}>
+            <Eye className="mr-2 h-4 w-4" />
             Preview
           </Button>
           <Button onClick={handleDownload} disabled={isDownloading}>
@@ -360,80 +348,57 @@ export default function SharedWithMeDetailPage() {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
-        <Card>
-          <CardHeader>
-            <CardTitle>Share Details</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4 text-sm">
-            <div className="flex items-center gap-2">
-              <Badge variant="secondary">Direct Share</Badge>
-              {share.objectId.isEncrypted && (
-                <Badge
-                  variant="outline"
-                  className="text-green-500 border-green-500/20 bg-green-500/10"
-                >
-                  E2EE
-                </Badge>
-              )}
-            </div>
-            <div>
+      <Card>
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <CardTitle>Share Details</CardTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="secondary">Direct Share</Badge>
+            {share.objectId.isEncrypted && (
+              <Badge
+                variant="outline"
+                className="text-green-500 border-green-500/20 bg-green-500/10"
+              >
+                E2EE
+              </Badge>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-md border border-border bg-secondary/20 p-4">
               <div className="text-muted-foreground">Size</div>
-              <div>{formatBytes(share.objectId.size)}</div>
+              <div className="mt-1 font-medium">{formatBytes(share.objectId.size)}</div>
             </div>
-            <div>
+            <div className="rounded-md border border-border bg-secondary/20 p-4">
               <div className="text-muted-foreground">Type</div>
-              <div>{resolvedContentType || share.objectId.contentType}</div>
+              <div className="mt-1 break-all font-medium">
+                {resolvedContentType || share.objectId.contentType}
+              </div>
             </div>
-            <div>
+            <div className="rounded-md border border-border bg-secondary/20 p-4">
               <div className="text-muted-foreground">Access</div>
-              <div className="capitalize">
+              <div className="mt-1 font-medium capitalize">
                 {share.recipient?.accessType || "download"}
               </div>
             </div>
-            <div>
+            <div className="rounded-md border border-border bg-secondary/20 p-4">
               <div className="text-muted-foreground">Shared</div>
-              <div>{new Date(share.createdAt).toLocaleString()}</div>
+              <div className="mt-1 font-medium">
+                {new Date(share.createdAt).toLocaleString()}
+              </div>
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </CardContent>
+      </Card>
 
-        <Card className="min-h-[360px]">
-          <CardHeader>
-            <CardTitle>Preview</CardTitle>
-          </CardHeader>
-          <CardContent className="flex min-h-[280px] items-center justify-center">
-            {!previewUrl ? (
-              <div className="flex flex-col items-center gap-3 text-center text-muted-foreground">
-                <FileText className="h-12 w-12" />
-                <p>Load a preview to inspect the shared file in-browser.</p>
-              </div>
-            ) : previewKind === "image" ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={previewUrl}
-                alt={resolvedName}
-                className="max-h-[70vh] rounded-md object-contain"
-              />
-            ) : previewKind === "video" ? (
-              <video src={previewUrl} controls className="max-h-[70vh] w-full" />
-            ) : previewKind === "audio" ? (
-              <audio src={previewUrl} controls className="w-full" />
-            ) : previewKind === "pdf" ? (
-              <iframe
-                src={previewUrl}
-                className="h-[70vh] w-full rounded-md border"
-                title={resolvedName}
-              />
-            ) : (
-              <div className="flex flex-col items-center gap-3 text-center text-muted-foreground">
-                <FileText className="h-12 w-12" />
-                <p>Preview is not available for this file type. Use download.</p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      <FilePreviewDialog
+        file={previewFile}
+        isOpen={isPreviewOpen}
+        onClose={() => setIsPreviewOpen(false)}
+        directShareId={shareId}
+        directShareWrappedKey={share.recipient?.wrappedShareKey}
+        onDownload={handleDownload}
+      />
     </div>
   );
 }

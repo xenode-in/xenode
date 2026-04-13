@@ -60,6 +60,9 @@ interface FilePreviewDialogProps {
   sharedToken?: string;
   shareKey?: string;
   password?: string;
+  directShareId?: string;
+  directShareWrappedKey?: string;
+  onDownload?: () => void;
 }
 
 const ChunkedStreamPlayer = ({
@@ -293,6 +296,9 @@ export function FilePreviewDialog({
   sharedToken,
   shareKey,
   password,
+  directShareId,
+  directShareWrappedKey,
+  onDownload,
 }: FilePreviewDialogProps) {
   const [url, setUrl] = useState<string | null>(null);
   const cryptoControl = useOptionalCrypto();
@@ -320,7 +326,8 @@ export function FilePreviewDialog({
 
   const objectUrlRef = useRef<string | null>(null);
 
-  const isLockedOut = !sharedToken && file?.isEncrypted && !privateKey;
+  const isLockedOut =
+    !sharedToken && !directShareId && file?.isEncrypted && !privateKey;
 
   useEffect(() => {
     if (isOpen && isLockedOut) {
@@ -420,7 +427,11 @@ export function FilePreviewDialog({
 
       try {
         let res;
-        if (sharedToken) {
+        if (directShareId) {
+          res = await fetch(`/api/direct-shares/${directShareId}/stream`, {
+            method: "POST",
+          });
+        } else if (sharedToken) {
           res = await fetch(`/api/share/${sharedToken}/stream`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -446,9 +457,24 @@ export function FilePreviewDialog({
 
         let shareKeyObj: CryptoKey | null = null;
         let type =
-          sharedToken && data.shareEncryptedContentType
+          (sharedToken || directShareId) && data.shareEncryptedContentType
             ? file.contentType
             : (data.contentType ?? file.contentType);
+
+        if (directShareId && directShareWrappedKey && privateKey) {
+          const rawShareKey = await crypto.subtle.decrypt(
+            { name: "RSA-OAEP" },
+            privateKey,
+            fromB64(directShareWrappedKey).buffer as ArrayBuffer,
+          );
+          shareKeyObj = await crypto.subtle.importKey(
+            "raw",
+            rawShareKey,
+            { name: "AES-GCM" },
+            false,
+            ["decrypt", "unwrapKey"],
+          );
+        }
 
         if (sharedToken && shareKey) {
           const skBytes = fromB64(
@@ -466,7 +492,11 @@ export function FilePreviewDialog({
           );
         }
 
-        if (sharedToken && shareKeyObj && data.shareEncryptedContentType) {
+        if (
+          (sharedToken || directShareId) &&
+          shareKeyObj &&
+          data.shareEncryptedContentType
+        ) {
           try {
             type = await decryptWithShareKey(
               data.shareEncryptedContentType,
@@ -549,7 +579,26 @@ export function FilePreviewDialog({
 
         // --- DEK Derivation ---
         let rawDEK: ArrayBuffer;
-        if (sharedToken && shareKey && shareKeyObj) {
+        let directShareDEK: CryptoKey | null = null;
+        if (directShareId && shareKeyObj) {
+          if (!data.shareEncryptedDEK || !data.shareKeyIv) {
+            throw new Error("Missing direct share decryption metadata.");
+          }
+
+          directShareDEK = await crypto.subtle.unwrapKey(
+            "raw",
+            fromB64(data.shareEncryptedDEK).buffer as ArrayBuffer,
+            shareKeyObj,
+            {
+              name: "AES-GCM",
+              iv: fromB64(data.shareKeyIv).buffer as ArrayBuffer,
+            },
+            { name: "AES-GCM" },
+            true,
+            ["decrypt"],
+          );
+          rawDEK = await crypto.subtle.exportKey("raw", directShareDEK);
+        } else if (sharedToken && shareKey && shareKeyObj) {
           const encryptedDekBytes = fromB64(
             data.shareEncryptedDEK || data.encryptedDEK,
           );
@@ -669,7 +718,7 @@ export function FilePreviewDialog({
           (pct) => {
             if (!cancelled) setProgress(pct);
           },
-          file.id,
+          directShareId ? `direct-share-${directShareId}-${file.id}` : file.id,
           file.size,
         );
 
@@ -679,13 +728,15 @@ export function FilePreviewDialog({
         }
 
         let decryptedBlob: Blob;
-        const dek = await crypto.subtle.importKey(
-          "raw",
-          rawDEK,
-          { name: "AES-GCM", length: 256 },
-          false,
-          ["decrypt"],
-        );
+        const dek =
+          directShareDEK ||
+          (await crypto.subtle.importKey(
+            "raw",
+            rawDEK,
+            { name: "AES-GCM", length: 256 },
+            false,
+            ["decrypt"],
+          ));
 
         if (data.chunkIvs && data.chunkSize && data.chunkCount) {
           decryptedBlob = await decryptFileChunkedCombined(
@@ -738,6 +789,8 @@ export function FilePreviewDialog({
     sharedToken,
     shareKey,
     password,
+    directShareId,
+    directShareWrappedKey,
     decryptedName,
   ]);
 
@@ -747,6 +800,11 @@ export function FilePreviewDialog({
   const type = decryptedContentType || file.contentType;
 
   const handleDownload = async () => {
+    if (directShareId) {
+      onDownload?.();
+      return;
+    }
+
     if (!file || !startDownload) return;
     try {
       await startDownload(

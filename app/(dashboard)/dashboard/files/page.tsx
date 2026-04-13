@@ -63,6 +63,12 @@ import { useSession } from "@/lib/auth/client";
 import { useFileSync } from "@/hooks/useFileSync";
 import { useCryptoWorker } from "@/hooks/useCryptoWorker";
 import { getDb } from "@/lib/db/local";
+import {
+  deleteLocalObjects,
+  deleteLocalPrefix,
+  upsertLocalObject,
+  upsertLocalObjects,
+} from "@/lib/db/object-cache";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
   encryptMetadataString,
@@ -766,6 +772,8 @@ export default function FilesPage() {
         }),
       });
       if (res.ok) {
+        const data = await res.json();
+        await upsertLocalObject(userId, data.folder, bucketId);
         setNewFolderName("");
         setIsCreateFolderOpen(false);
         fetchBucket();
@@ -797,10 +805,12 @@ export default function FilesPage() {
                 body: JSON.stringify({ bucketId, prefix: folderObj.key }),
               });
               if (!res.ok) throw new Error("Failed to delete folder");
+              await deleteLocalPrefix(userId, bucketId, folderObj.key);
             }
           } else {
             const res = await fetch(`/api/objects/${id}`, { method: "DELETE" });
             if (!res.ok) throw new Error("Failed to delete item");
+            await deleteLocalObjects(userId, [id]);
           }
         }),
       );
@@ -822,9 +832,10 @@ export default function FilesPage() {
   const handleDownload = async (obj: ObjectData) => {
     try {
       await startDownload(obj, !!obj.isEncrypted, privateKey);
-    } catch (err: any) {
-      if (err.message?.includes("Vault locked")) setModalOpen(true);
-      setError(err?.message || "Download failed");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Download failed";
+      if (message.includes("Vault locked")) setModalOpen(true);
+      setError(message);
     }
   };
 
@@ -852,7 +863,18 @@ export default function FilesPage() {
         }),
       });
       if (res.ok) {
+        const data = await res.json();
+        await Promise.all(
+          clipboard.items.map((item) =>
+            item.contentType === "application/x-directory" ||
+            item.key.endsWith("/")
+              ? deleteLocalPrefix(userId, bucketId, item.key)
+              : deleteLocalObjects(userId, [item.id]),
+          ),
+        );
+        await upsertLocalObjects(userId, data.movedObjects, bucketId);
         setClipboard(null);
+        setSelectedIds(new Set());
         fetchBucket();
         refetch();
       } else {
@@ -864,7 +886,7 @@ export default function FilesPage() {
     } finally {
       setProcessingPaste(false);
     }
-  }, [clipboard, bucketId, currentPrefix, refetch, fetchBucket]);
+  }, [clipboard, bucketId, currentPrefix, refetch, fetchBucket, userId]);
 
   const handleAddTag = async () => {
     if (!taggingObj || !newTag.trim()) return;
@@ -883,6 +905,11 @@ export default function FilesPage() {
         body: JSON.stringify({ tags: [...cur, tagToSave] }),
       });
       if (res.ok) {
+        await upsertLocalObject(
+          userId,
+          { ...taggingObj, tags: [...cur, tagToSave], updatedAt: new Date() },
+          bucketId,
+        );
         setTaggingObj({ ...taggingObj, tags: [...cur, tagToSave] });
         setNewTag("");
         fetchBucket();
@@ -901,6 +928,11 @@ export default function FilesPage() {
         body: JSON.stringify({ tags: updated }),
       });
       if (res.ok) {
+        await upsertLocalObject(
+          userId,
+          { ...taggingObj, tags: updated, updatedAt: new Date() },
+          bucketId,
+        );
         setTaggingObj({ ...taggingObj, tags: updated });
         fetchBucket();
         refetch();
@@ -1645,30 +1677,28 @@ function TagItem({
   onRemove,
 }: {
   encryptedTag: string;
-  metadataKey: any;
+  metadataKey: CryptoKey | null;
   onRemove: (tag: string) => void;
 }) {
   const [display, setDisplay] = useState(encryptedTag);
+  const shouldDecrypt =
+    !!metadataKey &&
+    (encryptedTag.startsWith("0x02") || encryptedTag.length > 50);
 
   useEffect(() => {
-    if (
-      metadataKey &&
-      (encryptedTag.startsWith("0x02") || encryptedTag.length > 50)
-    ) {
+    if (shouldDecrypt) {
       decryptMetadataString(encryptedTag, metadataKey)
         .then(setDisplay)
         .catch(() => setDisplay(encryptedTag));
-    } else {
-      setDisplay(encryptedTag);
     }
-  }, [encryptedTag, metadataKey]);
+  }, [encryptedTag, metadataKey, shouldDecrypt]);
 
   return (
     <Badge
       variant="secondary"
       className="bg-secondary text-primary hover:bg-secondary flex gap-1 items-center pl-2 pr-1 py-1"
     >
-      {display}
+      {shouldDecrypt ? display : encryptedTag}
       <button
         onClick={() => onRemove(encryptedTag)}
         className="hover:text-destructive p-0.5 rounded-full hover:bg-background/20"
