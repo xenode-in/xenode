@@ -109,6 +109,12 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
 
   useEffect(() => {
     setMounted(true);
+    // Pre-register Service Worker for high-performance streaming across the dashboard
+    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch((err) => {
+        console.warn("Dashboard Service Worker registration failed:", err);
+      });
+    }
   }, []);
 
   const initials = user.name

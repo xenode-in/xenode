@@ -9,20 +9,31 @@ interface Params {
   params: Promise<{ token: string }>;
 }
 
+interface SharedObjectMeta {
+  _id?: unknown;
+  key?: string;
+  size?: number;
+  contentType?: string;
+  isEncrypted?: boolean;
+  encryptedName?: string;
+  thumbnail?: string;
+  mediaCategory?: string;
+}
+
 /** GET /api/share/[token] — Public metadata (no auth required) */
 export async function GET(_: NextRequest, { params }: Params) {
   const resolvedParams = await params;
   await dbConnect();
 
   const link = await ShareLink.findOne({ token: resolvedParams.token, isRevoked: false })
-    .populate("objectId", "key size contentType isEncrypted encryptedName thumbnail")
+    .populate("objectId", "key size contentType isEncrypted encryptedName thumbnail mediaCategory")
     .lean();
 
   if (!link) return NextResponse.json({ error: "Link not found or revoked" }, { status: 404 });
   if (link.expiresAt && new Date() > link.expiresAt) return NextResponse.json({ error: "This link has expired" }, { status: 410 });
   if (link.maxDownloads && link.downloadCount >= link.maxDownloads) return NextResponse.json({ error: "Download limit reached" }, { status: 410 });
 
-  const obj = link.objectId as any;
+  const obj = link.objectId as SharedObjectMeta | null;
 
   const response = {
     id: obj?._id,
@@ -33,6 +44,7 @@ export async function GET(_: NextRequest, { params }: Params) {
     shareEncryptedThumbnail: link.isPasswordProtected ? undefined : link.shareEncryptedThumbnail,
     size: obj?.size,
     contentType: link.isPasswordProtected ? "application/octet-stream" : (link.shareEncryptedContentType || obj?.contentType),
+    mediaCategory: obj?.mediaCategory,
     isEncrypted: obj?.isEncrypted,
     isPasswordProtected: link.isPasswordProtected,
     expiresAt: link.expiresAt,

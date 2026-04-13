@@ -7,6 +7,7 @@ import StorageObject from "@/models/StorageObject";
 import { deleteObject as deleteB2Object, getDownloadUrl } from "@/lib/b2/objects";
 import { decrementStorage, updateBucketStats } from "@/lib/metering/usage";
 import ShareLink from "@/models/ShareLink";
+import DirectShare from "@/models/DirectShare";
 
 export const dynamic = "force-dynamic";
 
@@ -172,6 +173,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     });
 
     await ShareLink.deleteMany({ objectId: object._id });
+    await DirectShare.deleteMany({ objectId: object._id });
 
     await decrementStorage(userId, object.size);
     await updateBucketStats(bucket._id.toString(), -1, -object.size);

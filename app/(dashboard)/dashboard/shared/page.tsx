@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { formatBytes } from "@/lib/utils";
 import {
   Table,
@@ -19,21 +19,19 @@ import {
   Share2,
   AlertCircle,
   Copy,
-  Check,
   Lock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptFileName, decryptMetadataString } from "@/lib/crypto/fileEncryption";
+import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
 
-interface RawShareLink {
+interface PublicShare {
   _id: string;
   token: string;
   objectId: {
     _id: string;
     key: string;
     size: number;
-    contentType: string;
     isEncrypted?: boolean;
     encryptedName?: string;
   };
@@ -45,84 +43,175 @@ interface RawShareLink {
   createdAt: string;
 }
 
+interface DirectShare {
+  _id: string;
+  objectId: {
+    _id: string;
+    key: string;
+    size: number;
+    isEncrypted?: boolean;
+    encryptedName?: string;
+  };
+  recipients: Array<{
+    recipientEmail: string;
+    downloadCount: number;
+  }>;
+  createdAt: string;
+}
+
+type ShareRow = {
+  id: string;
+  type: "public" | "direct";
+  objectId: PublicShare["objectId"];
+  createdAt: string;
+  expiresAt?: string;
+  downloadCount: number;
+  maxDownloads?: number;
+  isPasswordProtected: boolean;
+  sharedWith: string[];
+  token?: string;
+};
+
 export default function SharedPage() {
-  const [links, setLinks] = useState<RawShareLink[]>([]);
+  const [rows, setRows] = useState<ShareRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
-
-  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>({});
+  const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>(
+    {},
+  );
   const { isUnlocked, metadataKey } = useCrypto();
 
-  const fetchLinks = async () => {
-    try {
-      const res = await fetch("/api/share");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to fetch links");
-      setLinks(data.shareLinks || []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load links");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    fetchLinks();
+    const fetchShares = async () => {
+      try {
+        const [publicRes, directRes] = await Promise.all([
+          fetch("/api/share"),
+          fetch("/api/direct-shares"),
+        ]);
+
+        const publicData = await publicRes.json();
+        const directData = await directRes.json();
+
+        if (!publicRes.ok) {
+          throw new Error(publicData.error || "Failed to load public shares");
+        }
+        if (!directRes.ok) {
+          throw new Error(directData.error || "Failed to load direct shares");
+        }
+
+        const publicRows: ShareRow[] = (publicData.shareLinks || []).map(
+          (link: PublicShare) => ({
+            id: link._id,
+            type: "public",
+            objectId: link.objectId,
+            createdAt: link.createdAt,
+            expiresAt: link.expiresAt,
+            downloadCount: link.downloadCount,
+            maxDownloads: link.maxDownloads,
+            isPasswordProtected: link.isPasswordProtected,
+            sharedWith: link.sharedWith || [],
+            token: link.token,
+          }),
+        );
+
+        const directRows: ShareRow[] = (directData.directShares || []).map(
+          (share: DirectShare) => ({
+            id: share._id,
+            type: "direct",
+            objectId: share.objectId,
+            createdAt: share.createdAt,
+            downloadCount: (share.recipients || []).reduce(
+              (sum, recipient) => sum + (recipient.downloadCount || 0),
+              0,
+            ),
+            isPasswordProtected: false,
+            sharedWith: (share.recipients || []).map(
+              (recipient) => recipient.recipientEmail,
+            ),
+          }),
+        );
+
+        setRows(
+          [...directRows, ...publicRows].sort(
+            (a, b) =>
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          ),
+        );
+      } catch (fetchError) {
+        setError(
+          fetchError instanceof Error ? fetchError.message : "Failed to load shares",
+        );
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchShares();
   }, []);
 
   useEffect(() => {
-    if (!isUnlocked) {
+    if (!isUnlocked || !metadataKey) {
       setDecryptedNames({});
       return;
     }
 
-    const decryptNames = async () => {
-      const newNames: Record<string, string> = {};
-      for (const link of links) {
-        if (link.objectId.isEncrypted && link.objectId.encryptedName && metadataKey) {
+    const run = async () => {
+      const nextNames: Record<string, string> = {};
+      for (const row of rows) {
+        if (row.objectId.isEncrypted && row.objectId.encryptedName) {
           try {
-            const name = await decryptMetadataString(link.objectId.encryptedName, metadataKey);
-            newNames[link._id] = name;
-          } catch (e) {
-            console.error("Failed to decrypt name", e);
+            nextNames[row.id] = await decryptMetadataString(
+              row.objectId.encryptedName,
+              metadataKey,
+            );
+          } catch (decryptError) {
+            console.error("Failed to decrypt file name", decryptError);
           }
         }
       }
-      setDecryptedNames((prev) => ({ ...prev, ...newNames }));
+      setDecryptedNames(nextNames);
     };
 
-    decryptNames();
-  }, [links, isUnlocked]);
+    run();
+  }, [rows, isUnlocked, metadataKey]);
 
-  const revokeLink = async (token: string, id: string) => {
-    if (
-      !confirm(
-        "Are you sure you want to revoke this link? Anyone with the link will lose access.",
-      )
-    )
-      return;
-    setRevokingId(id);
+  const revokeShare = async (row: ShareRow) => {
+    const message =
+      row.type === "public"
+        ? "Are you sure you want to revoke this public link?"
+        : "Are you sure you want to revoke this direct share?";
+
+    if (!confirm(message)) return;
+
+    setRevokingId(row.id);
     try {
-      const res = await fetch(`/api/share/${token}`, { method: "DELETE" });
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to revoke link");
-      }
-      toast.success("Link revoked successfully");
-      setLinks(links.filter((l) => l._id !== id));
-    } catch (err) {
-      toast.error("Error revoking link", {
-        description: err instanceof Error ? err.message : "Unknown error",
-      });
+      const endpoint =
+        row.type === "public" && row.token
+          ? `/api/share/${row.token}`
+          : `/api/direct-shares/${row.id}`;
+
+      const res = await fetch(endpoint, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to revoke share");
+
+      setRows((current) => current.filter((item) => item.id !== row.id));
+      toast.success(
+        row.type === "public"
+          ? "Public link revoked"
+          : "Direct share revoked",
+      );
+    } catch (revokeError) {
+      toast.error(
+        revokeError instanceof Error ? revokeError.message : "Failed to revoke share",
+      );
     } finally {
       setRevokingId(null);
     }
   };
 
   const copyLink = (token: string) => {
-    const url = `${window.location.origin}/shared/${token}`;
-    navigator.clipboard.writeText(url);
+    navigator.clipboard.writeText(`${window.location.origin}/shared/${token}`);
     toast.success("Link copied to clipboard");
   };
 
@@ -148,19 +237,18 @@ export default function SharedPage() {
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Shared by me</h1>
         <p className="text-muted-foreground">
-          Manage files you have shared with others
+          Manage public links and direct shares you created
         </p>
       </div>
 
-      {links.length === 0 ? (
+      {rows.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed p-12 text-center mt-8">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 mb-4">
             <Share2 className="h-6 w-6 text-primary" />
           </div>
           <h3 className="text-lg font-medium">No shared files</h3>
           <p className="text-sm text-muted-foreground mt-2 max-w-sm">
-            You haven&apos;t shared any files yet. To share a file, go to your
-            files and click the share icon.
+            You have not shared any files yet.
           </p>
         </div>
       ) : (
@@ -169,25 +257,25 @@ export default function SharedPage() {
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>File</TableHead>
+                <TableHead>Type</TableHead>
                 <TableHead>Downloads</TableHead>
                 <TableHead>Shared With</TableHead>
                 <TableHead>Security</TableHead>
                 <TableHead className="hidden md:table-cell">Expires</TableHead>
-                <TableHead className="w-[100px] text-right">Actions</TableHead>
+                <TableHead className="w-[120px] text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {links.map((link) => {
+              {rows.map((row) => {
                 const isExpired =
-                  link.expiresAt && new Date(link.expiresAt) < new Date();
+                  row.expiresAt && new Date(row.expiresAt) < new Date();
                 const displayName =
-                  decryptedNames[link._id] ||
-                  link.objectId.encryptedName ||
-                  link.objectId.key.split("/").pop() ||
-                  link.objectId.key;
+                  decryptedNames[row.id] ||
+                  row.objectId.key.split("/").pop() ||
+                  row.objectId.key;
 
                 return (
-                  <TableRow key={link._id}>
+                  <TableRow key={row.id}>
                     <TableCell>
                       <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-secondary text-secondary-foreground">
@@ -198,24 +286,29 @@ export default function SharedPage() {
                             {displayName}
                           </span>
                           <span className="text-xs text-muted-foreground">
-                            {formatBytes(link.objectId.size)} •{" "}
-                            {new Date(link.createdAt).toLocaleDateString()}
+                            {formatBytes(row.objectId.size)} •{" "}
+                            {new Date(row.createdAt).toLocaleDateString()}
                           </span>
                         </div>
                       </div>
                     </TableCell>
                     <TableCell>
+                      <Badge variant="secondary" className="text-[10px]">
+                        {row.type === "direct" ? "Direct Share" : "Public Link"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
                       <span className="text-sm">
-                        {link.downloadCount}{" "}
-                        {link.maxDownloads ? `/ ${link.maxDownloads}` : ""}
+                        {row.downloadCount}
+                        {row.maxDownloads ? ` / ${row.maxDownloads}` : ""}
                       </span>
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-wrap gap-1">
-                        {link.sharedWith && link.sharedWith.length > 0 ? (
-                          link.sharedWith.slice(0, 2).map((email) => (
+                        {row.sharedWith.length > 0 ? (
+                          row.sharedWith.slice(0, 2).map((email) => (
                             <Badge
-                              key={email}
+                              key={`${row.id}-${email}`}
                               variant="secondary"
                               className="text-[10px]"
                             >
@@ -224,30 +317,30 @@ export default function SharedPage() {
                           ))
                         ) : (
                           <span className="text-xs text-muted-foreground">
-                            Public Link
+                            Public
                           </span>
                         )}
-                        {link.sharedWith && link.sharedWith.length > 2 && (
+                        {row.sharedWith.length > 2 && (
                           <Badge variant="secondary" className="text-[10px]">
-                            +{link.sharedWith.length - 2} more
+                            +{row.sharedWith.length - 2} more
                           </Badge>
                         )}
                       </div>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        {link.isPasswordProtected && (
+                        {row.isPasswordProtected && (
                           <Badge
                             variant="outline"
-                            className="text-amber-500 border-amber-500/20 bg-amber-500/10 hover:bg-amber-500/20 px-1 py-0 h-5"
+                            className="text-amber-500 border-amber-500/20 bg-amber-500/10 px-1 py-0 h-5"
                           >
                             <Lock className="h-3 w-3 mr-1" /> Pass
                           </Badge>
                         )}
-                        {link.objectId.isEncrypted && (
+                        {row.objectId.isEncrypted && (
                           <Badge
                             variant="outline"
-                            className="text-green-500 border-green-500/20 bg-green-500/10 hover:bg-green-500/20 px-1 py-0 h-5"
+                            className="text-green-500 border-green-500/20 bg-green-500/10 px-1 py-0 h-5"
                           >
                             E2EE
                           </Badge>
@@ -255,11 +348,11 @@ export default function SharedPage() {
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
-                      {link.expiresAt ? (
+                      {row.expiresAt ? (
                         <span
                           className={`text-sm ${isExpired ? "text-destructive" : ""}`}
                         >
-                          {new Date(link.expiresAt).toLocaleDateString()}
+                          {new Date(row.expiresAt).toLocaleDateString()}
                         </span>
                       ) : (
                         <span className="text-muted-foreground text-sm">—</span>
@@ -267,25 +360,27 @@ export default function SharedPage() {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => copyLink(link.token)}
-                          disabled={!!isExpired}
-                          title="Copy Link"
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
+                        {row.type === "public" && row.token && (
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => copyLink(row.token!)}
+                            disabled={!!isExpired}
+                            title="Copy Link"
+                          >
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                          onClick={() => revokeLink(link.token, link._id)}
-                          disabled={revokingId === link._id}
+                          onClick={() => revokeShare(row)}
+                          disabled={revokingId === row.id}
                           title="Revoke Share"
                         >
-                          {revokingId === link._id ? (
+                          {revokingId === row.id ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
                           ) : (
                             <Trash2 className="h-4 w-4" />

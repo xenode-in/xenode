@@ -11,7 +11,13 @@
  */
 
 import { useState } from "react";
-import { ShieldCheck, RefreshCw, AlertTriangle, Loader2, X } from "lucide-react";
+import {
+  ShieldCheck,
+  RefreshCw,
+  AlertTriangle,
+  Loader2,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { SetupVaultModal } from "@/components/dashboard/SetupVaultModal";
@@ -41,7 +47,10 @@ export function VaultRecoverySection() {
           <Button size="sm" onClick={() => setShowSetup(true)}>
             Set up
           </Button>
-          <SetupVaultModal open={showSetup} onClose={() => setShowSetup(false)} />
+          <SetupVaultModal
+            open={showSetup}
+            onClose={() => setShowSetup(false)}
+          />
         </>
       </div>
     );
@@ -49,7 +58,7 @@ export function VaultRecoverySection() {
 
   return (
     <div className="py-3 border-b border-border">
-      <div className="flex items-center justify-between">
+      {/* <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-foreground flex items-center gap-1.5">
             <ShieldCheck className="w-3.5 h-3.5 text-primary" />
@@ -71,7 +80,7 @@ export function VaultRecoverySection() {
             Generate new kit
           </Button>
         )}
-      </div>
+      </div> */}
 
       {/* Danger confirmation */}
       {showConfirm && (
@@ -84,11 +93,16 @@ export function VaultRecoverySection() {
                 CRITICAL: This will replace your current vault
               </p>
               <p className="text-[13px] leading-relaxed text-foreground font-medium">
-                A new recovery kit and keypair will be generated. Any files currently
-                encrypted with your old key <span className="underline decoration-destructive underline-offset-2">will no longer be accessible</span>.
+                A new recovery kit and keypair will be generated. Any files
+                currently encrypted with your old key{" "}
+                <span className="underline decoration-destructive underline-offset-2">
+                  will no longer be accessible
+                </span>
+                .
               </p>
               <p className="text-xs text-muted-foreground italic">
-                Make sure you've downloaded unencrypted copies of important files before proceeding.
+                Make sure you've downloaded unencrypted copies of important
+                files before proceeding.
               </p>
             </div>
           </div>
@@ -104,7 +118,10 @@ export function VaultRecoverySection() {
               }}
             >
               {loading ? (
-                <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Generating...</>
+                <>
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />{" "}
+                  Generating...
+                </>
               ) : (
                 "Yes, generate new kit"
               )}

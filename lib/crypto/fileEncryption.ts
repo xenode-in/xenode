@@ -66,6 +66,15 @@ export async function decryptFile(
     ["decrypt"],
   );
 
+  return decryptFileWithDEK(ciphertext, dek, iv, contentType);
+}
+
+export async function decryptFileWithDEK(
+  ciphertext: ArrayBuffer,
+  dek: CryptoKey,
+  iv: string,
+  contentType: string,
+): Promise<Blob> {
   const ivBytes = fromB64(iv) as Uint8Array<ArrayBuffer>;
   const plaintext = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: ivBytes },
@@ -77,27 +86,34 @@ export async function decryptFile(
 
 export async function decryptFileChunkedCombined(
   ciphertext: ArrayBuffer,
-  encryptedDEK: string,
+  encryptedDEK: string | null,
   chunkIvsStr: string | string[],
   chunkSize: number,
   chunkCount: number,
-  privateKey: CryptoKey,
+  privateKeyOrDEK: CryptoKey,
   contentType: string,
 ): Promise<Blob> {
-  const wrappedDEKBytes = fromB64(encryptedDEK);
-  const rawDEK = await crypto.subtle.decrypt(
-    { name: "RSA-OAEP" },
-    privateKey,
-    wrappedDEKBytes,
-  );
+  let dek: CryptoKey;
 
-  const dek = await crypto.subtle.importKey(
-    "raw",
-    rawDEK,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["decrypt"],
-  );
+  if (encryptedDEK && privateKeyOrDEK.type === "private") {
+    const wrappedDEKBytes = fromB64(encryptedDEK);
+    const rawDEK = await crypto.subtle.decrypt(
+      { name: "RSA-OAEP" },
+      privateKeyOrDEK,
+      wrappedDEKBytes,
+    );
+
+    dek = await crypto.subtle.importKey(
+      "raw",
+      rawDEK,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["decrypt"],
+    );
+  } else {
+    // If encryptedDEK is null, the caller already passed the DEK
+    dek = privateKeyOrDEK;
+  }
 
   const chunkIvs: string[] =
     typeof chunkIvsStr === "string" ? JSON.parse(chunkIvsStr) : chunkIvsStr;

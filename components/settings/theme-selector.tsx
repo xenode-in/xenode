@@ -30,14 +30,14 @@ const themes = [
       primary: "bg-zinc-100",
     },
   },
-  {
-    id: "xenode-green",
-    name: "Xenode Green",
-    colors: {
-      bg: "bg-[#0f1a12]",
-      primary: "bg-[#7cb686]",
-    },
-  },
+  // {
+  //   id: "xenode-green",
+  //   name: "Xenode Green",
+  //   colors: {
+  //     bg: "bg-[#0f1a12]",
+  //     primary: "bg-[#7cb686]",
+  //   },
+  // },
 ];
 
 export function ThemeSelector() {

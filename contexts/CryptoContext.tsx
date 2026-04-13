@@ -178,3 +178,7 @@ export function useCrypto(): CryptoContextType {
   if (!ctx) throw new Error("useCrypto must be used within CryptoProvider");
   return ctx;
 }
+
+export function useOptionalCrypto(): CryptoContextType | undefined {
+  return useContext(CryptoContext);
+}
