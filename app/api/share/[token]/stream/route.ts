@@ -95,6 +95,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     isEncrypted: object.isEncrypted,
     iv: object.iv,
     contentType: link.shareEncryptedContentType || object.contentType,
+    mediaCategory: object.mediaCategory,
     fileName: link.shareEncryptedName || (object.encryptedName || object.key.split("/").pop())!,
     shareEncryptedName: link.shareEncryptedName,
     shareEncryptedContentType: link.shareEncryptedContentType,

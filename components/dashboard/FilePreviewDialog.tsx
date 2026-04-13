@@ -1,10 +1,10 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, useRef } from "react";
+const NOOP = () => {};
+
+import React, { useEffect, useState, useRef } from "react";
 import {
   Dialog,
-  DialogTitle,
-  DialogDescription,
   DialogClose,
   DialogOverlay,
   DialogPortal,
@@ -24,12 +24,13 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-import { useDownload } from "@/contexts/DownloadContext";
-import { useCrypto } from "@/contexts/CryptoContext";
+import { useOptionalDownload } from "@/contexts/DownloadContext";
+import { useOptionalCrypto } from "@/contexts/CryptoContext";
 import {
-  decryptFile,
+  decryptFileWithDEK,
   decryptFileChunkedCombined,
   decryptMetadataString,
+  decryptWithShareKey,
 } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
@@ -40,7 +41,7 @@ interface ObjectData {
   key: string;
   size: number;
   contentType: string;
-  createdAt: string;
+  createdAt?: string;
   isEncrypted?: boolean;
   encryptedName?: string;
   name?: string;
@@ -55,6 +56,10 @@ interface FilePreviewDialogProps {
   onPrevious?: () => void;
   hasNext?: boolean;
   hasPrevious?: boolean;
+  // Shared link specific props
+  sharedToken?: string;
+  shareKey?: string;
+  password?: string;
 }
 
 const ChunkedStreamPlayer = ({
@@ -178,6 +183,42 @@ function formatMB(bytes: number) {
   return (bytes / 1024 / 1024).toFixed(2);
 }
 
+function inferContentTypeFromName(name: string): string | null {
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".pdf")) return "application/pdf";
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".png")) return "image/png";
+  if (lower.endsWith(".gif")) return "image/gif";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".mp4")) return "video/mp4";
+  if (lower.endsWith(".webm")) return "video/webm";
+  if (lower.endsWith(".mov")) return "video/quicktime";
+  if (lower.endsWith(".mp3")) return "audio/mpeg";
+  if (lower.endsWith(".wav")) return "audio/wav";
+  if (lower.endsWith(".ogg")) return "audio/ogg";
+  if (lower.endsWith(".m4a")) return "audio/mp4";
+  return null;
+}
+
+function inferContentTypeFromCategory(
+  category?: string,
+  currentType?: string,
+): string | null {
+  if (category === "image") {
+    return currentType?.startsWith("image/") ? currentType : "image/jpeg";
+  }
+  if (category === "video") {
+    return currentType?.startsWith("video/") ? currentType : "video/mp4";
+  }
+  if (category === "audio") {
+    return currentType?.startsWith("audio/") ? currentType : "audio/mpeg";
+  }
+  if (category === "document" && currentType === "application/pdf") {
+    return currentType;
+  }
+  return null;
+}
+
 /** Fetch a URL while invoking onProgress(0-100) as bytes arrive and caching the stream locally */
 async function fetchWithProgress(
   url: string,
@@ -249,10 +290,20 @@ export function FilePreviewDialog({
   onPrevious,
   hasNext,
   hasPrevious,
+  sharedToken,
+  shareKey,
+  password,
 }: FilePreviewDialogProps) {
   const [url, setUrl] = useState<string | null>(null);
-  const { privateKey, metadataKey, setModalOpen, isUnlocked } = useCrypto();
-  const { startDownload } = useDownload();
+  const cryptoControl = useOptionalCrypto();
+  const downloadControl = useOptionalDownload();
+
+  const privateKey = cryptoControl?.privateKey;
+  const metadataKey = cryptoControl?.metadataKey;
+  const setModalOpen = cryptoControl?.setModalOpen ?? NOOP;
+  const isUnlocked = cryptoControl?.isUnlocked ?? false;
+
+  const startDownload = downloadControl?.startDownload;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [isEncrypted, setIsEncrypted] = useState(false);
@@ -269,7 +320,7 @@ export function FilePreviewDialog({
 
   const objectUrlRef = useRef<string | null>(null);
 
-  const isLockedOut = file?.isEncrypted && !privateKey;
+  const isLockedOut = !sharedToken && file?.isEncrypted && !privateKey;
 
   useEffect(() => {
     if (isOpen && isLockedOut) {
@@ -278,11 +329,8 @@ export function FilePreviewDialog({
     }
   }, [isOpen, isLockedOut, setModalOpen, onClose]);
 
-  useEffect(() => {
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => {});
-    }
-  }, []);
+  // Service Worker registration is now handled at page/layout level
+  // ensuring it's ready before the dialog even mounts.
 
   // Listen to Service Worker broadcast messages for real-time chunk download progress
   useEffect(() => {
@@ -341,7 +389,7 @@ export function FilePreviewDialog({
         if (file.encryptedName) {
           const name = await decryptMetadataString(
             file.encryptedName,
-            metadataKey,
+            metadataKey ?? null,
           );
           if (!cancelled) setDecryptedName(name);
         }
@@ -371,15 +419,68 @@ export function FilePreviewDialog({
       setIsVideoPreparing(false);
 
       try {
-        const res = await fetch(`/api/objects/${file.id}?preview=true`);
-        if (!res.ok) throw new Error("Failed to get URL");
+        let res;
+        if (sharedToken) {
+          res = await fetch(`/api/share/${sharedToken}/stream`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ password: password || undefined }),
+          });
+        } else {
+          res = await fetch(`/api/objects/${file.id}?preview=true`);
+        }
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || "Failed to get metadata");
+        }
         const data = await res.json();
-        if (!data?.url && (!data?.chunkUrls || data.chunkUrls.length === 0))
+        if (
+          !data?.url &&
+          !data?.streamUrl &&
+          (!data?.chunkUrls || data.chunkUrls.length === 0)
+        )
           throw new Error("No URL returned");
 
         const encrypted: boolean = data.isEncrypted ?? false;
 
-        let type = data.contentType ?? file.contentType;
+        let shareKeyObj: CryptoKey | null = null;
+        let type =
+          sharedToken && data.shareEncryptedContentType
+            ? file.contentType
+            : (data.contentType ?? file.contentType);
+
+        if (sharedToken && shareKey) {
+          const skBytes = fromB64(
+            shareKey
+              .replace(/-/g, "+")
+              .replace(/_/g, "/")
+              .padEnd(shareKey.length + ((4 - (shareKey.length % 4)) % 4), "="),
+          );
+          shareKeyObj = await crypto.subtle.importKey(
+            "raw",
+            skBytes,
+            { name: "AES-GCM" },
+            false,
+            ["decrypt", "unwrapKey"],
+          );
+        }
+
+        if (sharedToken && shareKeyObj && data.shareEncryptedContentType) {
+          try {
+            type = await decryptWithShareKey(
+              data.shareEncryptedContentType,
+              shareKeyObj,
+            );
+            if (!cancelled) setDecryptedContentType(type);
+          } catch (e) {
+            console.warn(
+              "Failed to decrypt shared content type, falling back",
+              e,
+            );
+          }
+        }
+
         if (
           type === "application/octet-stream" &&
           data.encryptedContentType &&
@@ -404,20 +505,13 @@ export function FilePreviewDialog({
         if (type === "application/octet-stream" || !type) {
           const fileName =
             decryptedName || file.name || fileNameFromKey(file.key);
-          if (fileName.toLowerCase().endsWith(".pdf")) {
-            type = "application/pdf";
-          } else if (
-            fileName.toLowerCase().endsWith(".jpg") ||
-            fileName.toLowerCase().endsWith(".jpeg")
-          ) {
-            type = "image/jpeg";
-          } else if (fileName.toLowerCase().endsWith(".png")) {
-            type = "image/png";
-          } else if (fileName.toLowerCase().endsWith(".mp4")) {
-            type = "video/mp4";
-          } else if (fileName.toLowerCase().endsWith(".mp3")) {
-            type = "audio/mpeg";
-          }
+          type =
+            inferContentTypeFromName(fileName) ||
+            inferContentTypeFromCategory(
+              data.mediaCategory || file.mediaCategory,
+              type,
+            ) ||
+            type;
           if (!cancelled) setDecryptedContentType(type);
         }
 
@@ -453,28 +547,50 @@ export function FilePreviewDialog({
 
         setIsEncrypted(true);
 
-        if (!privateKey) {
+        // --- DEK Derivation ---
+        let rawDEK: ArrayBuffer;
+        if (sharedToken && shareKey && shareKeyObj) {
+          const encryptedDekBytes = fromB64(
+            data.shareEncryptedDEK || data.encryptedDEK,
+          );
+          const ivBytes = fromB64(data.shareKeyIv);
+
+          rawDEK = await crypto.subtle
+            .unwrapKey(
+              "raw",
+              encryptedDekBytes,
+              shareKeyObj,
+              { name: "AES-GCM", iv: ivBytes },
+              { name: "AES-GCM" },
+              true,
+              ["decrypt"],
+            )
+            .then((key) => crypto.subtle.exportKey("raw", key));
+        } else if (privateKey) {
+          rawDEK = await crypto.subtle.decrypt(
+            { name: "RSA-OAEP" },
+            privateKey,
+            fromB64(data.encryptedDEK),
+          );
+        } else if (sharedToken) {
+          // If we are in shared mode but lack a key, just wait for it (it might be coming from a hash sync)
+          if (!shareKey) return;
+          throw new Error("Invalid share key or missing decryption metadata.");
+        } else {
           setModalOpen(true);
           throw new Error(
-            "Your files are encrypted. Please unlock your vault to preview this file.",
+            "Your files are encrypted. Please unlock your vault or provide a valid share key.",
           );
         }
 
+        // --- Path B: Chunked Streaming ---
         if (data.chunkUrls && data.chunkUrls.length > 0) {
           setLoadingMessage("Preparing decryption...");
-          if (!data.encryptedDEK) {
-            throw new Error("Missing encrypted DEK for chunked file.");
-          }
 
           if (!cancelled) {
-            const rawDEK = await crypto.subtle.decrypt(
-              { name: "RSA-OAEP" },
-              privateKey,
-              fromB64(data.encryptedDEK),
-            );
-
             if ("serviceWorker" in navigator) {
               try {
+                console.log("[Preview] Attempting SW streaming for:", file.id);
                 setLoadingMessage("Preparing stream...");
                 const registration = await navigator.serviceWorker.ready;
                 const sw = registration.active;
@@ -483,9 +599,12 @@ export function FilePreviewDialog({
                   await new Promise<void>((resolve, reject) => {
                     const channel = new MessageChannel();
                     channel.port1.onmessage = (event) => {
-                      if (event.data.success) resolve();
-                      else
+                      if (event.data.success) {
+                        console.log("[Preview] SW registration successful");
+                        resolve();
+                      } else {
                         reject(new Error("Failed to register stream with SW"));
+                      }
                     };
                     sw.postMessage(
                       {
@@ -507,7 +626,6 @@ export function FilePreviewDialog({
 
                   if (!cancelled) {
                     setLoadingMessage("Buffering initial stream...");
-                    // Ensure the progress bar visibly mounts instantly
                     setProgress(0);
                     if (shouldShowPreparingUI) setIsVideoPreparing(true);
                     setUrl(`/sw/objects/${file.id}`);
@@ -516,9 +634,10 @@ export function FilePreviewDialog({
                   }
                 }
               } catch (err) {
-                console.error("SW streaming failed, falling back to MSE", err);
+                console.warn("[Preview] SW streaming failed, falling back to MSE", err);
               }
             }
+            console.log("[Preview] Using MSE fallback mode");
 
             const dek = await crypto.subtle.importKey(
               "raw",
@@ -543,11 +662,10 @@ export function FilePreviewDialog({
           return;
         }
 
-        setLoadingMessage(
-          encrypted ? "Downloading encrypted file..." : "Downloading file...",
-        );
+        // --- Path C: Full Blob Decryption ---
+        setLoadingMessage("Downloading encrypted file...");
         const ciphertextBuf = await fetchWithProgress(
-          data.url,
+          data.url || data.streamUrl,
           (pct) => {
             if (!cancelled) setProgress(pct);
           },
@@ -561,33 +679,29 @@ export function FilePreviewDialog({
         }
 
         let decryptedBlob: Blob;
+        const dek = await crypto.subtle.importKey(
+          "raw",
+          rawDEK,
+          { name: "AES-GCM", length: 256 },
+          false,
+          ["decrypt"],
+        );
 
         if (data.chunkIvs && data.chunkSize && data.chunkCount) {
-          if (!data.encryptedDEK) {
-            throw new Error(
-              "Missing encrypted DEK for chunked file. File might be corrupted.",
-            );
-          }
           decryptedBlob = await decryptFileChunkedCombined(
             ciphertextBuf,
-            data.encryptedDEK,
+            null, // specify null so it uses the dek we pass below
             data.chunkIvs,
             data.chunkSize,
             data.chunkCount,
-            privateKey,
+            dek,
             type,
           );
         } else {
-          if (!data.iv || !data.encryptedDEK) {
-            throw new Error(
-              "Missing encryption parameters (IV or DEK). File might be corrupted.",
-            );
-          }
-          decryptedBlob = await decryptFile(
+          decryptedBlob = await decryptFileWithDEK(
             ciphertextBuf,
-            data.encryptedDEK,
+            dek,
             data.iv,
-            privateKey,
             type,
           );
         }
@@ -614,7 +728,18 @@ export function FilePreviewDialog({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, file, privateKey, isLockedOut, setModalOpen, metadataKey]);
+  }, [
+    isOpen,
+    file,
+    privateKey,
+    isLockedOut,
+    setModalOpen,
+    metadataKey,
+    sharedToken,
+    shareKey,
+    password,
+    decryptedName,
+  ]);
 
   if (!file) return null;
 
@@ -622,7 +747,7 @@ export function FilePreviewDialog({
   const type = decryptedContentType || file.contentType;
 
   const handleDownload = async () => {
-    if (!file) return;
+    if (!file || !startDownload) return;
     try {
       await startDownload(
         {
@@ -636,7 +761,7 @@ export function FilePreviewDialog({
         privateKey,
         metadataKey,
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Download failed:", err);
     }
   };

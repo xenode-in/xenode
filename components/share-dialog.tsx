@@ -85,7 +85,9 @@ export function ShareDialog({
   getDEKBytes,
 }: ShareDialogProps) {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
-  const [directShareSummary, setDirectShareSummary] = useState<string | null>(null);
+  const [directShareSummary, setDirectShareSummary] = useState<string | null>(
+    null,
+  );
   const { metadataKey } = useCrypto();
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -192,9 +194,8 @@ export function ShareDialog({
           }
 
           if (file.thumbnail && file.thumbnail.startsWith("enc:")) {
-            const { decryptThumbnail } = await import(
-              "@/lib/crypto/fileEncryption"
-            );
+            const { decryptThumbnail } =
+              await import("@/lib/crypto/fileEncryption");
             const plaintextThumb = await decryptThumbnail(
               file.thumbnail,
               metadataKey,
@@ -270,40 +271,42 @@ export function ShareDialog({
         }
 
         const recipients = await Promise.all(
-          (lookupData.recipients as RecipientLookup[]).map(async (recipient) => {
-            let wrappedShareKey = "";
+          (lookupData.recipients as RecipientLookup[]).map(
+            async (recipient) => {
+              let wrappedShareKey = "";
 
-            if (file.isEncrypted) {
-              if (!shareKeyRaw) {
-                throw new Error("Missing encrypted share key package");
+              if (file.isEncrypted) {
+                if (!shareKeyRaw) {
+                  throw new Error("Missing encrypted share key package");
+                }
+
+                const recipientPublicKey = await crypto.subtle.importKey(
+                  "spki",
+                  fromB64(recipient.publicKey).buffer as ArrayBuffer,
+                  { name: "RSA-OAEP", hash: "SHA-256" },
+                  false,
+                  ["encrypt"],
+                );
+
+                const wrapped = await crypto.subtle.encrypt(
+                  { name: "RSA-OAEP" },
+                  recipientPublicKey,
+                  shareKeyRaw.buffer.slice(
+                    shareKeyRaw.byteOffset,
+                    shareKeyRaw.byteOffset + shareKeyRaw.byteLength,
+                  ) as ArrayBuffer,
+                );
+                wrappedShareKey = bytesToB64(wrapped);
               }
 
-              const recipientPublicKey = await crypto.subtle.importKey(
-                "spki",
-                fromB64(recipient.publicKey).buffer as ArrayBuffer,
-                { name: "RSA-OAEP", hash: "SHA-256" },
-                false,
-                ["encrypt"],
-              );
-
-              const wrapped = await crypto.subtle.encrypt(
-                { name: "RSA-OAEP" },
-                recipientPublicKey,
-                shareKeyRaw.buffer.slice(
-                  shareKeyRaw.byteOffset,
-                  shareKeyRaw.byteOffset + shareKeyRaw.byteLength,
-                ) as ArrayBuffer,
-              );
-              wrappedShareKey = bytesToB64(wrapped);
-            }
-
-            return {
-              recipientUserId: recipient.userId,
-              recipientEmail: recipient.email,
-              wrappedShareKey,
-              accessType: "download",
-            };
-          }),
+              return {
+                recipientUserId: recipient.userId,
+                recipientEmail: recipient.email,
+                wrappedShareKey,
+                accessType: "download",
+              };
+            },
+          ),
         );
 
         const directShareRes = await fetch("/api/direct-shares", {
@@ -339,7 +342,9 @@ export function ShareDialog({
       if (!res.ok) throw new Error(data.error);
 
       setDirectShareSummary(null);
-      setShareUrl(fragment ? `${data.shareUrl}#key=${fragment}` : data.shareUrl);
+      setShareUrl(
+        fragment ? `${data.shareUrl}#key=${fragment}` : data.shareUrl,
+      );
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to create share");
     } finally {
@@ -487,7 +492,7 @@ export function ShareDialog({
                 <SelectTrigger className="h-9 bg-secondary/50 border-border">
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="bg-card border-border">
+                <SelectContent position="popper" className="bg-card border-border z-[200]">
                   <SelectItem value="never">Never expires</SelectItem>
                   <SelectItem value="1">1 hour</SelectItem>
                   <SelectItem value="24">24 hours</SelectItem>

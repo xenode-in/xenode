@@ -438,3 +438,7 @@ export function useDownload() {
     throw new Error("useDownload must be used within a DownloadProvider");
   return context;
 }
+
+export function useOptionalDownload() {
+  return useContext(DownloadContext);
+}
