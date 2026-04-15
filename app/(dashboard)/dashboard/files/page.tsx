@@ -432,6 +432,8 @@ export default function FilesPage() {
   const { data: session } = useSession();
   const userId = session?.user?.id || null;
 
+  const typeFilter = searchParams.get("type");
+
   const {
     fetchNextPage: fetchNextBatch,
     hasNextPage: hasMorePages,
@@ -443,14 +445,22 @@ export default function FilesPage() {
     limit: 50,
     sortBy: sortField,
     sortDir: sortDir,
+    mediaCategory: typeFilter,
   });
 
   const localFiles =
     useLiveQuery(() => {
       if (!userId || !bucketId) return [];
       const db = getDb(userId);
+      if (typeFilter) {
+        return db.files
+          .where("bucketId")
+          .equals(bucketId)
+          .filter((f) => f.mediaCategory === typeFilter)
+          .toArray();
+      }
       return db.files.where("bucketId").equals(bucketId).toArray();
-    }, [userId, bucketId]) || [];
+    }, [userId, bucketId, typeFilter]) || [];
 
   // Temporarily map Dexie models to the expected ObjectData array to minimize disruptions
   const objects = useMemo(() => {
@@ -582,6 +592,13 @@ export default function FilesPage() {
     const files: ObjectData[] = [];
 
     objects.forEach((obj) => {
+      if (typeFilter) {
+        if (obj.contentType !== "application/x-directory") {
+          files.push(obj);
+        }
+        return;
+      }
+
       if (!obj.key.startsWith(currentPrefix) || obj.key === currentPrefix)
         return;
 
@@ -641,6 +658,7 @@ export default function FilesPage() {
     sortDir,
     searchTerm,
     decryptedFolderNameMap,
+    typeFilter,
   ]);
 
   const allIds = useMemo(

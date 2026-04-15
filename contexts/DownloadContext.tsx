@@ -249,7 +249,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
           const chunkOffset = 0; // Discard partial offsets
 
           if (resumeFrom > resumeFromAligned) {
-            await truncateCache(obj.id, resumeFromAligned);
+            await truncateCache(obj.id, startChunkIndex);
             receivedLength = resumeFromAligned;
             
             // Update UI state immediately to reflect truncated bytes
@@ -367,6 +367,13 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         const cachedBytes = await getCachedBytes(obj.id);
         if (!cachedBytes) throw new Error("Cache lost after download");
 
+        let finalContentType = data.contentType ?? obj.contentType;
+        if (isEncrypted && data.encryptedContentType && metadataKey) {
+          try {
+            finalContentType = await decryptMetadataString(data.encryptedContentType, metadataKey);
+          } catch (e) {}
+        }
+
         let decryptedBlob: Blob;
         if (isChunked) {
           decryptedBlob = await decryptFileChunkedCombined(
@@ -376,7 +383,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
             data.chunkSize,
             data.chunkCount,
             privateKey,
-            data.contentType ?? obj.contentType,
+            finalContentType,
           );
         } else {
           decryptedBlob = await decryptFile(
@@ -384,7 +391,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
             data.encryptedDEK,
             data.iv,
             privateKey,
-            data.contentType ?? obj.contentType,
+            finalContentType,
           );
         }
 

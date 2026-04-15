@@ -8,7 +8,7 @@ export interface IStorageObject extends Document {
   size: number;
   contentType: string;
   encryptedContentType?: string;
-  mediaCategory: "image" | "video" | "audio" | "document" | "other";
+  mediaCategory: "image" | "video" | "audio" | "document" | "pdf" | "word" | "excel" | "powerpoint" | "archive" | "code" | "other";
   b2FileId: string;
   tags: string[];
   position: number;
@@ -82,7 +82,7 @@ const StorageObjectSchema = new Schema<IStorageObject>(
     },
     mediaCategory: {
       type: String,
-      enum: ["image", "video", "audio", "document", "other"],
+      enum: ["image", "video", "audio", "document", "pdf", "word", "excel", "powerpoint", "archive", "code", "other"],
       default: "other",
       index: true,
     },
@@ -228,8 +228,9 @@ StorageObjectSchema.index({
 });
 StorageObjectSchema.index({ deletedAt: 1 }, { expireAfterSeconds: 2592000 }); // 30 days TTL
 
-const StorageObject: Model<IStorageObject> =
-  mongoose.models.StorageObject ||
-  mongoose.model<IStorageObject>("StorageObject", StorageObjectSchema);
+if (mongoose.models.StorageObject) {
+  delete mongoose.models.StorageObject;
+}
+const StorageObject: Model<IStorageObject> = mongoose.model<IStorageObject>("StorageObject", StorageObjectSchema);
 
 export default StorageObject;

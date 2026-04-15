@@ -13,7 +13,7 @@ export interface FileMetadata {
   size: number | null;
   type: string | null;
   lastModified: number | null;
-  mediaCategory: "image" | "video" | "audio" | "document" | "other" | null;
+  mediaCategory: "image" | "video" | "audio" | "document" | "pdf" | "word" | "excel" | "powerpoint" | "archive" | "code" | "other" | null;
 
   // IMAGE / VIDEO COMMON
   width: number | null;

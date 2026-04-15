@@ -1,14 +1,7 @@
 "use client";
 import Link from "next/link";
-import {
-  FileText,
-  Image,
-  Music,
-  Video,
-  File,
-  MoreHorizontal,
-  Lock,
-} from "lucide-react";
+import { MoreHorizontal, Lock } from "lucide-react";
+import { getFileIcon } from "@/lib/file-icons";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
@@ -23,33 +16,11 @@ interface ObjectData {
   thumbnail?: string;
   isEncrypted?: boolean;
   encryptedName?: string;
+  mediaCategory?: string;
 }
 
 function getFileName(key: string) {
   return key.split("/").pop() || key;
-}
-
-function FileTypeIcon({ contentType }: { contentType: string }) {
-  if (contentType.startsWith("image/"))
-    return <Image className="w-4 h-4 text-blue-400" />;
-  if (contentType.startsWith("video/"))
-    return <Video className="w-4 h-4 text-purple-400" />;
-  if (contentType.startsWith("audio/"))
-    return <Music className="w-4 h-4 text-green-400" />;
-  if (contentType.includes("pdf") || contentType.includes("document"))
-    return <FileText className="w-4 h-4 text-red-400" />;
-  return <File className="w-4 h-4 text-muted-foreground/50" />;
-}
-
-function getTypeBadgeLabel(contentType: string) {
-  if (contentType.startsWith("image/"))
-    return contentType.split("/")[1]?.toUpperCase() ?? "IMG";
-  if (contentType.startsWith("video/"))
-    return contentType.split("/")[1]?.toUpperCase() ?? "VID";
-  if (contentType.startsWith("audio/"))
-    return contentType.split("/")[1]?.toUpperCase() ?? "AUD";
-  if (contentType.includes("pdf")) return "PDF";
-  return contentType.split("/")[1]?.toUpperCase() ?? "FILE";
 }
 
 interface RecentFilesTableProps {
@@ -64,7 +35,7 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
 
   useEffect(() => {
     if (!isUnlocked || !files.length) {
-      setDecryptedNames((prev) => Object.keys(prev).length ? {} : prev);
+      setDecryptedNames((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
 
@@ -78,7 +49,10 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
           !decryptedNames[file.id]
         ) {
           try {
-            const name = await decryptMetadataString(file.encryptedName, metadataKey);
+            const name = await decryptMetadataString(
+              file.encryptedName,
+              metadataKey,
+            );
             newNames[file.id] = name;
           } catch (e) {
             console.error("Failed to decrypt name", e);
@@ -127,16 +101,13 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
             {/* Name */}
             <div className="flex items-center gap-2 min-w-0">
               <div className="w-7 h-7 rounded-lg bg-secondary flex items-center justify-center shrink-0">
-                <FileTypeIcon contentType={file.contentType} />
+                {getFileIcon(file.contentType, "w-4 h-4", file.mediaCategory)}
               </div>
               <span className="text-sm text-foreground truncate">
                 {decryptedNames[file.id] ||
                   file.encryptedName ||
                   getFileName(file.key)}
               </span>
-              {file.isEncrypted && (
-                <Lock className="w-3 h-3 text-primary/60 shrink-0" />
-              )}
             </div>
 
             {/* Size */}

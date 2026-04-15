@@ -11,6 +11,7 @@ interface FetchObjectsParams {
   limit?: number;
   sortBy?: "date" | "size" | "type" | "name";
   sortDir?: "asc" | "desc";
+  mediaCategory?: string | null;
 }
 
 export function useFileSync({
@@ -19,15 +20,19 @@ export function useFileSync({
   limit = 100,
   sortBy = "date",
   sortDir = "desc",
+  mediaCategory,
 }: FetchObjectsParams) {
   return useInfiniteQuery({
-    queryKey: ["files", bucketId, sortBy, sortDir],
+    queryKey: ["files", bucketId, sortBy, sortDir, mediaCategory],
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }) => {
       if (!bucketId || !userId)
         return { objects: [], hasNextPage: false, nextCursor: null };
 
       let url = `/api/objects?bucketId=${bucketId}&limit=${limit}&sortBy=${sortBy}&sortDir=${sortDir}`;
+      if (mediaCategory) {
+        url += `&mediaCategory=${encodeURIComponent(mediaCategory)}`;
+      }
       if (pageParam) {
         url += `&before=${encodeURIComponent(pageParam)}`;
       }

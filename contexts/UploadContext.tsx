@@ -178,18 +178,31 @@ function getAdaptiveChunkSize(fileSize: number, mimeType: string): number {
     if (fileSize < 1024 * 1024 * 1024) return 4 * 1024 * 1024; // 4 MB
     return 8 * 1024 * 1024; // 8 MB
   }
-
   // Non-streamable: bigger chunks, fewer requests
   const adaptive = Math.max(8 * 1024 * 1024, Math.floor(fileSize / 100));
   return Math.min(adaptive, 64 * 1024 * 1024);
 }
 
 function getMediaCategory(mimeType: string): string {
+  if (!mimeType) return "other";
+  mimeType = mimeType.toLowerCase();
+  
   if (mimeType.startsWith("image/")) return "image";
   if (mimeType.startsWith("video/")) return "video";
   if (mimeType.startsWith("audio/")) return "audio";
-  if (mimeType.includes("pdf") || mimeType.includes("document"))
-    return "document";
+  
+  if (mimeType.includes("pdf")) return "pdf";
+  
+  if (mimeType.includes("spreadsheet") || mimeType.includes("excel") || mimeType.includes("xls") || mimeType.includes("csv")) return "excel";
+  if (mimeType.includes("wordprocessing") || mimeType.includes("word") || mimeType.includes("doc")) return "word";
+  if (mimeType.includes("presentation") || mimeType.includes("powerpoint") || mimeType.includes("ppt")) return "powerpoint";
+  
+  if (mimeType.includes("zip") || mimeType.includes("tar") || mimeType.includes("rar") || mimeType.includes("7z") || mimeType.includes("archive")) return "archive";
+  
+  if (mimeType.includes("json") || mimeType.includes("javascript") || mimeType.includes("html") || mimeType.includes("xml") || mimeType.includes("text/css") || mimeType.includes("text/x-") || mimeType.includes("application/x-sh")) return "code";
+
+  if (mimeType.includes("document") || mimeType.includes("text/")) return "document";
+  
   return "other";
 }
 

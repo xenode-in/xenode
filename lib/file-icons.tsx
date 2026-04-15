@@ -44,10 +44,11 @@ export const getFileIcon = (
       return { icon: Music, color: "text-emerald-500/70" };
 
     // 5. Documents
-    if (c === "document" || t.includes("pdf"))
+    if (c === "pdf" || c === "document" || t.includes("pdf"))
       return { icon: FileText, color: "text-red-500/70" };
 
     if (
+      c === "word" ||
       t.includes("word") ||
       t.includes("officedocument.wordprocessingml") ||
       t.includes("msword")
@@ -55,6 +56,7 @@ export const getFileIcon = (
       return { icon: FileText, color: "text-blue-600/70" };
 
     if (
+      c === "excel" ||
       t.includes("spreadsheet") ||
       t.includes("excel") ||
       t.includes("csv") ||
@@ -63,6 +65,7 @@ export const getFileIcon = (
       return { icon: FileSpreadsheet, color: "text-emerald-600/70" };
 
     if (
+      c === "powerpoint" ||
       t.includes("presentation") ||
       t.includes("powerpoint") ||
       t.includes("officedocument.presentationml")
@@ -71,17 +74,18 @@ export const getFileIcon = (
 
     // 6. Archives
     if (
+      c === "archive" ||
       t.includes("zip") ||
       t.includes("tar") ||
       t.includes("rar") ||
       t.includes("7z") ||
-      t.includes("archive") ||
-      c === "archive"
+      t.includes("archive")
     )
       return { icon: FileArchive, color: "text-amber-500/70" };
 
     // 7. Code
     if (
+      c === "code" ||
       t.includes("javascript") ||
       t.includes("typescript") ||
       t.includes("json") ||

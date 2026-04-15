@@ -183,8 +183,13 @@ export async function optimizeVideoForStreaming(file: File): Promise<File> {
     // (delta is typically positive; moov moves forward, mdat shifts forward)
 
     const ftypSize = ftyp?.size ?? 0;
-    const newMdatOffset = ftypSize + moov.size;
-    const delta = newMdatOffset - mdat.offset;
+    let actualNewMdatOffset = ftypSize + moov.size;
+    for (const box of boxes) {
+      if (box.type === "ftyp" || box.type === "moov") continue;
+      if (box.type === "mdat") break;
+      actualNewMdatOffset += box.size;
+    }
+    const delta = actualNewMdatOffset - mdat.offset;
 
     // ── Build the patched moov ───────────────────────────────────────────────
     const patchedMoov = moov.data.slice(0); // copies into a fresh ArrayBuffer
