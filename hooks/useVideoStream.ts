@@ -11,7 +11,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { decryptChunk } from "@/lib/crypto/fileEncryption";
-import { MP4BoxPlayer } from "@/lib/video/mp4box";
 
 export interface VideoStreamOptions {
   urls: string[];
@@ -67,7 +66,8 @@ export function useVideoStream(
     // ── Determine MSE codec ────────────────────────────────────────────────
     const mimeCodec = MIME_CODEC_MAP[contentType] ?? contentType;
     const mseSupported =
-      typeof MediaSource !== "undefined" && MediaSource.isTypeSupported(mimeCodec);
+      typeof MediaSource !== "undefined" &&
+      MediaSource.isTypeSupported(mimeCodec);
 
     if (!mseSupported) {
       // MSE not available → fall back to full download + blob URL
