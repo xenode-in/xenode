@@ -99,16 +99,19 @@ export function GlobalSearch() {
                     name: r.name,
                   }));
 
-                openPreview({
-                  id: result.id,
-                  key: result.key,
-                  size: result.size,
-                  contentType: result.contentType,
-                  createdAt: result.createdAt,
-                  isEncrypted: result.isEncrypted,
-                  encryptedName: result.encryptedName,
-                  name: result.name,
-                }, fileResults);
+                openPreview(
+                  {
+                    id: result.id,
+                    key: result.key,
+                    size: result.size,
+                    contentType: result.contentType,
+                    createdAt: result.createdAt,
+                    isEncrypted: result.isEncrypted,
+                    encryptedName: result.encryptedName,
+                    name: result.name,
+                  },
+                  fileResults,
+                );
               };
 
               return (
@@ -130,9 +133,6 @@ export function GlobalSearch() {
                       <p className="text-sm font-medium truncate">
                         {result.name}
                       </p>
-                      {result.isEncrypted && (
-                        <Lock className="w-3 h-3 text-muted-foreground" />
-                      )}
                     </div>
                     <p className="text-xs text-muted-foreground truncate">
                       {result.contentType === "application/x-directory"

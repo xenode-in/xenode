@@ -76,6 +76,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       url = await getDownloadUrl(bucket.b2BucketId, keyToUse!);
     }
 
+    const sidecars = await StorageObject.find({ 
+      parentObjectId: object._id, 
+      deletedAt: { $exists: false } 
+    }).select("mediaCategory encryptedName size contentType encryptedContentType").lean();
+
     return NextResponse.json({
       url,
       chunkUrls,
@@ -91,6 +96,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       chunkSize: object.chunkSize ?? null,
       chunkCount: object.chunkCount ?? null,
       chunkIvs: object.chunkIvs ?? null,
+      encryptedMetadata: object.encryptedMetadata ?? null, // needed for audioTracks/subtitleTracks at playback
+      sidecars: sidecars.map(s => ({
+        id: s._id.toString(),
+        mediaCategory: s.mediaCategory,
+        encryptedName: s.encryptedName,
+        size: s.size,
+        contentType: s.contentType,
+        encryptedContentType: s.encryptedContentType
+      })),
     });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
@@ -171,6 +185,17 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     await StorageObject.findByIdAndUpdate(object._id, {
       $set: { deletedAt: new Date() },
     });
+
+    // Cascade-delete all sidecar children (subtitles, extra audio tracks)
+    const sidecars = await StorageObject.find({ parentObjectId: object._id, userId }).lean();
+    for (const sidecar of sidecars) {
+      try {
+        await deleteB2Object(bucket.b2BucketId, sidecar.key);
+      } catch { /* ignore B2 errors */ }
+      await StorageObject.findByIdAndUpdate(sidecar._id, { $set: { deletedAt: new Date() } });
+      await decrementStorage(userId, sidecar.size);
+      await updateBucketStats(bucket._id.toString(), -1, -sidecar.size);
+    }
 
     await ShareLink.deleteMany({ objectId: object._id });
     await DirectShare.deleteMany({ objectId: object._id });

@@ -1,13 +1,17 @@
 import Link from "next/link";
-import { Image, Music, Video, FileText, Grid3x3, Download } from "lucide-react";
+import { Image, Music, Video, FileText, FileSpreadsheet, Presentation, FileArchive, FileCode } from "lucide-react";
 
 const quickItems = [
   { label: "Images", icon: Image, href: "/dashboard/photos" },
   { label: "Music", icon: Music, href: "/dashboard/files?type=audio" },
   { label: "Video", icon: Video, href: "/dashboard/files?type=video" },
-  { label: "Docs", icon: FileText, href: "/dashboard/files?type=docs" },
-  { label: "Apps", icon: Grid3x3, href: "/dashboard/files" },
-  { label: "Downloads", icon: Download, href: "/dashboard/files" },
+  { label: "Docs", icon: FileText, href: "/dashboard/files?type=document" },
+  { label: "PDFs", icon: FileText, href: "/dashboard/files?type=pdf" },
+  { label: "Word", icon: FileText, href: "/dashboard/files?type=word" },
+  { label: "Excel", icon: FileSpreadsheet, href: "/dashboard/files?type=excel" },
+  { label: "Slides", icon: Presentation, href: "/dashboard/files?type=powerpoint" },
+  { label: "Archives", icon: FileArchive, href: "/dashboard/files?type=archive" },
+  { label: "Code", icon: FileCode, href: "/dashboard/files?type=code" },
 ];
 
 export function QuickAccessBar() {

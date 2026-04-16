@@ -12,10 +12,11 @@ export async function GET(req: Request) {
 
     await dbConnect();
 
-    // Query for user's files updated after lastSync
+    // Query for user's files updated after lastSync (exclude sidecar files)
     const files = await StorageObject.find({
       userId: session.user.id,
-      updatedAt: { $gt: lastSyncDate }
+      updatedAt: { $gt: lastSyncDate },
+      isSidecar: { $ne: true },
     })
       .select("_id key size contentType encryptedContentType createdAt updatedAt " +
               "isEncrypted encryptedName tags thumbnail bucketId encryptedDisplayName deletedAt")

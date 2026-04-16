@@ -78,6 +78,7 @@ export async function GET(request: NextRequest) {
     const query: Record<string, unknown> = {
       bucketId,
       deletedAt: { $exists: false },
+      isSidecar: { $ne: true }, // exclude subtitle/audio sidecar files from listings
     };
 
     if (bucket.userId === "system") {

@@ -4,6 +4,7 @@
  */
 
 import exifr from "exifr";
+import MediaInfoFactory from "mediainfo.js";
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
 import { FileMetadata } from "./types";
@@ -103,7 +104,7 @@ export async function extractMetadata(
     xResolution: exifData.xResolution ?? null,
     yResolution: exifData.yResolution ?? null,
 
-    // FFMPEG
+    // FFMPEG / MEDIAINFO
     videoCodec: ffmpegData.videoCodec ?? null,
     audioCodec: ffmpegData.audioCodec ?? null,
     bitrate: ffmpegData.bitrate ?? null,
@@ -111,6 +112,10 @@ export async function extractMetadata(
     audioSampleRate: ffmpegData.audioSampleRate ?? null,
     audioChannels: ffmpegData.audioChannels ?? null,
     creationTime: ffmpegData.creationTime ?? null,
+    
+    // TRACKS
+    audioTracks: ffmpegData.audioTracks ?? undefined,
+    subtitleTracks: ffmpegData.subtitleTracks ?? undefined,
 
     // APP-LEVEL
     thumbnail: options.thumbnail ?? null,
@@ -178,72 +183,92 @@ async function extractExifMetadata(file: File): Promise<Partial<FileMetadata>> {
 async function extractFfmpegMetadata(
   file: File,
 ): Promise<Partial<FileMetadata>> {
-  const ff = await loadFFmpeg();
-  const inputName = "input_meta";
-  await ff.writeFile(inputName, await fetchFile(file));
-
-  let logs = "";
-  const logHandler = ({ message }: { message: string }) => {
-    logs += message + "\n";
-  };
-  ff.on("log", logHandler);
-
-  // Run -i command to get metadata in stderr/logs
-  await ff.exec(["-i", inputName]);
-
-  ff.off("log", logHandler);
-  await ff.deleteFile(inputName);
-
-  return parseFfmpegLogs(logs);
-}
-
-function parseFfmpegLogs(logs: string): Partial<FileMetadata> {
   const result: Partial<FileMetadata> = {};
 
-  // Duration: 00:00:10.05, start: 0.000000, bitrate: 1234 kb/s
-  const durationMatch = logs.match(
-    /Duration: (\d{2}):(\d{2}):(\d{2})\.(\d{2})/,
-  );
-  if (durationMatch) {
-    const h = parseInt(durationMatch[1]);
-    const m = parseInt(durationMatch[2]);
-    const s = parseInt(durationMatch[3]);
-    const ms = parseInt(durationMatch[4]);
-    result.duration = h * 3600 + m * 60 + s + ms / 100;
-  }
+  return new Promise((resolve) => {
+    MediaInfoFactory({ format: "object" })
+      .then((mediainfo) => {
+        const getSize = () => file.size;
+        const readChunk = (chunkSize: number, offset: number) => {
+          return new Promise<Uint8Array>((resolveChunk, rejectChunk) => {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+              if (e.target?.result) {
+                resolveChunk(new Uint8Array(e.target.result as ArrayBuffer));
+              } else {
+                resolveChunk(new Uint8Array(0));
+              }
+            };
+            reader.onerror = rejectChunk;
+            reader.readAsArrayBuffer(file.slice(offset, offset + chunkSize));
+          });
+        };
 
-  const bitrateMatch = logs.match(/bitrate: (\d+) kb\/s/);
-  if (bitrateMatch) result.bitrate = parseInt(bitrateMatch[1]);
+        mediainfo
+          .analyzeData(getSize, readChunk)
+          .then((info) => {
+            const m: any = info;
+            if (m && m.media && m.media.track) {
+              const general = m.media.track.find(
+                (t: any) => t["@type"] === "General",
+              );
+              const video = m.media.track.find(
+                (t: any) => t["@type"] === "Video",
+              );
+              const audios = m.media.track.filter(
+                (t: any) => t["@type"] === "Audio",
+              );
+              const text = m.media.track.filter(
+                (t: any) => t["@type"] === "Text",
+              );
 
-  // Video: h264 (High) (avc1 / 0x31637661), yuv420p, 1920x1080 [SAR 1:1 DAR 16:9], 1000 kb/s, 30 fps
-  const videoMatch = logs.match(
-    /Video: ([^, ]+).*?,.*?, (\d+)x(\d+).*?,.*?(\d+(\.\d+)?) fps/,
-  );
-  if (videoMatch) {
-    result.videoCodec = videoMatch[1];
-    result.width = parseInt(videoMatch[2]);
-    result.height = parseInt(videoMatch[3]);
-    result.aspectRatio = result.width / result.height;
-    result.fps = parseFloat(videoMatch[4]);
-  }
+              if (video) {
+                result.videoCodec = video.Format;
+                result.width = parseInt(video.Width, 10);
+                result.height = parseInt(video.Height, 10);
+                result.fps = parseFloat(video.FrameRate);
+                result.aspectRatio = result.width / result.height;
+              }
+              if (audios.length > 0) {
+                result.audioCodec = audios[0].Format;
+                result.audioSampleRate = parseInt(audios[0].SamplingRate, 10);
+                result.audioChannels = audios[0].Channels;
 
-  // Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s
-  const audioMatch = logs.match(/Audio: ([^, ]+).*?, (\d+) Hz, (.*?),/);
-  if (audioMatch) {
-    result.audioCodec = audioMatch[1];
-    result.audioSampleRate = parseInt(audioMatch[2]);
-    result.audioChannels = audioMatch[3];
-  }
-
-  // Creation Time
-  const creationMatch = logs.match(
-    /creation_time\s*:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/,
-  );
-  if (creationMatch) {
-    result.creationTime = creationMatch[1] + "Z";
-  }
-
-  return result;
+                result.audioTracks = audios.map((a: any, index: number) => ({
+                  id: a.ID || String(index),
+                  language: a.Language || "und",
+                  codec: a.Format,
+                  title: a.Title,
+                }));
+              }
+              if (text.length > 0) {
+                result.subtitleTracks = text.map((t: any, index: number) => ({
+                  id: t.ID || String(index),
+                  language: t.Language || "und",
+                  format: t.Format,
+                  codec: t.CodecID,
+                  title: t.Title,
+                }));
+              }
+              if (general) {
+                result.duration = parseFloat(general.Duration);
+                result.bitrate = parseInt(general.OverallBitRate, 10);
+              }
+            }
+            mediainfo.close();
+            resolve(result);
+          })
+          .catch((err) => {
+            mediainfo.close();
+            console.error("[Metadata Extractor] Mediainfo error:", err);
+            resolve(result);
+          });
+      })
+      .catch((err) => {
+        console.error("[Metadata Extractor] Failed to load mediainfo.js:", err);
+        resolve(result);
+      });
+  });
 }
 
 /**

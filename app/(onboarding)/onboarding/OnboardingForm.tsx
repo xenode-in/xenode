@@ -445,13 +445,6 @@ export function OnboardingForm() {
                         <Download className="mr-2 h-4 w-4" /> Download
                       </Button>
                     </div>
-                    <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
-                      <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
-                      <p className="text-xs text-amber-600 dark:text-amber-400">
-                        These words only work with your master password. Neither
-                        alone unlocks your vault.
-                      </p>
-                    </div>
                     <label className="flex items-center gap-3 cursor-pointer select-none">
                       <div
                         className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border-2 transition-colors ${
@@ -491,128 +484,6 @@ export function OnboardingForm() {
                     </div>
 
                     <div className="space-y-6 max-w-lg mx-auto">
-                      {/* ── Plan picker ── */}
-                      <FormField
-                        control={form.control}
-                        name="selectedPlan"
-                        render={({ field }) => (
-                          <FormItem>
-                            <FormLabel className="font-semibold">
-                              Choose your plan
-                            </FormLabel>
-                            <FormControl>
-                              <RadioGroup
-                                onValueChange={field.onChange}
-                                value={field.value}
-                                className="grid grid-cols-2 gap-3 sm:grid-cols-3"
-                              >
-                                {/* Free card */}
-                                <FormItem>
-                                  <FormLabel className="[&:has([data-state=checked])>div]:border-primary [&:has([data-state=checked])>div]:bg-primary/5 cursor-pointer">
-                                    <FormControl>
-                                      <RadioGroupItem
-                                        value="free"
-                                        className="sr-only"
-                                      />
-                                    </FormControl>
-                                    <div className="rounded-xl border-2 p-3 transition-all hover:bg-muted h-full">
-                                      <div className="flex justify-between items-start mb-1">
-                                        <span className="font-semibold text-sm">
-                                          Starter
-                                        </span>
-                                        {field.value === "free" && (
-                                          <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
-                                        )}
-                                      </div>
-                                      <div className="text-xl font-bold">
-                                        Free
-                                      </div>
-                                      <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-                                        <li className="flex items-center gap-1.5">
-                                          <HardDrive className="h-3 w-3 text-primary shrink-0" />{" "}
-                                          5 GB
-                                        </li>
-                                        <li className="flex items-center gap-1.5">
-                                          <Lock className="h-3 w-3 text-primary shrink-0" />{" "}
-                                          E2EE
-                                        </li>
-                                        <li className="flex items-center gap-1.5">
-                                          Upgrade anytime
-                                        </li>
-                                      </ul>
-                                    </div>
-                                  </FormLabel>
-                                </FormItem>
-
-                                {/* Paid plan cards — fetched from DB */}
-                                {plansLoading ? (
-                                  <FormItem>
-                                    <div className="rounded-xl border-2 border-muted p-3 h-full flex items-center justify-center">
-                                      <span className="text-xs text-muted-foreground">
-                                        Loading plans…
-                                      </span>
-                                    </div>
-                                  </FormItem>
-                                ) : (
-                                  plans.map((plan) => (
-                                    <FormItem key={plan.slug}>
-                                      <FormLabel className="[&:has([data-state=checked])>div]:border-primary [&:has([data-state=checked])>div]:bg-primary/5 cursor-pointer">
-                                        <FormControl>
-                                          <RadioGroupItem
-                                            value={plan.slug}
-                                            className="sr-only"
-                                          />
-                                        </FormControl>
-                                        <div
-                                          className={`relative rounded-xl border-2 p-3 transition-all hover:bg-muted h-full ${
-                                            plan.isPopular
-                                              ? "border-primary/40"
-                                              : ""
-                                          }`}
-                                        >
-                                          {plan.isPopular && (
-                                            <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 bg-primary text-primary-foreground px-2 py-0.5 rounded-full text-[10px] font-bold uppercase whitespace-nowrap">
-                                              Popular
-                                            </span>
-                                          )}
-                                          <div className="flex justify-between items-start mb-1">
-                                            <span className="font-semibold text-sm">
-                                              {plan.storage}
-                                            </span>
-                                            {field.value === plan.slug && (
-                                              <CheckCircle2 className="h-4 w-4 text-primary shrink-0" />
-                                            )}
-                                          </div>
-                                          <div className="text-xl font-bold">
-                                            ₹
-                                            {plan.pricing.find(
-                                              (p) => p.cycle === "monthly",
-                                            )?.priceINR ?? 0}
-                                            <span className="text-xs font-normal text-muted-foreground">
-                                              /mo
-                                            </span>
-                                          </div>
-                                          <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
-                                            <li className="flex items-center gap-1.5">
-                                              <HardDrive className="h-3 w-3 text-primary shrink-0" />{" "}
-                                              {plan.storage} E2EE
-                                            </li>
-                                            <li className="flex items-center gap-1.5">
-                                              <Lock className="h-3 w-3 text-primary shrink-0" />{" "}
-                                              Encrypted
-                                            </li>
-                                          </ul>
-                                        </div>
-                                      </FormLabel>
-                                    </FormItem>
-                                  ))
-                                )}
-                              </RadioGroup>
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-
                       {/* ── Theme picker ── */}
                       <FormField
                         control={form.control}
@@ -699,41 +570,6 @@ export function OnboardingForm() {
                                   ),
                                 )}
                               </RadioGroup>
-                            </FormControl>
-                          </FormItem>
-                        )}
-                      />
-
-                      {/* ── Encrypt by default ── */}
-                      <FormField
-                        control={form.control}
-                        name="encryptByDefault"
-                        render={({ field }) => (
-                          <FormItem className="flex flex-row items-center justify-between rounded-xl border-2 p-4">
-                            <div className="space-y-1 mr-4">
-                              <div className="flex items-center gap-2">
-                                <Shield className="h-4 w-4 text-primary" />
-                                <FormLabel className="text-base font-semibold">
-                                  Encrypt files by default
-                                </FormLabel>
-                              </div>
-                              <FormDescription className="text-sm leading-snug">
-                                Encrypt files in the browser before upload.
-                              </FormDescription>
-                              <a
-                                href="/blog/encryption-pros-cons"
-                                target="_blank"
-                                className="inline-flex mt-1 items-center gap-1 text-xs font-medium text-primary hover:underline"
-                              >
-                                Read trade-offs{" "}
-                                <ExternalLink className="h-3 w-3" />
-                              </a>
-                            </div>
-                            <FormControl>
-                              <Switch
-                                checked={field.value}
-                                onCheckedChange={field.onChange}
-                              />
                             </FormControl>
                           </FormItem>
                         )}

@@ -80,3 +80,73 @@ export async function DELETE(request: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
+export async function PATCH(request: NextRequest, { params }: Params) {
+  try {
+    const resolvedParams = await params;
+    const session = await requireAuth(request);
+    const body = await request.json();
+    await dbConnect();
+
+    const update: Record<string, unknown> = {};
+    const unset: Record<string, ""> = {};
+
+    if ("expiresAt" in body) {
+      if (body.expiresAt) update.expiresAt = new Date(body.expiresAt);
+      else unset.expiresAt = "";
+    }
+
+    if ("maxDownloads" in body) {
+      if (body.maxDownloads === null || body.maxDownloads === "") {
+        unset.maxDownloads = "";
+      } else {
+        update.maxDownloads = Math.max(1, Number(body.maxDownloads));
+      }
+    }
+
+    if ("sharedWith" in body) {
+      update.sharedWith = Array.isArray(body.sharedWith)
+        ? body.sharedWith
+            .map((email: unknown) => String(email).trim().toLowerCase())
+            .filter(Boolean)
+        : [];
+    }
+
+    if (body.accessType === "view" || body.accessType === "download") {
+      update.accessType = body.accessType;
+    }
+
+    if (body.shareEncryptedDEK) {
+      update.shareEncryptedDEK = body.shareEncryptedDEK;
+      update.shareKeyIv = body.shareKeyIv;
+      update.shareEncryptedName = body.shareEncryptedName;
+      update.shareEncryptedContentType = body.shareEncryptedContentType;
+    }
+
+    const link = await ShareLink.findOneAndUpdate(
+      {
+        token: resolvedParams.token,
+        createdBy: session.user.id,
+        isRevoked: false,
+      },
+      {
+        ...(Object.keys(update).length > 0 ? { $set: update } : {}),
+        ...(Object.keys(unset).length > 0 ? { $unset: unset } : {}),
+      },
+      { new: true },
+    ).lean();
+
+    if (!link) {
+      return NextResponse.json(
+        { error: "Not found or not authorised" },
+        { status: 404 },
+      );
+    }
+
+    return NextResponse.json({ shareLink: link });
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message === "Unauthorized")
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}

@@ -13,7 +13,7 @@ export interface FileMetadata {
   size: number | null;
   type: string | null;
   lastModified: number | null;
-  mediaCategory: "image" | "video" | "audio" | "document" | "other" | null;
+  mediaCategory: "image" | "video" | "audio" | "document" | "pdf" | "word" | "excel" | "powerpoint" | "archive" | "code" | "other" | null;
 
   // IMAGE / VIDEO COMMON
   width: number | null;
@@ -44,6 +44,8 @@ export interface FileMetadata {
   audioSampleRate: number | null;
   audioChannels: string | null;
   creationTime: string | null;
+  audioTracks?: { id: string; language: string; codec: string; title?: string }[];
+  subtitleTracks?: { id: string; language: string; format: string; codec?: string; title?: string; objectId?: string }[];
 
   // APP-LEVEL (IMPORTANT)
   thumbnail: string | null;

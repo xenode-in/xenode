@@ -95,7 +95,10 @@ export async function GET(request: NextRequest) {
       createdBy: session.user.id,
       isRevoked: false,
     })
-      .populate("objectId", "key size contentType isEncrypted encryptedName")
+      .populate(
+        "objectId",
+        "key size contentType isEncrypted encryptedName encryptedContentType mediaCategory",
+      )
       .sort({ createdAt: -1 })
       .lean();
 

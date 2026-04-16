@@ -21,6 +21,9 @@ import { extractMetadata } from "@/lib/metadata/extractor";
 import { toB64 } from "@/lib/crypto/utils";
 import { optimizeVideoForStreaming } from "@/lib/video/faststart";
 import { generatePreview } from "@/lib/images/optimizer";
+import { upsertLocalObject } from "@/lib/db/object-cache";
+import { extractSubtitleToVTT } from "@/lib/video/demuxer";
+import { extractAudioTrack } from "@/lib/video/audio-extractor";
 
 export interface UploadTask {
   id: string;
@@ -177,18 +180,31 @@ function getAdaptiveChunkSize(fileSize: number, mimeType: string): number {
     if (fileSize < 1024 * 1024 * 1024) return 4 * 1024 * 1024; // 4 MB
     return 8 * 1024 * 1024; // 8 MB
   }
-
   // Non-streamable: bigger chunks, fewer requests
   const adaptive = Math.max(8 * 1024 * 1024, Math.floor(fileSize / 100));
   return Math.min(adaptive, 64 * 1024 * 1024);
 }
 
 function getMediaCategory(mimeType: string): string {
+  if (!mimeType) return "other";
+  mimeType = mimeType.toLowerCase();
+  
   if (mimeType.startsWith("image/")) return "image";
   if (mimeType.startsWith("video/")) return "video";
   if (mimeType.startsWith("audio/")) return "audio";
-  if (mimeType.includes("pdf") || mimeType.includes("document"))
-    return "document";
+  
+  if (mimeType.includes("pdf")) return "pdf";
+  
+  if (mimeType.includes("spreadsheet") || mimeType.includes("excel") || mimeType.includes("xls") || mimeType.includes("csv")) return "excel";
+  if (mimeType.includes("wordprocessing") || mimeType.includes("word") || mimeType.includes("doc")) return "word";
+  if (mimeType.includes("presentation") || mimeType.includes("powerpoint") || mimeType.includes("ppt")) return "powerpoint";
+  
+  if (mimeType.includes("zip") || mimeType.includes("tar") || mimeType.includes("rar") || mimeType.includes("7z") || mimeType.includes("archive")) return "archive";
+  
+  if (mimeType.includes("json") || mimeType.includes("javascript") || mimeType.includes("html") || mimeType.includes("xml") || mimeType.includes("text/css") || mimeType.includes("text/x-") || mimeType.includes("application/x-sh")) return "code";
+
+  if (mimeType.includes("document") || mimeType.includes("text/")) return "document";
+  
   return "other";
 }
 
@@ -347,11 +363,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         let chunkIvs: string | undefined;
 
         let encryptedMetadata: string | undefined;
+        let metadata: any = null;
 
         if (shouldEncryptNow()) {
           try {
             // Extract all metadata sources
-            const metadata = await extractMetadata(uploadFile, {
+            metadata = await extractMetadata(uploadFile, {
               thumbnail: rawThumbnail,
               aspectRatio,
               chunkSize,
@@ -360,6 +377,190 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             });
 
             console.log("METADATA", metadata);
+
+            /*
+            // Handle Subtitle Extraction & Sidecar Upload
+            if (metadata.subtitleTracks && metadata.subtitleTracks.length > 0) {
+              const updatedSubtitles = [];
+              for (const track of metadata.subtitleTracks) {
+                try {
+                  const vttBlob = await extractSubtitleToVTT(uploadFile, track.id);
+                  if (vttBlob) {
+                    const sidecarFile = new File([vttBlob], `${uploadFile.name}-${track.language || track.id}.vtt`, { type: "text/vtt" });
+                    
+                    const sidecarEnc = await encryptFileChunked(
+                      sidecarFile,
+                      cryptoPublicKeyRef.current!,
+                      1 * 1024 * 1024 // 1MB chunks for text
+                    );
+
+                    // Presign & Upload sidecar
+                    const sidecarId = crypto.randomUUID();
+                    const pre = await fetch("/api/objects/presign-upload-multipart", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        fileName: sidecarId,
+                        fileSize: sidecarEnc.ciphertext.size,
+                        fileType: "application/octet-stream",
+                        bucketId: task.bucketId,
+                        prefix: task.prefix,
+                        chunkCount: sidecarEnc.chunkCount,
+                        chunkSize: sidecarEnc.chunkSize,
+                      }),
+                    });
+
+                    if (pre.ok) {
+                      const { fileId, urls, bucketId: stBucketData } = await pre.json();
+                      const sidecarChunkUploads = [];
+                      for (let i = 0; i < urls.length; i++) {
+                        const start = i * sidecarEnc.chunkSize;
+                        const end = Math.min(start + sidecarEnc.chunkSize, sidecarEnc.ciphertext.size);
+                        const cBlob = sidecarEnc.ciphertext.slice(start, end);
+                        await fetch(urls[i].url, { method: "PUT", body: cBlob });
+                        sidecarChunkUploads.push({ index: i, key: urls[i].key, size: cBlob.size });
+                      }
+                      
+                      const comp = await fetch("/api/objects/complete-upload", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          objectKey: fileId,
+                          bucketId: stBucketData,
+                          size: sidecarEnc.ciphertext.size,
+                          contentType: "application/octet-stream",
+                          originalContentType: "text/vtt",
+                          mediaCategory: "document",
+                          isEncrypted: true,
+                          encryptedDEK: sidecarEnc.encryptedDEK,
+                          encryptedName: await encryptMetadataString("subtitle.vtt", cryptoMetadataKeyRef.current!),
+                          chunkSize: sidecarEnc.chunkSize,
+                          chunkCount: sidecarEnc.chunkCount,
+                          chunkIvs: JSON.stringify(sidecarEnc.chunkIvs),
+                          isChunked: true,
+                          chunks: sidecarChunkUploads,
+                          // Optional: mark it hidden or sidecar so it doesn't show randomly in dashboard
+                          isSidecar: true, 
+                        }),
+                      });
+
+                      if (comp.ok) {
+                        const result = await comp.json();
+                        updatedSubtitles.push({ ...track, objectId: result.object._id });
+                      } else {
+                        updatedSubtitles.push(track);
+                      }
+                    } else {
+                      updatedSubtitles.push(track);
+                    }
+                  } else {
+                    updatedSubtitles.push(track);
+                  }
+                } catch (e) {
+                  console.warn(`[E2EE] Failed to process subtitle track ${track.id}`, e);
+                  updatedSubtitles.push(track);
+                }
+              }
+              metadata.subtitleTracks = updatedSubtitles;
+            }
+
+            // Handle Audio Track Extraction & Sidecar Upload
+            // Only extract extra tracks (index 1+). Track 0 stays native in the video.
+            if (metadata.audioTracks && metadata.audioTracks.length > 1) {
+              const updatedAudioTracks = [metadata.audioTracks[0]]; // keep track 0 as-is (native)
+
+              for (let i = 1; i < metadata.audioTracks.length; i++) {
+                const track = metadata.audioTracks[i];
+                try {
+                  const audioBlob = await extractAudioTrack(uploadFile, i, track.language || `track${i}`);
+
+                  if (audioBlob) {
+                    const sidecarFile = new File(
+                      [audioBlob],
+                      `${uploadFile.name}-audio-${track.language || i}.m4a`,
+                      { type: "audio/mp4" },
+                    );
+
+                    const sidecarEnc = await encryptFileChunked(
+                      sidecarFile,
+                      cryptoPublicKeyRef.current!,
+                      2 * 1024 * 1024, // 2MB chunks
+                    );
+
+                    const sidecarId = crypto.randomUUID();
+                    const pre = await fetch("/api/objects/presign-upload-multipart", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        fileName: sidecarId,
+                        fileSize: sidecarEnc.ciphertext.size,
+                        fileType: "application/octet-stream",
+                        bucketId: task.bucketId,
+                        prefix: task.prefix,
+                        chunkCount: sidecarEnc.chunkCount,
+                        chunkSize: sidecarEnc.chunkSize,
+                      }),
+                    });
+
+                    if (pre.ok) {
+                      const { fileId, urls, bucketId: stBucketData } = await pre.json();
+                      const audioChunkUploads = [];
+
+                      for (let ci = 0; ci < urls.length; ci++) {
+                        const start = ci * sidecarEnc.chunkSize;
+                        const end = Math.min(start + sidecarEnc.chunkSize, sidecarEnc.ciphertext.size);
+                        const cBlob = sidecarEnc.ciphertext.slice(start, end);
+                        await fetch(urls[ci].url, { method: "PUT", body: cBlob });
+                        audioChunkUploads.push({ index: ci, key: urls[ci].key, size: cBlob.size });
+                      }
+
+                      const comp = await fetch("/api/objects/complete-upload", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          objectKey: fileId,
+                          bucketId: stBucketData,
+                          size: sidecarEnc.ciphertext.size,
+                          contentType: "application/octet-stream",
+                          originalContentType: "audio/aac",
+                          mediaCategory: "audio",
+                          isEncrypted: true,
+                          encryptedDEK: sidecarEnc.encryptedDEK,
+                          encryptedName: await encryptMetadataString(
+                            `${track.language || `track${i}`}.aac`,
+                            cryptoMetadataKeyRef.current!,
+                          ),
+                          chunkSize: sidecarEnc.chunkSize,
+                          chunkCount: sidecarEnc.chunkCount,
+                          chunkIvs: JSON.stringify(sidecarEnc.chunkIvs),
+                          isChunked: true,
+                          chunks: audioChunkUploads,
+                          isSidecar: true,
+                          // parentObjectId will be patched after main upload completes
+                        }),
+                      });
+
+                      if (comp.ok) {
+                        const result = await comp.json();
+                        updatedAudioTracks.push({ ...track, objectId: result.object._id });
+                      } else {
+                        updatedAudioTracks.push(track);
+                      }
+                    } else {
+                      updatedAudioTracks.push(track);
+                    }
+                  } else {
+                    updatedAudioTracks.push(track);
+                  }
+                } catch (e) {
+                  console.warn(`[E2EE] Failed to extract audio track ${i}`, e);
+                  updatedAudioTracks.push(track);
+                }
+              }
+
+              metadata.audioTracks = updatedAudioTracks;
+            }
+            */
 
             // Encrypt standardized metadata object
             encryptedMetadata = await encryptMetadataObject(
@@ -549,6 +750,38 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           const error = await completeResponse.json();
           throw new Error(error.error || "Failed to save file metadata");
         }
+
+        const completeData = await completeResponse.json();
+        const mainObjectId = completeData.object?._id;
+        await upsertLocalObject(
+          sessionRef.current?.user?.id,
+          completeData.object,
+          returnedBucketId,
+        );
+
+        /*
+        // Patch sidecar objects (audio and subtitles) with parentObjectId now that we have the main object's ID
+        if (mainObjectId && metadata) {
+          const tracks = [
+            ...(metadata.audioTracks || []),
+            ...(metadata.subtitleTracks || [])
+          ];
+          
+          for (const track of tracks) {
+            if ((track as any).objectId) {
+              await fetch(`/api/objects/complete-upload`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  objectKey: (track as any).objectId, // pass the sidecar's ID as key to look it up
+                  parentObjectId: mainObjectId,
+                  // minimal fields — API will do a find-and-update via objectKey matching
+                }),
+              }).catch(() => {});
+            }
+          }
+        }
+        */
 
         setTasks((prev) =>
           prev.map((t) =>
@@ -908,6 +1141,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         const error = await completeResponse.json();
         throw new Error(error.error || "Failed to save file metadata");
       }
+
+      const completeData = await completeResponse.json();
+      await upsertLocalObject(
+        sessionRef.current?.user?.id,
+        completeData.object,
+        returnedBucketId,
+      );
 
       // Mark as completed
       setTasks((prev) =>

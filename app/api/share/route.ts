@@ -120,7 +120,10 @@ export async function GET(req: NextRequest) {
     await dbConnect();
 
     const links = await ShareLink.find({ createdBy: userId, isRevoked: false })
-      .populate("objectId", "key size contentType isEncrypted encryptedName")
+      .populate(
+        "objectId",
+        "key size contentType isEncrypted encryptedName encryptedContentType mediaCategory",
+      )
       .sort({ createdAt: -1 })
       .lean();
 

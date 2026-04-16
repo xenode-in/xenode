@@ -84,3 +84,69 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
+
+export async function PATCH(request: NextRequest, { params }: RouteParams) {
+  try {
+    const session = await requireAuth(request);
+    const { id } = await params;
+    const body = await request.json();
+    await dbConnect();
+
+    const update: Record<string, unknown> = {};
+
+    if ("recipients" in body) {
+      if (!Array.isArray(body.recipients) || body.recipients.length === 0) {
+        return NextResponse.json(
+          {
+            error:
+              "Direct shares must have at least one recipient. Revoke the share instead.",
+          },
+          { status: 400 },
+        );
+      }
+
+      update.recipients = body.recipients.map(
+        (recipient: Record<string, unknown>) => ({
+          recipientUserId: String(recipient.recipientUserId),
+          recipientEmail: String(recipient.recipientEmail).toLowerCase(),
+          wrappedShareKey: String(recipient.wrappedShareKey),
+          accessType: recipient.accessType === "view" ? "view" : "download",
+          downloadCount: Number(recipient.downloadCount || 0),
+          lastAccessedAt: recipient.lastAccessedAt
+            ? new Date(String(recipient.lastAccessedAt))
+            : undefined,
+        }),
+      );
+    }
+
+    if (body.shareEncryptedDEK) {
+      update.shareEncryptedDEK = body.shareEncryptedDEK;
+      update.shareKeyIv = body.shareKeyIv;
+      update.shareEncryptedName = body.shareEncryptedName;
+      update.shareEncryptedContentType = body.shareEncryptedContentType;
+    }
+
+    const share = await DirectShare.findOneAndUpdate(
+      { _id: id, createdBy: session.user.id, isRevoked: false },
+      { $set: update },
+      { new: true },
+    )
+      .populate(
+        "objectId",
+        "key size contentType isEncrypted encryptedName encryptedContentType mediaCategory",
+      )
+      .lean();
+
+    if (!share) {
+      return NextResponse.json({ error: "Share not found" }, { status: 404 });
+    }
+
+    return NextResponse.json({ directShare: share });
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}

@@ -63,6 +63,12 @@ import { useSession } from "@/lib/auth/client";
 import { useFileSync } from "@/hooks/useFileSync";
 import { useCryptoWorker } from "@/hooks/useCryptoWorker";
 import { getDb } from "@/lib/db/local";
+import {
+  deleteLocalObjects,
+  deleteLocalPrefix,
+  upsertLocalObject,
+  upsertLocalObjects,
+} from "@/lib/db/object-cache";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
   encryptMetadataString,
@@ -418,6 +424,9 @@ export default function FilesPage() {
   const [decryptedFolderNameMap, setDecryptedFolderNameMap] = useState<
     Record<string, string>
   >({});
+  const [decryptedFileNameMap, setDecryptedFileNameMap] = useState<
+    Record<string, string>
+  >({});
 
   const { addTasks, tasks } = useUpload();
   const { privateKey, metadataKey, setModalOpen } = useCrypto();
@@ -425,6 +434,8 @@ export default function FilesPage() {
   const { openPreview, closePreview } = usePreview();
   const { data: session } = useSession();
   const userId = session?.user?.id || null;
+
+  const typeFilter = searchParams.get("type");
 
   const {
     fetchNextPage: fetchNextBatch,
@@ -437,14 +448,22 @@ export default function FilesPage() {
     limit: 50,
     sortBy: sortField,
     sortDir: sortDir,
+    mediaCategory: typeFilter,
   });
 
   const localFiles =
     useLiveQuery(() => {
       if (!userId || !bucketId) return [];
       const db = getDb(userId);
+      if (typeFilter) {
+        return db.files
+          .where("bucketId")
+          .equals(bucketId)
+          .filter((f) => f.mediaCategory === typeFilter)
+          .toArray();
+      }
       return db.files.where("bucketId").equals(bucketId).toArray();
-    }, [userId, bucketId]) || [];
+    }, [userId, bucketId, typeFilter]) || [];
 
   // Temporarily map Dexie models to the expected ObjectData array to minimize disruptions
   const objects = useMemo(() => {
@@ -527,6 +546,32 @@ export default function FilesPage() {
     run();
   }, [objects, metadataKey]);
 
+  // Decrypt file names for accurate client-side name sorting/searching
+  useEffect(() => {
+    if (!metadataKey || !objects.length) return;
+    const run = async () => {
+      const newMap: Record<string, string> = {};
+      for (const obj of objects) {
+        if (
+          obj.contentType !== "application/x-directory" &&
+          obj.isEncrypted &&
+          obj.encryptedName &&
+          !decryptedFileNameMap[obj.id]
+        ) {
+          try {
+            newMap[obj.id] = await decryptMetadataString(
+              obj.encryptedName,
+              metadataKey,
+            );
+          } catch {}
+        }
+      }
+      if (Object.keys(newMap).length > 0)
+        setDecryptedFileNameMap((prev) => ({ ...prev, ...newMap }));
+    };
+    run();
+  }, [objects, metadataKey]);
+
   useEffect(() => {
     if (!rootPrefix) return;
     const folderParam = searchParams.get("folder");
@@ -576,6 +621,13 @@ export default function FilesPage() {
     const files: ObjectData[] = [];
 
     objects.forEach((obj) => {
+      if (typeFilter) {
+        if (obj.contentType !== "application/x-directory") {
+          files.push(obj);
+        }
+        return;
+      }
+
       if (!obj.key.startsWith(currentPrefix) || obj.key === currentPrefix)
         return;
 
@@ -602,8 +654,15 @@ export default function FilesPage() {
     const applySort = <T extends ObjectData>(arr: T[]): T[] =>
       [...arr].sort((a, b) => {
         let cmp = 0;
-        if (sortField === "name") cmp = a.key.localeCompare(b.key);
-        else if (sortField === "size") cmp = a.size - b.size;
+        if (sortField === "name") {
+          const nameA = a.contentType === "application/x-directory"
+            ? (decryptedFolderNameMap[a.key] || a.key.split("/").filter(Boolean).pop() || a.key)
+            : (decryptedFileNameMap[a.id] || a.key.split("/").filter(Boolean).pop() || a.key);
+          const nameB = b.contentType === "application/x-directory"
+            ? (decryptedFolderNameMap[b.key] || b.key.split("/").filter(Boolean).pop() || b.key)
+            : (decryptedFileNameMap[b.id] || b.key.split("/").filter(Boolean).pop() || b.key);
+          cmp = nameA.localeCompare(nameB, undefined, { sensitivity: "base" });
+        } else if (sortField === "size") cmp = a.size - b.size;
         else if (sortField === "type")
           cmp = a.contentType.localeCompare(b.contentType);
         else
@@ -616,10 +675,9 @@ export default function FilesPage() {
       if (!searchTerm) return arr;
       const q = searchTerm.toLowerCase();
       return arr.filter((o) => {
-        const name =
-          decryptedFolderNameMap[o.key] ||
-          o.key.split("/").filter(Boolean).pop() ||
-          o.key;
+        const name = o.contentType === "application/x-directory"
+          ? (decryptedFolderNameMap[o.key] || o.key.split("/").filter(Boolean).pop() || o.key)
+          : (decryptedFileNameMap[o.id] || o.key.split("/").filter(Boolean).pop() || o.key);
         return name.toLowerCase().includes(q);
       });
     };
@@ -635,6 +693,8 @@ export default function FilesPage() {
     sortDir,
     searchTerm,
     decryptedFolderNameMap,
+    decryptedFileNameMap,
+    typeFilter,
   ]);
 
   const allIds = useMemo(
@@ -766,6 +826,8 @@ export default function FilesPage() {
         }),
       });
       if (res.ok) {
+        const data = await res.json();
+        await upsertLocalObject(userId, data.folder, bucketId);
         setNewFolderName("");
         setIsCreateFolderOpen(false);
         fetchBucket();
@@ -797,10 +859,12 @@ export default function FilesPage() {
                 body: JSON.stringify({ bucketId, prefix: folderObj.key }),
               });
               if (!res.ok) throw new Error("Failed to delete folder");
+              await deleteLocalPrefix(userId, bucketId, folderObj.key);
             }
           } else {
             const res = await fetch(`/api/objects/${id}`, { method: "DELETE" });
             if (!res.ok) throw new Error("Failed to delete item");
+            await deleteLocalObjects(userId, [id]);
           }
         }),
       );
@@ -822,9 +886,10 @@ export default function FilesPage() {
   const handleDownload = async (obj: ObjectData) => {
     try {
       await startDownload(obj, !!obj.isEncrypted, privateKey);
-    } catch (err: any) {
-      if (err.message?.includes("Vault locked")) setModalOpen(true);
-      setError(err?.message || "Download failed");
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Download failed";
+      if (message.includes("Vault locked")) setModalOpen(true);
+      setError(message);
     }
   };
 
@@ -852,7 +917,18 @@ export default function FilesPage() {
         }),
       });
       if (res.ok) {
+        const data = await res.json();
+        await Promise.all(
+          clipboard.items.map((item) =>
+            item.contentType === "application/x-directory" ||
+            item.key.endsWith("/")
+              ? deleteLocalPrefix(userId, bucketId, item.key)
+              : deleteLocalObjects(userId, [item.id]),
+          ),
+        );
+        await upsertLocalObjects(userId, data.movedObjects, bucketId);
         setClipboard(null);
+        setSelectedIds(new Set());
         fetchBucket();
         refetch();
       } else {
@@ -864,7 +940,7 @@ export default function FilesPage() {
     } finally {
       setProcessingPaste(false);
     }
-  }, [clipboard, bucketId, currentPrefix, refetch, fetchBucket]);
+  }, [clipboard, bucketId, currentPrefix, refetch, fetchBucket, userId]);
 
   const handleAddTag = async () => {
     if (!taggingObj || !newTag.trim()) return;
@@ -883,6 +959,11 @@ export default function FilesPage() {
         body: JSON.stringify({ tags: [...cur, tagToSave] }),
       });
       if (res.ok) {
+        await upsertLocalObject(
+          userId,
+          { ...taggingObj, tags: [...cur, tagToSave], updatedAt: new Date() },
+          bucketId,
+        );
         setTaggingObj({ ...taggingObj, tags: [...cur, tagToSave] });
         setNewTag("");
         fetchBucket();
@@ -901,6 +982,11 @@ export default function FilesPage() {
         body: JSON.stringify({ tags: updated }),
       });
       if (res.ok) {
+        await upsertLocalObject(
+          userId,
+          { ...taggingObj, tags: updated, updatedAt: new Date() },
+          bucketId,
+        );
         setTaggingObj({ ...taggingObj, tags: updated });
         fetchBucket();
         refetch();
@@ -1645,30 +1731,28 @@ function TagItem({
   onRemove,
 }: {
   encryptedTag: string;
-  metadataKey: any;
+  metadataKey: CryptoKey | null;
   onRemove: (tag: string) => void;
 }) {
   const [display, setDisplay] = useState(encryptedTag);
+  const shouldDecrypt =
+    !!metadataKey &&
+    (encryptedTag.startsWith("0x02") || encryptedTag.length > 50);
 
   useEffect(() => {
-    if (
-      metadataKey &&
-      (encryptedTag.startsWith("0x02") || encryptedTag.length > 50)
-    ) {
+    if (shouldDecrypt) {
       decryptMetadataString(encryptedTag, metadataKey)
         .then(setDisplay)
         .catch(() => setDisplay(encryptedTag));
-    } else {
-      setDisplay(encryptedTag);
     }
-  }, [encryptedTag, metadataKey]);
+  }, [encryptedTag, metadataKey, shouldDecrypt]);
 
   return (
     <Badge
       variant="secondary"
       className="bg-secondary text-primary hover:bg-secondary flex gap-1 items-center pl-2 pr-1 py-1"
     >
-      {display}
+      {shouldDecrypt ? display : encryptedTag}
       <button
         onClick={() => onRemove(encryptedTag)}
         className="hover:text-destructive p-0.5 rounded-full hover:bg-background/20"

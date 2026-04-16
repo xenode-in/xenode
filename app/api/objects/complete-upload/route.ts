@@ -9,12 +9,26 @@ import { HeadObjectCommand } from "@aws-sdk/client-s3";
 
 export const dynamic = "force-dynamic";
 
-function getMediaCategory(contentType: string): string {
-  if (contentType.startsWith("image/")) return "image";
-  if (contentType.startsWith("video/")) return "video";
-  if (contentType.startsWith("audio/")) return "audio";
-  if (contentType.includes("pdf") || contentType.includes("document"))
-    return "document";
+function getMediaCategory(mimeType: string): string {
+  if (!mimeType) return "other";
+  mimeType = mimeType.toLowerCase();
+  
+  if (mimeType.startsWith("image/")) return "image";
+  if (mimeType.startsWith("video/")) return "video";
+  if (mimeType.startsWith("audio/")) return "audio";
+  
+  if (mimeType.includes("pdf")) return "pdf";
+  
+  if (mimeType.includes("spreadsheet") || mimeType.includes("excel") || mimeType.includes("xls") || mimeType.includes("csv")) return "excel";
+  if (mimeType.includes("wordprocessing") || mimeType.includes("word") || mimeType.includes("doc")) return "word";
+  if (mimeType.includes("presentation") || mimeType.includes("powerpoint") || mimeType.includes("ppt")) return "powerpoint";
+  
+  if (mimeType.includes("zip") || mimeType.includes("tar") || mimeType.includes("rar") || mimeType.includes("7z") || mimeType.includes("archive")) return "archive";
+  
+  if (mimeType.includes("json") || mimeType.includes("javascript") || mimeType.includes("html") || mimeType.includes("xml") || mimeType.includes("text/css") || mimeType.includes("text/x-") || mimeType.includes("application/x-sh")) return "code";
+
+  if (mimeType.includes("document") || mimeType.includes("text/")) return "document";
+  
   return "other";
 }
 
@@ -47,6 +61,8 @@ export async function POST(request: NextRequest) {
       optimizedIV,
       optimizedEncryptedDEK,
       aspectRatio,
+      isSidecar,
+      parentObjectId,
     } = await request.json();
 
     if (!objectKey || !bucketId || !size) {
@@ -157,6 +173,8 @@ export async function POST(request: NextRequest) {
         if (optimizedEncryptedDEK) existingObject.optimizedEncryptedDEK = optimizedEncryptedDEK;
         if (aspectRatio) existingObject.aspectRatio = aspectRatio;
       }
+      if (isSidecar !== undefined) existingObject.isSidecar = isSidecar;
+      if (parentObjectId) existingObject.parentObjectId = parentObjectId;
       await existingObject.save();
       if (sizeDiff !== 0) {
         await incrementStorage(userId, sizeDiff);
@@ -202,6 +220,8 @@ export async function POST(request: NextRequest) {
       optimizedIV: optimizedIV ?? undefined,
       optimizedEncryptedDEK: optimizedEncryptedDEK ?? undefined,
       aspectRatio: aspectRatio ?? undefined,
+      isSidecar: isSidecar ?? false,
+      parentObjectId: parentObjectId ?? undefined,
     });
 
     await incrementStorage(userId, size, {
