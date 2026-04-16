@@ -11,6 +11,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { decryptChunk } from "@/lib/crypto/fileEncryption";
+import { MP4BoxPlayer } from "@/lib/video/mp4box";
 
 export interface VideoStreamOptions {
   urls: string[];

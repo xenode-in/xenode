@@ -5,6 +5,27 @@ const nextConfig: NextConfig = {
   pageExtensions: ["js", "jsx", "md", "mdx", "ts", "tsx"],
   output: "standalone",
   reactStrictMode: false,
+
+  // ── Turbopack: redirect mediainfo.js → CDN shim so the WASM is never bundled ──
+  turbopack: {
+    resolveAlias: {
+      "mediainfo.js": "./lib/metadata/mediainfo-loader",
+    },
+  },
+
+  // ── Webpack (non-Turbopack builds) ──────────────────────────────────────────
+  webpack(config, { isServer }) {
+    if (!isServer) {
+      // Redirect mediainfo.js → CDN shim at the webpack level too
+      config.resolve = config.resolve || {};
+      config.resolve.alias = {
+        ...(config.resolve.alias || {}),
+        "mediainfo.js": require.resolve("./lib/metadata/mediainfo-loader"),
+      };
+    }
+    return config;
+  },
+
   images: {
     remotePatterns: [
       {
@@ -21,7 +42,7 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  // Allow admin subdomain in development
+
   async headers() {
     return [
       {
@@ -32,7 +53,6 @@ const nextConfig: NextConfig = {
         ],
       },
       {
-        // Prevent search engines from indexing admin routes
         source: "/admin/:path*",
         headers: [
           { key: "X-Robots-Tag", value: "noindex, nofollow" },

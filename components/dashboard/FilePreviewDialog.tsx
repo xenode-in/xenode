@@ -35,6 +35,20 @@ import {
 import { fromB64 } from "@/lib/crypto/utils";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
 import { useVideoStream, VideoStreamOptions } from "@/hooks/useVideoStream";
+import {
+  useAudioTrackSyncer,
+  SidecarAudioTrack,
+} from "@/hooks/useAudioTrackSyncer";
+
+import "@vidstack/react/player/styles/default/theme.css";
+import "@vidstack/react/player/styles/default/layouts/video.css";
+import "@vidstack/react/player/styles/default/layouts/audio.css";
+import { MediaPlayer as VidstackPlayer, MediaProvider } from "@vidstack/react";
+import {
+  defaultLayoutIcons,
+  DefaultVideoLayout,
+  DefaultAudioLayout,
+} from "@vidstack/react/player/layouts/default";
 
 interface ObjectData {
   id: string;
@@ -46,6 +60,24 @@ interface ObjectData {
   encryptedName?: string;
   name?: string;
   mediaCategory?: string;
+  encryptedContentType?: string;
+  url?: string;
+  chunkUrls?: string[];
+  chunkSize?: number;
+  chunkCount?: number;
+  chunkIvs?: string;
+  encryptedMetadata?: string;
+  shareEncryptedDEK?: string;
+  shareKeyIv?: string;
+  shareEncryptedContentType?: string;
+  sidecars?: {
+    id: string;
+    mediaCategory: string;
+    encryptedName?: string;
+    size: number;
+    contentType: string;
+    encryptedContentType?: string;
+  }[];
 }
 
 interface FilePreviewDialogProps {
@@ -70,11 +102,19 @@ const ChunkedStreamPlayer = ({
   type,
   onUrlChange,
   onReady,
+  audioTracks,
+  dek,
+  privateKey,
+  metadataKey,
 }: {
   opts: VideoStreamOptions;
   type: string;
   onUrlChange: (url: string | null) => void;
   onReady?: () => void;
+  audioTracks?: SidecarAudioTrack[];
+  dek?: CryptoKey | null;
+  privateKey?: CryptoKey | null;
+  metadataKey?: CryptoKey | null;
 }) => {
   const isAudio = type.startsWith("audio/");
   const [videoElement, setVideoElement] = useState<HTMLMediaElement | null>(
@@ -82,6 +122,19 @@ const ChunkedStreamPlayer = ({
   );
 
   const { blobUrl, error } = useVideoStream(opts, videoElement);
+  const hasSidecars = (audioTracks?.filter((t) => t.objectId).length ?? 0) > 1;
+
+  const {
+    activeTrackId,
+    isLoading: trackLoading,
+    selectTrack,
+  } = useAudioTrackSyncer({
+    videoElement,
+    audioTracks: audioTracks ?? [],
+    dek: dek ?? null,
+    privateKey,
+    metadataKey,
+  });
 
   useEffect(() => {
     onUrlChange(blobUrl);
@@ -107,29 +160,61 @@ const ChunkedStreamPlayer = ({
   return (
     <div
       className={cn(
-        "relative flex h-full items-center justify-center",
-        isAudio ? "w-full p-4" : "w-full h-full bg-black overflow-hidden",
+        "relative flex w-full flex-col items-center justify-center bg-black overflow-hidden aspect-video",
+        isAudio ? "p-4" : "",
       )}
     >
-      {isAudio ? (
-        <audio
-          ref={(node) => setVideoElement(node)}
-          controls
-          autoPlay
-          className="w-full relative z-20 outline-none"
-          src={blobUrl || ""}
-          onLoadedData={onReady}
-        />
-      ) : (
-        <video
-          ref={(node) => setVideoElement(node)}
-          controls
-          autoPlay
-          playsInline
-          className="w-full h-full max-h-full object-contain bg-black z-20 outline-none"
-          src={blobUrl || ""}
-          onLoadedData={onReady}
-        />
+      <VidstackPlayer
+        title="Encrypted Media"
+        src={blobUrl || ""}
+        onProviderSetup={(provider) => {
+          if (provider.type === "video") {
+            setVideoElement((provider as any).video);
+          } else if (provider.type === "audio") {
+            setVideoElement((provider as any).audio);
+          }
+        }}
+        onCanPlay={onReady}
+        viewType={isAudio ? "audio" : "video"}
+        className="w-full h-full max-h-[85vh] flex items-center justify-center outline-none"
+      >
+        <MediaProvider />
+        {isAudio ? (
+          <DefaultAudioLayout icons={defaultLayoutIcons} />
+        ) : (
+          <DefaultVideoLayout icons={defaultLayoutIcons} />
+        )}
+      </VidstackPlayer>
+
+      {/* Audio Track Selector — shown only when sidecar audio tracks exist */}
+      {hasSidecars && audioTracks && audioTracks.length > 1 && (
+        <div className="absolute bottom-16 right-3 z-20 flex items-center gap-1.5 rounded-lg bg-black/70 px-2 py-1.5 backdrop-blur-sm border border-white/10">
+          <span className="text-[10px] font-medium text-white/50 uppercase tracking-wider mr-1">
+            Audio
+          </span>
+          {audioTracks.map((track, idx) => (
+            <button
+              key={track.id}
+              onClick={() => selectTrack(idx === 0 ? null : track.id)}
+              disabled={trackLoading}
+              className={cn(
+                "rounded px-2 py-0.5 text-[11px] font-semibold transition-all duration-150",
+                (
+                  idx === 0
+                    ? activeTrackId === null
+                    : activeTrackId === track.id
+                )
+                  ? "bg-primary text-primary-foreground"
+                  : "text-white/70 hover:text-white hover:bg-white/10",
+              )}
+            >
+              {track.language?.toUpperCase() || `Track ${idx + 1}`}
+            </button>
+          ))}
+          {trackLoading && (
+            <span className="ml-1 h-3 w-3 animate-spin rounded-full border border-white/30 border-t-white" />
+          )}
+        </div>
       )}
     </div>
   );
@@ -139,12 +224,37 @@ const MediaPlayer = ({
   url,
   type,
   onReady,
+  audioTracks,
+  dek,
+  privateKey,
+  metadataKey,
 }: {
   url: string;
   type: string;
   onReady?: () => void;
+  audioTracks?: SidecarAudioTrack[];
+  dek?: CryptoKey | null;
+  privateKey?: CryptoKey | null;
+  metadataKey?: CryptoKey | null;
 }) => {
   const isAudio = type.startsWith("audio/");
+  const [mediaElement, setMediaElement] = useState<HTMLMediaElement | null>(
+    null,
+  );
+
+  const {
+    activeTrackId,
+    isLoading: trackLoading,
+    selectTrack,
+  } = useAudioTrackSyncer({
+    videoElement: mediaElement,
+    audioTracks: audioTracks ?? [],
+    dek: dek ?? null,
+    privateKey,
+    metadataKey,
+  });
+
+  const hasSidecars = (audioTracks?.filter((t) => t.objectId).length ?? 0) > 1;
 
   return (
     <div
@@ -155,6 +265,7 @@ const MediaPlayer = ({
     >
       {isAudio ? (
         <audio
+          ref={setMediaElement}
           controls
           autoPlay
           className="w-full relative z-20 outline-none"
@@ -163,13 +274,45 @@ const MediaPlayer = ({
         />
       ) : (
         <video
+          ref={setMediaElement}
           controls
           autoPlay
           playsInline
-          className="w-full h-full max-h-full object-contain bg-black z-20 outline-none"
+          className="w-full h-full max-h-full object-contain z-20 outline-none"
           src={url}
           onLoadedData={onReady}
         />
+      )}
+
+      {/* Audio Track Selector for Native Player */}
+      {audioTracks && audioTracks.length > 1 && (
+        <div className="absolute bottom-16 right-3 z-30 flex items-center gap-1.5 rounded-lg bg-black/70 px-2 py-1.5 backdrop-blur-sm border border-white/10">
+          <span className="text-[10px] font-medium text-white/50 uppercase tracking-wider mr-1">
+            Audio
+          </span>
+          {audioTracks.map((track, idx) => (
+            <button
+              key={track.id}
+              onClick={() => selectTrack(idx === 0 ? null : track.id)}
+              disabled={trackLoading}
+              className={cn(
+                "rounded px-2 py-0.5 text-[11px] font-semibold transition-all duration-150 relative",
+                (
+                  idx === 0
+                    ? activeTrackId === null
+                    : activeTrackId === track.id
+                )
+                  ? "bg-primary text-primary-foreground"
+                  : "text-white/70 hover:text-white hover:bg-white/10",
+              )}
+            >
+              {track.language?.toUpperCase() || `Track ${idx + 1}`}
+            </button>
+          ))}
+          {trackLoading && (
+            <span className="ml-1 h-3 w-3 animate-spin rounded-full border border-white/30 border-t-white" />
+          )}
+        </div>
       )}
     </div>
   );
@@ -194,6 +337,7 @@ function inferContentTypeFromName(name: string): string | null {
   if (lower.endsWith(".gif")) return "image/gif";
   if (lower.endsWith(".webp")) return "image/webp";
   if (lower.endsWith(".mp4")) return "video/mp4";
+  if (lower.endsWith(".mkv")) return "video/x-matroska";
   if (lower.endsWith(".webm")) return "video/webm";
   if (lower.endsWith(".mov")) return "video/quicktime";
   if (lower.endsWith(".mp3")) return "audio/mpeg";
@@ -315,6 +459,8 @@ export function FilePreviewDialog({
   const [isEncrypted, setIsEncrypted] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
   const [streamOpts, setStreamOpts] = useState<VideoStreamOptions | null>(null);
+  const [audioTracks, setAudioTracks] = useState<SidecarAudioTrack[]>([]);
+  const [streamDek, setStreamDek] = useState<CryptoKey | null>(null);
   const [loadingMessage, setLoadingMessage] =
     useState<string>("Loading preview...");
   const [progress, setProgress] = useState<number | null>(null);
@@ -323,6 +469,7 @@ export function FilePreviewDialog({
   const [decryptedContentType, setDecryptedContentType] = useState<
     string | null
   >(null);
+  const [fetchedData, setFetchedData] = useState<ObjectData | null>(null);
 
   const objectUrlRef = useRef<string | null>(null);
 
@@ -374,9 +521,12 @@ export function FilePreviewDialog({
       setIsEncrypted(false);
       setIsMinimized(false);
       setStreamOpts(null);
+      setAudioTracks([]);
+      setStreamDek(null);
       setLoadingMessage("Loading preview...");
       setProgress(null);
       setIsVideoPreparing(false);
+      setFetchedData(null);
     }
   }, [isOpen]);
 
@@ -412,6 +562,71 @@ export function FilePreviewDialog({
   }, [file, isUnlocked, metadataKey]);
 
   useEffect(() => {
+    if (!isOpen || !fetchedData) return;
+
+    let cancelled = false;
+    /*
+    async function discoverTracks() {
+      // --- Audio Track Discovery (Unified) ---
+      const sidecarAudio =
+        fetchedData.sidecars?.filter((s) => s.mediaCategory === "audio") || [];
+      console.log(sidecarAudio);
+
+      let tracks: SidecarAudioTrack[] = [
+        {
+          id: "internal-0",
+          language: "Default",
+          title: "Internal Audio",
+        },
+        ...sidecarAudio.map((s, idx) => ({
+          id: s.id,
+          objectId: s.id,
+          language: `Track ${idx + 2}`,
+          title: `Sidecar ${idx + 1}`,
+        })),
+      ];
+
+      if (fetchedData.encryptedMetadata && metadataKey) {
+        try {
+          const { decryptMetadataObject } =
+            await import("@/lib/crypto/fileEncryption");
+          const decoded = await decryptMetadataObject(
+            fetchedData.encryptedMetadata,
+            metadataKey,
+          );
+
+          if (decoded?.audioTracks && decoded.audioTracks.length > 0) {
+            tracks = tracks.map((track, idx) => {
+              const meta = decoded.audioTracks[idx];
+              if (meta) {
+                return {
+                  ...track,
+                  language: meta.language || track.language,
+                  title: meta.title || track.title,
+                };
+              }
+              return track;
+            });
+          }
+        } catch (e) {
+          console.warn("[Preview] Failed to enrich track labels", e);
+        }
+      }
+
+      if (tracks.length > 1 && !cancelled) {
+        console.log("tracks", tracks);
+        setAudioTracks(tracks);
+      }
+    }
+
+    discoverTracks();
+    */
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, fetchedData, metadataKey]);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function run() {
@@ -422,6 +637,7 @@ export function FilePreviewDialog({
       setError("");
       setUrl(null);
       setStreamOpts(null);
+      setStreamDek(null);
       setProgress(null);
       setIsVideoPreparing(false);
 
@@ -446,6 +662,7 @@ export function FilePreviewDialog({
           throw new Error(errData.error || "Failed to get metadata");
         }
         const data = await res.json();
+        if (!cancelled) setFetchedData(data);
         if (
           !data?.url &&
           !data?.streamUrl &&
@@ -683,7 +900,10 @@ export function FilePreviewDialog({
                   }
                 }
               } catch (err) {
-                console.warn("[Preview] SW streaming failed, falling back to MSE", err);
+                console.warn(
+                  "[Preview] SW streaming failed, falling back to MSE",
+                  err,
+                );
               }
             }
             console.log("[Preview] Using MSE fallback mode");
@@ -696,17 +916,21 @@ export function FilePreviewDialog({
               ["decrypt"],
             );
 
-            setStreamOpts({
-              urls: data.chunkUrls,
-              dek,
-              chunkSize: data.chunkSize || 2 * 1024 * 1024,
-              chunkCount: data.chunkCount || data.chunkUrls.length,
-              chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
-              contentType: type,
-            });
-            if (shouldShowPreparingUI) setIsVideoPreparing(true);
-            setLoadingMessage("Fetching initial chunks...");
-            setLoading(false);
+            if (data.chunkUrls && data.chunkUrls.length > 0) {
+              if (!cancelled) setStreamDek(dek);
+
+              setStreamOpts({
+                urls: data.chunkUrls,
+                dek,
+                chunkSize: data.chunkSize || 2 * 1024 * 1024,
+                chunkCount: data.chunkCount || data.chunkUrls.length,
+                chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
+                contentType: type,
+              });
+              if (shouldShowPreparingUI) setIsVideoPreparing(true);
+              setLoadingMessage("Fetching initial chunks...");
+              setLoading(false);
+            }
           }
           return;
         }
@@ -837,6 +1061,10 @@ export function FilePreviewDialog({
               if (newUrl !== url) setUrl(newUrl);
             }}
             onReady={() => setIsVideoPreparing(false)}
+            audioTracks={audioTracks}
+            dek={streamDek}
+            privateKey={privateKey}
+            metadataKey={metadataKey}
           />
         );
       } else if (url) {
@@ -859,6 +1087,10 @@ export function FilePreviewDialog({
               url={url}
               type={type}
               onReady={() => setIsVideoPreparing(false)}
+              audioTracks={audioTracks}
+              dek={streamDek}
+              privateKey={privateKey}
+              metadataKey={metadataKey}
             />
           );
         } else if (type === "application/pdf") {

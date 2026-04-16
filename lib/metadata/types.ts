@@ -44,6 +44,8 @@ export interface FileMetadata {
   audioSampleRate: number | null;
   audioChannels: string | null;
   creationTime: string | null;
+  audioTracks?: { id: string; language: string; codec: string; title?: string }[];
+  subtitleTracks?: { id: string; language: string; format: string; codec?: string; title?: string; objectId?: string }[];
 
   // APP-LEVEL (IMPORTANT)
   thumbnail: string | null;
