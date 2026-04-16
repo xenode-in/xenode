@@ -1,11 +1,26 @@
 "use client";
 import Link from "next/link";
-import { MoreHorizontal, Lock } from "lucide-react";
+import {
+  MoreHorizontal,
+  Lock,
+  DownloadCloud,
+  Link2,
+  FileText,
+} from "lucide-react";
 import { getFileIcon } from "@/lib/file-icons";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
 import { useState, useEffect } from "react";
+import { usePreview } from "@/contexts/PreviewContext";
+import { useDownload } from "@/contexts/DownloadContext";
+import { ShareDialog, ShareableFile } from "@/components/share-dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface ObjectData {
   id: string;
@@ -17,6 +32,8 @@ interface ObjectData {
   isEncrypted?: boolean;
   encryptedName?: string;
   mediaCategory?: string;
+  encryptedContentType?: string;
+  encryptedDisplayName?: string;
 }
 
 function getFileName(key: string) {
@@ -31,7 +48,31 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>(
     {},
   );
-  const { isUnlocked, metadataKey } = useCrypto();
+  const { isUnlocked, metadataKey, privateKey, setModalOpen } = useCrypto();
+  const { openPreview } = usePreview();
+  const { startDownload } = useDownload();
+  const [shareFile, setShareFile] = useState<ShareableFile | null>(null);
+
+  async function getDEKBytes(fileId: string): Promise<Uint8Array> {
+    if (!privateKey) {
+      setModalOpen(true);
+      throw new Error("Vault locked");
+    }
+    const res = await fetch(`/api/objects/${fileId}`);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Failed to get file metadata");
+    if (!data.encryptedDEK)
+      throw new Error("No encrypted key found for this file");
+    const wrappedDEK = Uint8Array.from(atob(data.encryptedDEK), (c) =>
+      c.charCodeAt(0),
+    );
+    const dekBytes = await crypto.subtle.decrypt(
+      { name: "RSA-OAEP" },
+      privateKey,
+      wrappedDEK,
+    );
+    return new Uint8Array(dekBytes);
+  }
 
   useEffect(() => {
     if (!isUnlocked || !files.length) {
@@ -96,7 +137,8 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
         {files.map((file) => (
           <div
             key={file.id}
-            className="grid grid-cols-[2fr_1fr_1fr_40px] gap-4 px-4 py-3 border-b border-border/50 last:border-0 hover:bg-secondary/40 transition-colors items-center"
+            onClick={() => openPreview(file)}
+            className="grid grid-cols-[2fr_1fr_1fr_40px] gap-4 px-4 py-3 border-b border-border/50 last:border-0 hover:bg-secondary/40 transition-colors items-center cursor-pointer group"
           >
             {/* Name */}
             <div className="flex items-center gap-2 min-w-0">
@@ -125,12 +167,65 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
             </span>
 
             {/* Action */}
-            <button className="flex items-center justify-center w-7 h-7 rounded-lg hover:bg-secondary transition-colors ml-auto">
-              <MoreHorizontal className="w-4 h-4 text-muted-foreground" />
-            </button>
+            <div
+              className="ml-auto flex items-center"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="flex items-center justify-center w-7 h-7 rounded-lg hover:bg-secondary transition-colors">
+                    <MoreHorizontal className="w-4 h-4 text-muted-foreground" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="end"
+                  className="w-48 bg-card border-border"
+                >
+                  <DropdownMenuItem
+                    className="hover:bg-accent cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openPreview(file);
+                    }}
+                  >
+                    <FileText className="w-4 h-4 mr-2" />
+                    Preview
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="hover:bg-accent cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      startDownload(file as any, !!file.isEncrypted, privateKey, metadataKey);
+                    }}
+                  >
+                    <DownloadCloud className="w-4 h-4 mr-2" />
+                    Download
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="hover:bg-accent cursor-pointer"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShareFile(file as any);
+                    }}
+                  >
+                    <Link2 className="w-4 h-4 mr-2" />
+                    Share
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
         ))}
       </div>
+
+      {shareFile && (
+        <ShareDialog
+          file={shareFile}
+          open={!!shareFile}
+          onOpenChange={(isOpen) => !isOpen && setShareFile(null)}
+          getDEKBytes={getDEKBytes}
+        />
+      )}
     </div>
   );
 }

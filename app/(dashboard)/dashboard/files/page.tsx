@@ -424,6 +424,9 @@ export default function FilesPage() {
   const [decryptedFolderNameMap, setDecryptedFolderNameMap] = useState<
     Record<string, string>
   >({});
+  const [decryptedFileNameMap, setDecryptedFileNameMap] = useState<
+    Record<string, string>
+  >({});
 
   const { addTasks, tasks } = useUpload();
   const { privateKey, metadataKey, setModalOpen } = useCrypto();
@@ -543,6 +546,32 @@ export default function FilesPage() {
     run();
   }, [objects, metadataKey]);
 
+  // Decrypt file names for accurate client-side name sorting/searching
+  useEffect(() => {
+    if (!metadataKey || !objects.length) return;
+    const run = async () => {
+      const newMap: Record<string, string> = {};
+      for (const obj of objects) {
+        if (
+          obj.contentType !== "application/x-directory" &&
+          obj.isEncrypted &&
+          obj.encryptedName &&
+          !decryptedFileNameMap[obj.id]
+        ) {
+          try {
+            newMap[obj.id] = await decryptMetadataString(
+              obj.encryptedName,
+              metadataKey,
+            );
+          } catch {}
+        }
+      }
+      if (Object.keys(newMap).length > 0)
+        setDecryptedFileNameMap((prev) => ({ ...prev, ...newMap }));
+    };
+    run();
+  }, [objects, metadataKey]);
+
   useEffect(() => {
     if (!rootPrefix) return;
     const folderParam = searchParams.get("folder");
@@ -625,8 +654,15 @@ export default function FilesPage() {
     const applySort = <T extends ObjectData>(arr: T[]): T[] =>
       [...arr].sort((a, b) => {
         let cmp = 0;
-        if (sortField === "name") cmp = a.key.localeCompare(b.key);
-        else if (sortField === "size") cmp = a.size - b.size;
+        if (sortField === "name") {
+          const nameA = a.contentType === "application/x-directory"
+            ? (decryptedFolderNameMap[a.key] || a.key.split("/").filter(Boolean).pop() || a.key)
+            : (decryptedFileNameMap[a.id] || a.key.split("/").filter(Boolean).pop() || a.key);
+          const nameB = b.contentType === "application/x-directory"
+            ? (decryptedFolderNameMap[b.key] || b.key.split("/").filter(Boolean).pop() || b.key)
+            : (decryptedFileNameMap[b.id] || b.key.split("/").filter(Boolean).pop() || b.key);
+          cmp = nameA.localeCompare(nameB, undefined, { sensitivity: "base" });
+        } else if (sortField === "size") cmp = a.size - b.size;
         else if (sortField === "type")
           cmp = a.contentType.localeCompare(b.contentType);
         else
@@ -639,10 +675,9 @@ export default function FilesPage() {
       if (!searchTerm) return arr;
       const q = searchTerm.toLowerCase();
       return arr.filter((o) => {
-        const name =
-          decryptedFolderNameMap[o.key] ||
-          o.key.split("/").filter(Boolean).pop() ||
-          o.key;
+        const name = o.contentType === "application/x-directory"
+          ? (decryptedFolderNameMap[o.key] || o.key.split("/").filter(Boolean).pop() || o.key)
+          : (decryptedFileNameMap[o.id] || o.key.split("/").filter(Boolean).pop() || o.key);
         return name.toLowerCase().includes(q);
       });
     };
@@ -658,6 +693,7 @@ export default function FilesPage() {
     sortDir,
     searchTerm,
     decryptedFolderNameMap,
+    decryptedFileNameMap,
     typeFilter,
   ]);
 
