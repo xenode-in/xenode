@@ -360,6 +360,12 @@ a[href^="mailto"], a[href^="tel"], a[href^="sms"] { color: inherit; text-decorat
         enabled: false,
       },
     },
+    advanced: {
+      crossSubDomainCookies: {
+        enabled: true,
+        domain: process.env.NODE_ENV === "production" ? "xenode.in" : "localhost",
+      },
+    },
     rateLimit: {
       window: 60, // time window in seconds
       max: 100, // max requests in the window
@@ -372,6 +378,8 @@ a[href^="mailto"], a[href^="tel"], a[href^="sms"] { color: inherit; text-decorat
     },
     trustedOrigins: [
       process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+      "https://docs.xenode.in",
+      "http://docs.localhost:3000",
       "xenode://",
       "xenode://*",
       "http://localhost:8081",
