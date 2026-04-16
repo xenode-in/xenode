@@ -73,6 +73,59 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
+        // --- SUBDOMAIN SYNC LOGIC ---
+        const hostname = typeof window !== "undefined" ? window.location.hostname : "";
+        const isSubdomain = hostname.startsWith("docs.") || hostname.startsWith("admin.");
+        
+        if (isSubdomain) {
+          console.log("[CryptoProvider] Attempting cross-subdomain key sync...");
+          const mainUrl = process.env.NEXT_PUBLIC_APP_URL || (hostname.includes("localhost") ? "http://localhost:3000" : "https://xenode.in");
+          
+          const iframe = document.createElement("iframe");
+          iframe.src = `${mainUrl}/sync`;
+          iframe.style.display = "none";
+          document.body.appendChild(iframe);
+
+          const syncPromise = new Promise<any>((resolve) => {
+            const timeout = setTimeout(() => resolve(null), 5000);
+            
+            const handleSync = async (event: MessageEvent) => {
+              if (event.origin !== new URL(mainUrl).origin) return;
+              
+              if (event.data?.type === "XENODE_SYNC_READY") {
+                iframe.contentWindow?.postMessage({ type: "XENODE_GET_KEYS" }, mainUrl);
+              }
+              
+              if (event.data?.type === "XENODE_KEYS_RELAY") {
+                clearTimeout(timeout);
+                window.removeEventListener("message", handleSync);
+                document.body.removeChild(iframe);
+                resolve(event.data.keys);
+              }
+
+              if (event.data?.type === "XENODE_KEYS_NOT_FOUND") {
+                clearTimeout(timeout);
+                window.removeEventListener("message", handleSync);
+                document.body.removeChild(iframe);
+                resolve(null);
+              }
+            };
+            window.addEventListener("message", handleSync);
+          });
+
+          const syncedKeys = await syncPromise;
+          if (syncedKeys) {
+            console.log("[CryptoProvider] Successfully synced keys from main domain");
+            setPrivateKey(syncedKeys.privateKey);
+            setPublicKey(syncedKeys.publicKey);
+            setMetadataKey(syncedKeys.metadataKey);
+            setIsUnlocked(true);
+            await cacheKeys(syncedKeys.privateKey, syncedKeys.publicKey, syncedKeys.metadataKey);
+            return;
+          }
+        }
+        // --- END SYNC LOGIC ---
+
         const storedPw = sessionStorage.getItem("xenode-vault-pw");
         if (storedPw) {
           sessionStorage.removeItem("xenode-vault-pw");
