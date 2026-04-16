@@ -51,20 +51,31 @@ export default function DocsEditorPage() {
       }
 
       // 3. Download and Decrypt
-      // We'll use the same logic as FilePreviewDialog but specialized for this page
       const downloadRes = await fetch(data.url);
       if (!downloadRes.ok) throw new Error("Failed to download file content");
       const encryptedBuffer = await downloadRes.arrayBuffer();
 
-      // Get DEK
-      const dek = await decryptWithShareKey(data.encryptedDEK, privateKey);
-      const iv = data.iv;
+      // Unwrap DEK (RSA-OAEP)
+      const wrappedDEKBytes = fromB64(data.encryptedDEK);
+      const rawDEKBuffer = await crypto.subtle.decrypt(
+        { name: "RSA-OAEP" },
+        privateKey,
+        wrappedDEKBytes
+      );
 
-      const decryptedBuffer = await decryptFileWithDEK(encryptedBuffer, dek as unknown as CryptoKey, iv, data.contentType);
-      const blob = await decryptedBuffer;
+      const dek = await crypto.subtle.importKey(
+        "raw",
+        rawDEKBuffer,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["decrypt", "encrypt"]
+      );
+
+      const iv = data.iv;
+      const decryptedBlob = await decryptFileWithDEK(encryptedBuffer, dek, iv, data.contentType);
       
       if (blobUrl) URL.revokeObjectURL(blobUrl);
-      setBlobUrl(URL.createObjectURL(blob));
+      setBlobUrl(URL.createObjectURL(decryptedBlob));
       
       setLoading(false);
     } catch (err) {
@@ -83,10 +94,24 @@ export default function DocsEditorPage() {
 
     try {
       // 1. Re-encrypt with the same DEK but a NEW IV (standard security practice)
-      const dek = await decryptWithShareKey(fileMeta.encryptedDEK, privateKey);
+      const wrappedDEKBytes = fromB64(fileMeta.encryptedDEK);
+      const rawDEKBuffer = await crypto.subtle.decrypt(
+        { name: "RSA-OAEP" },
+        privateKey,
+        wrappedDEKBytes
+      );
+
+      const dek = await crypto.subtle.importKey(
+        "raw",
+        rawDEKBuffer,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["decrypt", "encrypt"]
+      );
+
       const newIv = crypto.getRandomValues(new Uint8Array(12));
       const arrayBuffer = await newBlob.arrayBuffer();
-      const encryptedBuffer = await encryptFileWithDEK(arrayBuffer, dek as unknown as CryptoKey, newIv);
+      const encryptedBuffer = await encryptFileWithDEK(arrayBuffer, dek, newIv);
       const encryptedBlob = new Blob([encryptedBuffer], { type: "application/octet-stream" });
 
       // 2. Upload to the same key using a specialized upload flow
