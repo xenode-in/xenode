@@ -720,9 +720,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             objectKey: fileId,
             bucketId: returnedBucketId,
             size: totalSize,
-            contentType: shouldEncryptNow()
-              ? "application/octet-stream"
-              : uploadFile.type,
+            contentType: uploadFile.type || "application/octet-stream",
             originalContentType: uploadFile.type,
             mediaCategory: getMediaCategory(uploadFile.type),
             encryptedContentType:

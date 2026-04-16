@@ -28,6 +28,12 @@ const ADMIN_HOSTNAMES = [
   "admin.localhost:3000",
 ];
 
+const DOCS_HOSTNAMES = [
+  "docs.xenode.in",
+  "docs.localhost",
+  "docs.localhost:3000",
+];
+
 export function proxy(req: NextRequest) {
   const hostname = req.headers.get("host") || "";
   const { pathname } = req.nextUrl;
@@ -56,6 +62,23 @@ export function proxy(req: NextRequest) {
     //    /dashboard →  /admin/dashboard
     const rewriteUrl = req.nextUrl.clone();
     rewriteUrl.pathname = `/admin${pathname === "/" ? "" : pathname}`;
+    return NextResponse.rewrite(rewriteUrl);
+  }
+
+  const isDocsHost = DOCS_HOSTNAMES.some(
+    (h) => hostname === h || hostname.startsWith(h),
+  );
+
+  // ── Docs subdomain ──────────────────────────────────────────────────────
+  if (isDocsHost) {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.next();
+    }
+    if (pathname.startsWith("/docs")) {
+      return NextResponse.next();
+    }
+    const rewriteUrl = req.nextUrl.clone();
+    rewriteUrl.pathname = `/docs${pathname === "/" ? "" : pathname}`;
     return NextResponse.rewrite(rewriteUrl);
   }
 

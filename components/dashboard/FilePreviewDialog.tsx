@@ -3,6 +3,8 @@
 const NOOP = () => {};
 
 import React, { useEffect, useState, useRef } from "react";
+import dynamic from "next/dynamic";
+import DocxViewer from "./DocxViewer";
 import {
   Dialog,
   DialogClose,
@@ -21,6 +23,7 @@ import {
   Maximize2,
   ChevronLeft,
   ChevronRight,
+  Pencil,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -49,6 +52,11 @@ import {
   DefaultVideoLayout,
   DefaultAudioLayout,
 } from "@vidstack/react/player/layouts/default";
+import { DocViewerRenderers } from "@cyntler/react-doc-viewer";
+
+const DocViewer = dynamic(() => import("@cyntler/react-doc-viewer"), {
+  ssr: false,
+});
 
 interface ObjectData {
   id: string;
@@ -332,6 +340,19 @@ function formatMB(bytes: number) {
 function inferContentTypeFromName(name: string): string | null {
   const lower = name.toLowerCase();
   if (lower.endsWith(".pdf")) return "application/pdf";
+  if (
+    lower.endsWith(".docx") ||
+    lower.endsWith(".doc") ||
+    lower.endsWith(".dot") ||
+    lower.endsWith(".dotx")
+  )
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  if (lower.endsWith(".txt")) return "text/plain";
+  if (lower.endsWith(".csv")) return "text/csv";
+  if (lower.endsWith(".xlsx") || lower.endsWith(".xls"))
+    return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+  if (lower.endsWith(".pptx") || lower.endsWith(".ppt"))
+    return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
   if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
   if (lower.endsWith(".png")) return "image/png";
   if (lower.endsWith(".gif")) return "image/gif";
@@ -360,8 +381,23 @@ function inferContentTypeFromCategory(
   if (category === "audio") {
     return currentType?.startsWith("audio/") ? currentType : "audio/mpeg";
   }
-  if (category === "document" && currentType === "application/pdf") {
-    return currentType;
+  if (category === "word") {
+    return (
+      currentType ||
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    );
+  }
+  if (category === "excel") {
+    return (
+      currentType ||
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+  }
+  if (
+    category === "pdf" ||
+    (category === "document" && currentType === "application/pdf")
+  ) {
+    return currentType || "application/pdf";
   }
   return null;
 }
@@ -1105,6 +1141,36 @@ export function FilePreviewDialog({
               />
             </div>
           );
+        } else if (
+          type.includes("word") ||
+          type.includes("officedocument.wordprocessingml") ||
+          type.includes("msword")
+        ) {
+          innerContent = <DocxViewer url={url} name={name} />;
+        } else if (
+          type.includes("excel") ||
+          type.includes("spreadsheet") ||
+          type.includes("presentation") ||
+          type.includes("powerpoint") ||
+          type.includes("text/plain") ||
+          type.includes("text/csv")
+        ) {
+          innerContent = (
+            <div className="h-full w-full doc-viewer-wrapper">
+              <DocViewer
+                documents={[{ uri: url, fileType: type, fileName: name }]}
+                pluginRenderers={DocViewerRenderers}
+                style={{ height: "100%" }}
+                config={{
+                  header: {
+                    disableHeader: true,
+                    disableFileName: true,
+                    retainURLParams: false,
+                  },
+                }}
+              />
+            </div>
+          );
         } else {
           innerContent = (
             <div className="flex h-full flex-col items-center justify-center text-center px-6">
@@ -1250,14 +1316,32 @@ export function FilePreviewDialog({
                 </Button>
               )}
               {url && !isMinimized && (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleDownload}
-                  className="mr-1"
-                >
-                  Download
-                </Button>
+                <div className="flex items-center gap-1.5 mr-1">
+                  {type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        const editorUrl = window.location.hostname === "localhost" 
+                          ? `http://docs.localhost:3000/?id=${file.id}` 
+                          : `https://docs.xenode.in/?id=${file.id}`;
+                        window.open(editorUrl, "_blank");
+                      }}
+                      className="h-8 gap-1.5 text-primary hover:text-primary hover:bg-primary/10"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Edit</span>
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleDownload}
+                    className="h-8"
+                  >
+                    Download
+                  </Button>
+                </div>
               )}
 
               <Button

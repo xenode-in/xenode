@@ -1,7 +1,5 @@
 import { getServerSession } from "@/lib/auth/session";
 import { redirect } from "next/navigation";
-import type { Metadata } from "next";
-import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { UploadProvider } from "@/contexts/UploadContext";
 import { UploadProgress } from "@/components/upload/UploadProgress";
 import { CryptoProvider } from "@/contexts/CryptoContext";
@@ -10,12 +8,7 @@ import { DownloadProvider } from "@/contexts/DownloadContext";
 import { CryptoDashboardWrapper } from "@/components/dashboard/CryptoDashboardWrapper";
 import { DownloadProgress } from "@/components/dashboard/DownloadProgress";
 
-export const metadata: Metadata = {
-  title: "Dashboard",
-  description: "Manage your Xenode files",
-};
-
-export default async function DashboardLayout({
+export default async function DocsLayout({
   children,
 }: {
   children: React.ReactNode;
@@ -23,18 +16,8 @@ export default async function DashboardLayout({
   const session = await getServerSession();
 
   if (!session) {
-    redirect("/login");
-  }
-
-  // Enforce email verification
-  if (session.user.emailVerified === false) {
-    redirect("/verify-email");
-  }
-
-  // Redirect to onboarding if not completed
-  // Use loose check in case the field is undefined for older users
-  if ((session.user as any).onboarded === false) {
-    redirect("/onboarding");
+    const mainUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    redirect(`${mainUrl}/login`);
   }
 
   return (
@@ -42,16 +25,9 @@ export default async function DashboardLayout({
       <DownloadProvider>
         <PreviewProvider>
           <UploadProvider>
-            <DashboardShell
-              user={{
-                id: session.user.id,
-                name: session.user.name,
-                email: session.user.email,
-                image: session.user.image || undefined,
-              }}
-            >
+            <div className="flex h-screen w-full flex-col overflow-hidden bg-background">
               <CryptoDashboardWrapper>{children}</CryptoDashboardWrapper>
-            </DashboardShell>
+            </div>
             <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-4 w-96 max-w-[calc(100vw-2rem)] pointer-events-none *:pointer-events-auto">
               <UploadProgress />
               <DownloadProgress />

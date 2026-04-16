@@ -75,13 +75,25 @@ export async function decryptFileWithDEK(
   iv: string,
   contentType: string,
 ): Promise<Blob> {
-  const ivBytes = fromB64(iv) as Uint8Array<ArrayBuffer>;
+  const ivBytes = fromB64(iv);
   const plaintext = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: ivBytes },
     dek,
     ciphertext,
   );
   return new Blob([plaintext], { type: contentType });
+}
+
+export async function encryptFileWithDEK(
+  plaintext: ArrayBuffer,
+  dek: CryptoKey,
+  iv: Uint8Array,
+): Promise<ArrayBuffer> {
+  return await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: iv as any },
+    dek,
+    plaintext,
+  );
 }
 
 export async function decryptFileChunkedCombined(

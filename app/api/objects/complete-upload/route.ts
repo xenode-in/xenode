@@ -200,7 +200,7 @@ export async function POST(request: NextRequest) {
       userId,
       key: objectKey,
       size,
-      contentType: "application/octet-stream",
+      contentType: originalContentType ?? contentType ?? "application/octet-stream",
       encryptedContentType: encryptedContentType ?? undefined,
       mediaCategory,
       b2FileId,
