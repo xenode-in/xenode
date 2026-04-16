@@ -18,7 +18,6 @@ import {
 import { getFileIcon } from "@/lib/file-icons";
 import { DocViewerRenderers } from "@cyntler/react-doc-viewer";
 import dynamic from "next/dynamic";
-import "plyr-react/plyr.css";
 import { useVideoStream, VideoStreamOptions } from "@/hooks/useVideoStream";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
 import {
@@ -271,7 +270,8 @@ export default function SharedFilePage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to load stream info");
 
-      const shareEncryptedDEK = data.shareEncryptedDEK || meta.shareEncryptedDEK;
+      const shareEncryptedDEK =
+        data.shareEncryptedDEK || meta.shareEncryptedDEK;
 
       if (data.isEncrypted && (!shareKey || !shareEncryptedDEK)) {
         throw new Error("Missing decryption key.");
