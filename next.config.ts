@@ -53,6 +53,12 @@ const nextConfig: NextConfig = {
         ],
       },
       {
+        source: "/sync",
+        headers: [
+          { key: "Cross-Origin-Resource-Policy", value: "cross-origin" },
+        ],
+      },
+      {
         source: "/admin/:path*",
         headers: [
           { key: "X-Robots-Tag", value: "noindex, nofollow" },

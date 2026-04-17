@@ -1,33 +1,43 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useEffect, useState, useCallback } from "react";
+import { useSearchParams } from "next/navigation";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { useDownload } from "@/contexts/DownloadContext";
-import { useUpload } from "@/contexts/UploadContext";
 import {
   decryptFileWithDEK,
   decryptMetadataString,
   encryptFileWithDEK
 } from "@/lib/crypto/fileEncryption";
-import { decryptWithShareKey } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
-import { Loader2, AlertCircle, Lock } from "lucide-react";
+import { Loader2, AlertCircle } from "lucide-react";
 import DocxEditor from "@/components/dashboard/DocxEditor";
 import { Button } from "@/components/ui/button";
 
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+interface DocsFileMeta {
+  url: string;
+  encryptedName?: string | null;
+  encryptedDEK: string;
+  iv: string;
+  contentType: string;
+}
+
 export default function DocsEditorPage() {
   const searchParams = useSearchParams();
-  const router = useRouter();
   const fileId = searchParams.get("id");
   
   const { privateKey, metadataKey } = useCrypto();
-  const { startDownload } = useDownload();
-  const { addTasks } = useUpload(); // We'll use this for the save operation
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [fileMeta, setFileMeta] = useState<any>(null);
+  const [fileMeta, setFileMeta] = useState<DocsFileMeta | null>(null);
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [decryptedName, setDecryptedName] = useState<string>("");
 
@@ -41,7 +51,7 @@ export default function DocsEditorPage() {
       // 1. Fetch metadata
       const res = await fetch(`/api/objects/${fileId}`);
       if (!res.ok) throw new Error("File not found or access denied");
-      const data = await res.json();
+      const data = (await res.json()) as DocsFileMeta;
       setFileMeta(data);
 
       // 2. Decrypt name
@@ -74,8 +84,10 @@ export default function DocsEditorPage() {
       const iv = data.iv;
       const decryptedBlob = await decryptFileWithDEK(encryptedBuffer, dek, iv, data.contentType);
       
-      if (blobUrl) URL.revokeObjectURL(blobUrl);
-      setBlobUrl(URL.createObjectURL(decryptedBlob));
+      setBlobUrl((previousBlobUrl) => {
+        if (previousBlobUrl) URL.revokeObjectURL(previousBlobUrl);
+        return URL.createObjectURL(decryptedBlob);
+      });
       
       setLoading(false);
     } catch (err) {
@@ -114,35 +126,17 @@ export default function DocsEditorPage() {
       const encryptedBuffer = await encryptFileWithDEK(arrayBuffer, dek, newIv);
       const encryptedBlob = new Blob([encryptedBuffer], { type: "application/octet-stream" });
 
-      // 2. Upload to the same key using a specialized upload flow
-      // Instead of using UploadContext (which is for new files), we'll do a direct update
-      const updateRes = await fetch(`/api/objects/${fileId}/update-content`, {
+      // 2. Upload through our API so docs.xenode.in does not depend on B2 CORS.
+      const updateRes = await fetch(`/api/objects/${fileId}/update-content?iv=${encodeURIComponent(bytesToBase64(newIv))}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          size: encryptedBlob.size,
-          iv: Buffer.from(newIv).toString("base64"),
-        })
-      });
-
-      if (!updateRes.ok) throw new Error("Failed to get upload URL");
-      const { uploadUrl } = await updateRes.json();
-
-      // 3. PUT to B2
-      const putRes = await fetch(uploadUrl, {
-        method: "PUT",
+        headers: { "Content-Type": "application/octet-stream" },
         body: encryptedBlob,
-        headers: { "Content-Type": "application/octet-stream" }
       });
 
-      if (!putRes.ok) throw new Error("Failed to upload to storage");
-
-      // 4. Complete the update on the server
-      await fetch(`/api/objects/${fileId}/complete-update`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ size: encryptedBlob.size })
-      });
+      if (!updateRes.ok) {
+        const data = await updateRes.json().catch(() => null);
+        throw new Error(data?.error || "Failed to save document");
+      }
 
     } catch (err) {
       console.error("[DocsEditorPage] Save error:", err);
