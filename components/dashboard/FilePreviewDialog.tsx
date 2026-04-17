@@ -978,7 +978,9 @@ export function FilePreviewDialog({
           (pct) => {
             if (!cancelled) setProgress(pct);
           },
-          directShareId ? `direct-share-${directShareId}-${file.id}` : file.id,
+          directShareId 
+            ? `direct-share-${directShareId}-${file.id}` 
+            : `${file.id}-${data.iv || ""}`,
           file.size,
         );
 

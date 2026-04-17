@@ -1,0 +1,298 @@
+"use server";
+
+import officeParser from "officeparser";
+import {
+  Document,
+  Packer,
+  Paragraph,
+  TextRun,
+  Table,
+  TableRow,
+  TableCell,
+  HeadingLevel,
+  WidthType,
+  AlignmentType,
+  BorderStyle,
+  VerticalAlign,
+} from "docx";
+import { officeASTToTiptapJSON } from "@/lib/office/normalizer";
+
+/**
+ * parseDocxToJSONAction
+ * Uses officeparser and our normalizer to turn a DOCX blob into TipTap JSON.
+ */
+export async function parseDocxToJSONAction(base64: string): Promise<any> {
+  try {
+    const buffer = Buffer.from(base64, "base64");
+
+    // officeparser expects a path or a buffer
+    const ast = await officeParser.parseOffice(buffer);
+
+    // Convert AST to TipTap JSON
+    return officeASTToTiptapJSON(ast);
+  } catch (error) {
+    console.error("[parseDocxToJSONAction] Error:", error);
+    throw new Error("Failed to parse document to JSON");
+  }
+}
+
+/**
+ * convertJSONToDocxAction
+ * Uses the 'docx' library to build a high-fidelity Word document from TipTap JSON.
+ */
+export async function convertJSONToDocxAction(json: any): Promise<string> {
+  try {
+    const doc = new Document({
+      numbering: {
+        config: [
+          {
+            reference: "bullet-numbering",
+            levels: [
+              {
+                level: 0,
+                format: "bullet",
+                alignment: "left",
+                text: "•",
+              },
+            ],
+          },
+          {
+            reference: "ordered-numbering",
+            levels: [
+              {
+                level: 0,
+                format: "decimal",
+                alignment: "left",
+                text: "%1.",
+              },
+            ],
+          },
+        ],
+      },
+      sections: [
+        {
+          children: mapJSONToDocxNodes(json.content || []),
+        },
+      ],
+    });
+
+    const buffer = await Packer.toBuffer(doc);
+    return Buffer.from(buffer).toString("base64");
+  } catch (error) {
+    console.error("[convertJSONToDocxAction] Error:", error);
+    throw new Error("Failed to generate DOCX from JSON");
+  }
+}
+
+function mapJSONToDocxNodes(nodes: any[], options: any = {}): any[] {
+  const result: any[] = [];
+
+  for (const node of nodes) {
+    switch (node.type) {
+      case "heading":
+        result.push(
+          new Paragraph({
+            text: extractText(node),
+            heading: getHeadingLevel(node.attrs?.level),
+            ...options,
+          }),
+        );
+        break;
+
+      case "paragraph":
+        result.push(
+          new Paragraph({
+            children: mapTextMarks(node.content || []),
+            alignment: getAlignment(node.attrs?.textAlign),
+            ...options,
+          }),
+        );
+        break;
+
+      case "horizontalRule":
+        result.push(
+          new Paragraph({
+            thematicBreak: true,
+          }),
+        );
+        break;
+
+      case "bulletList":
+      case "orderedList": {
+        const isOrdered = node.type === "orderedList";
+        const numbering = {
+          reference: isOrdered ? "ordered-numbering" : "bullet-numbering",
+          level: 0,
+        };
+
+        (node.content || []).forEach((listItem: any) => {
+          // listItem content is usually a paragraph. Pass numbering options down.
+          const itemContent = mapJSONToDocxNodes(listItem.content || [], {
+            numbering,
+          });
+          result.push(...itemContent);
+        });
+        break;
+      }
+
+      case "table": {
+        // Calculate column widths if available in TipTap JSON
+        let columnWidths: number[] | undefined = undefined;
+        const firstRow = node.content?.[0];
+        if (firstRow && firstRow.content) {
+          columnWidths = firstRow.content.map((cell: any) => {
+            const widths = cell.attrs?.colwidth;
+            if (Array.isArray(widths) && widths[0]) {
+              // Convert px to twips (1px approx 15 twips)
+              return Math.round(widths[0] * 15);
+            }
+            return 2000; // Default wide width
+          });
+        }
+
+        result.push(
+          new Table({
+            width: { size: 100, type: WidthType.PERCENTAGE },
+            columnWidths,
+            borders: {
+              top: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
+              bottom: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
+              left: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
+              right: { style: BorderStyle.SINGLE, size: 4, color: "000000" },
+              insideHorizontal: {
+                style: BorderStyle.SINGLE,
+                size: 2,
+                color: "666666",
+              },
+              insideVertical: {
+                style: BorderStyle.SINGLE,
+                size: 2,
+                color: "666666",
+              },
+            },
+            rows: (node.content || []).map(
+              (row: any) =>
+                new TableRow({
+                  children: (row.content || []).map(
+                    (cell: any) =>
+                      new TableCell({
+                        children: mapJSONToDocxNodes(cell.content || []),
+                        verticalAlign: VerticalAlign.CENTER,
+                        margins: {
+                          top: 100, // 5pt approx
+                          bottom: 100,
+                          left: 150, // 7.5pt approx
+                          right: 150,
+                        },
+                      }),
+                  ),
+                }),
+            ),
+          }),
+        );
+        break;
+      }
+
+      case "image":
+        result.push(
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: `[Image: ${node.attrs?.alt || "Imported Image"}]`,
+                color: "999999",
+                italics: true,
+              }),
+            ],
+          }),
+        );
+        break;
+
+      default:
+        // Try to handle text nodes if they appear at top level (unlikely but safe)
+        if (node.type === "text") {
+          result.push(
+            new Paragraph({
+              children: mapTextMarks([node]),
+              ...options,
+            }),
+          );
+        }
+    }
+  }
+
+  return result.filter(Boolean);
+}
+
+function mapTextMarks(content: any[]): TextRun[] {
+  return content
+    .map((item) => {
+      if (item.type === "text") {
+        const marks = item.marks || [];
+        const textStyle =
+          marks.find((m: any) => m.type === "textStyle")?.attrs || {};
+
+        const options: any = {
+          text: item.text,
+          bold: !!marks.find((m: any) => m.type === "bold"),
+          italics: !!marks.find((m: any) => m.type === "italic"),
+          underline: !!marks.find((m: any) => m.type === "underline")
+            ? {}
+            : undefined,
+          strike: !!marks.find((m: any) => m.type === "strike"),
+        };
+
+        // Export Font Family
+        if (textStyle.fontFamily) {
+          options.font = textStyle.fontFamily;
+        }
+
+        // Export Font Size (px to half-points)
+        // Formula: (px / 1.333) = pt. pt * 2 = half-points.
+        if (textStyle.fontSize) {
+          const pt = parseInt(textStyle.fontSize) / 1.333;
+          options.size = Math.round(pt * 2);
+        }
+
+        // Export Color (strip #)
+        if (textStyle.color) {
+          options.color = textStyle.color.replace("#", "");
+        }
+
+        return new TextRun(options);
+      }
+      return null;
+    })
+    .filter(Boolean) as TextRun[];
+}
+
+function extractText(node: any): string {
+  if (!node.content) return "";
+  return node.content.map((c: any) => c.text || "").join("");
+}
+
+function getHeadingLevel(level: number): any {
+  switch (level) {
+    case 1:
+      return HeadingLevel.HEADING_1;
+    case 2:
+      return HeadingLevel.HEADING_2;
+    case 3:
+      return HeadingLevel.HEADING_3;
+    default:
+      return HeadingLevel.HEADING_1;
+  }
+}
+
+function getAlignment(align?: string): AlignmentType {
+  switch (align) {
+    case "center":
+      return AlignmentType.CENTER;
+    case "right":
+      return AlignmentType.RIGHT;
+    case "justify":
+      return AlignmentType.JUSTIFIED;
+    case "left":
+    default:
+      return AlignmentType.LEFT;
+  }
+}

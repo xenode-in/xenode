@@ -22,6 +22,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   const exp = request.nextUrl.searchParams.get("exp");
   const sig = request.nextUrl.searchParams.get("sig");
+  const version = request.nextUrl.searchParams.get("v") || "";
 
   if (!exp || !sig) {
     return new NextResponse("Missing token parameters", { status: 400 });
@@ -32,7 +33,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     return new NextResponse("Invalid expiry", { status: 400 });
   }
 
-  if (!verifyFileToken(bucket, key, expNum, sig)) {
+  if (!verifyFileToken(bucket, key, expNum, sig, version)) {
     return new NextResponse("Invalid or expired token", { status: 403 });
   }
 

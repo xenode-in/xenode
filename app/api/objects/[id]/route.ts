@@ -73,7 +73,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         sortedChunks.map((chunk) => getDownloadUrl(bucket.b2BucketId, chunk.key))
       );
     } else {
-      url = await getDownloadUrl(bucket.b2BucketId, keyToUse!);
+      url = await getDownloadUrl(
+        bucket.b2BucketId, 
+        keyToUse!, 
+        3600, 
+        object.iv
+      );
     }
 
     const sidecars = await StorageObject.find({ 

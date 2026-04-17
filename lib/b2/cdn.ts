@@ -11,6 +11,7 @@ export function generateFileToken(
   bucketName: string,
   key: string,
   expiresIn: number = 3600, // seconds
+  version: string = "",
 ): { exp: number; sig: string } {
   const nowInSeconds = Math.floor(Date.now() / 1000);
   // Time-Windowed Logic:
@@ -19,7 +20,7 @@ export function generateFileToken(
 
   // The expiration is the start of this block + the duration
   const exp = currentBlockStart + expiresIn;
-  const payload = `${bucketName}:${key}:${exp}`;
+  const payload = `${bucketName}:${key}:${exp}${version ? ":" + version : ""}`;
   const sig = createHmac("sha256", SECRET).update(payload).digest("hex");
 
   return { exp, sig };
@@ -32,10 +33,11 @@ export function verifyFileToken(
   key: string,
   exp: number,
   sig: string,
+  version: string = "",
 ): boolean {
   const now = Math.floor(Date.now() / 1000);
   if (now > exp) return false; // expired
-  const payload = `${bucketName}:${key}:${exp}`;
+  const payload = `${bucketName}:${key}:${exp}${version ? ":" + version : ""}`;
   const expected = createHmac("sha256", SECRET).update(payload).digest("hex");
   // Constant-time comparison to prevent timing attacks
   if (expected.length !== sig.length) return false;
@@ -64,11 +66,17 @@ export function getSignedFileUrl(
   bucketName: string,
   key: string,
   expiresIn: number = 3600,
+  version?: string,
 ): string {
-  const { exp, sig } = generateFileToken(bucketName, key, expiresIn);
+  const { exp, sig } = generateFileToken(bucketName, key, expiresIn, version);
   const base =
     process.env.AZURE_CDN_URL ||
     process.env.NEXT_PUBLIC_APP_URL ||
     "http://localhost:3000";
-  return `${base.replace(/\/$/, "")}/api/files/${bucketName}/${key}?exp=${exp}&sig=${sig}`;
+  
+  let url = `${base.replace(/\/$/, "")}/api/files/${bucketName}/${key}?exp=${exp}&sig=${sig}`;
+  if (version) {
+    url += `&v=${encodeURIComponent(version)}`;
+  }
+  return url;
 }
