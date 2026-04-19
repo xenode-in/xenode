@@ -1,5 +1,6 @@
 "use server";
 
+import { JSONContent } from "@tiptap/react";
 import officeParser from "officeparser";
 import {
   Document,
@@ -14,6 +15,7 @@ import {
   AlignmentType,
   BorderStyle,
   VerticalAlign,
+  IParagraphOptions,
 } from "docx";
 import { officeASTToTiptapJSON } from "@/lib/office/normalizer";
 
@@ -21,15 +23,17 @@ import { officeASTToTiptapJSON } from "@/lib/office/normalizer";
  * parseDocxToJSONAction
  * Uses officeparser and our normalizer to turn a DOCX blob into TipTap JSON.
  */
-export async function parseDocxToJSONAction(base64: string): Promise<any> {
+export async function parseDocxToJSONAction(
+  base64: string,
+): Promise<JSONContent> {
   try {
     const buffer = Buffer.from(base64, "base64");
 
     // officeparser expects a path or a buffer
     const ast = await officeParser.parseOffice(buffer);
 
-    // Convert AST to TipTap JSON
-    return officeASTToTiptapJSON(ast);
+    // Convert AST to TipTap JSON (ast might need a cast if officeparser returns any)
+    return officeASTToTiptapJSON(ast as any);
   } catch (error) {
     console.error("[parseDocxToJSONAction] Error:", error);
     throw new Error("Failed to parse document to JSON");
@@ -40,7 +44,9 @@ export async function parseDocxToJSONAction(base64: string): Promise<any> {
  * convertJSONToDocxAction
  * Uses the 'docx' library to build a high-fidelity Word document from TipTap JSON.
  */
-export async function convertJSONToDocxAction(json: any): Promise<string> {
+export async function convertJSONToDocxAction(
+  json: JSONContent,
+): Promise<string> {
   try {
     const doc = new Document({
       numbering: {
@@ -51,7 +57,7 @@ export async function convertJSONToDocxAction(json: any): Promise<string> {
               {
                 level: 0,
                 format: "bullet",
-                alignment: "left",
+                alignment: AlignmentType.LEFT,
                 text: "•",
               },
             ],
@@ -62,7 +68,7 @@ export async function convertJSONToDocxAction(json: any): Promise<string> {
               {
                 level: 0,
                 format: "decimal",
-                alignment: "left",
+                alignment: AlignmentType.LEFT,
                 text: "%1.",
               },
             ],
@@ -84,8 +90,11 @@ export async function convertJSONToDocxAction(json: any): Promise<string> {
   }
 }
 
-function mapJSONToDocxNodes(nodes: any[], options: any = {}): any[] {
-  const result: any[] = [];
+function mapJSONToDocxNodes(
+  nodes: JSONContent[],
+  options: Partial<IParagraphOptions> = {},
+): (Paragraph | Table)[] {
+  const result: (Paragraph | Table)[] = [];
 
   for (const node of nodes) {
     switch (node.type) {
@@ -125,12 +134,13 @@ function mapJSONToDocxNodes(nodes: any[], options: any = {}): any[] {
           level: 0,
         };
 
-        (node.content || []).forEach((listItem: any) => {
+        (node.content || []).forEach((listItem) => {
           // listItem content is usually a paragraph. Pass numbering options down.
           const itemContent = mapJSONToDocxNodes(listItem.content || [], {
             numbering,
           });
-          result.push(...itemContent);
+          // result.push(...itemContent) might include tables if nested, but usually paragraphs
+          result.push(...(itemContent as (Paragraph | Table)[]));
         });
         break;
       }
@@ -140,7 +150,7 @@ function mapJSONToDocxNodes(nodes: any[], options: any = {}): any[] {
         let columnWidths: number[] | undefined = undefined;
         const firstRow = node.content?.[0];
         if (firstRow && firstRow.content) {
-          columnWidths = firstRow.content.map((cell: any) => {
+          columnWidths = firstRow.content.map((cell) => {
             const widths = cell.attrs?.colwidth;
             if (Array.isArray(widths) && widths[0]) {
               // Convert px to twips (1px approx 15 twips)
@@ -171,12 +181,14 @@ function mapJSONToDocxNodes(nodes: any[], options: any = {}): any[] {
               },
             },
             rows: (node.content || []).map(
-              (row: any) =>
+              (row) =>
                 new TableRow({
                   children: (row.content || []).map(
-                    (cell: any) =>
+                    (cell) =>
                       new TableCell({
-                        children: mapJSONToDocxNodes(cell.content || []),
+                        children: mapJSONToDocxNodes(
+                          cell.content || [],
+                        ) as Paragraph[],
                         verticalAlign: VerticalAlign.CENTER,
                         margins: {
                           top: 100, // 5pt approx
@@ -223,22 +235,22 @@ function mapJSONToDocxNodes(nodes: any[], options: any = {}): any[] {
   return result.filter(Boolean);
 }
 
-function mapTextMarks(content: any[]): TextRun[] {
+function mapTextMarks(content: JSONContent[]): TextRun[] {
   return content
     .map((item) => {
       if (item.type === "text") {
         const marks = item.marks || [];
         const textStyle =
-          marks.find((m: any) => m.type === "textStyle")?.attrs || {};
+          marks.find((m) => m.type === "textStyle")?.attrs || {};
 
         const options: any = {
-          text: item.text,
-          bold: !!marks.find((m: any) => m.type === "bold"),
-          italics: !!marks.find((m: any) => m.type === "italic"),
-          underline: !!marks.find((m: any) => m.type === "underline")
+          text: item.text || "",
+          bold: !!marks.find((m) => m.type === "bold"),
+          italics: !!marks.find((m) => m.type === "italic"),
+          underline: !!marks.find((m) => m.type === "underline")
             ? {}
             : undefined,
-          strike: !!marks.find((m: any) => m.type === "strike"),
+          strike: !!marks.find((m) => m.type === "strike"),
         };
 
         // Export Font Family
@@ -262,15 +274,15 @@ function mapTextMarks(content: any[]): TextRun[] {
       }
       return null;
     })
-    .filter(Boolean) as TextRun[];
+    .filter((v): v is TextRun => !!v);
 }
 
-function extractText(node: any): string {
+function extractText(node: JSONContent): string {
   if (!node.content) return "";
-  return node.content.map((c: any) => c.text || "").join("");
+  return node.content.map((c) => c.text || "").join("");
 }
 
-function getHeadingLevel(level: number): any {
+function getHeadingLevel(level: number | undefined): any {
   switch (level) {
     case 1:
       return HeadingLevel.HEADING_1;
@@ -283,7 +295,7 @@ function getHeadingLevel(level: number): any {
   }
 }
 
-function getAlignment(align?: string): AlignmentType {
+function getAlignment(align?: string): any {
   switch (align) {
     case "center":
       return AlignmentType.CENTER;

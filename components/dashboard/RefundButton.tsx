@@ -29,10 +29,10 @@ export default function RefundButton({ paymentId, amount }: Props) {
   const handleRefund = async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/payment/refund", {
+      const res = await fetch("/api/payment/razorpay/refund", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentId }),
+        body: JSON.stringify({ paymentId, amount }),
       });
 
       const data = await res.json();
@@ -66,7 +66,7 @@ export default function RefundButton({ paymentId, amount }: Props) {
           <AlertDialogDescription>
             Are you sure you want to refund this payment of ₹{amount.toFixed(2)}?
             <br /><br />
-            <strong>Important:</strong> Your account will be immediately downgraded to the Free tier (5 GB storage). If you are currently over this limit, you won't be able to upload new files until you delete enough data.
+            <strong>Important:</strong> Your account will be immediately downgraded to the Free tier (5 GB storage). If you are currently over this limit, you won&apos;t be able to upload new files until you delete enough data.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

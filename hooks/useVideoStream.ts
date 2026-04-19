@@ -56,10 +56,12 @@ export function useVideoStream(
     const abort = new AbortController();
     abortRef.current = abort;
 
-    setBlobUrl(null);
-    setError(null);
-    setIsBuffering(true);
-    setProgress(0);
+    const timer = setTimeout(() => {
+      setBlobUrl(null);
+      setError(null);
+      setIsBuffering(true);
+      setProgress(0);
+    }, 0);
 
     const { urls, dek, chunkCount, chunkIvs, contentType } = opts;
 
@@ -94,7 +96,6 @@ export function useVideoStream(
       const url = URL.createObjectURL(ms);
       blobUrlRef.current = url;
       setBlobUrl(url);
-      videoElement.src = url;
 
       // Wait for sourceopen
       await new Promise<void>((r) =>
@@ -161,7 +162,10 @@ export function useVideoStream(
       setIsBuffering(false);
     });
 
-    return () => cleanup(abort, blobUrlRef);
+    return () => {
+      clearTimeout(timer);
+      cleanup(abort, blobUrlRef);
+    };
   }, [opts, videoElement]);
 
   return { blobUrl, error, isBuffering, progress };

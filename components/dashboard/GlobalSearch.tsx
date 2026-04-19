@@ -17,7 +17,7 @@ import { formatBytes } from "@/lib/utils";
 
 export function GlobalSearch() {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<any[]>([]);
+  const [results, setResults] = useState<LocalFile[]>([]);
   const [open, setOpen] = useState(false);
 
   // Initialize sync
@@ -38,11 +38,11 @@ export function GlobalSearch() {
       boost: { name: 2 },
     });
 
-    setResults(searchResults.slice(0, 10)); // Top 10 results
+    setResults(searchResults.slice(0, 10) as unknown as LocalFile[]); // Top 10 results
     setOpen(true);
   }, [query]);
 
-  const getResultUrl = (result: any) => {
+  const getResultUrl = (result: LocalFile) => {
     if (result.contentType === "application/x-directory") {
       const parts = result.key.split("/");
       // e.g. ["users", "userid", "my-folder", ""]
@@ -78,7 +78,7 @@ export function GlobalSearch() {
           onOpenAutoFocus={(e) => e.preventDefault()}
         >
           <div className="max-h-[300px] overflow-y-auto p-1">
-            {results.map((result: any) => {
+            {results.map((result: LocalFile) => {
               const isFolder = result.contentType === "application/x-directory";
 
               const handleClick = (e: React.MouseEvent) => {
@@ -95,7 +95,7 @@ export function GlobalSearch() {
                     contentType: r.contentType,
                     createdAt: r.createdAt,
                     isEncrypted: r.isEncrypted,
-                    encryptedName: r.encryptedName,
+                    encryptedName: r.encryptedName ?? undefined,
                     name: r.name,
                   }));
 
@@ -107,7 +107,7 @@ export function GlobalSearch() {
                     contentType: result.contentType,
                     createdAt: result.createdAt,
                     isEncrypted: result.isEncrypted,
-                    encryptedName: result.encryptedName,
+                    encryptedName: result.encryptedName ?? undefined,
                     name: result.name,
                   },
                   fileResults,

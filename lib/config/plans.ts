@@ -32,7 +32,7 @@ export const PLANS: PlanConfig[] = [
     storageLimitBytes: 100 * 1024 * 1024 * 1024,
     pricing: [
       { cycle: "monthly", priceINR: 149 },
-      { cycle: "yearly", priceINR: 1490, discountPercent: 17 },
+      { cycle: "yearly", priceINR: 1490 },
     ],
     features: [
       "100 GB E2EE Storage",
@@ -48,7 +48,7 @@ export const PLANS: PlanConfig[] = [
     storageLimitBytes: 500 * 1024 * 1024 * 1024,
     pricing: [
       { cycle: "monthly", priceINR: 399 },
-      { cycle: "yearly", priceINR: 3990, discountPercent: 17 },
+      { cycle: "yearly", priceINR: 3990 },
     ],
     features: [
       "500 GB E2EE Storage",
@@ -64,7 +64,7 @@ export const PLANS: PlanConfig[] = [
     storageLimitBytes: 1024 * 1024 * 1024 * 1024,
     pricing: [
       { cycle: "monthly", priceINR: 699 },
-      { cycle: "yearly", priceINR: 6990, discountPercent: 17 },
+      { cycle: "yearly", priceINR: 6990 },
     ],
     isPopular: true,
     features: [
@@ -81,7 +81,7 @@ export const PLANS: PlanConfig[] = [
     storageLimitBytes: 2 * 1024 * 1024 * 1024 * 1024,
     pricing: [
       { cycle: "monthly", priceINR: 999 },
-      { cycle: "yearly", priceINR: 9990, discountPercent: 17 },
+      { cycle: "yearly", priceINR: 9990 },
     ],
     features: [
       "2 TB E2EE Storage",
@@ -106,14 +106,16 @@ export function getPlanByName(name: string): PlanConfig | undefined {
  * @deprecated Use getPlanConfigFromDB(cycle) from lib/config/getPricingConfig.ts
  * Kept for unit test compatibility only.
  */
-export const PLAN_CONFIG: Record<string, { storageLimitBytes: number; priceINR: number }> =
-  Object.fromEntries(
-    PLANS.map((p) => [
-      p.name,
-      {
-        storageLimitBytes: p.storageLimitBytes,
-        // Falls back to monthly price for the legacy scalar shape
-        priceINR: p.pricing.find((x) => x.cycle === "monthly")?.priceINR ?? 0,
-      },
-    ])
-  );
+export const PLAN_CONFIG: Record<
+  string,
+  { storageLimitBytes: number; priceINR: number }
+> = Object.fromEntries(
+  PLANS.map((p) => [
+    p.name,
+    {
+      storageLimitBytes: p.storageLimitBytes,
+      // Falls back to monthly price for the legacy scalar shape
+      priceINR: p.pricing.find((x) => x.cycle === "monthly")?.priceINR ?? 0,
+    },
+  ]),
+);

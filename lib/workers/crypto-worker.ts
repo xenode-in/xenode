@@ -57,8 +57,9 @@ self.addEventListener("message", async (event) => {
       }
 
       self.postMessage({ type: "DECRYPT_BATCH_RESULT", jobId, results });
-    } catch (err: any) {
-      self.postMessage({ type: "DECRYPT_BATCH_ERROR", jobId, error: err.message });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Batch decryption failed";
+      self.postMessage({ type: "DECRYPT_BATCH_ERROR", jobId, error: message });
     }
   }
 });

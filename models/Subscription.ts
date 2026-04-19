@@ -4,12 +4,27 @@ import type { BillingCycle } from "@/types/pricing";
 export interface ISubscription extends Document {
   userId: string;
   planSlug: string;
-  status: "active" | "canceled" | "past_due" | "expired";
+  status:
+    | "created"
+    | "authenticated"
+    | "active"
+    | "paused"
+    | "cancelled"
+    | "completed"
+    | "expired";
+  subscription_id?: string;
+  mandate_status?: string;
   billingCycle: BillingCycle;
   startDate: Date;
   endDate: Date;
+  current_period_start?: Date;
+  current_period_end?: Date;
+  paid_count?: number;
+  total_count?: number;
+  cancel_at_cycle_end?: boolean;
   autoRenew: boolean;
-  metadata?: Record<string, any>;
+  gateway?: string;
+  metadata?: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -20,10 +35,20 @@ const SubscriptionSchema = new Schema<ISubscription>(
     planSlug: { type: String, required: true },
     status: {
       type: String,
-      enum: ["active", "canceled", "past_due", "expired"],
-      default: "active",
+      enum: [
+        "created",
+        "authenticated",
+        "active",
+        "paused",
+        "cancelled",
+        "completed",
+        "expired",
+      ],
+      default: "created",
       index: true,
     },
+    subscription_id: { type: String, unique: true, sparse: true, index: true },
+    mandate_status: { type: String },
     billingCycle: {
       type: String,
       enum: ["monthly", "yearly", "quarterly", "lifetime"],
@@ -31,10 +56,16 @@ const SubscriptionSchema = new Schema<ISubscription>(
     },
     startDate: { type: Date, required: true },
     endDate: { type: Date, required: true, index: true },
+    current_period_start: { type: Date },
+    current_period_end: { type: Date },
+    paid_count: { type: Number, default: 0 },
+    total_count: { type: Number },
+    cancel_at_cycle_end: { type: Boolean, default: false },
     autoRenew: { type: Boolean, default: false },
+    gateway: { type: String, default: "razorpay" },
     metadata: { type: Schema.Types.Mixed, default: {} },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 const Subscription: Model<ISubscription> =

@@ -17,16 +17,35 @@ export interface IPayment extends Document {
   userId: string;
   amount: number;
   currency: string;
-  status: "success" | "pending" | "failed" | "refunded" | "refund_pending";
+  status:
+    | "success"
+    | "pending"
+    | "failed"
+    | "refunded"
+    | "refund_pending"
+    | "refund_initiated";
+  /** Razorpay order ID */
+  order_id?: string;
+  /** Razorpay payment ID */
+  payment_id?: string;
+  /** Internal transaction tracking ID */
   txnid: string;
   planName: string;
-  /** Billing cycle selected at checkout — defaults to monthly for old records */
+  /** Billing cycle selected at checkout */
   billingCycle: BillingCycle;
   /** When this subscription period starts (payment success date) */
   subscriptionStartDate: Date;
   /** Pre-computed expiry date based on billingCycle */
   subscriptionEndDate: Date;
-  payuResponse?: any;
+  /** Payment method used (card, upi, etc.) */
+  method?: string;
+  /** Razorpay refund ID if applicable */
+  refund_id?: string;
+  /** Razorpay refund status */
+  refund_status?: string;
+  /** Any relevant internal or gateway notes */
+  notes?: string;
+  gatewayResponse?: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -48,8 +67,23 @@ const PaymentSchema = new Schema<IPayment>(
     },
     status: {
       type: String,
-      enum: ["success", "pending", "failed", "refunded", "refund_pending"],
+      enum: [
+        "success",
+        "pending",
+        "failed",
+        "refunded",
+        "refund_pending",
+        "refund_initiated",
+      ],
       default: "pending",
+      index: true,
+    },
+    order_id: {
+      type: String,
+      index: true,
+    },
+    payment_id: {
+      type: String,
       index: true,
     },
     txnid: {
@@ -64,8 +98,13 @@ const PaymentSchema = new Schema<IPayment>(
     },
     billingCycle: {
       type: String,
-      enum: ["monthly", "yearly", "quarterly", "lifetime"] satisfies BillingCycle[],
-      default: "monthly", // backward compat: old records treated as monthly
+      enum: [
+        "monthly",
+        "yearly",
+        "quarterly",
+        "lifetime",
+      ] satisfies BillingCycle[],
+      default: "monthly",
     },
     subscriptionStartDate: {
       type: Date,
@@ -74,14 +113,26 @@ const PaymentSchema = new Schema<IPayment>(
     subscriptionEndDate: {
       type: Date,
       default: null,
-      index: true, // indexed for fast "find active subscriptions" queries
+      index: true,
     },
-    payuResponse: {
+    method: {
+      type: String,
+    },
+    refund_id: {
+      type: String,
+    },
+    refund_status: {
+      type: String,
+    },
+    notes: {
+      type: String,
+    },
+    gatewayResponse: {
       type: Schema.Types.Mixed,
       default: {},
     },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 const Payment: Model<IPayment> =

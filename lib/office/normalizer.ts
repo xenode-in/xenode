@@ -1,10 +1,44 @@
 import { JSONContent } from "@tiptap/react";
 
 /**
+ * Office AST Node structure from officeparser
+ */
+interface OfficeNode {
+  type: string;
+  text?: string;
+  children?: (OfficeNode | string)[];
+  metadata?: Record<string, unknown>;
+  formatting?: {
+    bold?: boolean;
+    italic?: boolean;
+    underline?: boolean;
+    strike?: boolean;
+    size?: string;
+    color?: string;
+    font?: string;
+  };
+  level?: number;
+  rows?: OfficeNode[];
+  cells?: OfficeNode[];
+  items?: OfficeNode[];
+  src?: string;
+  rawContent?: string;
+}
+
+interface GroupedListNode {
+  type: "list_container";
+  listType: string;
+  listId: string;
+  items: OfficeNode[];
+}
+
+type ProcessingNode = OfficeNode | GroupedListNode | string;
+
+/**
  * officeASTToTiptapJSON
  * Converts the hierarchical AST from officeparser into a TipTap-compatible JSON structure.
  */
-export function officeASTToTiptapJSON(ast: any): JSONContent {
+export function officeASTToTiptapJSON(ast: { content: OfficeNode[]; metadata?: Record<string, unknown> }): JSONContent {
   const content: JSONContent[] = [];
 
   if (!ast || !ast.content) {
@@ -12,8 +46,8 @@ export function officeASTToTiptapJSON(ast: any): JSONContent {
   }
 
   // Grouping pass: adjacent 'list' nodes with same ID should be grouped
-  const groupedNodes: any[] = [];
-  let currentList: any = null;
+  const groupedNodes: ProcessingNode[] = [];
+  let currentList: GroupedListNode | null = null;
 
   for (const node of ast.content) {
     if (node.type === "list") {
@@ -71,52 +105,61 @@ export function officeASTToTiptapJSON(ast: any): JSONContent {
   };
 }
 
-function mapOfficeNodeToTiptap(node: any): JSONContent | null {
+function mapOfficeNodeToTiptap(node: ProcessingNode): JSONContent | null {
+  if (typeof node === "string") {
+    return { type: "text", text: node };
+  }
+
   switch (node.type) {
-    case "heading":
+    case "heading": {
+      const officeNode = node as OfficeNode;
       return {
         type: "heading",
-        attrs: { level: node.level || 1 },
-        content: mapChildren(node.children || node.text),
+        attrs: { level: officeNode.level || 1 },
+        content: mapChildren(officeNode.children || officeNode.text),
       };
+    }
 
     case "paragraph": {
-      const firstChild = Array.isArray(node.children) ? node.children[0] : null;
-      if (firstChild?.formatting?.size) {
+      const officeNode = node as OfficeNode;
+      const firstChild = Array.isArray(officeNode.children) ? officeNode.children[0] : null;
+      
+      if (firstChild && typeof firstChild !== "string" && firstChild.formatting?.size) {
         const sizePt = parseInt(firstChild.formatting.size) / 2; // half-points
         if (sizePt >= 24)
           return {
             type: "heading",
             attrs: { level: 1 },
-            content: mapChildren(node.children),
+            content: mapChildren(officeNode.children),
           };
         if (sizePt >= 18)
           return {
             type: "heading",
             attrs: { level: 2 },
-            content: mapChildren(node.children),
+            content: mapChildren(officeNode.children),
           };
         if (sizePt >= 14)
           return {
             type: "heading",
             attrs: { level: 3 },
-            content: mapChildren(node.children),
+            content: mapChildren(officeNode.children),
           };
       }
 
       // Preserve text alignment
-      const align = node.metadata?.alignment; // "left" | "center" | "right" | "justify"
+      const align = officeNode.metadata?.alignment; // "left" | "center" | "right" | "justify"
       return {
         type: "paragraph",
         attrs: align ? { textAlign: align } : {},
-        content: mapChildren(node.children || node.text),
+        content: mapChildren(officeNode.children || officeNode.text),
       };
     }
 
     case "list_container": {
+      const listNode = node as GroupedListNode;
       return {
-        type: node.listType === "ordered" ? "orderedList" : "bulletList",
-        content: node.items.map((item: any) => ({
+        type: listNode.listType === "ordered" ? "orderedList" : "bulletList",
+        content: listNode.items.map((item) => ({
           type: "listItem",
           content: [
             {
@@ -128,13 +171,17 @@ function mapOfficeNodeToTiptap(node: any): JSONContent | null {
       };
     }
     case "table": {
-      const rows = (node.rows || node.children || []).filter((r: any) => r);
+      const officeNode = node as OfficeNode;
+      const rows = (officeNode.rows || officeNode.children || []).filter((r): r is OfficeNode => typeof r !== "string" && !!r);
       if (rows.length === 0) return null;
       return {
         type: "table",
-        content: rows.map((row: any) => ({
+        content: rows.map((row) => ({
           type: "tableRow",
-          content: (row.cells || row.children || []).map((cell: any) => {
+          content: (row.cells || row.children || []).map((cell) => {
+            if (typeof cell === "string") {
+               return { type: "tableCell", content: [{ type: "paragraph", content: [{ type: "text", text: cell }] }] };
+            }
             const children = mapChildren(cell.children || cell.text || []);
             // TipTap table cells MUST contain block nodes (like paragraphs)
             const wrappedContent = children.some(
@@ -161,7 +208,7 @@ function mapOfficeNodeToTiptap(node: any): JSONContent | null {
   }
 }
 
-function mapChildren(children: any): JSONContent[] {
+function mapChildren(children: (OfficeNode | string)[] | string | undefined): JSONContent[] {
   if (!children) return [];
   if (typeof children === "string") {
     return [{ type: "text", text: children }];
@@ -175,7 +222,7 @@ function mapChildren(children: any): JSONContent[] {
         }
 
         if (child.type === "text") {
-          const marks: any[] = [];
+          const marks: JSONContent[] = [];
           const f = child.formatting || {};
 
           if (f.bold) marks.push({ type: "bold" });

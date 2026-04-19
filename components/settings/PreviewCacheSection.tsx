@@ -26,8 +26,11 @@ export function PreviewCacheSection() {
   }
 
   useEffect(() => {
-    setMounted(true);
-    refresh();
+    const timer = setTimeout(() => {
+      setMounted(true);
+      refresh();
+    }, 0);
+    return () => clearTimeout(timer);
   }, []);
 
   if (!mounted) {

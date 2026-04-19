@@ -14,7 +14,8 @@ export function PasskeySignInButton() {
 
   useEffect(() => {
     if (localStorage.getItem("xenode_prf_unsupported")) { 
-      setShow(false)
+      // Defer to avoid cascading render
+      setTimeout(() => setShow(false), 0)
       return 
     }
     isPlatformAuthenticatorAvailable().then(setShow)

@@ -51,7 +51,18 @@ interface DocxEditorProps {
 const MenuBar = ({ editor }: { editor: Editor | null }) => {
   if (!editor) return null;
 
-  const buttons = [
+  type ToolbarButton = {
+    type?: "divider" | "custom" | "color";
+    icon?: React.ReactNode;
+    title?: string;
+    action?: (val?: any) => void;
+    disabled?: boolean;
+    isActive?: boolean;
+    component?: React.ReactNode;
+    value?: string;
+  };
+
+  const buttons: ToolbarButton[] = [
     {
       type: "custom",
       component: (
@@ -214,7 +225,7 @@ const MenuBar = ({ editor }: { editor: Editor | null }) => {
               <input
                 type="color"
                 onInput={(e) =>
-                  btn.action((e.target as HTMLInputElement).value)
+                  btn.action?.((e.target as HTMLInputElement).value)
                 }
                 value={btn.value}
                 className="w-6 h-6 rounded cursor-pointer border-none bg-transparent"
@@ -228,7 +239,7 @@ const MenuBar = ({ editor }: { editor: Editor | null }) => {
             key={i}
             variant="ghost"
             size="icon"
-            onClick={btn.action}
+            onClick={() => btn.action?.()}
             disabled={btn.disabled}
             className={cn(
               "h-8 w-8 transition-colors",

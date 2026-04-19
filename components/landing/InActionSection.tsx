@@ -130,7 +130,7 @@ export function InActionSection() {
                 <span className="font-brand italic">Xenode</span> helps
               </h2>
               <p className="opacity-60 mb-8 text-sm max-w-sm">
-                Common real-world scenarios. Don't see yours? There are many
+                Common real-world scenarios. Don&apos;t see yours? There are many
                 more.
               </p>
             </div>

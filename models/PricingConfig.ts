@@ -60,6 +60,7 @@ const PlanPricingSchema = new Schema<IPlanPricing>(
     },
     priceINR: { type: Number, required: true, min: 0 },
     discountPercent: { type: Number, min: 0, max: 100, default: undefined },
+    razorpayPlanId: { type: String, default: "" },
   },
   { _id: false }
 );

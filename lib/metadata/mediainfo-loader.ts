@@ -24,14 +24,14 @@ function injectScript(): Promise<void> {
       resolve();
       return;
     }
-    if ((window as any).MediaInfo) {
+    if (window.MediaInfo) {
       resolve();
       return;
     }
     if (document.querySelector(`script[src="${SCRIPT_URL}"]`)) {
       // Already injected – poll until it's ready
       const poll = setInterval(() => {
-        if ((window as any).MediaInfo) {
+        if (window.MediaInfo) {
           clearInterval(poll);
           resolve();
         }
@@ -49,20 +49,31 @@ function injectScript(): Promise<void> {
   return loading;
 }
 
-/**
- * Drop-in replacement for `MediaInfoFactory(opts)` from the npm package.
- * The UMD build's `locateFile` is pointed at /mediainfo/ so it finds the
- * pre-copied MediaInfoModule.wasm served from public/.
- */
-const MediaInfoFactory: (opts?: any) => Promise<any> = async (opts = {}) => {
+interface MediaInfoInstance {
+  analyzeData: (getSize: () => number, readChunk: (sz: number, off: number) => Promise<Uint8Array>) => Promise<unknown>;
+  close: () => void;
+}
+
+type MediaInfoFactoryFunction = (opts?: Record<string, unknown>) => Promise<MediaInfoInstance>;
+
+interface GlobalMediaInfo {
+  default?: MediaInfoFactoryFunction;
+  mediaInfoFactory?: MediaInfoFactoryFunction;
+}
+
+declare global {
+  var MediaInfo: GlobalMediaInfo | undefined;
+}
+
+const MediaInfoFactory: (opts?: Record<string, unknown>) => Promise<MediaInfoInstance> = async (opts = {}) => {
   await injectScript();
 
   // The UMD build sets globalThis.MediaInfo = { default: mediaInfoFactory, mediaInfoFactory, ... }
-  const MediaInfo = (globalThis as any).MediaInfo;
+  const MediaInfo = (globalThis as unknown as { MediaInfo: GlobalMediaInfo }).MediaInfo;
   if (!MediaInfo) throw new Error("MediaInfo not available after script load");
 
-  const factory: (opts: any) => Promise<any> =
-    MediaInfo.default ?? MediaInfo.mediaInfoFactory;
+  const factory = MediaInfo.default ?? MediaInfo.mediaInfoFactory;
+  if (!factory) throw new Error("MediaInfo factory not found in global object");
 
   return factory({
     ...opts,

@@ -50,7 +50,7 @@ export function DashboardClient() {
 
   const hasPreview = (videos && videos.length > 0) || (images && images.length > 0) || (audios && audios.length > 0);
 
-  const mapToObjects = (files: any[]) => files.map(f => ({ ...f, encryptedName: f.encryptedName ?? undefined }));
+  const mapToObjects = (files: import("@/lib/db/local").LocalFile[]) => files.map(f => ({ ...f, encryptedName: f.encryptedName ?? undefined }));
 
   return (
     <div className="space-y-8">

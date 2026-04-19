@@ -15,7 +15,7 @@ export default class PaymentService {
     amount: string,
     productinfo: string,
     udf1: string,
-    payuData: any,
+    gatewayData: Record<string, unknown>,
     session: ClientSession
   ) {
     const existingPayment = await Payment.findOne({ txnid }).session(session);
@@ -53,13 +53,13 @@ export default class PaymentService {
       );
     }
 
-    const authpayuid = payuData.payuMoneyId || payuData.authpayuid || null;
+    const authpayuid = (gatewayData.payuMoneyId || gatewayData.authpayuid || null) as string | null;
 
     // ── Subscription window ──
     const billingCycle = pending.billingCycle ?? "monthly";
     const now = new Date();
     
-    let subscriptionStartDate = now;
+    const subscriptionStartDate = now;
     const currentUsage = await Usage.findOne({ userId: user._id.toString() }).session(session);
     
     let baseDateForEnd = now;
@@ -116,13 +116,13 @@ export default class PaymentService {
       billingCycle,
       subscriptionStartDate,
       subscriptionEndDate,
-      payuResponse: {
-        status: payuData.status,
-        txnid: payuData.txnid,
-        mihpayid: payuData.mihpayid,
-        mode: payuData.mode,
-        PG_TYPE: payuData.PG_TYPE,
-        bank_ref_num: payuData.bank_ref_num,
+      gatewayResponse: {
+        status: gatewayData.status as string,
+        txnid: gatewayData.txnid as string,
+        mihpayid: gatewayData.mihpayid as string,
+        mode: gatewayData.mode as string,
+        PG_TYPE: gatewayData.PG_TYPE as string,
+        bank_ref_num: gatewayData.bank_ref_num as string,
         ...(authpayuid ? { authpayuid } : {}),
       },
     }], { session });

@@ -6,6 +6,7 @@ import { PaymentSuccessIcon } from "@/app/components/payment/PaymentResultIcon";
 interface SuccessPageProps {
   searchParams: Promise<{
     txnid?: string;
+    subscription_id?: string;
     plan?: string;
     amount?: string;
   }>;
@@ -20,10 +21,11 @@ export default async function PaymentSuccessPage({
   searchParams,
 }: SuccessPageProps) {
   const params = await searchParams;
-  const { txnid, plan, amount } = params;
+  const { txnid, subscription_id, plan, amount } = params;
 
-  // Hard guard — never show a blank success page without a txnid
-  if (!txnid) redirect("/dashboard/billing");
+  // Hard guard — never show a blank success page without a txnid or subscription_id
+  if (!txnid && !subscription_id) redirect("/dashboard/billing");
+
 
   const formattedAmount = amount ? `₹${parseFloat(amount).toFixed(2)}` : null;
 
@@ -33,7 +35,10 @@ export default async function PaymentSuccessPage({
     year: "numeric",
   });
 
-  const shortTxnId = txnid.length > 20 ? `${txnid.slice(0, 20)}…` : txnid;
+  const displayId = txnid || subscription_id || "";
+  const shortTxnId = displayId.length > 20 ? `${displayId.slice(0, 20)}…` : displayId;
+  const idLabel = txnid ? "Transaction ID" : "Subscription ID";
+
 
   return (
     <div className="flex min-h-screen w-full items-center justify-center px-4 py-16">
@@ -68,7 +73,7 @@ export default async function PaymentSuccessPage({
               />
             )}
             <ReceiptRow label="Date" value={formattedDate} />
-            <ReceiptRow label="Transaction ID" value={shortTxnId} mono />
+            <ReceiptRow label={idLabel} value={shortTxnId} mono />
             <ReceiptRow label="Status" value="Confirmed" green />
           </div>
         </div>
