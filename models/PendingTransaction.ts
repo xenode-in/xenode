@@ -30,6 +30,7 @@ export interface IPendingTransaction extends Document {
   couponDiscount?: number;
   expiresAt: Date;
   paymentMethod: "autopay" | "direct";
+  gateway: string;
   billingAddress?: object | null;
   expectedAmount?: number;
 }
@@ -59,6 +60,7 @@ const PendingTransactionSchema = new Schema<IPendingTransaction>(
       enum: ["autopay", "direct"],
       required: true,
     },
+    gateway: { type: String, default: "razorpay" },
     billingAddress: { type: Schema.Types.Mixed, default: null },
     expectedAmount: { type: Number, default: 0 },
   },

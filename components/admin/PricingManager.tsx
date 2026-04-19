@@ -75,16 +75,20 @@ export function PricingManager({ initialConfig }: Props) {
     normalizeCampaign(initialConfig.campaign ?? null)
   );
   const [editingCampaign, setEditingCampaign] = useState(false);
-  const [campDraft, setCampDraft] = useState({
-    name: "",
-    discountPercent: 10,
-    startDate: formatDate(new Date()),
-    endDate: formatDate(new Date(Date.now() + 7 * 86400000)),
-    isActive: true,
-    badge: "🎉 Sale",
-    discountDuration: "forever" as "forever" | "limited",
-    discountCycles: 1 as number | null,
-    targetAudience: "all" as "all" | "free_only",
+  const [campDraft, setCampDraft] = useState(() => {
+    const now = new Date();
+    const weekLater = new Date(now.getTime() + 7 * 86400000);
+    return {
+      name: "",
+      discountPercent: 10,
+      startDate: formatDate(now),
+      endDate: formatDate(weekLater),
+      isActive: true,
+      badge: "🎉 Sale",
+      discountDuration: "forever" as "forever" | "limited",
+      discountCycles: 1 as number | null,
+      targetAudience: "all" as "all" | "free_only",
+    };
   });
 
   const [saving, setSaving] = useState(false);

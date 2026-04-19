@@ -273,7 +273,7 @@ export function TwoFactorSettingsSection() {
               </div>
 
               <Button onClick={() => setSetupStep("verify")} className="w-full">
-                I've scanned the code →
+                I&apos;ve scanned the code →
               </Button>
             </div>
           )}

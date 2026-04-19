@@ -89,7 +89,7 @@ export function SetupVaultModal({ open, onClose }: SetupVaultModalProps) {
   function handlePasswordNext() {
     setPwError("");
     if (password.length < 8) { setPwError("Password must be at least 8 characters."); return; }
-    if (password !== confirm) { setPwError("Passwords don't match."); return; }
+    if (password !== confirm) { setPwError("Passwords don&apos;t match."); return; }
     setStep(2);
   }
 
@@ -98,14 +98,14 @@ export function SetupVaultModal({ open, onClose }: SetupVaultModalProps) {
     for (const idx of verifyIndices) {
       const input = (verifyInputs[idx] || "").trim().toLowerCase();
       if (input !== kit.words[idx]) {
-        setVerifyError(`Word #${idx + 1} doesn't match. Check your recovery kit.`);
+        setVerifyError(`Word #${idx + 1} doesn&apos;t match. Check your recovery kit.`);
         return;
       }
     }
     setLoading(true);
     try {
       await setup(password, kit.passphrase);
-      toast.success("Vault protected. You're all set!");
+      toast.success("Vault protected. You&apos;re all set!");
       onClose();
     } catch (e) {
       setVerifyError(e instanceof Error ? e.message : "Something went wrong.");
@@ -220,7 +220,7 @@ export function SetupVaultModal({ open, onClose }: SetupVaultModalProps) {
               >
                 {saved && <CheckCircle2 className="h-3.5 w-3.5 text-primary-foreground" />}
               </div>
-              <span className="text-sm text-foreground">I've saved my recovery kit in a safe place</span>
+              <span className="text-sm text-foreground">I&apos;ve saved my recovery kit in a safe place</span>
             </label>
 
             <div className="flex gap-2">
@@ -241,7 +241,7 @@ export function SetupVaultModal({ open, onClose }: SetupVaultModalProps) {
               </div>
               <DialogTitle className="text-center text-lg">Confirm your Recovery Kit</DialogTitle>
               <DialogDescription className="text-center text-sm text-muted-foreground">
-                Enter the words at the positions below to confirm you've saved your kit.
+                Enter the words at the positions below to confirm you&apos;ve saved your kit.
               </DialogDescription>
             </DialogHeader>
 

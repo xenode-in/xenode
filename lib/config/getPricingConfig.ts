@@ -34,7 +34,7 @@ const DEFAULT_PLANS: IPlan[] = [
     storageLimitBytes: 100 * 1024 * 1024 * 1024,
     pricing: [
       { cycle: "monthly", priceINR: 149 },
-      { cycle: "yearly", priceINR: 1490, discountPercent: 17 },
+      { cycle: "yearly", priceINR: 1490 },
     ],
     features: [
       "100 GB E2EE Storage",
@@ -49,8 +49,12 @@ const DEFAULT_PLANS: IPlan[] = [
     storage: "500 GB",
     storageLimitBytes: 500 * 1024 * 1024 * 1024,
     pricing: [
-      { cycle: "monthly", priceINR: 399 },
-      { cycle: "yearly", priceINR: 3990, discountPercent: 17 },
+      { cycle: "monthly", priceINR: 399, razorpayPlanId: "plan_ProMonthly_1" },
+      {
+        cycle: "yearly",
+        priceINR: 3990,
+        razorpayPlanId: "plan_ProYearly_1",
+      },
     ],
     features: [
       "500 GB E2EE Storage",
@@ -65,8 +69,12 @@ const DEFAULT_PLANS: IPlan[] = [
     storage: "1 TB",
     storageLimitBytes: 1024 * 1024 * 1024 * 1024,
     pricing: [
-      { cycle: "monthly", priceINR: 699 },
-      { cycle: "yearly", priceINR: 6990, discountPercent: 17 },
+      { cycle: "monthly", priceINR: 699, razorpayPlanId: "plan_PlusMonthly_1" },
+      {
+        cycle: "yearly",
+        priceINR: 6990,
+        razorpayPlanId: "plan_PlusYearly_1",
+      },
     ],
     isPopular: true,
     features: [
@@ -82,8 +90,12 @@ const DEFAULT_PLANS: IPlan[] = [
     storage: "2 TB",
     storageLimitBytes: 2 * 1024 * 1024 * 1024 * 1024,
     pricing: [
-      { cycle: "monthly", priceINR: 999 },
-      { cycle: "yearly", priceINR: 9990, discountPercent: 17 },
+      { cycle: "monthly", priceINR: 999, razorpayPlanId: "plan_MaxMonthly_1" },
+      {
+        cycle: "yearly",
+        priceINR: 9990,
+        razorpayPlanId: "plan_MaxYearly_1",
+      },
     ],
     features: [
       "2 TB E2EE Storage",
@@ -127,7 +139,7 @@ export async function getPricingConfig(): Promise<PricingData> {
 
 /** Returns plan by slug. Used in checkout pages. */
 export async function getPlanBySlugFromDB(
-  slug: string
+  slug: string,
 ): Promise<IPlan | undefined> {
   const { plans } = await getPricingConfig();
   return plans.find((p) => p.slug === slug);
@@ -142,8 +154,19 @@ export async function getPlanBySlugFromDB(
  */
 export async function getPlanConfigFromDB(
   cycle: BillingCycle = "monthly",
-  userPlan?: string
-): Promise<Record<string, { storageLimitBytes: number; priceINR: number; basePriceINR: number; campaignType: "forever" | "limited" | null; campaignCyclesLeft: number | null }>> {
+  userPlan?: string,
+): Promise<
+  Record<
+    string,
+    {
+      storageLimitBytes: number;
+      priceINR: number;
+      basePriceINR: number;
+      campaignType: "forever" | "limited" | null;
+      campaignCyclesLeft: number | null;
+    }
+  >
+> {
   const { plans, campaign } = await getPricingConfig();
 
   const activeCampaign = resolveActiveCampaign(campaign, userPlan);
@@ -154,15 +177,21 @@ export async function getPlanConfigFromDB(
       const price = getEffectivePriceForCycle(
         p.pricing,
         cycle,
-        activeCampaign?.discountPercent
+        activeCampaign?.discountPercent,
       );
-      return [p.name, { 
-        storageLimitBytes: p.storageLimitBytes, 
-        priceINR: price, 
-        basePriceINR: basePrice,
-        campaignType: activeCampaign ? activeCampaign.discountDuration : null,
-        campaignCyclesLeft: activeCampaign && activeCampaign.discountDuration === "limited" ? activeCampaign.discountCycles : null,
-      }];
-    })
+      return [
+        p.name,
+        {
+          storageLimitBytes: p.storageLimitBytes,
+          priceINR: price,
+          basePriceINR: basePrice,
+          campaignType: activeCampaign ? activeCampaign.discountDuration : null,
+          campaignCyclesLeft:
+            activeCampaign && activeCampaign.discountDuration === "limited"
+              ? activeCampaign.discountCycles
+              : null,
+        },
+      ];
+    }),
   );
 }

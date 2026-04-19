@@ -383,7 +383,7 @@ export function OnboardingForm() {
                         Welcome into Xenode!
                       </h2>
                       <p className="text-muted-foreground px-4 text-balance">
-                        We're thrilled to have you. Let's get your account
+                        We&apos;re thrilled to have you. Let&apos;s get your account
                         personalized and set up perfectly for your needs in just
                         a few clicks.
                       </p>
@@ -459,7 +459,7 @@ export function OnboardingForm() {
                         )}
                       </div>
                       <span className="text-sm">
-                        I've saved my recovery kit in a safe place
+                        I&apos;ve saved my recovery kit in a safe place
                       </span>
                     </label>
                   </motion.div>
@@ -590,12 +590,12 @@ export function OnboardingForm() {
                   >
                     <WellDone className="h-64 w-auto drop-shadow-sm" />
                     <div className="space-y-2">
-                      <h2 className="text-3xl font-bold">You're All Set!</h2>
+                      <h2 className="text-3xl font-bold">You&apos;re All Set!</h2>
                       <p className="text-muted-foreground">
                         Your vault is protected and your workspace is ready.
                         {isPaidPlan
                           ? " One last step — complete your payment to activate your plan."
-                          : " Let's start uploading and sharing files securely."}
+                          : " Let&apos;s start uploading and sharing files securely."}
                       </p>
                     </div>
                   </motion.div>

@@ -123,10 +123,11 @@ export async function getDownloadUrl(
   bucketName: string,
   key: string,
   expiresIn: number = 3600,
+  version?: string,
 ): Promise<string> {
   // Always route through our proxy so we can benefit from AZURE_CDN_URL
   // or handle custom stream processing (like range requests) uniformly.
-  return getSignedFileUrl(bucketName, key, expiresIn);
+  return getSignedFileUrl(bucketName, key, expiresIn, version);
 }
 
 /**

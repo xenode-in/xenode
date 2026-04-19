@@ -74,7 +74,10 @@ export async function createPayment(overrides: Partial<{
     status: overrides.status ?? "success",
     txnid: overrides.txnid ?? makeTxnid(),
     planName: overrides.planName ?? "Basic",
-    payuResponse: { status: "success", txnid: overrides.txnid ?? "test" },
+    gatewayResponse: { status: "success", txnid: overrides.txnid ?? "test" },
+    billingCycle: "monthly",
+    subscriptionStartDate: new Date(),
+    subscriptionEndDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
   });
 }
 

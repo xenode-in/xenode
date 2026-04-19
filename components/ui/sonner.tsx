@@ -17,7 +17,9 @@ const Toaster = ({ ...props }: ToasterProps) => {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
+    // Defer to avoid cascading render lint error
+    const timer = setTimeout(() => setMounted(true), 0);
+    return () => clearTimeout(timer);
   }, []);
 
   const currentTheme = theme === "system" ? resolvedTheme : theme;

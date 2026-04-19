@@ -13,9 +13,13 @@ export interface IPlanPricing {
   /**
    * Optional display-only discount label.
    * e.g. 17 means "Save 17%" badge shown on yearly plan.
-   * Actual discount logic lives in pricingService.ts.
    */
   discountPercent?: number;
+  /**
+   * Razorpay Plan ID for subscriptions (recurring).
+   * e.g. plan_N6O...
+   */
+  razorpayPlanId?: string;
 }
 
 export interface PlanCardProps {

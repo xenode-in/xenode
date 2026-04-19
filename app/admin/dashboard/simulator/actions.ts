@@ -14,7 +14,10 @@ export async function getUserUsage(userId: string) {
 
 // Manually trigger the recurring charge logic exactly like the cron job
 // but we pass in whether it "succeeded" or "failed" to skip real PayU calls
-export async function mockChargeRecurring(userId: string, forceStatus: "success" | "failed") {
+export async function mockChargeRecurring(
+  userId: string,
+  forceStatus: "success" | "failed",
+) {
   await dbConnect();
   const usage = await Usage.findOne({ userId });
   if (!usage) throw new Error("Usage not found");
@@ -52,22 +55,21 @@ export async function mockChargeRecurring(userId: string, forceStatus: "success"
     status: forceStatus,
     txnid,
     planName: "SIMULATED_CHARGE",
-    payuResponse: {
-      status: forceStatus,
-      payuid: "MOCK_PAYU_ID",
-      field9: "Simulated response",
-      authpayuid: usage.autopayMandateId,
-    },
   });
 
-  const lastPayment = await Payment.findOne({ userId: usage.userId, status: "success" })
+  const lastPayment = await Payment.findOne({
+    userId: usage.userId,
+    status: "success",
+  })
     .sort({ createdAt: -1 })
     .select("billingCycle");
   const cycle = lastPayment?.billingCycle || "monthly";
-  
+
   let nextExpiryDate = new Date();
-  if (cycle === "yearly") nextExpiryDate.setFullYear(nextExpiryDate.getFullYear() + 1);
-  else if (cycle === "quarterly") nextExpiryDate.setMonth(nextExpiryDate.getMonth() + 3);
+  if (cycle === "yearly")
+    nextExpiryDate.setFullYear(nextExpiryDate.getFullYear() + 1);
+  else if (cycle === "quarterly")
+    nextExpiryDate.setMonth(nextExpiryDate.getMonth() + 3);
   else nextExpiryDate.setMonth(nextExpiryDate.getMonth() + 1);
 
   if (forceStatus === "success") {
@@ -91,14 +93,14 @@ export async function mockChargeRecurring(userId: string, forceStatus: "success"
       const graceEnds = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
       await Usage.updateOne(
         { userId: usage.userId },
-        { 
-          $set: { 
-            autopayActive: false, 
+        {
+          $set: {
+            autopayActive: false,
             lastRenewalTxnid: txnid,
             isGracePeriod: true,
             gracePeriodEndsAt: graceEnds,
-            planExpiresAt: graceEnds 
-          } 
+            planExpiresAt: graceEnds,
+          },
         },
       );
     } else {
@@ -118,16 +120,19 @@ export async function timeTravelUsage(userId: string) {
   await dbConnect();
   await Usage.updateOne(
     { userId },
-    { $set: { planExpiresAt: new Date(Date.now() - 1000) } }
+    { $set: { planExpiresAt: new Date(Date.now() - 1000) } },
   );
   revalidatePath("/admin/dashboard/simulator");
   return { success: true };
 }
 
 // Initialize a clean state for testing
-export async function initializeTestState(userId: string, state: "pro_forever" | "pro_limited") {
+export async function initializeTestState(
+  userId: string,
+  state: "pro_forever" | "pro_limited",
+) {
   await dbConnect();
-  
+
   const updateData: any = {
     plan: "pro",
     autopayActive: true,
@@ -148,7 +153,11 @@ export async function initializeTestState(userId: string, state: "pro_forever" |
     updateData.campaignCyclesLeft = 2; // 2 more discounted cycles
   }
 
-  await Usage.findOneAndUpdate({ userId }, { $set: updateData }, { upsert: true });
+  await Usage.findOneAndUpdate(
+    { userId },
+    { $set: updateData },
+    { upsert: true },
+  );
 
   // Add a fake payment so cycle detection works
   await Payment.create({

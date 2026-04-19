@@ -101,7 +101,7 @@ export function VaultRecoverySection() {
                 .
               </p>
               <p className="text-xs text-muted-foreground italic">
-                Make sure you've downloaded unencrypted copies of important
+                Make sure you&apos;ve downloaded unencrypted copies of important
                 files before proceeding.
               </p>
             </div>
