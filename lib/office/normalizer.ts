@@ -51,8 +51,8 @@ export function officeASTToTiptapJSON(ast: { content: OfficeNode[]; metadata?: R
 
   for (const node of ast.content) {
     if (node.type === "list") {
-      const listId = node.metadata?.listId || "default";
-      const listType = node.metadata?.listType || "unordered";
+      const listId = (node.metadata?.listId as string) || "default";
+      const listType = (node.metadata?.listType as string) || "unordered";
 
       if (currentList && currentList.listId === listId) {
         currentList.items.push(node);
@@ -83,12 +83,13 @@ export function officeASTToTiptapJSON(ast: { content: OfficeNode[]; metadata?: R
   }
 
   // Extract default font from metadata
-  const defaultFont = ast.metadata?.formatting?.font || 
-                      ast.metadata?.styleMap?.Normal?.formatting?.font || 
+  const meta = ast.metadata as any;
+  const defaultFont = meta?.formatting?.font || 
+                      meta?.styleMap?.Normal?.formatting?.font || 
                       "Calibri";
   
-  const rawSize = ast.metadata?.formatting?.size || 
-                  ast.metadata?.styleMap?.Normal?.formatting?.size || 
+  const rawSize = meta?.formatting?.size || 
+                  meta?.styleMap?.Normal?.formatting?.size || 
                   "11pt";
   
   // Convert pt to px for the editor base

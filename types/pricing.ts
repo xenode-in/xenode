@@ -13,6 +13,8 @@ export interface IPlanPricing {
   /**
    * Optional display-only discount label.
    * e.g. 17 means "Save 17%" badge shown on yearly plan.
+   */
+  discountPercent?: number;
   /**
    * Razorpay Plan ID for subscriptions (recurring).
    * e.g. plan_N6O...
