@@ -20,6 +20,9 @@ export interface IUser extends Document {
   twoFactorEnabled?: boolean;
   twoFactorSecret?: string;
   twoFactorBackupCodes?: string;
+  subscriptionStatus?: "none" | "active" | "past_due" | "halted" | "cancelled";
+  subscriptionId?: mongoose.Types.ObjectId | string | null;
+  subscriptionExpiresAt?: Date | null;
 }
 
 const UserSchema = new Schema<IUser>(
@@ -40,6 +43,14 @@ const UserSchema = new Schema<IUser>(
     twoFactorEnabled: { type: Boolean, default: false },
     twoFactorSecret: { type: String },
     twoFactorBackupCodes: { type: String },
+    subscriptionStatus: {
+      type: String,
+      enum: ["none", "active", "past_due", "halted", "cancelled"],
+      default: "none",
+      index: true,
+    },
+    subscriptionId: { type: Schema.Types.Mixed, default: null },
+    subscriptionExpiresAt: { type: Date, default: null, index: true },
   },
   { 
     timestamps: true,

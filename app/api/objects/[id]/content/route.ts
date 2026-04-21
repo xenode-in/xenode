@@ -4,6 +4,7 @@ import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import { getDownloadUrl } from "@/lib/b2/objects";
+import { enforceStorageAccess } from "@/lib/subscriptions/service";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,6 +17,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const session = await requireAuth(request);
     const userId = session.user.id;
+    await enforceStorageAccess(userId);
     const { id } = await params;
 
     await dbConnect();
@@ -65,6 +67,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (error instanceof Error && error.name === "SubscriptionRequired") {
+      return NextResponse.json({ error: "Active subscription required" }, { status: 402 });
     }
     const message = error instanceof Error ? error.message : "Internal server error";
     return NextResponse.json({ error: message }, { status: 500 });

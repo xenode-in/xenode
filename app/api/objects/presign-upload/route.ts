@@ -6,6 +6,7 @@ import { randomBytes } from "crypto";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
+import { enforceStorageAccess } from "@/lib/subscriptions/service";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +14,7 @@ export async function POST(request: NextRequest) {
   try {
     const session = await requireAuth(request);
     const userId = session.user.id;
+    await enforceStorageAccess(userId);
 
     const S3_ENDPOINT =
       process.env.S3_ENDPOINT || "https://s3.us-west-004.backblazeb2.com";
@@ -118,6 +120,12 @@ export async function POST(request: NextRequest) {
       bucketId: bucket._id.toString(),
     });
   } catch (error) {
+    if (error instanceof Error && error.name === "SubscriptionRequired") {
+      return NextResponse.json(
+        { error: "Active subscription required" },
+        { status: 402 },
+      );
+    }
     const message =
       error instanceof Error ? error.message : "Failed to generate upload URL";
     return NextResponse.json({ error: message }, { status: 500 });

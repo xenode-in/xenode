@@ -66,6 +66,24 @@ const navItems = [
     roles: ["super_admin"],
   },
   {
+    href: "/admin/dashboard/subscriptions",
+    label: "Subscriptions",
+    icon: DollarSign,
+    roles: ["super_admin", "admin"],
+  },
+  {
+    href: "/admin/dashboard/subscriptions/offers",
+    label: "Sub Offers",
+    icon: Ticket,
+    roles: ["super_admin", "admin"],
+  },
+  {
+    href: "/admin/dashboard/subscriptions/plans",
+    label: "Sub Plans",
+    icon: Layers,
+    roles: ["super_admin", "admin"],
+  },
+  {
     href: "/admin/dashboard/simulator",
     label: "Billing Simulator",
     icon: Activity,

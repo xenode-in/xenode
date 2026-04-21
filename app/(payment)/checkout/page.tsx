@@ -24,6 +24,7 @@ import {
 } from "@/lib/pricing/pricingService";
 import CheckoutPage from "@/components/checkout/CheckoutPage";
 import type { BillingCycle } from "@/types/pricing";
+import { getActiveSubscriptionOffer } from "@/lib/subscriptions/service";
 
 export const metadata = {
   title: "Checkout | Xenode",
@@ -55,7 +56,10 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
   const plan = planSlug ? await getPlanBySlugFromDB(planSlug) : undefined;
   if (!plan) redirect("/pricing");
 
-  const { campaign } = await getPricingConfig();
+  const [{ campaign }, activeSubscriptionOffer] = await Promise.all([
+    getPricingConfig(),
+    getActiveSubscriptionOffer(),
+  ]);
   const activeCampaign = resolveActiveCampaign(campaign ?? null);
 
   // ── Server-authoritative price for this cycle ──────────────────────────────
@@ -93,17 +97,19 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
   // ── Proration credit ───────────────────────────────────────────────────────
   const currentUsage = await Usage.findOne({ userId: session.user.id }).lean();
   let prorationCredit = 0;
+  // eslint-disable-next-line react-hooks/purity
+  const nowTs = Date.now();
   if (
     currentUsage &&
     currentUsage.plan !== "free" &&
     currentUsage.planExpiresAt &&
-    new Date(currentUsage.planExpiresAt).getTime() > Date.now() &&
+    new Date(currentUsage.planExpiresAt).getTime() > nowTs &&
     currentUsage.planPriceINR > 0 &&
     !currentUsage.isGracePeriod &&
     planSlug !== currentUsage.plan
   ) {
     const msRemaining =
-      new Date(currentUsage.planExpiresAt).getTime() - Date.now();
+      new Date(currentUsage.planExpiresAt).getTime() - nowTs;
     const daysRemaining = msRemaining / (1000 * 60 * 60 * 24);
     
     // Standard rounding to the nearest whole number (e.g., 349.97 -> 350)
@@ -131,6 +137,25 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
         campaignDiscount,
         campaignBadge: activeCampaign?.badge ?? null,
         campaignDiscountPercent: activeCampaign?.discountPercent ?? null,
+        subscriptionOffer:
+          billingCycle === "monthly" && activeCampaign?.discountDuration === "limited"
+            ? {
+                name: activeCampaign.name,
+                discountPercent: activeCampaign.discountPercent,
+                discountedAmount:
+                  getEffectivePriceForCycle(
+                    plan.pricing,
+                    "monthly",
+                    activeCampaign.discountPercent,
+                  ),
+              }
+            : activeSubscriptionOffer && activeSubscriptionOffer.originalAmount === originalPrice * 100
+          ? {
+              name: activeSubscriptionOffer.name,
+              discountPercent: activeSubscriptionOffer.discountPercent,
+              discountedAmount: activeSubscriptionOffer.discountedAmount / 100,
+            }
+          : null,
       }}
       user={{
         id: session.user.id,

@@ -8,6 +8,7 @@ import { deleteObject as deleteB2Object, getDownloadUrl } from "@/lib/b2/objects
 import { decrementStorage, updateBucketStats } from "@/lib/metering/usage";
 import ShareLink from "@/models/ShareLink";
 import DirectShare from "@/models/DirectShare";
+import { enforceStorageAccess } from "@/lib/subscriptions/service";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const session = await requireAuth(request);
     userId = session.user.id;
+    await enforceStorageAccess(userId);
 
     const { id } = await params;
     const isPreview = request.nextUrl.searchParams.get("preview") === "true";
@@ -117,6 +119,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       errorMessage = "Unauthorized";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
+    if (error instanceof Error && error.name === "SubscriptionRequired") {
+      statusCode = 402;
+      errorMessage = "Active subscription required";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    }
 
     statusCode = 500;
     errorMessage = error instanceof Error ? error.message : "Internal server error";
@@ -148,6 +155,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     const session = await requireAuth(request);
     userId = session.user.id;
+    await enforceStorageAccess(userId);
 
     const { id } = await params;
 
@@ -215,6 +223,11 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       errorMessage = "Unauthorized";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
+    if (error instanceof Error && error.name === "SubscriptionRequired") {
+      statusCode = 402;
+      errorMessage = "Active subscription required";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    }
 
     statusCode = 500;
     errorMessage = error instanceof Error ? error.message : "Internal server error";
@@ -246,6 +259,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
     const session = await requireAuth(request);
     userId = session.user.id;
+    await enforceStorageAccess(userId);
 
     const { id } = await params;
 
@@ -279,6 +293,11 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     if (error instanceof Error && error.message === "Unauthorized") {
       statusCode = 401;
       errorMessage = "Unauthorized";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    }
+    if (error instanceof Error && error.name === "SubscriptionRequired") {
+      statusCode = 402;
+      errorMessage = "Active subscription required";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
