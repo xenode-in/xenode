@@ -50,7 +50,7 @@ export default function PricingGrid({
       router.push("/sign-in");
       return;
     }
-    router.push(`/checkout?plan=${slug}&cycle=${cycle}`);
+    window.location.assign(`/checkout?plan=${slug}&cycle=${cycle}`);
   };
 
   // Savings % shown on the Yearly toggle button (use first plan as reference)
@@ -60,7 +60,6 @@ export default function PricingGrid({
   return (
     <section className={cn("w-full", compact ? "px-4 pb-6" : "py-20 px-6")}>
       <div className={cn("mx-auto", compact ? "max-w-none" : "max-w-5xl")}>
-
         {/* ── Header ─────────────────────────────────────────────── */}
         {!compact && (
           <div className="mb-10 text-center">
@@ -83,7 +82,7 @@ export default function PricingGrid({
                 "px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200",
                 cycle === "monthly"
                   ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               Monthly
@@ -94,7 +93,7 @@ export default function PricingGrid({
                 "flex items-center gap-2 px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200",
                 cycle === "yearly"
                   ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
               )}
             >
               Yearly
@@ -128,15 +127,12 @@ export default function PricingGrid({
         >
           {plans.map((plan) => {
             // Get base price for selected cycle
-            const basePrice = getEffectivePriceForCycle(
-              plan.pricing,
-              cycle
-            );
+            const basePrice = getEffectivePriceForCycle(plan.pricing, cycle);
             // Apply campaign discount on top if active
             const finalPrice = getEffectivePriceForCycle(
               plan.pricing,
               cycle,
-              campaign?.discountPercent
+              campaign?.discountPercent,
             );
             const isDiscounted = finalPrice !== basePrice;
 

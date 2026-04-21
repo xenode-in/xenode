@@ -6,6 +6,7 @@ import Coupon from "@/models/Coupon";
 import PendingTransaction from "@/models/PendingTransaction";
 import { User } from "@/models/User";
 import Subscription from "@/models/Subscription";
+import Usage from "@/models/Usage";
 import crypto from "crypto";
 import {
   getPlanBySlugFromDB,
@@ -48,13 +49,13 @@ export async function POST(req: Request) {
     }
 
     const { campaign } = await getPricingConfig();
-    
+
     // Find active subscription to determine user's current plan for campaign targeting
     const activeSubscription = await Subscription.findOne({
       userId: session.user.id,
-      status: "active"
+      status: "active",
     }).lean();
-    
+
     const userPlanSlug = activeSubscription?.planSlug || "free";
     const activeCampaign = resolveActiveCampaign(campaign, userPlanSlug);
 
@@ -64,7 +65,7 @@ export async function POST(req: Request) {
       activeCampaign?.discountPercent,
     );
 
-    let finalAmount = priceAfterCampaign;
+    let totalPayableAmount = priceAfterCampaign;
     let couponDiscount = 0;
     let validatedCouponId = null;
 
@@ -94,16 +95,46 @@ export async function POST(req: Request) {
               priceAfterCampaign - 1,
             );
           }
-          finalAmount = priceAfterCampaign - couponDiscount;
+          totalPayableAmount = priceAfterCampaign - couponDiscount;
         }
       }
     }
 
-    // Razorpay minimum requirement: 1 INR
-    finalAmount = Math.max(1, finalAmount);
+    // ─── 2. Proration Credit Calculation ──────────────────────────────────────
+    const currentUsage = await Usage.findOne({
+      userId: session.user.id,
+    }).lean();
+    let prorationCredit = 0;
+
+    if (
+      currentUsage &&
+      currentUsage.plan !== "free" &&
+      currentUsage.planExpiresAt &&
+      new Date(currentUsage.planExpiresAt).getTime() > Date.now() &&
+      currentUsage.planPriceINR > 0 &&
+      planSlug !== currentUsage.plan
+    ) {
+      const msRemaining =
+        new Date(currentUsage.planExpiresAt).getTime() - Date.now();
+      const daysRemaining = msRemaining / (1000 * 60 * 60 * 24);
+
+      // Standard rounding (e.g., 349.97 -> 350)
+      // Capped at the original price paid to prevent system errors (favors the business logic)
+      const calculatedCredit = Math.round(
+        (currentUsage.planPriceINR / 30) * daysRemaining,
+      );
+      prorationCredit = Math.min(calculatedCredit, currentUsage.planPriceINR);
+    }
+
+    // ─── 3. Final Amount Calculation ──────────────────────────────────────────
+    // Final price = (Price after campaign - Coupon discount) - Proration credit
+    totalPayableAmount = Math.max(
+      1,
+      Math.round(priceAfterCampaign - couponDiscount - prorationCredit),
+    );
 
     const options = {
-      amount: Math.round(finalAmount * 100), // Razorpay expects amount in paise
+      amount: Math.round(totalPayableAmount * 100), // Razorpay expects amount in paise
       currency,
       receipt: receipt || `receipt_${Date.now()}`,
       notes: {
@@ -140,7 +171,7 @@ export async function POST(req: Request) {
       couponCode,
       couponDiscount,
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
-      expectedAmount: finalAmount,
+      expectedAmount: totalPayableAmount,
     });
 
     return NextResponse.json({
