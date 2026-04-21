@@ -44,21 +44,45 @@ const nextConfig: NextConfig = {
   },
 
   async headers() {
+    const relaxedHeaders = [
+      { key: "Cross-Origin-Opener-Policy", value: "unsafe-none" },
+      { key: "Cross-Origin-Embedder-Policy", value: "unsafe-none" },
+    ];
+
+    const strictHeaders = [
+      { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+      { key: "Cross-Origin-Embedder-Policy", value: "require-corp" },
+    ];
+
     return [
       {
-        source: "/checkout",
-        headers: [
-          { key: "Cross-Origin-Opener-Policy", value: "unsafe-none" },
-          { key: "Cross-Origin-Embedder-Policy", value: "unsafe-none" },
-        ],
+        source: "/",
+        headers: relaxedHeaders,
       },
       {
-        source: "/((?!checkout).*)",
-        headers: [
-          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
-          { key: "Cross-Origin-Embedder-Policy", value: "require-corp" },
-        ],
+        source: "/plans",
+        headers: relaxedHeaders,
       },
+      {
+        source: "/pricing",
+        headers: relaxedHeaders,
+      },
+      {
+        source: "/checkout",
+        headers: relaxedHeaders,
+      },
+      {
+        // ── Strict Headers for Dashboard/Media ─────────────────────────────
+        // Applied only to routes where SharedArrayBuffer is needed.
+        source: "/dashboard/:path*",
+        headers: strictHeaders,
+      },
+      {
+        // Fallback catch-all (excluding the public ones above)
+        source: "/((?!plans|pricing|checkout).*)",
+        headers: strictHeaders,
+      },
+
       {
         source: "/sync",
         headers: [

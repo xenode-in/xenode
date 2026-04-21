@@ -105,8 +105,11 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
     const msRemaining =
       new Date(currentUsage.planExpiresAt).getTime() - Date.now();
     const daysRemaining = msRemaining / (1000 * 60 * 60 * 24);
-    prorationCredit =
-      Math.round((currentUsage.planPriceINR / 30) * daysRemaining * 100) / 100;
+    
+    // Standard rounding to the nearest whole number (e.g., 349.97 -> 350)
+    // Capped at the original price paid to prevent negative checkouts
+    const calculatedCredit = Math.round((currentUsage.planPriceINR / 30) * daysRemaining);
+    prorationCredit = Math.min(calculatedCredit, currentUsage.planPriceINR);
   }
 
   const finalAmount = Math.max(1, campaignPrice - prorationCredit);
@@ -137,7 +140,8 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
         billingAddress: userDoc?.billingAddress || null,
       }}
       prorationCredit={prorationCredit}
-      finalAmount={parseFloat(finalAmount.toFixed(2))}
+      finalAmount={Math.round(finalAmount)}
     />
   );
+
 }
