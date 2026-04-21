@@ -40,6 +40,11 @@ export interface CheckoutPlan extends IPlan {
   campaignDiscount: number;
   campaignBadge: string | null;
   campaignDiscountPercent: number | null;
+  subscriptionOffer?: {
+    name: string;
+    discountPercent: number;
+    discountedAmount: number;
+  } | null;
 }
 
 export interface CouponResult {
@@ -60,13 +65,13 @@ export default function CheckoutPage({
   plan,
   user,
   prorationCredit,
-  finalAmount: _serverFinalAmount,
+  finalAmount,
 }: CheckoutPageProps) {
   const [appliedCoupon, setAppliedCoupon] = useState<CouponResult | null>(null);
 
   const campaignPrice = plan.originalPrice - plan.campaignDiscount;
   const couponDiscount = appliedCoupon?.discountAmount ?? 0;
-  const finalAmount = Math.max(
+  const computedFinalAmount = Math.max(
     1,
     campaignPrice - couponDiscount - prorationCredit,
   );
@@ -108,7 +113,7 @@ export default function CheckoutPage({
               plan={plan}
               user={user}
               prorationCredit={prorationCredit}
-              finalAmount={finalAmount}
+              finalAmount={computedFinalAmount || finalAmount}
               onCouponChange={setAppliedCoupon}
               appliedCoupon={appliedCoupon}
             />
@@ -119,7 +124,7 @@ export default function CheckoutPage({
             <OrderSummary
               plan={plan}
               prorationCredit={prorationCredit}
-              finalAmount={finalAmount}
+              finalAmount={computedFinalAmount || finalAmount}
               appliedCoupon={appliedCoupon}
             />
           </aside>

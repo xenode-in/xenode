@@ -9,6 +9,7 @@ import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import { uploadObject } from "@/lib/b2/objects";
 import { incrementStorage, updateBucketStats } from "@/lib/metering/usage";
+import { enforceStorageAccess } from "@/lib/subscriptions/service";
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
@@ -19,6 +20,7 @@ export async function POST(request: NextRequest) {
   try {
     const session = await requireAuth(request);
     userId = session.user.id;
+    await enforceStorageAccess(userId);
 
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
@@ -86,6 +88,11 @@ export async function POST(request: NextRequest) {
     if (error instanceof Error && error.message === "Unauthorized") {
       statusCode = 401;
       errorMessage = "Unauthorized";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    }
+    if (error instanceof Error && error.name === "SubscriptionRequired") {
+      statusCode = 402;
+      errorMessage = "Active subscription required";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
     if (error instanceof Error && error.message === "QUOTA_EXCEEDED") {

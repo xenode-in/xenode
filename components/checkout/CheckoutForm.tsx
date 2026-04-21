@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -11,6 +11,7 @@ import type { CheckoutPlan, CheckoutUser, CouponResult } from "./CheckoutPage";
 import PaymentMethodToggle from "./PaymentMethodToggle";
 import AddressSection from "./AddressSection";
 import CouponInput from "./CouponInput";
+import SubscribeButton from "@/components/SubscribeButton";
 import { getEffectivePriceForCycle } from "@/lib/pricing/pricingService";
 
 const addressSchema = z.object({
@@ -44,10 +45,6 @@ interface CheckoutFormProps {
   onCouponChange: (result: CouponResult | null) => void;
   appliedCoupon: CouponResult | null;
 }
-
-  interface Window {
-    Razorpay: any; // Razorpay doesn't have official TS types for the constructor easily accessible without full lib
-  }
 
 export default function CheckoutForm({
   plan,
@@ -84,6 +81,10 @@ export default function CheckoutForm({
   });
 
   const paymentMethod = watch("paymentMethod");
+  const recurringPlanId = plan.pricing.find(
+    (entry) => entry.cycle === "monthly",
+  )?.razorpayPlanId;
+  const isSubscriptionEligible = plan.billingCycle === "monthly" && Boolean(recurringPlanId);
 
   const cycleBasePrice = getEffectivePriceForCycle(
     plan.pricing,
@@ -95,159 +96,94 @@ export default function CheckoutForm({
     setIsSubmitting(true);
 
     try {
-      if (values.paymentMethod === "direct") {
-        // One-time payment flow
-        const res = await fetch("/api/payment/razorpay/create-order", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            amount: finalAmount,
-            planName: plan.name,
-            planSlug: plan.slug,
-            billingCycle: plan.billingCycle,
-            couponCode: appliedCoupon?.code ?? null,
-            storageLimitBytes: plan.storageLimitBytes,
-            planPriceINR: plan.originalPrice,
-            basePlanPriceINR: cycleBasePrice,
-            notes: {
-              phone: values.phone,
-            },
-          }),
-        });
-
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Failed to initiate order");
-
-        if (!window.Razorpay) {
-          throw new Error("Razorpay SDK not loaded. Please refresh the page.");
-        }
-
-        const options = {
-          key: data.keyId,
-          amount: data.amount,
-          currency: data.currency,
-          name: "Xenode",
-          description: `Upgrade to ${plan.name}`,
-          order_id: data.orderId,
-          handler: async function (response: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) {
-            const verifyRes = await fetch("/api/payment/razorpay/verify", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                razorpay_order_id: response.razorpay_order_id,
-                razorpay_payment_id: response.razorpay_payment_id,
-                razorpay_signature: response.razorpay_signature,
-              }),
-            });
-            const verifyData = await verifyRes.json();
-            if (verifyRes.ok) {
-              router.push(
-                `/payment/success?txnid=${response.razorpay_order_id}&plan=${plan.name}&amount=${finalAmount}`,
-              );
-            } else {
-              setServerError(verifyData.error || "Verification failed");
-            }
-          },
-          prefill: {
-            name: user.name,
-            email: user.email,
-            contact: values.phone,
-            method: "upi",
-          },
-          theme: { color: "#111111" },
-          modal: {
-            ondismiss: function () {
-              console.log("Razorpay modal closed by user");
-              setIsSubmitting(false);
-            },
-          },
-        };
-
-        console.log("Opening Razorpay with options:", options);
-        const rzp = new window.Razorpay(options);
-        rzp.open();
-      } else {
-        // Subscription flow
-        const subscriptionPlanId = (plan.pricing as Array<{ cycle: string; razorpayPlanId?: string }>).find(
-          (p) => p.cycle === plan.billingCycle,
-        )?.razorpayPlanId;
-        if (!subscriptionPlanId)
-          throw new Error("Subscription plan ID not found for this cycle.");
-
-        const res = await fetch("/api/payment/razorpay/subscription/create", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            planId: subscriptionPlanId,
-            planName: plan.name,
-            planSlug: plan.slug,
-            billingCycle: plan.billingCycle,
-            storageLimitBytes: plan.storageLimitBytes,
-            planPriceINR: plan.originalPrice,
-            basePlanPriceINR: cycleBasePrice,
-            notes: {
-              phone: values.phone,
-            },
-          }),
-        });
-
-        const data = await res.json();
-        if (!res.ok)
-          throw new Error(data.error || "Failed to create subscription");
-
-        if (!window.Razorpay) {
-          throw new Error("Razorpay SDK not loaded. Please refresh the page.");
-        }
-
-        const razorpayKey = process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID;
-        if (!razorpayKey) {
+      if (values.paymentMethod === "autopay") {
+        if (!isSubscriptionEligible) {
           throw new Error(
-            "Razorpay Public Key is missing. Please check .env.local",
+            "Recurring subscriptions are only available for monthly plans with Razorpay recurring configured.",
           );
         }
 
-        const options = {
-          key: razorpayKey,
-          subscription_id: data.subscriptionId,
-          name: "Xenode",
-          description: `Subscription to ${plan.name}`,
-          handler: async function (response: { razorpay_payment_id: string; razorpay_subscription_id: string; razorpay_signature: string }) {
-            const verifyRes = await fetch(
-              "/api/payment/razorpay/subscription/verify",
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  razorpay_payment_id: response.razorpay_payment_id,
-                  razorpay_subscription_id: response.razorpay_subscription_id,
-                  razorpay_signature: response.razorpay_signature,
-                }),
-              },
-            );
-            if (verifyRes.ok) {
-              router.push(
-                `/payment/success?subscription_id=${data.subscriptionId}&plan=${plan.name}`,
-              );
-            } else {
-              const verifyData = await verifyRes.json();
-              setServerError(verifyData.error || "Mandate verification failed");
-            }
-          },
-          prefill: {
-            name: user.name,
-            email: user.email,
-            contact: values.phone,
-            method: "upi",
-          },
-          recurring: true,
-          theme: { color: "#111111" },
-        };
-
-        const rzp = new window.Razorpay(options);
-        rzp.open();
+        return;
       }
+
+      const res = await fetch("/api/payment/razorpay/create-order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: finalAmount,
+          planName: plan.name,
+          planSlug: plan.slug,
+          billingCycle: plan.billingCycle,
+          couponCode: appliedCoupon?.code ?? null,
+          storageLimitBytes: plan.storageLimitBytes,
+          planPriceINR: plan.originalPrice,
+          basePlanPriceINR: cycleBasePrice,
+          notes: {
+            phone: values.phone,
+          },
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to initiate order");
+      }
+
+      if (!window.Razorpay) {
+        throw new Error("Razorpay SDK not loaded. Please refresh the page.");
+      }
+
+      const options = {
+        key: data.keyId,
+        amount: data.amount,
+        currency: data.currency,
+        name: "Xenode",
+        description: `Upgrade to ${plan.name}`,
+        order_id: data.orderId,
+        handler: async (response: {
+          razorpay_order_id: string;
+          razorpay_payment_id: string;
+          razorpay_signature: string;
+        }) => {
+          const verifyRes = await fetch("/api/payment/razorpay/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+            }),
+          });
+
+          const verifyData = await verifyRes.json();
+          if (verifyRes.ok) {
+            router.push(
+              `/payment/success?txnid=${response.razorpay_order_id}&plan=${plan.name}&amount=${finalAmount}`,
+            );
+            return;
+          }
+
+          setServerError(verifyData.error || "Verification failed");
+        },
+        prefill: {
+          name: user.name,
+          email: user.email,
+          contact: values.phone,
+          method: "upi",
+        },
+        theme: { color: "#111111" },
+        modal: {
+          ondismiss: () => {
+            setIsSubmitting(false);
+          },
+        },
+      };
+
+      const rzp = new window.Razorpay(options);
+      rzp.open();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Something went wrong. Please try again.";
+      const message =
+        err instanceof Error ? err.message : "Something went wrong. Please try again.";
       setServerError(message);
     } finally {
       setIsSubmitting(false);
@@ -270,7 +206,6 @@ export default function CheckoutForm({
           Payment Details
         </p>
 
-        {/* Contact card */}
         <div className="rounded-xl border border-border bg-card p-5 space-y-4">
           <p className="text-sm font-semibold text-foreground">Contact</p>
           <div>
@@ -289,7 +224,7 @@ export default function CheckoutForm({
             </label>
             <div className="flex">
               <span className="flex items-center rounded-l-lg border border-r-0 border-border bg-muted px-3 text-sm text-muted-foreground select-none">
-                🇮🇳 +91
+                +91
               </span>
               <input
                 {...register("phone")}
@@ -299,15 +234,14 @@ export default function CheckoutForm({
                 className="flex-1 rounded-r-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
               />
             </div>
-            {errors.phone && (
+            {errors.phone ? (
               <p className="mt-1.5 text-xs text-destructive">
                 {errors.phone.message}
               </p>
-            )}
+            ) : null}
           </div>
         </div>
 
-        {/* Coupon card */}
         <div className="rounded-xl border border-border bg-card p-5 space-y-3">
           <p className="text-sm font-semibold text-foreground">Coupon Code</p>
           <CouponInput
@@ -318,70 +252,77 @@ export default function CheckoutForm({
           />
         </div>
 
-        {/* Address */}
         <AddressSection
           register={register}
           errors={errors}
           defaultOpen={!!user.billingAddress?.name}
         />
 
-        {/* Payment method */}
         <div className="rounded-xl border border-border bg-card p-5 space-y-3">
-          <p className="text-sm font-semibold text-foreground">
-            Payment Method
-          </p>
+          <p className="text-sm font-semibold text-foreground">Payment Method</p>
           <PaymentMethodToggle
             value={paymentMethod}
-            onChange={(v) => setValue("paymentMethod", v)}
+            onChange={(value) => setValue("paymentMethod", value)}
           />
-          {paymentMethod === "autopay" && (
+          {paymentMethod === "autopay" ? (
             <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
               <p className="text-xs text-muted-foreground">
-                <span className="font-semibold text-foreground">
-                  How it works:{" "}
-                </span>
-                You&apos;ll approve a UPI mandate in your UPI app (GPay / PhonePe /
-                Paytm). Xenode will automatically charge ₹
-                {finalAmount.toFixed(2)} every{" "}
-                {plan.billingCycle === "yearly"
-                  ? "year"
-                  : plan.billingCycle === "quarterly"
-                    ? "3 months"
-                    : "30 days"}
-                . You can cancel anytime from your UPI app or your Xenode
-                billing page.
+                <span className="font-semibold text-foreground">How it works: </span>
+                {isSubscriptionEligible
+                  ? `You'll approve a UPI mandate in your UPI app. ${
+                      plan.subscriptionOffer
+                        ? `The first cycle is Rs.${plan.subscriptionOffer.discountedAmount.toFixed(
+                            2,
+                          )}, then renewals continue at the full monthly plan price after the follow-up authorization.`
+                        : "Renewals continue at the full monthly plan price."
+                    }`
+                  : "Recurring subscriptions are only available for monthly plans with Razorpay recurring configured."}
               </p>
             </div>
-          )}
+          ) : null}
         </div>
 
-        {/* Server error */}
-        {serverError && (
+        {serverError ? (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
             <p className="text-sm text-destructive">{serverError}</p>
           </div>
-        )}
+        ) : null}
 
-        {/* Submit */}
-        <button
-          type="submit"
-          disabled={isSubmitting || !razorpayLoaded}
-          className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 shadow-md"
-        >
-          {isSubmitting ? (
-            <>
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
-              Processing…
-            </>
-          ) : !razorpayLoaded ? (
-            "Loading Payment..."
-          ) : (
-            <>
-              <Lock className="h-4 w-4" /> Pay ₹{finalAmount.toFixed(2)}{" "}
-              securely
-            </>
-          )}
-        </button>
+        {paymentMethod === "autopay" ? (
+          <SubscribeButton
+            phone={watch("phone")}
+            planSlug={plan.slug}
+            planName={plan.name}
+            disabled={Boolean(errors.phone) || !razorpayLoaded || !isSubscriptionEligible}
+            offerLabel={
+              plan.subscriptionOffer
+                ? `${plan.subscriptionOffer.name}: ${plan.subscriptionOffer.discountPercent}% off first month`
+                : null
+            }
+            user={{ name: user.name, email: user.email }}
+            onError={(message) => setServerError(message || null)}
+            onSettled={() => setIsSubmitting(false)}
+          />
+        ) : (
+          <button
+            type="submit"
+            disabled={isSubmitting || !razorpayLoaded}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 shadow-md"
+          >
+            {isSubmitting ? (
+              <>
+                <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
+                Processing...
+              </>
+            ) : !razorpayLoaded ? (
+              "Loading Payment..."
+            ) : (
+              <>
+                <Lock className="h-4 w-4" /> Pay Rs.{finalAmount.toFixed(2)} securely
+              </>
+            )}
+          </button>
+        )}
 
         <p className="text-center text-xs text-muted-foreground">
           By completing this purchase you agree to Xenode&apos;s{" "}

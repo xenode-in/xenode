@@ -8,6 +8,9 @@ export interface ISubscription extends Document {
     | "created"
     | "authenticated"
     | "active"
+    | "pending"
+    | "halted"
+    | "past_due"
     | "paused"
     | "cancelled"
     | "completed"
@@ -22,6 +25,11 @@ export interface ISubscription extends Document {
   paid_count?: number;
   total_count?: number;
   cancel_at_cycle_end?: boolean;
+  offerApplied?: boolean;
+  offerSubscriptionId?: string;
+  baseSubscriptionId?: string;
+  chargeCount?: number;
+  cancelAtPeriodEnd?: boolean;
   autoRenew: boolean;
   gateway?: string;
   metadata?: Record<string, unknown>;
@@ -39,6 +47,9 @@ const SubscriptionSchema = new Schema<ISubscription>(
         "created",
         "authenticated",
         "active",
+        "pending",
+        "halted",
+        "past_due",
         "paused",
         "cancelled",
         "completed",
@@ -61,6 +72,11 @@ const SubscriptionSchema = new Schema<ISubscription>(
     paid_count: { type: Number, default: 0 },
     total_count: { type: Number },
     cancel_at_cycle_end: { type: Boolean, default: false },
+    offerApplied: { type: Boolean, default: false, index: true },
+    offerSubscriptionId: { type: String, default: null, index: true },
+    baseSubscriptionId: { type: String, default: null, index: true },
+    chargeCount: { type: Number, default: 0 },
+    cancelAtPeriodEnd: { type: Boolean, default: false },
     autoRenew: { type: Boolean, default: false },
     gateway: { type: String, default: "razorpay" },
     metadata: { type: Schema.Types.Mixed, default: {} },
