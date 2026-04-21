@@ -4,6 +4,7 @@ import {
   computeWebhookEventId,
   createBaseFollowupSubscription,
   createSubscriptionInvoiceIfMissing,
+  createSubscriptionPaymentIfMissing,
   createWebhookLog,
   markWebhookFailed,
   markWebhookProcessed,
@@ -142,6 +143,33 @@ export async function POST(request: Request) {
           );
         }
         await subscription.save();
+
+        if (typeof paymentEntity?.id === "string") {
+          await createSubscriptionPaymentIfMissing({
+            userId: subscription.userId,
+            paymentId: paymentEntity.id,
+            subscriptionId: razorpaySubscriptionId,
+            planName:
+              typeof subscription.metadata?.planName === "string"
+                ? subscription.metadata.planName
+                : subscription.planSlug,
+            billingCycle: subscription.billingCycle,
+            amountPaise,
+            subscriptionStartDate:
+              subscription.current_period_start || subscription.startDate,
+            subscriptionEndDate:
+              subscription.current_period_end || subscription.endDate,
+            method:
+              typeof paymentEntity.method === "string"
+                ? paymentEntity.method
+                : "upi_autopay",
+            gatewayResponse: {
+              eventId,
+              source: "subscription.charged",
+              paymentEntity,
+            },
+          });
+        }
 
         await syncUserSubscriptionState({
           userId: subscription.userId,

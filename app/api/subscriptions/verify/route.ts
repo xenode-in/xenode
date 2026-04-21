@@ -4,6 +4,7 @@ import dbConnect from "@/lib/mongodb";
 import razorpay from "@/lib/razorpay";
 import Subscription from "@/models/Subscription";
 import {
+  createSubscriptionPaymentIfMissing,
   createSubscriptionInvoiceIfMissing,
   syncUserSubscriptionState,
 } from "@/lib/subscriptions/service";
@@ -68,6 +69,28 @@ export async function POST(request: NextRequest) {
     );
     subscriptionDoc.paid_count = Math.max(subscriptionDoc.paid_count ?? 0, 1);
     await subscriptionDoc.save();
+
+    await createSubscriptionPaymentIfMissing({
+      userId: subscriptionDoc.userId,
+      paymentId: razorpay_payment_id,
+      subscriptionId: razorpay_subscription_id,
+      planName:
+        typeof subscriptionDoc.metadata?.planName === "string"
+          ? subscriptionDoc.metadata.planName
+          : subscriptionDoc.planSlug,
+      billingCycle: subscriptionDoc.billingCycle,
+      amountPaise,
+      subscriptionStartDate:
+        subscriptionDoc.current_period_start || subscriptionDoc.startDate,
+      subscriptionEndDate:
+        subscriptionDoc.current_period_end || subscriptionDoc.endDate,
+      method: "upi_autopay",
+      gatewayResponse: {
+        source: "subscription_verify",
+        invoiceCreated: invoiceResult.created,
+        razorpaySubscriptionId: razorpay_subscription_id,
+      },
+    });
 
     await syncUserSubscriptionState({
       userId: subscriptionDoc.userId,

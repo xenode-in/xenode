@@ -5,13 +5,18 @@ import razorpay from "@/lib/razorpay";
 import { getPlanBySlugFromDB, getPricingConfig } from "@/lib/config/getPricingConfig";
 import { resolveActiveCampaign } from "@/lib/pricing/pricingService";
 import { PricingConfig } from "@/models/PricingConfig";
+import Payment from "@/models/Payment";
 import Subscription from "@/models/Subscription";
 import SubscriptionOffer, { type ISubscriptionOffer } from "@/models/SubscriptionOffer";
 import SubscriptionInvoice from "@/models/SubscriptionInvoice";
 import WebhookLog from "@/models/WebhookLog";
 import Usage from "@/models/Usage";
 import { User } from "@/models/User";
-import { SUBSCRIPTION_GRACE_PERIOD_DAYS } from "./constants";
+import {
+  BASE_MONTHLY_AMOUNT_PAISE,
+  SUBSCRIPTION_GRACE_PERIOD_DAYS,
+  SUBSCRIPTION_PLAN_SLUG,
+} from "./constants";
 
 type UserSubscriptionStatus = "none" | "active" | "past_due" | "halted" | "cancelled";
 
@@ -297,6 +302,45 @@ export async function createSubscriptionInvoiceIfMissing(args: {
   });
 
   return { invoice, created: true };
+}
+
+export async function createSubscriptionPaymentIfMissing(args: {
+  userId: string;
+  paymentId: string;
+  subscriptionId: string;
+  planName: string;
+  billingCycle?: "monthly" | "yearly" | "quarterly" | "lifetime";
+  amountPaise: number;
+  subscriptionStartDate?: Date | null;
+  subscriptionEndDate?: Date | null;
+  method?: string;
+  gatewayResponse?: Record<string, unknown>;
+}) {
+  await dbConnect();
+
+  const existing = await Payment.findOne({ payment_id: args.paymentId }).lean();
+  if (existing) {
+    return { payment: existing, created: false };
+  }
+
+  const payment = await Payment.create({
+    userId: args.userId,
+    amount: args.amountPaise / 100,
+    currency: "INR",
+    status: "success",
+    order_id: args.subscriptionId,
+    payment_id: args.paymentId,
+    txnid: args.paymentId,
+    planName: args.planName,
+    billingCycle: args.billingCycle || "monthly",
+    subscriptionStartDate: args.subscriptionStartDate || new Date(),
+    subscriptionEndDate: args.subscriptionEndDate || args.subscriptionStartDate || new Date(),
+    method: args.method || "upi_autopay",
+    notes: "subscription_charge",
+    gatewayResponse: args.gatewayResponse || {},
+  });
+
+  return { payment, created: true };
 }
 
 export async function getCurrentSubscriptionForUser(userId: string) {
