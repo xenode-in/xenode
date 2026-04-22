@@ -2,12 +2,19 @@ import crypto from "crypto";
 import mongoose from "mongoose";
 import dbConnect from "@/lib/mongodb";
 import razorpay from "@/lib/razorpay";
-import { getPlanBySlugFromDB, getPricingConfig } from "@/lib/config/getPricingConfig";
+import {
+  getPlanBySlugFromDB,
+  getPricingConfig,
+} from "@/lib/config/getPricingConfig";
 import { resolveActiveCampaign } from "@/lib/pricing/pricingService";
+import type { BillingCycle } from "@/types/pricing";
+import Coupon from "@/models/Coupon";
 import { PricingConfig } from "@/models/PricingConfig";
 import Payment from "@/models/Payment";
 import Subscription from "@/models/Subscription";
-import SubscriptionOffer, { type ISubscriptionOffer } from "@/models/SubscriptionOffer";
+import SubscriptionOffer, {
+  type ISubscriptionOffer,
+} from "@/models/SubscriptionOffer";
 import SubscriptionInvoice from "@/models/SubscriptionInvoice";
 import WebhookLog from "@/models/WebhookLog";
 import Usage from "@/models/Usage";
@@ -18,9 +25,40 @@ import {
   SUBSCRIPTION_PLAN_SLUG,
 } from "./constants";
 
-type UserSubscriptionStatus = "none" | "active" | "past_due" | "halted" | "cancelled";
+type UserSubscriptionStatus =
+  | "none"
+  | "active"
+  | "past_due"
+  | "halted"
+  | "cancelled";
 
-export function computeDiscountedAmount(amount: number, discountPercent: number) {
+interface ValidatedRecurringCoupon {
+  id: string;
+  code: string;
+  discountAmountPaise: number;
+  discountLabel: string;
+}
+
+interface RecurringFirstCyclePricing {
+  plan: NonNullable<Awaited<ReturnType<typeof getPlanBySlugFromDB>>>;
+  pricingEntry: {
+    cycle: BillingCycle;
+    priceINR: number;
+    razorpayPlanId?: string;
+  };
+  billingCycle: BillingCycle;
+  baseAmountPaise: number;
+  firstCycleAmountPaise: number;
+  limitedCampaign: ReturnType<typeof resolveActiveCampaign> | null;
+  activeOffer: ISubscriptionOffer | null;
+  coupon: ValidatedRecurringCoupon | null;
+  requiresOfferSubscription: boolean;
+}
+
+export function computeDiscountedAmount(
+  amount: number,
+  discountPercent: number,
+) {
   return Math.max(1, Math.round(amount * (1 - discountPercent / 100)));
 }
 
@@ -46,7 +84,9 @@ export async function ensureBasePlanConfig() {
     (plan: { slug: string }) => plan.slug === SUBSCRIPTION_PLAN_SLUG,
   );
   if (planIndex === -1) {
-    throw new Error(`PricingConfig is missing the "${SUBSCRIPTION_PLAN_SLUG}" plan`);
+    throw new Error(
+      `PricingConfig is missing the "${SUBSCRIPTION_PLAN_SLUG}" plan`,
+    );
   }
 
   const monthlyEntry = pricingConfig.plans[planIndex].pricing.find(
@@ -63,7 +103,23 @@ export async function ensureBasePlanConfig() {
   };
 }
 
-export async function getRecurringPlanContext(planSlug: string) {
+function getRazorpayPeriodConfig(cycle: BillingCycle) {
+  switch (cycle) {
+    case "monthly":
+      return { period: "monthly", interval: 1 };
+    case "quarterly":
+      return { period: "monthly", interval: 3 };
+    case "yearly":
+      return { period: "yearly", interval: 1 };
+    default:
+      return null;
+  }
+}
+
+export async function getRecurringPlanContext(
+  planSlug: string,
+  billingCycle: BillingCycle,
+) {
   const [plan, pricing] = await Promise.all([
     getPlanBySlugFromDB(planSlug),
     getPricingConfig(),
@@ -73,9 +129,17 @@ export async function getRecurringPlanContext(planSlug: string) {
     throw new Error("Invalid plan");
   }
 
-  const monthlyEntry = plan.pricing.find((entry) => entry.cycle === "monthly");
-  if (!monthlyEntry?.razorpayPlanId) {
-    throw new Error("Recurring monthly plan is not configured for this plan");
+  if (billingCycle === "lifetime") {
+    throw new Error(
+      "Recurring subscriptions are not available for lifetime plans",
+    );
+  }
+
+  const pricingEntry = plan.pricing.find(
+    (entry) => entry.cycle === billingCycle,
+  );
+  if (!pricingEntry?.razorpayPlanId) {
+    throw new Error("Recurring plan is not configured for this billing cycle");
   }
 
   const campaign = resolveActiveCampaign(pricing.campaign ?? null);
@@ -86,28 +150,169 @@ export async function getRecurringPlanContext(planSlug: string) {
       ? campaign
       : null;
 
-  const baseAmountPaise = Math.round(monthlyEntry.priceINR * 100);
+  const baseAmountPaise = Math.round(pricingEntry.priceINR * 100);
   const offerAmountPaise = limitedCampaign
     ? computeDiscountedAmount(baseAmountPaise, limitedCampaign.discountPercent)
     : null;
 
   return {
     plan,
-    monthlyEntry,
+    pricingEntry,
     limitedCampaign,
     baseAmountPaise,
     offerAmountPaise,
   };
 }
 
+function computeCouponDiscountPaise(args: {
+  amountPaise: number;
+  discountType: "percent" | "flat";
+  discountValue: number;
+}) {
+  if (args.discountType === "percent") {
+    return Math.round(args.amountPaise * (args.discountValue / 100));
+  }
+
+  return Math.min(Math.round(args.discountValue * 100), args.amountPaise - 100);
+}
+
+export async function validateRecurringCoupon(args: {
+  code: string;
+  userId: string;
+  planSlug: string;
+  amountPaise: number;
+}) {
+  await dbConnect();
+
+  const normalizedCode = args.code.trim().toUpperCase();
+  if (!normalizedCode) {
+    throw new Error("Enter a coupon code");
+  }
+
+  const coupon = await Coupon.findOne({
+    code: normalizedCode,
+    isActive: true,
+  }).lean();
+
+  if (!coupon) {
+    throw new Error("Invalid coupon code");
+  }
+
+  const now = new Date();
+  if (now < new Date(coupon.validFrom)) {
+    throw new Error("This coupon is not yet valid");
+  }
+
+  if (now > new Date(coupon.validTo)) {
+    throw new Error("This coupon has expired");
+  }
+
+  if (coupon.maxUses > 0 && coupon.usedCount >= coupon.maxUses) {
+    throw new Error("This coupon has reached its usage limit");
+  }
+
+  if (coupon.type === "user" && coupon.targetUserId !== args.userId) {
+    throw new Error("This coupon is not valid for your account");
+  }
+
+  const userUses = coupon.usedBy.filter(
+    (entry) => entry.userId === args.userId,
+  ).length;
+  if (userUses >= coupon.perUserLimit) {
+    throw new Error("You have already used this coupon");
+  }
+
+  if (
+    coupon.applicablePlans.length > 0 &&
+    !coupon.applicablePlans.includes(args.planSlug)
+  ) {
+    throw new Error(
+      `This coupon is only valid for: ${coupon.applicablePlans.join(", ")} plans`,
+    );
+  }
+
+  const discountAmountPaise = computeCouponDiscountPaise({
+    amountPaise: args.amountPaise,
+    discountType: coupon.discountType,
+    discountValue: coupon.discountValue,
+  });
+
+  return {
+    id: coupon._id.toString(),
+    code: coupon.code,
+    discountAmountPaise,
+    discountLabel:
+      coupon.discountType === "percent"
+        ? `${coupon.discountValue}% off`
+        : `Rs.${coupon.discountValue} off`,
+  } satisfies ValidatedRecurringCoupon;
+}
+
+export async function getRecurringFirstCyclePricing(args: {
+  userId: string;
+  planSlug: string;
+  billingCycle: BillingCycle;
+  couponCode?: string | null;
+}) {
+  const [planContext, activeOffer] = await Promise.all([
+    getRecurringPlanContext(args.planSlug, args.billingCycle),
+    getActiveSubscriptionOffer(),
+  ]);
+
+  const campaignAdjustedAmountPaise =
+    planContext.offerAmountPaise ?? planContext.baseAmountPaise;
+  const coupon = args.couponCode
+    ? await validateRecurringCoupon({
+        code: args.couponCode,
+        userId: args.userId,
+        planSlug: args.planSlug,
+        amountPaise: campaignAdjustedAmountPaise,
+      })
+    : null;
+
+  const firstCycleAmountPaise = coupon
+    ? Math.max(100, campaignAdjustedAmountPaise - coupon.discountAmountPaise)
+    : campaignAdjustedAmountPaise;
+
+  const matchingOffer =
+    activeOffer &&
+    activeOffer.originalAmount === planContext.baseAmountPaise &&
+    activeOffer.discountedAmount === firstCycleAmountPaise
+      ? activeOffer
+      : null;
+
+  return {
+    plan: planContext.plan,
+    pricingEntry: {
+      cycle: planContext.pricingEntry.cycle as BillingCycle,
+      priceINR: planContext.pricingEntry.priceINR,
+      razorpayPlanId: planContext.pricingEntry.razorpayPlanId,
+    },
+    billingCycle: args.billingCycle,
+    baseAmountPaise: planContext.baseAmountPaise,
+    firstCycleAmountPaise,
+    limitedCampaign: planContext.limitedCampaign,
+    activeOffer: matchingOffer,
+    coupon,
+    requiresOfferSubscription:
+      firstCycleAmountPaise !== planContext.baseAmountPaise,
+  } satisfies RecurringFirstCyclePricing;
+}
+
 export async function createRazorpayRecurringPlan(args: {
   amountPaise: number;
   name: string;
+  billingCycle: BillingCycle;
   description?: string;
 }) {
+  const periodConfig = getRazorpayPeriodConfig(args.billingCycle);
+  if (!periodConfig) {
+    throw new Error("Unsupported recurring billing cycle");
+  }
+
   const plan = await razorpay.plans.create({
-    period: "monthly",
-    interval: 1,
+    period: periodConfig.period,
+    interval: periodConfig.interval,
     item: {
       name: args.name,
       amount: args.amountPaise,
@@ -122,31 +327,67 @@ export async function createRazorpayRecurringPlan(args: {
   return plan;
 }
 
+export async function consumeCouponRedemptionIfNeeded(args: {
+  couponId?: string | null;
+  userId: string;
+  txnid: string;
+}) {
+  if (!args.couponId) {
+    return false;
+  }
+
+  await dbConnect();
+
+  const result = await Coupon.updateOne(
+    {
+      _id: args.couponId,
+      "usedBy.txnid": { $ne: args.txnid },
+    },
+    {
+      $inc: { usedCount: 1 },
+      $push: {
+        usedBy: {
+          userId: args.userId,
+          usedAt: new Date(),
+          txnid: args.txnid,
+        },
+      },
+    },
+  );
+
+  return result.modifiedCount > 0;
+}
+
 export async function updatePricingBasePlan(razorpayPlanId: string) {
   const { config } = await ensureBasePlanConfig();
-  const nextPlans = config.plans.map((plan: { slug: string; pricing: unknown[] }) => {
-    const plainPlan = JSON.parse(JSON.stringify(plan)) as Record<string, unknown> & {
-      slug: string;
-      pricing: Array<Record<string, unknown> & { cycle: string }>;
-    };
+  const nextPlans = config.plans.map(
+    (plan: { slug: string; pricing: unknown[] }) => {
+      const plainPlan = JSON.parse(JSON.stringify(plan)) as Record<
+        string,
+        unknown
+      > & {
+        slug: string;
+        pricing: Array<Record<string, unknown> & { cycle: string }>;
+      };
 
-    if (plainPlan.slug !== "max") {
-      return plainPlan;
-    }
+      if (plainPlan.slug !== "max") {
+        return plainPlan;
+      }
 
-    return {
-      ...plainPlan,
-      pricing: plainPlan.pricing.map((entry) =>
-        entry.cycle === "monthly"
-          ? {
-              ...entry,
-              priceINR: BASE_MONTHLY_AMOUNT_PAISE / 100,
-              razorpayPlanId,
-            }
-          : entry,
-      ),
-    };
-  });
+      return {
+        ...plainPlan,
+        pricing: plainPlan.pricing.map((entry) =>
+          entry.cycle === "monthly"
+            ? {
+                ...entry,
+                priceINR: BASE_MONTHLY_AMOUNT_PAISE / 100,
+                razorpayPlanId,
+              }
+            : entry,
+        ),
+      };
+    },
+  );
 
   await PricingConfig.updateOne(
     { _id: config._id },
@@ -160,7 +401,8 @@ export async function updatePricingBasePlan(razorpayPlanId: string) {
 
 export function computeWebhookEventId(rawBody: string, parsedBody: unknown) {
   const parsed = parsedBody as Record<string, unknown>;
-  const explicitId = typeof parsed?.["event_id"] === "string" ? parsed["event_id"] : null;
+  const explicitId =
+    typeof parsed?.["event_id"] === "string" ? parsed["event_id"] : null;
   if (explicitId) {
     return explicitId;
   }
@@ -168,7 +410,11 @@ export function computeWebhookEventId(rawBody: string, parsedBody: unknown) {
   return crypto.createHash("sha256").update(rawBody).digest("hex");
 }
 
-export async function createWebhookLog(eventId: string, eventType: string, payload: unknown) {
+export async function createWebhookLog(
+  eventId: string,
+  eventType: string,
+  payload: unknown,
+) {
   await dbConnect();
   const existing = await WebhookLog.findOne({ eventId }).lean();
   if (existing) {
@@ -230,10 +476,12 @@ export async function syncUserSubscriptionState(args: {
     usageUpdate.plan = subscription?.planSlug || "free";
     usageUpdate.planActivatedAt = subscription?.startDate || new Date();
     usageUpdate.planExpiresAt = expiresAt;
-    usageUpdate.planPriceINR = subscription?.metadata?.offerAppliedAmountINR ??
+    usageUpdate.planPriceINR =
+      subscription?.metadata?.offerAppliedAmountINR ??
       subscription?.metadata?.basePlanAmountINR ??
       0;
-    usageUpdate.basePlanPriceINR = subscription?.metadata?.basePlanAmountINR ?? 0;
+    usageUpdate.basePlanPriceINR =
+      subscription?.metadata?.basePlanAmountINR ?? 0;
     usageUpdate.isGracePeriod = false;
     usageUpdate.gracePeriodEndsAt = null;
   }
@@ -264,10 +512,13 @@ export async function enforceStorageAccess(userId: string) {
     return;
   }
 
-  const expiresAt = user.subscriptionExpiresAt ? new Date(user.subscriptionExpiresAt) : null;
+  const expiresAt = user.subscriptionExpiresAt
+    ? new Date(user.subscriptionExpiresAt)
+    : null;
   if (expiresAt) {
     const graceEndsAt = new Date(
-      expiresAt.getTime() + SUBSCRIPTION_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000,
+      expiresAt.getTime() +
+        SUBSCRIPTION_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000,
     );
     if (graceEndsAt >= new Date()) {
       return;
@@ -287,7 +538,9 @@ export async function createSubscriptionInvoiceIfMissing(args: {
   metadata?: Record<string, unknown>;
 }) {
   await dbConnect();
-  const existing = await SubscriptionInvoice.findOne({ payment_id: args.paymentId }).lean();
+  const existing = await SubscriptionInvoice.findOne({
+    payment_id: args.paymentId,
+  }).lean();
   if (existing) {
     return { invoice: existing, created: false };
   }
@@ -309,7 +562,7 @@ export async function createSubscriptionPaymentIfMissing(args: {
   paymentId: string;
   subscriptionId: string;
   planName: string;
-  billingCycle?: "monthly" | "yearly" | "quarterly" | "lifetime";
+  billingCycle?: BillingCycle;
   amountPaise: number;
   subscriptionStartDate?: Date | null;
   subscriptionEndDate?: Date | null;
@@ -334,7 +587,8 @@ export async function createSubscriptionPaymentIfMissing(args: {
     planName: args.planName,
     billingCycle: args.billingCycle || "monthly",
     subscriptionStartDate: args.subscriptionStartDate || new Date(),
-    subscriptionEndDate: args.subscriptionEndDate || args.subscriptionStartDate || new Date(),
+    subscriptionEndDate:
+      args.subscriptionEndDate || args.subscriptionStartDate || new Date(),
     method: args.method || "upi_autopay",
     notes: "subscription_charge",
     gatewayResponse: args.gatewayResponse || {},
@@ -345,9 +599,7 @@ export async function createSubscriptionPaymentIfMissing(args: {
 
 export async function getCurrentSubscriptionForUser(userId: string) {
   await dbConnect();
-  return Subscription.findOne({ userId })
-    .sort({ createdAt: -1 })
-    .lean();
+  return Subscription.findOne({ userId }).sort({ createdAt: -1 }).lean();
 }
 
 export function getNextBillingAmount(subscription: {
@@ -368,16 +620,21 @@ export async function createBaseFollowupSubscription(args: {
   userId: string;
   offerSubscriptionId: string;
   planSlug: string;
+  billingCycle: BillingCycle;
 }) {
-  const { plan, monthlyEntry, baseAmountPaise } = await getRecurringPlanContext(args.planSlug);
+  const { plan, pricingEntry, baseAmountPaise } = await getRecurringPlanContext(
+    args.planSlug,
+    args.billingCycle,
+  );
   const razorpaySubscription = await razorpay.subscriptions.create({
-    plan_id: monthlyEntry.razorpayPlanId,
+    plan_id: pricingEntry.razorpayPlanId,
     total_count: 0,
     customer_notify: 1,
     notes: {
       userId: args.userId,
       offerSubscriptionId: args.offerSubscriptionId,
       planSlug: args.planSlug,
+      billingCycle: args.billingCycle,
       kind: "base_followup",
     },
   } as never);
@@ -387,7 +644,7 @@ export async function createBaseFollowupSubscription(args: {
     planSlug: args.planSlug,
     status: "pending",
     subscription_id: razorpaySubscription.id,
-    billingCycle: "monthly",
+    billingCycle: args.billingCycle,
     startDate: new Date(),
     endDate: new Date(),
     total_count: 0,

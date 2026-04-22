@@ -82,14 +82,16 @@ export default function CheckoutForm({
 
   const paymentMethod = watch("paymentMethod");
   const recurringPlanId = plan.pricing.find(
-    (entry) => entry.cycle === "monthly",
+    (entry) => entry.cycle === plan.billingCycle,
   )?.razorpayPlanId;
-  const isSubscriptionEligible = plan.billingCycle === "monthly" && Boolean(recurringPlanId);
+  const isSubscriptionEligible =
+    plan.billingCycle !== "lifetime" && Boolean(recurringPlanId);
 
   const cycleBasePrice = getEffectivePriceForCycle(
     plan.pricing,
     plan.billingCycle,
   );
+  const couponBasePrice = Math.max(1, plan.originalPrice - plan.campaignDiscount);
 
   const handlePayment = async (values: CheckoutFormValues) => {
     setServerError(null);
@@ -99,7 +101,7 @@ export default function CheckoutForm({
       if (values.paymentMethod === "autopay") {
         if (!isSubscriptionEligible) {
           throw new Error(
-            "Recurring subscriptions are only available for monthly plans with Razorpay recurring configured.",
+            "Recurring subscriptions are only available for billing cycles with Razorpay recurring configured.",
           );
         }
 
@@ -183,7 +185,9 @@ export default function CheckoutForm({
       rzp.open();
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "Something went wrong. Please try again.";
+        err instanceof Error
+          ? err.message
+          : "Something went wrong. Please try again.";
       setServerError(message);
     } finally {
       setIsSubmitting(false);
@@ -246,7 +250,7 @@ export default function CheckoutForm({
           <p className="text-sm font-semibold text-foreground">Coupon Code</p>
           <CouponInput
             planSlug={plan.slug}
-            planPriceINR={cycleBasePrice}
+            planPriceINR={couponBasePrice}
             onApply={onCouponChange}
             applied={appliedCoupon}
           />
@@ -259,7 +263,9 @@ export default function CheckoutForm({
         />
 
         <div className="rounded-xl border border-border bg-card p-5 space-y-3">
-          <p className="text-sm font-semibold text-foreground">Payment Method</p>
+          <p className="text-sm font-semibold text-foreground">
+            Payment Method
+          </p>
           <PaymentMethodToggle
             value={paymentMethod}
             onChange={(value) => setValue("paymentMethod", value)}
@@ -267,16 +273,18 @@ export default function CheckoutForm({
           {paymentMethod === "autopay" ? (
             <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
               <p className="text-xs text-muted-foreground">
-                <span className="font-semibold text-foreground">How it works: </span>
+                <span className="font-semibold text-foreground">
+                  How it works:{" "}
+                </span>
                 {isSubscriptionEligible
                   ? `You'll approve a UPI mandate in your UPI app. ${
-                      plan.subscriptionOffer
-                        ? `The first cycle is Rs.${plan.subscriptionOffer.discountedAmount.toFixed(
+                      plan.subscriptionOffer || appliedCoupon
+                        ? `The first cycle is Rs.${finalAmount.toFixed(
                             2,
-                          )}, then renewals continue at the full monthly plan price after the follow-up authorization.`
-                        : "Renewals continue at the full monthly plan price."
+                          )}, then renewals continue at the full ${plan.billingCycle} plan price after the follow-up authorization.`
+                        : `Renewals continue at the full ${plan.billingCycle} plan price.`
                     }`
-                  : "Recurring subscriptions are only available for monthly plans with Razorpay recurring configured."}
+                  : "Recurring subscriptions are only available for billing cycles with Razorpay recurring configured."}
               </p>
             </div>
           ) : null}
@@ -293,10 +301,16 @@ export default function CheckoutForm({
             phone={watch("phone")}
             planSlug={plan.slug}
             planName={plan.name}
-            disabled={Boolean(errors.phone) || !razorpayLoaded || !isSubscriptionEligible}
+            billingCycle={plan.billingCycle}
+            couponCode={appliedCoupon?.code ?? null}
+            disabled={
+              Boolean(errors.phone) ||
+              !razorpayLoaded ||
+              !isSubscriptionEligible
+            }
             offerLabel={
               plan.subscriptionOffer
-                ? `${plan.subscriptionOffer.name}: ${plan.subscriptionOffer.discountPercent}% off first month`
+                ? `${plan.subscriptionOffer.name}: ${plan.subscriptionOffer.discountPercent}% off first cycle`
                 : null
             }
             user={{ name: user.name, email: user.email }}
@@ -318,7 +332,8 @@ export default function CheckoutForm({
               "Loading Payment..."
             ) : (
               <>
-                <Lock className="h-4 w-4" /> Pay Rs.{finalAmount.toFixed(2)} securely
+                <Lock className="h-4 w-4" /> Pay Rs.{finalAmount.toFixed(2)}{" "}
+                securely
               </>
             )}
           </button>

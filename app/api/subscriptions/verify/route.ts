@@ -4,6 +4,7 @@ import dbConnect from "@/lib/mongodb";
 import razorpay from "@/lib/razorpay";
 import Subscription from "@/models/Subscription";
 import {
+  consumeCouponRedemptionIfNeeded,
   createSubscriptionPaymentIfMissing,
   createSubscriptionInvoiceIfMissing,
   syncUserSubscriptionState,
@@ -90,6 +91,15 @@ export async function POST(request: NextRequest) {
         invoiceCreated: invoiceResult.created,
         razorpaySubscriptionId: razorpay_subscription_id,
       },
+    });
+
+    await consumeCouponRedemptionIfNeeded({
+      couponId:
+        typeof subscriptionDoc.metadata?.couponId === "string"
+          ? subscriptionDoc.metadata.couponId
+          : null,
+      userId: subscriptionDoc.userId,
+      txnid: razorpay_payment_id,
     });
 
     await syncUserSubscriptionState({

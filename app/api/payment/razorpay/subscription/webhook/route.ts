@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import Subscription from "@/models/Subscription";
 import {
   computeWebhookEventId,
+  consumeCouponRedemptionIfNeeded,
   createBaseFollowupSubscription,
   createSubscriptionInvoiceIfMissing,
   createSubscriptionPaymentIfMissing,
@@ -169,6 +170,15 @@ export async function POST(request: Request) {
               paymentEntity,
             },
           });
+
+          await consumeCouponRedemptionIfNeeded({
+            couponId:
+              typeof subscription.metadata?.couponId === "string"
+                ? subscription.metadata.couponId
+                : null,
+            userId: subscription.userId,
+            txnid: paymentEntity.id,
+          });
         }
 
         await syncUserSubscriptionState({
@@ -242,6 +252,7 @@ export async function POST(request: Request) {
               userId: subscription.userId,
               offerSubscriptionId: subscription.subscription_id,
               planSlug: subscription.planSlug,
+              billingCycle: subscription.billingCycle,
             });
 
             subscription.baseSubscriptionId = followup.subscription.subscription_id;
