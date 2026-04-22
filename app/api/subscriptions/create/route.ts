@@ -8,6 +8,7 @@ import { ACTIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscriptions/constants";
 import {
   createRazorpayRecurringPlan,
   getRecurringFirstCyclePricing,
+  scheduleBasePlanUpgrade,
 } from "@/lib/subscriptions/service";
 
 export async function POST(request: NextRequest) {
@@ -45,6 +46,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // ── Resolve pricing (base + campaign + coupon) ──────────────────────
     const pricing = await getRecurringFirstCyclePricing({
       userId: session.user.id,
       planSlug,
@@ -52,42 +54,66 @@ export async function POST(request: NextRequest) {
       couponCode: couponCode || null,
     });
 
-    const offerPlan =
-      pricing.requiresOfferSubscription && !pricing.activeOffer
-        ? await createRazorpayRecurringPlan({
-            amountPaise: pricing.firstCycleAmountPaise,
-            name: `${pricing.plan.name} - Intro ${billingCycle}`,
-            billingCycle,
-            description: `One-cycle introductory plan for ${pricing.plan.name}`,
-          })
-        : null;
+    // ── Determine the Razorpay plan to use ──────────────────────────────
+    //
+    // If there's a first-cycle discount, we create a temporary Razorpay plan
+    // at the discounted price and immediately schedule the subscription to
+    // upgrade to the base plan at the end of the first cycle.
+    //
+    // If there's no discount, we use the base plan directly.
+    //
+    // In BOTH cases: total_count = 0 (unlimited recurring), single mandate.
 
-    const planId = pricing.requiresOfferSubscription
-      ? pricing.activeOffer
-        ? pricing.activeOffer.razorpayPlanId_offer
-        : offerPlan!.id
-      : pricing.pricingEntry.razorpayPlanId;
-    const totalCount = pricing.requiresOfferSubscription ? 1 : 0;
-    const amountPaise = pricing.requiresOfferSubscription
-      ? pricing.firstCycleAmountPaise
-      : pricing.baseAmountPaise;
+    let planId = pricing.pricingEntry.razorpayPlanId!;
+    let discountedPlanId: string | null = null;
 
+    if (pricing.hasFirstCycleDiscount) {
+      const tempPlan = await createRazorpayRecurringPlan({
+        amountPaise: pricing.firstCycleAmountPaise,
+        name: `${pricing.plan.name} - Intro ${billingCycle}`,
+        billingCycle,
+        description: `First-cycle introductory plan for ${pricing.plan.name}`,
+      });
+      discountedPlanId = tempPlan.id;
+      planId = tempPlan.id;
+    }
+
+    // ── Create the Razorpay subscription ────────────────────────────────
     const razorpaySubscription = await razorpay.subscriptions.create({
       plan_id: planId,
-      total_count: totalCount,
+      total_count: 0, // Always unlimited — Razorpay handles plan transitions
       customer_notify: 1,
       notes: {
         userId: session.user.id,
         planSlug: pricing.plan.slug,
         planName: pricing.plan.name,
         billingCycle,
-        offerId: pricing.activeOffer?._id?.toString?.() || "",
         couponCode: pricing.coupon?.code || "",
         phone,
-        amountPaise: String(amountPaise),
+        amountPaise: String(
+          pricing.hasFirstCycleDiscount
+            ? pricing.firstCycleAmountPaise
+            : pricing.baseAmountPaise,
+        ),
       },
     } as never);
 
+    // ── Schedule base plan upgrade if discounted ────────────────────────
+    //
+    // This calls the Razorpay Update Subscription API with
+    // schedule_change_at: "cycle_end" so the subscription automatically
+    // switches to the base plan after the first cycle. No second mandate.
+    let basePlanScheduled = false;
+
+    if (pricing.hasFirstCycleDiscount) {
+      await scheduleBasePlanUpgrade({
+        razorpaySubscriptionId: razorpaySubscription.id,
+        basePlanId: pricing.pricingEntry.razorpayPlanId!,
+      });
+      basePlanScheduled = true;
+    }
+
+    // ── Save to database ────────────────────────────────────────────────
     await Subscription.create({
       userId: session.user.id,
       planSlug: pricing.plan.slug,
@@ -96,21 +122,16 @@ export async function POST(request: NextRequest) {
       billingCycle,
       startDate: new Date(),
       endDate: new Date(),
-      total_count: totalCount,
+      total_count: 0,
       autoRenew: true,
       gateway: "razorpay",
-      offerApplied: pricing.requiresOfferSubscription,
-      ...(pricing.requiresOfferSubscription
-        ? { offerSubscriptionId: razorpaySubscription.id }
-        : { baseSubscriptionId: razorpaySubscription.id }),
+      offerApplied: pricing.hasFirstCycleDiscount,
+      basePlanScheduled,
       chargeCount: 0,
       cancelAtPeriodEnd: false,
       metadata: {
         authorizationUrl: razorpaySubscription.short_url,
-        offerId: pricing.activeOffer?._id?.toString?.() || null,
         offerName: pricing.activeOffer?.name || pricing.limitedCampaign?.name || null,
-        offerAmount: pricing.requiresOfferSubscription ? amountPaise : null,
-        offerAppliedAmountINR: pricing.requiresOfferSubscription ? amountPaise / 100 : null,
         basePlanAmount: pricing.baseAmountPaise,
         basePlanAmountINR: pricing.baseAmountPaise / 100,
         planName: pricing.plan.name,
@@ -123,6 +144,8 @@ export async function POST(request: NextRequest) {
           : 0,
         firstCycleAmount: pricing.firstCycleAmountPaise,
         firstCycleAmountINR: pricing.firstCycleAmountPaise / 100,
+        discountedPlanId,
+        basePlanId: pricing.pricingEntry.razorpayPlanId,
         planIdUsed: planId,
       },
     });
@@ -131,8 +154,10 @@ export async function POST(request: NextRequest) {
       subscriptionId: razorpaySubscription.id,
       razorpayKeyId: process.env.RAZORPAY_KEY_ID,
       shortUrl: razorpaySubscription.short_url,
-      offerApplied: pricing.requiresOfferSubscription,
-      amount: amountPaise / 100,
+      offerApplied: pricing.hasFirstCycleDiscount,
+      amount: (pricing.hasFirstCycleDiscount
+        ? pricing.firstCycleAmountPaise
+        : pricing.baseAmountPaise) / 100,
     });
   } catch (error) {
     const message =

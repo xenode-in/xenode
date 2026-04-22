@@ -281,8 +281,8 @@ export default function CheckoutForm({
                       plan.subscriptionOffer || appliedCoupon
                         ? `The first cycle is Rs.${finalAmount.toFixed(
                             2,
-                          )}, then renewals continue at the full ${plan.billingCycle} plan price after the follow-up authorization.`
-                        : `Renewals continue at the full ${plan.billingCycle} plan price.`
+                          )}, then renewals continue at Rs.${plan.originalPrice.toFixed(2)}/${plan.billingCycle} automatically.`
+                        : `Renewals continue at Rs.${plan.originalPrice.toFixed(2)}/${plan.billingCycle} automatically.`
                     }`
                   : "Recurring subscriptions are only available for billing cycles with Razorpay recurring configured."}
               </p>

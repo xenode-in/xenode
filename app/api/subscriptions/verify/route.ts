@@ -7,6 +7,7 @@ import {
   consumeCouponRedemptionIfNeeded,
   createSubscriptionPaymentIfMissing,
   createSubscriptionInvoiceIfMissing,
+  scheduleBasePlanUpgrade,
   syncUserSubscriptionState,
 } from "@/lib/subscriptions/service";
 
@@ -41,9 +42,11 @@ export async function POST(request: NextRequest) {
     }
 
     const fetchedSubscription = await razorpay.subscriptions.fetch(razorpay_subscription_id);
+
+    // Use the plan amount from the fetched subscription as the source of truth
     const amountPaise =
-      subscriptionDoc.offerApplied && Number(subscriptionDoc.metadata?.offerAmount) > 0
-        ? Number(subscriptionDoc.metadata?.offerAmount)
+      Number(subscriptionDoc.metadata?.firstCycleAmount) > 0
+        ? Number(subscriptionDoc.metadata?.firstCycleAmount)
         : Number(subscriptionDoc.metadata?.basePlanAmount) || 99900;
 
     const invoiceResult = await createSubscriptionInvoiceIfMissing({
@@ -69,6 +72,20 @@ export async function POST(request: NextRequest) {
       invoiceResult.created ? 1 : subscriptionDoc.chargeCount ?? 1,
     );
     subscriptionDoc.paid_count = Math.max(subscriptionDoc.paid_count ?? 0, 1);
+
+    // Safety net: ensure base plan upgrade is scheduled for discounted subscriptions
+    if (
+      subscriptionDoc.offerApplied &&
+      !subscriptionDoc.basePlanScheduled &&
+      typeof subscriptionDoc.metadata?.basePlanId === "string"
+    ) {
+      await scheduleBasePlanUpgrade({
+        razorpaySubscriptionId: razorpay_subscription_id,
+        basePlanId: subscriptionDoc.metadata.basePlanId as string,
+      });
+      subscriptionDoc.basePlanScheduled = true;
+    }
+
     await subscriptionDoc.save();
 
     await createSubscriptionPaymentIfMissing({

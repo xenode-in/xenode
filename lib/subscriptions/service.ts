@@ -39,7 +39,13 @@ interface ValidatedRecurringCoupon {
   discountLabel: string;
 }
 
-interface RecurringFirstCyclePricing {
+/**
+ * Pricing context for creating a recurring subscription.
+ * Used by the /api/subscriptions/create route to decide whether a
+ * discounted first-cycle plan is needed and whether to schedule a
+ * base-plan upgrade via the Razorpay Update Subscription API.
+ */
+export interface RecurringFirstCyclePricing {
   plan: NonNullable<Awaited<ReturnType<typeof getPlanBySlugFromDB>>>;
   pricingEntry: {
     cycle: BillingCycle;
@@ -47,13 +53,21 @@ interface RecurringFirstCyclePricing {
     razorpayPlanId?: string;
   };
   billingCycle: BillingCycle;
+  /** Full base price in paise (no discounts applied) */
   baseAmountPaise: number;
+  /** Amount to charge on the first cycle (after all discounts) */
   firstCycleAmountPaise: number;
+  /** Active limited campaign, if any */
   limitedCampaign: ReturnType<typeof resolveActiveCampaign> | null;
+  /** Active subscription offer from the database, if any */
   activeOffer: ISubscriptionOffer | null;
+  /** Validated coupon, if one was provided */
   coupon: ValidatedRecurringCoupon | null;
-  requiresOfferSubscription: boolean;
+  /** Whether the first cycle price differs from the base price */
+  hasFirstCycleDiscount: boolean;
 }
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 export function computeDiscountedAmount(
   amount: number,
@@ -116,6 +130,8 @@ function getRazorpayPeriodConfig(cycle: BillingCycle) {
   }
 }
 
+// ─── Plan Context ─────────────────────────────────────────────────────────────
+
 export async function getRecurringPlanContext(
   planSlug: string,
   billingCycle: BillingCycle,
@@ -163,6 +179,8 @@ export async function getRecurringPlanContext(
     offerAmountPaise,
   };
 }
+
+// ─── Coupon Validation ────────────────────────────────────────────────────────
 
 function computeCouponDiscountPaise(args: {
   amountPaise: number;
@@ -248,12 +266,19 @@ export async function validateRecurringCoupon(args: {
   } satisfies ValidatedRecurringCoupon;
 }
 
+// ─── Pricing Resolution ──────────────────────────────────────────────────────
+
+/**
+ * Computes the full pricing context for creating a recurring subscription.
+ * Resolves campaign offers, subscription offers, and coupon discounts
+ * to determine the first-cycle amount and whether a discounted plan is needed.
+ */
 export async function getRecurringFirstCyclePricing(args: {
   userId: string;
   planSlug: string;
   billingCycle: BillingCycle;
   couponCode?: string | null;
-}) {
+}): Promise<RecurringFirstCyclePricing> {
   const [planContext, activeOffer] = await Promise.all([
     getRecurringPlanContext(args.planSlug, args.billingCycle),
     getActiveSubscriptionOffer(),
@@ -274,13 +299,6 @@ export async function getRecurringFirstCyclePricing(args: {
     ? Math.max(100, campaignAdjustedAmountPaise - coupon.discountAmountPaise)
     : campaignAdjustedAmountPaise;
 
-  const matchingOffer =
-    activeOffer &&
-    activeOffer.originalAmount === planContext.baseAmountPaise &&
-    activeOffer.discountedAmount === firstCycleAmountPaise
-      ? activeOffer
-      : null;
-
   return {
     plan: planContext.plan,
     pricingEntry: {
@@ -292,20 +310,22 @@ export async function getRecurringFirstCyclePricing(args: {
     baseAmountPaise: planContext.baseAmountPaise,
     firstCycleAmountPaise,
     limitedCampaign: planContext.limitedCampaign,
-    activeOffer: matchingOffer,
+    activeOffer: activeOffer ?? null,
     coupon,
-    requiresOfferSubscription:
+    hasFirstCycleDiscount:
       firstCycleAmountPaise !== planContext.baseAmountPaise,
-  } satisfies RecurringFirstCyclePricing;
+  };
 }
+
+// ─── Razorpay Plan & Subscription Helpers ─────────────────────────────────────
 
 export async function createRazorpayRecurringPlan(args: {
   amountPaise: number;
   name: string;
-  billingCycle: BillingCycle;
+  billingCycle?: BillingCycle;
   description?: string;
 }) {
-  const periodConfig = getRazorpayPeriodConfig(args.billingCycle);
+  const periodConfig = getRazorpayPeriodConfig(args.billingCycle ?? "monthly");
   if (!periodConfig) {
     throw new Error("Unsupported recurring billing cycle");
   }
@@ -326,6 +346,34 @@ export async function createRazorpayRecurringPlan(args: {
 
   return plan;
 }
+
+/**
+ * Schedules a plan upgrade on an existing Razorpay subscription.
+ *
+ * Uses the Razorpay Update Subscription API (`PATCH /v1/subscriptions/{id}`)
+ * with `schedule_change_at: "cycle_end"` so the plan change takes effect
+ * at the end of the current billing cycle — no second mandate needed.
+ *
+ * This is used for first-cycle discounts: the subscription starts on a
+ * discounted plan, and this function schedules it to switch to the base
+ * plan at the end of the first cycle.
+ */
+export async function scheduleBasePlanUpgrade(args: {
+  razorpaySubscriptionId: string;
+  basePlanId: string;
+}) {
+  const updated = await razorpay.subscriptions.update(
+    args.razorpaySubscriptionId,
+    {
+      plan_id: args.basePlanId,
+      schedule_change_at: "cycle_end",
+    } as never,
+  );
+
+  return updated;
+}
+
+// ─── Coupon Consumption ───────────────────────────────────────────────────────
 
 export async function consumeCouponRedemptionIfNeeded(args: {
   couponId?: string | null;
@@ -357,6 +405,8 @@ export async function consumeCouponRedemptionIfNeeded(args: {
 
   return result.modifiedCount > 0;
 }
+
+// ─── Admin Plan Management ────────────────────────────────────────────────────
 
 export async function updatePricingBasePlan(razorpayPlanId: string) {
   const { config } = await ensureBasePlanConfig();
@@ -398,6 +448,8 @@ export async function updatePricingBasePlan(razorpayPlanId: string) {
     },
   );
 }
+
+// ─── Webhook Helpers ──────────────────────────────────────────────────────────
 
 export function computeWebhookEventId(rawBody: string, parsedBody: unknown) {
   const parsed = parsedBody as Record<string, unknown>;
@@ -443,6 +495,8 @@ export async function markWebhookFailed(eventId: string, errorMessage: string) {
     { $set: { status: "failed", errorMessage } },
   );
 }
+
+// ─── User State Sync ──────────────────────────────────────────────────────────
 
 export async function syncUserSubscriptionState(args: {
   userId: string;
@@ -530,6 +584,8 @@ export async function enforceStorageAccess(userId: string) {
   throw error;
 }
 
+// ─── Invoice & Payment Helpers ────────────────────────────────────────────────
+
 export async function createSubscriptionInvoiceIfMissing(args: {
   subscriptionId: string;
   paymentId: string;
@@ -597,75 +653,22 @@ export async function createSubscriptionPaymentIfMissing(args: {
   return { payment, created: true };
 }
 
+// ─── Subscription Queries ─────────────────────────────────────────────────────
+
 export async function getCurrentSubscriptionForUser(userId: string) {
   await dbConnect();
   return Subscription.findOne({ userId }).sort({ createdAt: -1 }).lean();
 }
 
+/**
+ * Returns the next billing amount in INR.
+ * With the single-subscription model, after the first discounted cycle
+ * the Razorpay subscription has already been upgraded to the base plan,
+ * so the next billing amount is always the base plan price.
+ */
 export function getNextBillingAmount(subscription: {
   status?: string;
-  offerApplied?: boolean;
-  chargeCount?: number;
   basePlanAmount?: number;
-  offerAmount?: number;
 }) {
-  if (subscription.offerApplied && (subscription.chargeCount ?? 0) < 1) {
-    return (subscription.offerAmount ?? BASE_MONTHLY_AMOUNT_PAISE) / 100;
-  }
-
   return (subscription.basePlanAmount ?? BASE_MONTHLY_AMOUNT_PAISE) / 100;
-}
-
-export async function createBaseFollowupSubscription(args: {
-  userId: string;
-  offerSubscriptionId: string;
-  planSlug: string;
-  billingCycle: BillingCycle;
-}) {
-  const { plan, pricingEntry, baseAmountPaise } = await getRecurringPlanContext(
-    args.planSlug,
-    args.billingCycle,
-  );
-  const razorpaySubscription = await razorpay.subscriptions.create({
-    plan_id: pricingEntry.razorpayPlanId,
-    total_count: 0,
-    customer_notify: 1,
-    notes: {
-      userId: args.userId,
-      offerSubscriptionId: args.offerSubscriptionId,
-      planSlug: args.planSlug,
-      billingCycle: args.billingCycle,
-      kind: "base_followup",
-    },
-  } as never);
-
-  const subscription = await Subscription.create({
-    userId: args.userId,
-    planSlug: args.planSlug,
-    status: "pending",
-    subscription_id: razorpaySubscription.id,
-    billingCycle: args.billingCycle,
-    startDate: new Date(),
-    endDate: new Date(),
-    total_count: 0,
-    autoRenew: true,
-    gateway: "razorpay",
-    offerApplied: false,
-    offerSubscriptionId: args.offerSubscriptionId,
-    baseSubscriptionId: razorpaySubscription.id,
-    chargeCount: 0,
-    cancelAtPeriodEnd: false,
-    metadata: {
-      authorizationUrl: razorpaySubscription.short_url,
-      planName: plan.name,
-      basePlanAmount: baseAmountPaise,
-      basePlanAmountINR: baseAmountPaise / 100,
-      kind: "base_followup",
-    },
-  });
-
-  return {
-    razorpaySubscription,
-    subscription,
-  };
 }
