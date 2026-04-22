@@ -7,8 +7,6 @@ interface SubscriptionStatusPayload {
   subscription: {
     id: string;
     subscriptionId: string;
-    offerSubscriptionId: string | null;
-    baseSubscriptionId: string | null;
     cancelAtPeriodEnd: boolean;
     authorizationUrl: string | null;
   } | null;

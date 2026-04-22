@@ -28,8 +28,6 @@ export async function GET(request: NextRequest) {
       subscription: {
         id: subscription._id.toString(),
         subscriptionId: subscription.subscription_id,
-        offerSubscriptionId: subscription.offerSubscriptionId || null,
-        baseSubscriptionId: subscription.baseSubscriptionId || null,
         cancelAtPeriodEnd: subscription.cancelAtPeriodEnd || false,
         authorizationUrl:
           typeof subscription.metadata?.authorizationUrl === "string"
@@ -39,10 +37,7 @@ export async function GET(request: NextRequest) {
       currentPeriodEnd: subscription.current_period_end || subscription.endDate || null,
       offerApplied: subscription.offerApplied || false,
       nextBillingAmount: getNextBillingAmount({
-        offerApplied: subscription.offerApplied,
-        chargeCount: subscription.chargeCount,
         basePlanAmount: Number(subscription.metadata?.basePlanAmount) || undefined,
-        offerAmount: Number(subscription.metadata?.offerAmount) || undefined,
       }),
     });
   } catch (error) {

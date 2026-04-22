@@ -8,6 +8,8 @@ interface SubscribeButtonProps {
   phone: string;
   planSlug: string;
   planName: string;
+  billingCycle: "monthly" | "yearly" | "quarterly" | "lifetime";
+  couponCode?: string | null;
   disabled?: boolean;
   offerLabel?: string | null;
   user: {
@@ -22,6 +24,8 @@ export default function SubscribeButton({
   phone,
   planSlug,
   planName,
+  billingCycle,
+  couponCode,
   disabled,
   offerLabel,
   user,
@@ -39,7 +43,7 @@ export default function SubscribeButton({
       const createResponse = await fetch("/api/subscriptions/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone, planSlug }),
+        body: JSON.stringify({ phone, planSlug, billingCycle, couponCode }),
       });
       const createData = await createResponse.json();
       if (!createResponse.ok) {

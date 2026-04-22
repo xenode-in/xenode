@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import Subscription from "@/models/Subscription";
 import {
   computeWebhookEventId,
-  createBaseFollowupSubscription,
+  consumeCouponRedemptionIfNeeded,
   createSubscriptionInvoiceIfMissing,
   createSubscriptionPaymentIfMissing,
   createWebhookLog,
@@ -87,6 +87,7 @@ export async function POST(request: Request) {
           typeof subEntity?.paid_count === "number"
             ? subEntity.paid_count
             : subscription.paid_count ?? 0;
+
         await subscription.save();
 
         await syncUserSubscriptionState({
@@ -100,11 +101,12 @@ export async function POST(request: Request) {
       }
 
       case "subscription.charged": {
+        // Use the payment entity amount as source of truth.
+        // Razorpay sends the actual charged amount, which accounts for
+        // any offer/plan changes automatically.
         const amountPaise =
           typeof paymentEntity?.amount === "number"
             ? Number(paymentEntity.amount)
-          : subscription.offerApplied && Number(subscription.metadata?.offerAmount) > 0
-            ? Number(subscription.metadata?.offerAmount)
             : Number(subscription.metadata?.basePlanAmount) || 99900;
 
         const invoiceResult =
@@ -169,6 +171,15 @@ export async function POST(request: Request) {
               paymentEntity,
             },
           });
+
+          await consumeCouponRedemptionIfNeeded({
+            couponId:
+              typeof subscription.metadata?.couponId === "string"
+                ? subscription.metadata.couponId
+                : null,
+            userId: subscription.userId,
+            txnid: paymentEntity.id,
+          });
         }
 
         await syncUserSubscriptionState({
@@ -228,39 +239,9 @@ export async function POST(request: Request) {
       }
 
       case "subscription.completed": {
+        // With total_count=0 (unlimited), this event should not fire
+        // for new subscriptions. If it does, just mark as completed.
         subscription.status = "completed";
-
-        if (subscription.offerApplied && (subscription.chargeCount ?? 0) === 1) {
-          const existingBase = await Subscription.findOne({
-            userId: subscription.userId,
-            offerSubscriptionId: subscription.subscription_id,
-            baseSubscriptionId: { $ne: null },
-          });
-
-          if (!existingBase && subscription.subscription_id) {
-            const followup = await createBaseFollowupSubscription({
-              userId: subscription.userId,
-              offerSubscriptionId: subscription.subscription_id,
-              planSlug: subscription.planSlug,
-            });
-
-            subscription.baseSubscriptionId = followup.subscription.subscription_id;
-            subscription.metadata = {
-              ...subscription.metadata,
-              followupAuthorizationUrl:
-                followup.razorpaySubscription.short_url || null,
-            };
-
-            await syncUserSubscriptionState({
-              userId: subscription.userId,
-              subscriptionDocId: followup.subscription._id,
-              status: "past_due",
-              expiresAt: subscription.current_period_end || subscription.endDate || null,
-              autopayActive: false,
-            });
-          }
-        }
-
         await subscription.save();
         break;
       }

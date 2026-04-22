@@ -138,14 +138,15 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
         campaignBadge: activeCampaign?.badge ?? null,
         campaignDiscountPercent: activeCampaign?.discountPercent ?? null,
         subscriptionOffer:
-          billingCycle === "monthly" && activeCampaign?.discountDuration === "limited"
+          activeCampaign?.discountDuration === "limited" &&
+          billingCycle !== "lifetime"
             ? {
                 name: activeCampaign.name,
                 discountPercent: activeCampaign.discountPercent,
                 discountedAmount:
                   getEffectivePriceForCycle(
                     plan.pricing,
-                    "monthly",
+                    billingCycle,
                     activeCampaign.discountPercent,
                   ),
               }

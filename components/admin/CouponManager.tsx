@@ -21,6 +21,7 @@ interface Coupon {
   perUserLimit: number;
   usedCount: number;
   applicablePlans: string[];
+  razorpayOfferId: string | null;
   validFrom: string;
   validTo: string;
   isActive: boolean;
@@ -37,6 +38,7 @@ const emptyForm = {
   maxUses: 0,
   perUserLimit: 1,
   applicablePlans: "",
+  razorpayOfferId: "",
   validFrom: new Date().toISOString().slice(0, 10),
   validTo: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
   isActive: true,
@@ -75,9 +77,9 @@ export function CouponManager({ initialCoupons }: { initialCoupons: Coupon[] }) 
         code: c.code, type: c.type, targetUserId: c.targetUserId,
         discountType: c.discountType, discountValue: c.discountValue,
         maxUses: c.maxUses, perUserLimit: c.perUserLimit, usedCount: c.usedCount,
-        applicablePlans: c.applicablePlans, validFrom: c.validFrom,
-        validTo: c.validTo, isActive: c.isActive, createdBy: c.createdBy,
-        createdAt: c.createdAt,
+        applicablePlans: c.applicablePlans, razorpayOfferId: c.razorpayOfferId || null,
+        validFrom: c.validFrom, validTo: c.validTo, isActive: c.isActive,
+        createdBy: c.createdBy, createdAt: c.createdAt,
       }, ...prev]);
       setForm(emptyForm);
       setShowForm(false);
@@ -229,6 +231,20 @@ export function CouponManager({ initialCoupons }: { initialCoupons: Coupon[] }) 
                   placeholder="basic, pro, plus, max"
                   className="mt-1 bg-zinc-800 border-zinc-700 text-white"
                 />
+              </div>
+              <div className="sm:col-span-2">
+                <Label className="text-xs text-zinc-400">Razorpay Offer ID (for subscriptions)</Label>
+                <Input
+                  value={form.razorpayOfferId}
+                  onChange={(e) => setForm({ ...form, razorpayOfferId: e.target.value })}
+                  placeholder="offer_xxxxx (create on Razorpay Dashboard first)"
+                  className="mt-1 bg-zinc-800 border-zinc-700 text-white font-mono text-xs"
+                />
+                <p className="mt-1 text-[10px] text-zinc-500">
+                  Required for subscription discounts. Create the offer on the{" "}
+                  <a href="https://dashboard.razorpay.com/app/offers" target="_blank" rel="noopener noreferrer" className="text-blue-400 underline">Razorpay Dashboard</a>
+                  {" "}first, then paste the ID here.
+                </p>
               </div>
               <div className="flex items-center gap-3 pt-5">
                 <Switch

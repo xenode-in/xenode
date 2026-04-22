@@ -1,15 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/admin/session";
+import dbConnect from "@/lib/mongodb";
 import SubscriptionOffer from "@/models/SubscriptionOffer";
-import {
-  BASE_MONTHLY_AMOUNT_PAISE,
-  SUBSCRIPTION_PLAN_NAME,
-} from "@/lib/subscriptions/constants";
-import {
-  createRazorpayRecurringPlan,
-  getActiveSubscriptionOffer,
-} from "@/lib/subscriptions/service";
+import { getActiveSubscriptionOffer } from "@/lib/subscriptions/service";
 
+/**
+ * POST /api/admin/subscriptions/offers/create
+ *
+ * Creates a subscription offer that links to a Razorpay Offer
+ * created on the Razorpay Dashboard.
+ *
+ * Body: {
+ *   name: "Launch Offer",
+ *   discountPercent: 50,
+ *   razorpayOfferId: "offer_JHD834hjbxzhd38d",  // from Dashboard
+ *   validFrom: "2026-04-22T00:00:00Z",
+ *   validUntil: "2026-05-22T00:00:00Z",  // optional
+ *   originalAmount: 69900  // base plan amount in paise (optional, defaults to 99900)
+ * }
+ */
 export async function POST(request: NextRequest) {
   const session = await getAdminSession();
   if (!session) {
@@ -19,6 +28,28 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const validFrom = new Date(body.validFrom);
   const validUntil = body.validUntil ? new Date(body.validUntil) : null;
+  const discountPercent = Number(body.discountPercent);
+  const razorpayOfferId =
+    typeof body.razorpayOfferId === "string" ? body.razorpayOfferId.trim() : "";
+
+  if (!discountPercent || discountPercent < 1 || discountPercent > 99) {
+    return NextResponse.json(
+      { error: "discountPercent must be between 1 and 99" },
+      { status: 400 },
+    );
+  }
+
+  if (!razorpayOfferId || !razorpayOfferId.startsWith("offer_")) {
+    return NextResponse.json(
+      {
+        error:
+          "razorpayOfferId is required. Create an offer on the Razorpay Dashboard and paste the ID (e.g., offer_JHD834hjbxzhd38d).",
+      },
+      { status: 400 },
+    );
+  }
+
+  await dbConnect();
 
   const existingActive = await getActiveSubscriptionOffer();
   if (existingActive) {
@@ -28,24 +59,15 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const plan = await createRazorpayRecurringPlan({
-    amountPaise: Math.max(
-      1,
-      Math.round(BASE_MONTHLY_AMOUNT_PAISE * (1 - Number(body.discountPercent) / 100)),
-    ),
-    name: `${SUBSCRIPTION_PLAN_NAME} - ${body.name}`,
-    description: `Offer plan for ${body.name}`,
-  });
-
   const offer = await SubscriptionOffer.create({
     name: body.name,
-    discountPercent: Number(body.discountPercent),
+    discountPercent,
     appliesForCycles: 1,
     validFrom,
     validUntil,
     isActive: true,
-    razorpayPlanId_offer: plan.id,
-    originalAmount: BASE_MONTHLY_AMOUNT_PAISE,
+    razorpayOfferId,
+    originalAmount: Number(body.originalAmount) || 99900,
     createdBy: session.id,
   });
 

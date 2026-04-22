@@ -25,6 +25,7 @@ export default async function CouponsPage() {
     perUserLimit: c.perUserLimit,
     usedCount: c.usedCount,
     applicablePlans: c.applicablePlans,
+    razorpayOfferId: c.razorpayOfferId ?? null,
     validFrom: c.validFrom.toISOString(),
     validTo: c.validTo.toISOString(),
     isActive: c.isActive,

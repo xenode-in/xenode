@@ -25,6 +25,8 @@ export interface ICoupon extends Document {
   usedBy: ICouponUsedBy[];
   /** Empty array = valid for all plans */
   applicablePlans: string[];
+  /** Razorpay Offer ID (created on Dashboard, e.g. offer_JHD834hjbxzhd38d) */
+  razorpayOfferId?: string;
   validFrom: Date;
   validTo: Date;
   isActive: boolean;
@@ -58,6 +60,7 @@ const CouponSchema = new Schema<ICoupon>(
       },
     ],
     applicablePlans: { type: [String], default: [] },
+    razorpayOfferId: { type: String, default: null, sparse: true },
     validFrom: { type: Date, required: true },
     validTo: { type: Date, required: true },
     isActive: { type: Boolean, default: true },

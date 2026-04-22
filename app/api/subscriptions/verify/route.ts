@@ -4,6 +4,7 @@ import dbConnect from "@/lib/mongodb";
 import razorpay from "@/lib/razorpay";
 import Subscription from "@/models/Subscription";
 import {
+  consumeCouponRedemptionIfNeeded,
   createSubscriptionPaymentIfMissing,
   createSubscriptionInvoiceIfMissing,
   syncUserSubscriptionState,
@@ -21,6 +22,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
+    // Verify signature per Razorpay docs:
+    // generated_signature = hmac_sha256(razorpay_payment_id + "|" + subscription_id, secret)
     const expectedSignature = crypto
       .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET!)
       .update(`${razorpay_payment_id}|${razorpay_subscription_id}`)
@@ -40,9 +43,11 @@ export async function POST(request: NextRequest) {
     }
 
     const fetchedSubscription = await razorpay.subscriptions.fetch(razorpay_subscription_id);
+
+    // Use the first-cycle amount from our metadata (which accounts for any offer discount)
     const amountPaise =
-      subscriptionDoc.offerApplied && Number(subscriptionDoc.metadata?.offerAmount) > 0
-        ? Number(subscriptionDoc.metadata?.offerAmount)
+      Number(subscriptionDoc.metadata?.firstCycleAmount) > 0
+        ? Number(subscriptionDoc.metadata?.firstCycleAmount)
         : Number(subscriptionDoc.metadata?.basePlanAmount) || 99900;
 
     const invoiceResult = await createSubscriptionInvoiceIfMissing({
@@ -90,6 +95,15 @@ export async function POST(request: NextRequest) {
         invoiceCreated: invoiceResult.created,
         razorpaySubscriptionId: razorpay_subscription_id,
       },
+    });
+
+    await consumeCouponRedemptionIfNeeded({
+      couponId:
+        typeof subscriptionDoc.metadata?.couponId === "string"
+          ? subscriptionDoc.metadata.couponId
+          : null,
+      userId: subscriptionDoc.userId,
+      txnid: razorpay_payment_id,
     });
 
     await syncUserSubscriptionState({
