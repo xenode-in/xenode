@@ -347,32 +347,6 @@ export async function createRazorpayRecurringPlan(args: {
   return plan;
 }
 
-/**
- * Schedules a plan upgrade on an existing Razorpay subscription.
- *
- * Uses the Razorpay Update Subscription API (`PATCH /v1/subscriptions/{id}`)
- * with `schedule_change_at: "cycle_end"` so the plan change takes effect
- * at the end of the current billing cycle — no second mandate needed.
- *
- * This is used for first-cycle discounts: the subscription starts on a
- * discounted plan, and this function schedules it to switch to the base
- * plan at the end of the first cycle.
- */
-export async function scheduleBasePlanUpgrade(args: {
-  razorpaySubscriptionId: string;
-  basePlanId: string;
-}) {
-  const updated = await razorpay.subscriptions.update(
-    args.razorpaySubscriptionId,
-    {
-      plan_id: args.basePlanId,
-      schedule_change_at: "cycle_end",
-    } as never,
-  );
-
-  return updated;
-}
-
 // ─── Coupon Consumption ───────────────────────────────────────────────────────
 
 export async function consumeCouponRedemptionIfNeeded(args: {

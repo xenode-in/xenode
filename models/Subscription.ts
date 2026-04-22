@@ -26,8 +26,6 @@ export interface ISubscription extends Document {
   total_count?: number;
   cancel_at_cycle_end?: boolean;
   offerApplied?: boolean;
-  /** Whether a base-plan upgrade has been scheduled via Razorpay Update API */
-  basePlanScheduled?: boolean;
   chargeCount?: number;
   cancelAtPeriodEnd?: boolean;
   autoRenew: boolean;
@@ -73,7 +71,6 @@ const SubscriptionSchema = new Schema<ISubscription>(
     total_count: { type: Number },
     cancel_at_cycle_end: { type: Boolean, default: false },
     offerApplied: { type: Boolean, default: false, index: true },
-    basePlanScheduled: { type: Boolean, default: false },
     chargeCount: { type: Number, default: 0 },
     cancelAtPeriodEnd: { type: Boolean, default: false },
     autoRenew: { type: Boolean, default: false },

@@ -7,6 +7,8 @@ export interface ISubscriptionOffer extends Document {
   validFrom: Date;
   validUntil: Date | null;
   isActive: boolean;
+  /** Razorpay Offer ID created on the Dashboard (e.g., offer_JHD834hjbxzhd38d) */
+  razorpayOfferId: string;
   originalAmount: number;
   discountedAmount: number;
   createdBy: mongoose.Types.ObjectId | string;
@@ -22,6 +24,7 @@ const SubscriptionOfferSchema = new Schema<ISubscriptionOffer>(
     validFrom: { type: Date, required: true, index: true },
     validUntil: { type: Date, default: null, index: true },
     isActive: { type: Boolean, default: false, index: true },
+    razorpayOfferId: { type: String, required: true, unique: true },
     originalAmount: { type: Number, required: true, default: 99900 },
     discountedAmount: { type: Number, required: true, min: 1 },
     createdBy: {

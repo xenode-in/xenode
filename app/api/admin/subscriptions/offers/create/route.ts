@@ -4,6 +4,21 @@ import dbConnect from "@/lib/mongodb";
 import SubscriptionOffer from "@/models/SubscriptionOffer";
 import { getActiveSubscriptionOffer } from "@/lib/subscriptions/service";
 
+/**
+ * POST /api/admin/subscriptions/offers/create
+ *
+ * Creates a subscription offer that links to a Razorpay Offer
+ * created on the Razorpay Dashboard.
+ *
+ * Body: {
+ *   name: "Launch Offer",
+ *   discountPercent: 50,
+ *   razorpayOfferId: "offer_JHD834hjbxzhd38d",  // from Dashboard
+ *   validFrom: "2026-04-22T00:00:00Z",
+ *   validUntil: "2026-05-22T00:00:00Z",  // optional
+ *   originalAmount: 69900  // base plan amount in paise (optional, defaults to 99900)
+ * }
+ */
 export async function POST(request: NextRequest) {
   const session = await getAdminSession();
   if (!session) {
@@ -14,10 +29,22 @@ export async function POST(request: NextRequest) {
   const validFrom = new Date(body.validFrom);
   const validUntil = body.validUntil ? new Date(body.validUntil) : null;
   const discountPercent = Number(body.discountPercent);
+  const razorpayOfferId =
+    typeof body.razorpayOfferId === "string" ? body.razorpayOfferId.trim() : "";
 
   if (!discountPercent || discountPercent < 1 || discountPercent > 99) {
     return NextResponse.json(
       { error: "discountPercent must be between 1 and 99" },
+      { status: 400 },
+    );
+  }
+
+  if (!razorpayOfferId || !razorpayOfferId.startsWith("offer_")) {
+    return NextResponse.json(
+      {
+        error:
+          "razorpayOfferId is required. Create an offer on the Razorpay Dashboard and paste the ID (e.g., offer_JHD834hjbxzhd38d).",
+      },
       { status: 400 },
     );
   }
@@ -32,9 +59,6 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // No longer pre-creating Razorpay plans for offers.
-  // Discounted plans are created dynamically at subscription time using
-  // createRazorpayRecurringPlan() in the subscription create route.
   const offer = await SubscriptionOffer.create({
     name: body.name,
     discountPercent,
@@ -42,6 +66,7 @@ export async function POST(request: NextRequest) {
     validFrom,
     validUntil,
     isActive: true,
+    razorpayOfferId,
     originalAmount: Number(body.originalAmount) || 99900,
     createdBy: session.id,
   });

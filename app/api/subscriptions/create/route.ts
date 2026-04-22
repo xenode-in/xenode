@@ -4,13 +4,23 @@ import dbConnect from "@/lib/mongodb";
 import razorpay from "@/lib/razorpay";
 import { getServerSession } from "@/lib/auth/session";
 import Subscription from "@/models/Subscription";
+import Coupon from "@/models/Coupon";
 import { ACTIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscriptions/constants";
 import {
-  createRazorpayRecurringPlan,
-  getRecurringFirstCyclePricing,
-  scheduleBasePlanUpgrade,
+  getRecurringPlanContext,
+  getActiveSubscriptionOffer,
 } from "@/lib/subscriptions/service";
 
+/**
+ * POST /api/subscriptions/create
+ *
+ * Creates a Razorpay subscription. Discounts are handled via native offer_id:
+ *
+ * 1. Campaign offer (auto-applied): SubscriptionOffer.razorpayOfferId
+ * 2. Coupon code (user-entered): Coupon.razorpayOfferId
+ *
+ * Priority: coupon > campaign offer (only one offer_id can be passed)
+ */
 export async function POST(request: NextRequest) {
   try {
     const session = await getServerSession(request);
@@ -29,11 +39,15 @@ export async function POST(request: NextRequest) {
         : "monthly";
 
     if (!planSlug) {
-      return NextResponse.json({ error: "planSlug is required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "planSlug is required" },
+        { status: 400 },
+      );
     }
 
     await dbConnect();
 
+    // ── Check for existing active subscription ──────────────────────────
     const existing = await Subscription.findOne({
       userId: session.user.id,
       status: { $in: [...ACTIVE_SUBSCRIPTION_STATUSES] },
@@ -46,107 +60,178 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ── Resolve pricing (base + campaign + coupon) ──────────────────────
-    const pricing = await getRecurringFirstCyclePricing({
-      userId: session.user.id,
-      planSlug,
-      billingCycle,
-      couponCode: couponCode || null,
-    });
+    // ── Resolve plan and pricing ────────────────────────────────────────
+    const planContext = await getRecurringPlanContext(planSlug, billingCycle);
+    const baseAmountPaise = planContext.baseAmountPaise;
 
-    // ── Determine the Razorpay plan to use ──────────────────────────────
-    //
-    // If there's a first-cycle discount, we create a temporary Razorpay plan
-    // at the discounted price and immediately schedule the subscription to
-    // upgrade to the base plan at the end of the first cycle.
-    //
-    // If there's no discount, we use the base plan directly.
-    //
-    // In BOTH cases: total_count = 0 (unlimited recurring), single mandate.
+    // ── Resolve discount source (coupon takes priority over campaign) ───
+    let offerId: string | null = null;
+    let offerSource: "coupon" | "campaign" | null = null;
+    let discountPercent: number | null = null;
+    let couponId: string | null = null;
+    let couponCodeUsed: string | null = null;
 
-    let planId = pricing.pricingEntry.razorpayPlanId!;
-    let discountedPlanId: string | null = null;
+    // 1. Check for coupon code with a linked Razorpay offer
+    if (couponCode) {
+      const coupon = await Coupon.findOne({
+        code: couponCode.toUpperCase(),
+        isActive: true,
+      }).lean();
 
-    if (pricing.hasFirstCycleDiscount) {
-      const tempPlan = await createRazorpayRecurringPlan({
-        amountPaise: pricing.firstCycleAmountPaise,
-        name: `${pricing.plan.name} - Intro ${billingCycle}`,
-        billingCycle,
-        description: `First-cycle introductory plan for ${pricing.plan.name}`,
-      });
-      discountedPlanId = tempPlan.id;
-      planId = tempPlan.id;
+      if (!coupon) {
+        return NextResponse.json(
+          { error: "Invalid coupon code" },
+          { status: 400 },
+        );
+      }
+
+      const now = new Date();
+      if (now < new Date(coupon.validFrom)) {
+        return NextResponse.json(
+          { error: "This coupon is not yet valid" },
+          { status: 400 },
+        );
+      }
+      if (now > new Date(coupon.validTo)) {
+        return NextResponse.json(
+          { error: "This coupon has expired" },
+          { status: 400 },
+        );
+      }
+      if (coupon.maxUses > 0 && coupon.usedCount >= coupon.maxUses) {
+        return NextResponse.json(
+          { error: "This coupon has reached its usage limit" },
+          { status: 400 },
+        );
+      }
+      if (coupon.type === "user" && coupon.targetUserId !== session.user.id) {
+        return NextResponse.json(
+          { error: "This coupon is not valid for your account" },
+          { status: 400 },
+        );
+      }
+      const userUses = coupon.usedBy.filter(
+        (u) => u.userId === session.user.id,
+      ).length;
+      if (userUses >= coupon.perUserLimit) {
+        return NextResponse.json(
+          { error: "You have already used this coupon" },
+          { status: 400 },
+        );
+      }
+      if (
+        coupon.applicablePlans.length > 0 &&
+        !coupon.applicablePlans.includes(planSlug)
+      ) {
+        return NextResponse.json(
+          {
+            error: `This coupon is only valid for: ${coupon.applicablePlans.join(", ")} plans`,
+          },
+          { status: 400 },
+        );
+      }
+
+      if (coupon.razorpayOfferId) {
+        offerId = coupon.razorpayOfferId;
+        offerSource = "coupon";
+        discountPercent =
+          coupon.discountType === "percent" ? coupon.discountValue : null;
+        couponId = coupon._id.toString();
+        couponCodeUsed = coupon.code;
+      } else {
+        // Coupon exists but has no linked Razorpay offer_id
+        return NextResponse.json(
+          {
+            error:
+              "This coupon is not configured for subscriptions. Please contact support.",
+          },
+          { status: 400 },
+        );
+      }
     }
 
-    // ── Create the Razorpay subscription ────────────────────────────────
-    const razorpaySubscription = await razorpay.subscriptions.create({
-      plan_id: planId,
-      total_count: 0, // Always unlimited — Razorpay handles plan transitions
+    // 2. Fall back to campaign offer if no coupon was applied
+    if (!offerId) {
+      const activeOffer = await getActiveSubscriptionOffer();
+      if (activeOffer?.razorpayOfferId) {
+        offerId = activeOffer.razorpayOfferId;
+        offerSource = "campaign";
+        discountPercent = activeOffer.discountPercent;
+      }
+    }
+
+    const offerApplied = !!offerId;
+    const firstCycleAmountPaise =
+      offerApplied && discountPercent
+        ? Math.max(
+            100,
+            Math.round(baseAmountPaise * (1 - discountPercent / 100)),
+          )
+        : baseAmountPaise;
+
+    // ── Razorpay requires total_count >= 1 ──────────────────────────────
+    const maxTotalCount =
+      billingCycle === "yearly"
+        ? 100
+        : billingCycle === "quarterly"
+          ? 400
+          : 1200; // monthly
+
+    // ── Create the Razorpay subscription (per docs) ─────────────────────
+    const subscriptionPayload: Record<string, unknown> = {
+      plan_id: planContext.pricingEntry.razorpayPlanId,
+      total_count: maxTotalCount,
+      quantity: 1,
       customer_notify: 1,
       notes: {
         userId: session.user.id,
-        planSlug: pricing.plan.slug,
-        planName: pricing.plan.name,
+        planSlug: planContext.plan.slug,
+        planName: planContext.plan.name,
         billingCycle,
-        couponCode: pricing.coupon?.code || "",
         phone,
-        amountPaise: String(
-          pricing.hasFirstCycleDiscount
-            ? pricing.firstCycleAmountPaise
-            : pricing.baseAmountPaise,
-        ),
+        couponCode: couponCodeUsed || "",
+        amountPaise: String(baseAmountPaise),
       },
-    } as never);
+    };
 
-    // ── Schedule base plan upgrade if discounted ────────────────────────
-    //
-    // This calls the Razorpay Update Subscription API with
-    // schedule_change_at: "cycle_end" so the subscription automatically
-    // switches to the base plan after the first cycle. No second mandate.
-    let basePlanScheduled = false;
-
-    if (pricing.hasFirstCycleDiscount) {
-      await scheduleBasePlanUpgrade({
-        razorpaySubscriptionId: razorpaySubscription.id,
-        basePlanId: pricing.pricingEntry.razorpayPlanId!,
-      });
-      basePlanScheduled = true;
+    // Pass offer_id to Razorpay (either from coupon or campaign)
+    if (offerId) {
+      subscriptionPayload.offer_id = offerId;
     }
+
+    const razorpaySubscription = await razorpay.subscriptions.create(
+      subscriptionPayload as never,
+    );
 
     // ── Save to database ────────────────────────────────────────────────
     await Subscription.create({
       userId: session.user.id,
-      planSlug: pricing.plan.slug,
+      planSlug: planContext.plan.slug,
       status: "created",
       subscription_id: razorpaySubscription.id,
       billingCycle,
       startDate: new Date(),
       endDate: new Date(),
-      total_count: 0,
+      total_count: maxTotalCount,
       autoRenew: true,
       gateway: "razorpay",
-      offerApplied: pricing.hasFirstCycleDiscount,
-      basePlanScheduled,
+      offerApplied,
       chargeCount: 0,
       cancelAtPeriodEnd: false,
       metadata: {
         authorizationUrl: razorpaySubscription.short_url,
-        offerName: pricing.activeOffer?.name || pricing.limitedCampaign?.name || null,
-        basePlanAmount: pricing.baseAmountPaise,
-        basePlanAmountINR: pricing.baseAmountPaise / 100,
-        planName: pricing.plan.name,
+        offerSource,
+        offerId,
+        discountPercent,
+        couponId,
+        couponCode: couponCodeUsed,
+        basePlanAmount: baseAmountPaise,
+        basePlanAmountINR: baseAmountPaise / 100,
+        firstCycleAmount: firstCycleAmountPaise,
+        firstCycleAmountINR: firstCycleAmountPaise / 100,
+        planName: planContext.plan.name,
         billingCycle,
-        couponId: pricing.coupon?.id || null,
-        couponCode: pricing.coupon?.code || null,
-        couponDiscountAmount: pricing.coupon?.discountAmountPaise || 0,
-        couponDiscountAmountINR: pricing.coupon
-          ? pricing.coupon.discountAmountPaise / 100
-          : 0,
-        firstCycleAmount: pricing.firstCycleAmountPaise,
-        firstCycleAmountINR: pricing.firstCycleAmountPaise / 100,
-        discountedPlanId,
-        basePlanId: pricing.pricingEntry.razorpayPlanId,
-        planIdUsed: planId,
+        razorpayPlanId: planContext.pricingEntry.razorpayPlanId,
       },
     });
 
@@ -154,10 +239,9 @@ export async function POST(request: NextRequest) {
       subscriptionId: razorpaySubscription.id,
       razorpayKeyId: process.env.RAZORPAY_KEY_ID,
       shortUrl: razorpaySubscription.short_url,
-      offerApplied: pricing.hasFirstCycleDiscount,
-      amount: (pricing.hasFirstCycleDiscount
-        ? pricing.firstCycleAmountPaise
-        : pricing.baseAmountPaise) / 100,
+      offerApplied,
+      offerSource,
+      amount: (offerApplied ? firstCycleAmountPaise : baseAmountPaise) / 100,
     });
   } catch (error) {
     const message =
@@ -167,13 +251,13 @@ export async function POST(request: NextRequest) {
       "Invalid plan",
       "Recurring subscriptions are not available for lifetime plans",
       "Recurring plan is not configured for this billing cycle",
-      "Enter a coupon code",
       "Invalid coupon code",
       "This coupon is not yet valid",
       "This coupon has expired",
       "This coupon has reached its usage limit",
       "This coupon is not valid for your account",
       "You have already used this coupon",
+      "This coupon is not configured for subscriptions. Please contact support.",
     ].includes(message) || message.startsWith("This coupon is only valid for:")
       ? 400
       : 500;

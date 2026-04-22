@@ -91,5 +91,6 @@ export async function POST(req: NextRequest) {
     discountLabel,
     couponId: coupon._id.toString(),
     code: coupon.code,
+    razorpayOfferId: coupon.razorpayOfferId || null,
   });
 }

@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
     maxUses,
     perUserLimit,
     applicablePlans,
+    razorpayOfferId,
     validFrom,
     validTo,
     isActive,
@@ -60,6 +61,9 @@ export async function POST(req: NextRequest) {
       maxUses: Number(maxUses ?? 0),
       perUserLimit: Number(perUserLimit ?? 1),
       applicablePlans: applicablePlans ?? [],
+      razorpayOfferId: typeof razorpayOfferId === "string" && razorpayOfferId.trim()
+        ? razorpayOfferId.trim()
+        : undefined,
       validFrom: new Date(validFrom),
       validTo: new Date(validTo),
       isActive: isActive !== false,

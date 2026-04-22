@@ -87,6 +87,7 @@ export async function POST(request: Request) {
           typeof subEntity?.paid_count === "number"
             ? subEntity.paid_count
             : subscription.paid_count ?? 0;
+
         await subscription.save();
 
         await syncUserSubscriptionState({
