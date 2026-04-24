@@ -536,7 +536,14 @@ export async function enforceStorageAccess(userId: string) {
     throw error;
   }
 
-  if (user.subscriptionStatus === "active") {
+  // Allow free tier users and users who have cancelled their premium plans to access storage
+  // (Storage quotas for these users are enforced separately via the Usage model)
+  if (
+    !user.subscriptionStatus ||
+    user.subscriptionStatus === "none" ||
+    user.subscriptionStatus === "cancelled" ||
+    user.subscriptionStatus === "active"
+  ) {
     return;
   }
 
