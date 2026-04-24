@@ -170,12 +170,14 @@ export async function POST(request: NextRequest) {
         : baseAmountPaise;
 
     // ── Razorpay requires total_count >= 1 ──────────────────────────────
+    // Use ~30 years worth of cycles (matches Razorpay's default expire_by)
+    // Do NOT pass expire_by — Razorpay defaults to 30 years automatically.
     const maxTotalCount =
       billingCycle === "yearly"
-        ? 100
+        ? 30
         : billingCycle === "quarterly"
-          ? 400
-          : 1200; // monthly
+          ? 120
+          : 360; // monthly
 
     // ── Create the Razorpay subscription (per docs) ─────────────────────
     const subscriptionPayload: Record<string, unknown> = {
