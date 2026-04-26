@@ -65,7 +65,6 @@ export async function POST(request: NextRequest) {
       {
         userId,
         key: objectKey,
-        ...(bucketId && { bucketId }),
       },
       { $set: updateData },
     );
