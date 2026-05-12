@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, memo } from "react";
 import { usePreview } from "@/contexts/PreviewContext";
 import { Loader2, ImageOff, LayoutGrid, Grid3x3, Rows3 } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
@@ -62,7 +62,7 @@ function groupByDate(photos: ObjectData[]) {
   return groups;
 }
 
-function PhotoThumbnail({
+const PhotoThumbnail = memo(function PhotoThumbnail({
   photo,
   onPhotoClick,
   decryptedName,
@@ -113,9 +113,9 @@ function PhotoThumbnail({
       </div>
     </div>
   );
-}
+});
 
-function MasonryGrid({
+const MasonryGrid = memo(function MasonryGrid({
   photos,
   onPhotoClick,
   decryptedNames,
@@ -176,9 +176,9 @@ function MasonryGrid({
       ))}
     </div>
   );
-}
+});
 
-function UniformGrid({
+const UniformGrid = memo(function UniformGrid({
   photos,
   density,
   onPhotoClick,
@@ -206,7 +206,7 @@ function UniformGrid({
       ))}
     </div>
   );
-}
+});
 
 export function PhotosGrid() {
   const [bucketId, setBucketId] = useState<string | null>(null);
@@ -261,6 +261,20 @@ export function PhotosGrid() {
   });
   const metadataItems = metaData?.items ?? [];
 
+  // Pre-compute index → date-label array once. Eliminates new Date() +
+  // toLocaleDateString() inside the 60fps pointer-move hot path.
+  const metaIndexToLabel = useMemo(
+    () =>
+      metadataItems.map((item) =>
+        new Date(item.createdAt).toLocaleDateString("en-US", {
+          month: "long",
+          day: "numeric",
+          year: "numeric",
+        }),
+      ),
+    [metadataItems],
+  );
+
   // Map each date label (same format as groupByDate) → first index in metadataItems.
   // This lets handleScroll translate "which section is visible" into a 0-1 progress
   // value that matches the scrubber's photo-count coordinate system.
@@ -284,44 +298,82 @@ export function PhotosGrid() {
   // scrollIntoView on every pointer-move event within the same section.
   const lastScrubLabelRef = useRef<string | null>(null);
 
-  // Section-aware scroll progress: find which date-group header is closest to
-  // the top of the viewport, then map its first metadata index to 0-1.
-  const handleScroll = useCallback(() => {
-    const entries = groupEntriesRef.current;
-    if (entries.length === 0 || metadataItems.length === 0) return;
+  // Cached { label, top (offsetTop), firstMetaIndex } per section, rebuilt
+  // after layout — lets handleScroll do a O(log n) binary search instead of
+  // O(n) getBoundingClientRect() reads on every scroll event.
+  const sectionOffsetsRef = useRef<
+    Array<{ label: string; top: number; firstMetaIndex: number }>
+  >([]);
 
-    // Groups are newest-first. Walk through them and keep the last one whose
-    // header has scrolled above the viewport threshold.
-    // 76 = topbar (68 px) + 8 px breathing room, matching scroll-mt-[76px].
-    const THRESHOLD = 76;
-    let activeLabel: string | null = null;
-    for (const [label] of entries) {
+  // RAF handle: ensures we never queue more than one scroll-processing frame.
+  const scrollRafRef = useRef<number | null>(null);
+
+  // Rebuild offsetTop cache after every layout commit and on resize.
+  // Uses groupEntriesRef (a ref, not a dep) so the callback stays stable.
+  const measureOffsets = useCallback(() => {
+    const result: (typeof sectionOffsetsRef.current) = [];
+    for (const [label] of groupEntriesRef.current) {
       const el = groupRefs.current[label];
       if (!el) continue;
-      if (el.getBoundingClientRect().top <= THRESHOLD) {
-        activeLabel = label;
-      } else {
-        break; // below threshold — groups further down won't qualify either
-      }
+      result.push({
+        label,
+        // offsetTop is relative to the document body (no positioned ancestors
+        // in the ancestor chain) and is stable between scroll events.
+        top: el.offsetTop,
+        firstMetaIndex: dateLabelToFirstMetaIndex.get(label) ?? 0,
+      });
     }
+    sectionOffsetsRef.current = result;
+  }, [dateLabelToFirstMetaIndex]);
 
-    if (activeLabel === null) {
-      setScrollProgress(0);
-      lastScrubLabelRef.current = null;
-      return;
-    }
-    const idx = dateLabelToFirstMetaIndex.get(activeLabel) ?? 0;
-    setScrollProgress(idx / Math.max(1, metadataItems.length - 1));
-    // Keep lastScrubLabel in sync with actual scroll position so the next
-    // drag to this same section (after manual scrolling away and back) fires.
-    lastScrubLabelRef.current = activeLabel;
-  }, [metadataItems, dateLabelToFirstMetaIndex]);
+  // Section-aware scroll progress — O(log n) binary search on pre-cached
+  // offsetTop values, RAF-gated so it never runs more than once per frame.
+  const handleScroll = useCallback(() => {
+    if (scrollRafRef.current !== null) return; // frame already queued
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+
+      const offsets = sectionOffsetsRef.current;
+      if (offsets.length === 0 || metadataItems.length === 0) return;
+
+      // Binary search: find the last section whose offsetTop ≤ scrollY + threshold.
+      // Sections are stored newest-first = ascending offsetTop order.
+      // 76 = topbar (68 px) + 8 px breathing room, matching scroll-mt-[76px].
+      const THRESHOLD = 76;
+      const scrollY = window.scrollY;
+      let lo = 0, hi = offsets.length - 1, activeIdx = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (offsets[mid].top <= scrollY + THRESHOLD) {
+          activeIdx = mid;
+          lo = mid + 1;
+        } else {
+          hi = mid - 1;
+        }
+      }
+
+      if (activeIdx === -1) {
+        setScrollProgress(0);
+        lastScrubLabelRef.current = null;
+        return;
+      }
+
+      const { label, firstMetaIndex } = offsets[activeIdx];
+      // Skip state update when still in the same section — avoids re-renders
+      // while the user scrolls within a single date group.
+      if (label === lastScrubLabelRef.current) return;
+      lastScrubLabelRef.current = label;
+      setScrollProgress(firstMetaIndex / Math.max(1, metadataItems.length - 1));
+    });
+  }, [metadataItems.length]);
 
   useEffect(() => {
     window.addEventListener("scroll", handleScroll, { passive: true });
     handleScroll(); // initialise on mount
     return () => window.removeEventListener("scroll", handleScroll);
   }, [handleScroll]);
+
+  // ── Data derivations (declared before effects that depend on them) ────────
 
   const localFiles =
     useLiveQuery(() => {
@@ -375,26 +427,66 @@ export function PhotosGrid() {
     decryptMetadata();
   }, [photos, isUnlocked, metadataKey, decryptedNames]);
 
-  // Scrub handler: map metadata index → date label → instant-scroll to section.
-  // Using behavior:"instant" is critical — smooth scroll queued 60×/sec from
-  // pointer move events fight each other and the page never lands anywhere.
+  // Memoize the heavy derivations so they only recompute when their inputs
+  // actually change — not on every scroll-progress state update.
+  const filteredPhotos = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return photos;
+    return photos.filter((p) => {
+      const name = decryptedNames[p.id] || p.encryptedName || getFileName(p.key);
+      return name.toLowerCase().includes(query);
+    });
+  }, [photos, search, decryptedNames]);
+
+  const grouped = useMemo(() => groupByDate(filteredPhotos), [filteredPhotos]);
+
+  const groupEntries = useMemo(() => Object.entries(grouped), [grouped]);
+
+  // Keep the ref current so handleScroll / measureOffsets always read the
+  // latest entries without needing groupEntries in their dep arrays.
+  groupEntriesRef.current = groupEntries;
+
+  // Stable photo-click handler — captures filteredPhotos via ref so the
+  // callback identity never changes, letting memo'd grids bail out on
+  // every scroll-progress re-render.
+  const filteredPhotosRef = useRef<ObjectData[]>([]);
+  filteredPhotosRef.current = filteredPhotos;
+  const handlePhotoClick = useCallback(
+    (photo: ObjectData) => openPreview(photo, filteredPhotosRef.current),
+    [openPreview],
+  );
+
+  // ── Effects that reference groupEntries (must follow its declaration) ─────
+
+  // Rebuild the offset cache after React commits to the DOM and whenever
+  // the section list changes (new date groups appear from infinite scroll).
+  // rAF defers reading to after paint so offsetTop is fully settled.
+  useEffect(() => {
+    const id = requestAnimationFrame(measureOffsets);
+    return () => cancelAnimationFrame(id);
+    // groupEntries identity only changes when filtered sections change,
+    // so this fires exactly when new date boundaries appear.
+  }, [measureOffsets, groupEntries]);
+
+  // Re-measure on viewport resize — font/layout changes shift offsetTops.
+  useEffect(() => {
+    window.addEventListener("resize", measureOffsets, { passive: true });
+    return () => window.removeEventListener("resize", measureOffsets);
+  }, [measureOffsets]);
+
+  // Scrub handler: array-index lookup (O(1), no Date/locale parsing) →
+  // dedup against last label → instant-scroll to section DOM node.
   const handleScrub = useCallback(
     (index: number) => {
-      const iso = metadataItems[index]?.createdAt;
-      if (!iso) return;
-      const label = new Date(iso).toLocaleDateString("en-US", {
-        month: "long",
-        day: "numeric",
-        year: "numeric",
-      });
-      if (label === lastScrubLabelRef.current) return; // already at this section
+      const label = metaIndexToLabel[index];
+      if (!label || label === lastScrubLabelRef.current) return;
       lastScrubLabelRef.current = label;
       groupRefs.current[label]?.scrollIntoView({
         behavior: "instant",
         block: "start",
       });
     },
-    [metadataItems],
+    [metaIndexToLabel],
   );
 
   // ⚡ INFINITE SCROLL OBSERVER LOGIC
@@ -419,20 +511,6 @@ export function PhotosGrid() {
     },
     [loadingMore, hasMorePages, fetchNextBatch],
   );
-
-  const filteredPhotos = search.trim()
-    ? photos.filter((p) => {
-        const name =
-          decryptedNames[p.id] || p.encryptedName || getFileName(p.key);
-        return name.toLowerCase().includes(search.toLowerCase());
-      })
-    : photos;
-
-  const grouped = groupByDate(filteredPhotos);
-  const groupEntries = Object.entries(grouped);
-  // Keep the ref current so handleScroll always reads the latest entries
-  // without needing groupEntries in its own dep array.
-  groupEntriesRef.current = groupEntries;
 
   if (initialLoading) {
     return (
@@ -570,7 +648,7 @@ export function PhotosGrid() {
               {gridMode === "masonry" ? (
                 <MasonryGrid
                   photos={groupPhotos}
-                  onPhotoClick={(photo) => openPreview(photo, filteredPhotos)}
+                  onPhotoClick={handlePhotoClick}
                   decryptedNames={decryptedNames}
                   metadataKey={metadataKey}
                 />
@@ -578,7 +656,7 @@ export function PhotosGrid() {
                 <UniformGrid
                   photos={groupPhotos}
                   density={gridMode as GridDensity}
-                  onPhotoClick={(photo) => openPreview(photo, filteredPhotos)}
+                  onPhotoClick={handlePhotoClick}
                   decryptedNames={decryptedNames}
                   metadataKey={metadataKey}
                 />

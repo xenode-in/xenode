@@ -156,7 +156,7 @@ export function LazyPhotosGallery({ bucketId, mediaCategory }: Props) {
         // Subtract a small margin so the heading isn't flush against the top.
         container.scrollTo({
           top: Math.max(0, sEl.offsetTop + 100),
-          behavior: "instant",
+          behavior: "smooth",
         });
       }
     },
