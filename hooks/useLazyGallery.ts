@@ -114,8 +114,12 @@ interface BatchState {
   requested: Set<string>;
   /** IDs queued for the next flush. */
   pending: Set<string>;
+  /** IDs currently being fetched in the active POST request. */
+  inFlight: Set<string>;
   /** setTimeout handle for the pending flush. */
   flushTimer: ReturnType<typeof setTimeout> | null;
+  /** AbortController for the currently in-flight POST request. */
+  abortController: AbortController;
 }
 
 /**
@@ -137,7 +141,9 @@ export function useObjectsBatch(bucketId: string | null) {
     cache: new Map(),
     requested: new Set(),
     pending: new Set(),
+    inFlight: new Set(),
     flushTimer: null,
+    abortController: new AbortController(),
   });
   const lastBucketRef = useRef<string | null>(null);
   // Bumped on every cache mutation so consumers can useMemo against it.
@@ -148,9 +154,12 @@ export function useObjectsBatch(bucketId: string | null) {
     if (lastBucketRef.current !== bucketId) {
       lastBucketRef.current = bucketId;
       const s = stateRef.current;
+      s.abortController.abort();
+      s.abortController = new AbortController();
       s.cache.clear();
       s.requested.clear();
       s.pending.clear();
+      s.inFlight.clear();
       if (s.flushTimer) {
         clearTimeout(s.flushTimer);
         s.flushTimer = null;
@@ -171,7 +180,10 @@ export function useObjectsBatch(bucketId: string | null) {
       ids.push(id);
       if (ids.length >= MAX_BATCH) break;
     }
-    for (const id of ids) s.pending.delete(id);
+    for (const id of ids) {
+      s.pending.delete(id);
+      s.inFlight.add(id);
+    }
 
     if (s.pending.size > 0) {
       // Re-arm immediately so the overflow flushes on the next tick.
@@ -184,7 +196,9 @@ export function useObjectsBatch(bucketId: string | null) {
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bucketId, ids }),
+        signal: s.abortController.signal,
       });
+      for (const id of ids) s.inFlight.delete(id);
       if (!res.ok) {
         // Roll back so a retry will re-request these — leaving them in
         // `requested` would silently strand them with no data.
@@ -200,8 +214,13 @@ export function useObjectsBatch(bucketId: string | null) {
       // Any id we asked for but didn't get back (deleted, etc.) stays in
       // `requested` so we don't retry it — there's nothing to fetch.
       setVersion((v) => v + 1);
-    } catch {
-      for (const id of ids) s.requested.delete(id);
+    } catch (err) {
+      for (const id of ids) {
+        s.inFlight.delete(id);
+        s.requested.delete(id);
+      }
+      // Swallow AbortErrors — cancelPending() already handles cleanup.
+      if (err instanceof DOMException && err.name === "AbortError") return;
     }
   }, [bucketId]);
 
@@ -223,6 +242,28 @@ export function useObjectsBatch(bucketId: string | null) {
     [flush],
   );
 
+  const cancelPending = useCallback(() => {
+    const s = stateRef.current;
+    // Stop the coalesce timer.
+    if (s.flushTimer) {
+      clearTimeout(s.flushTimer);
+      s.flushTimer = null;
+    }
+    // Abort any in-flight POST and reset the controller for next use.
+    s.abortController.abort();
+    s.abortController = new AbortController();
+    // Return in-flight IDs to pending so they're retried after the abort.
+    for (const id of s.inFlight) {
+      s.pending.add(id);
+    }
+    s.inFlight.clear();
+    // Clear the pending queue entirely — we don't want stale section IDs.
+    for (const id of s.pending) {
+      s.requested.delete(id);
+    }
+    s.pending.clear();
+  }, []);
+
   return {
     /** Map<id, FullObject>. Read-only — mutate via `requestIds`. */
     cache: stateRef.current.cache,
@@ -230,5 +271,7 @@ export function useObjectsBatch(bucketId: string | null) {
     version,
     /** Trigger a fetch for one or more ids. Safe to spam — dedupes. */
     requestIds,
+    /** Abort in-flight batch POST and discard pending queue. */
+    cancelPending,
   };
 }
