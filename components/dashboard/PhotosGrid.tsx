@@ -7,33 +7,12 @@ import { formatBytes } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
 import { useThumbnail } from "@/hooks/useThumbnail";
-
-import { useSession } from "@/lib/auth/client";
-import { useFileSync } from "@/hooks/useFileSync";
-import { useObjectsMetadata } from "@/hooks/useLazyGallery";
-import { getDb } from "@/lib/db/local";
-import { useLiveQuery } from "dexie-react-hooks";
-import { motion, AnimatePresence } from "framer-motion";
+import { GridObject, useGridObjects } from "@/hooks/useLazyGallery";
 import { Scrubber } from "@/components/dashboard/Scrubber";
 
-interface ObjectData {
-  id: string;
-  key: string;
-  size: number;
-  contentType: string;
-  createdAt: string;
-  thumbnail?: string;
-  isEncrypted?: boolean;
-  tags?: string[];
-  position?: number;
-  encryptedName?: string;
-  encryptedDisplayName?: string;
-  optimizedKey?: string;
-  optimizedIV?: string;
-  optimizedEncryptedDEK?: string;
-  optimizedSize?: number;
-  aspectRatio?: number;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
 
 type GridDensity = "large" | "medium" | "small";
 
@@ -47,8 +26,8 @@ function getFileName(key: string) {
   return key.split("/").pop() || key;
 }
 
-function groupByDate(photos: ObjectData[]) {
-  const groups: Record<string, ObjectData[]> = {};
+function groupByDate(photos: GridObject[]) {
+  const groups: Record<string, GridObject[]> = {};
   photos.forEach((p) => {
     const date = new Date(p.createdAt);
     const label = date.toLocaleDateString("en-US", {
@@ -62,21 +41,59 @@ function groupByDate(photos: ObjectData[]) {
   return groups;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Thumbnail tile
+// ─────────────────────────────────────────────────────────────────────────────
+
 const PhotoThumbnail = memo(function PhotoThumbnail({
   photo,
   onPhotoClick,
   decryptedName,
   metadataKey,
 }: {
-  photo: ObjectData;
-  onPhotoClick: (p: ObjectData) => void;
+  photo: GridObject;
+  onPhotoClick: (p: GridObject) => void;
   decryptedName?: string;
   metadataKey: CryptoKey | null;
 }) {
-  const thumbUrl = useThumbnail(photo.thumbnail, metadataKey);
+  const tileRef = useRef<HTMLDivElement | null>(null);
+  const [visible, setVisible] = useState(false);
+
+  useEffect(() => {
+    const el = tileRef.current;
+    if (!el) return;
+
+    let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          if (hideTimer !== null) {
+            clearTimeout(hideTimer);
+            hideTimer = null;
+          }
+          setVisible(true);
+        } else {
+          hideTimer = setTimeout(() => setVisible(false), 150);
+        }
+      },
+      { rootMargin: "400px 0px", threshold: 0 },
+    );
+    io.observe(el);
+    return () => {
+      io.disconnect();
+      if (hideTimer !== null) clearTimeout(hideTimer);
+    };
+  }, []);
+
+  const thumbUrl = useThumbnail(
+    visible && photo.thumbnail ? photo.thumbnail : undefined,
+    metadataKey,
+  );
 
   return (
     <div
+      ref={tileRef}
       onClick={() => onPhotoClick(photo)}
       className="relative w-full rounded-2xl overflow-hidden bg-secondary border border-border/50 cursor-pointer group"
       style={
@@ -93,8 +110,8 @@ const PhotoThumbnail = memo(function PhotoThumbnail({
           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
         />
       ) : (
-        <div className="w-full h-full flex items-center justify-center bg-secondary/50">
-          <ImageOff className="w-8 h-8 text-muted-foreground/20" />
+        <div className="relative w-full h-full overflow-hidden rounded-2xl bg-zinc-900">
+          <div className="absolute inset-0 -translate-x-full animate-[shimmer_1.5s_infinite] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
         </div>
       )}
 
@@ -104,16 +121,22 @@ const PhotoThumbnail = memo(function PhotoThumbnail({
           <p className="text-white text-sm font-medium truncate drop-shadow-md">
             {decryptedName || photo.encryptedName || getFileName(photo.key)}
           </p>
-          <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-white/60 text-[10px] uppercase tracking-wider font-bold">
-              {formatBytes(photo.size)}
-            </span>
-          </div>
+          {photo.size > 0 && (
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="text-white/60 text-[10px] uppercase tracking-wider font-bold">
+                {formatBytes(photo.size)}
+              </span>
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Grid layout variants
+// ─────────────────────────────────────────────────────────────────────────────
 
 const MasonryGrid = memo(function MasonryGrid({
   photos,
@@ -121,8 +144,8 @@ const MasonryGrid = memo(function MasonryGrid({
   decryptedNames,
   metadataKey,
 }: {
-  photos: ObjectData[];
-  onPhotoClick: (p: ObjectData) => void;
+  photos: GridObject[];
+  onPhotoClick: (p: GridObject) => void;
   decryptedNames: Record<string, string>;
   metadataKey: CryptoKey | null;
 }) {
@@ -142,7 +165,7 @@ const MasonryGrid = memo(function MasonryGrid({
   }, []);
 
   const columns = useMemo(() => {
-    const cols: ObjectData[][] = Array.from({ length: columnCount }, () => []);
+    const cols: GridObject[][] = Array.from({ length: columnCount }, () => []);
     photos.forEach((photo, i) => {
       cols[i % columnCount].push(photo);
     });
@@ -153,25 +176,15 @@ const MasonryGrid = memo(function MasonryGrid({
     <div className="flex gap-4">
       {columns.map((column, i) => (
         <div key={i} className="flex-1 flex flex-col gap-4">
-          <AnimatePresence initial={false}>
-            {column.map((photo) => (
-              <motion.div
-                key={photo.id}
-                layout
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ duration: 0.4, ease: [0.23, 1, 0.32, 1] }}
-              >
-                <PhotoThumbnail
-                  photo={photo}
-                  onPhotoClick={onPhotoClick}
-                  decryptedName={decryptedNames[photo.id]}
-                  metadataKey={metadataKey}
-                />
-              </motion.div>
-            ))}
-          </AnimatePresence>
+          {column.map((photo) => (
+            <PhotoThumbnail
+              key={photo._id}
+              photo={photo}
+              onPhotoClick={onPhotoClick}
+              decryptedName={decryptedNames[photo._id]}
+              metadataKey={metadataKey}
+            />
+          ))}
         </div>
       ))}
     </div>
@@ -185,9 +198,9 @@ const UniformGrid = memo(function UniformGrid({
   decryptedNames,
   metadataKey,
 }: {
-  photos: ObjectData[];
+  photos: GridObject[];
   density: GridDensity;
-  onPhotoClick: (p: ObjectData) => void;
+  onPhotoClick: (p: GridObject) => void;
   decryptedNames: Record<string, string>;
   metadataKey: CryptoKey | null;
 }) {
@@ -197,10 +210,10 @@ const UniformGrid = memo(function UniformGrid({
     >
       {photos.map((photo) => (
         <PhotoThumbnail
-          key={photo.id}
+          key={photo._id}
           photo={photo}
           onPhotoClick={onPhotoClick}
-          decryptedName={decryptedNames[photo.id]}
+          decryptedName={decryptedNames[photo._id]}
           metadataKey={metadataKey}
         />
       ))}
@@ -208,10 +221,14 @@ const UniformGrid = memo(function UniformGrid({
   );
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Main component
+// ─────────────────────────────────────────────────────────────────────────────
+
 export function PhotosGrid() {
   const [bucketId, setBucketId] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [configError, setConfigError] = useState("");
   const [search, setSearch] = useState("");
   const [gridMode, setGridMode] = useState<"masonry" | GridDensity>("masonry");
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>(
@@ -220,136 +237,158 @@ export function PhotosGrid() {
 
   const { openPreview } = usePreview();
   const { isUnlocked, metadataKey } = useCrypto();
-  const { data: session } = useSession();
-  const userId = session?.user?.id || null;
 
-  // Gallery wrapper ref (used only for bounding-box reads, no overflow scroll)
-  const galleryRef = useRef<HTMLDivElement>(null);
-  const [scrollProgress, setScrollProgress] = useState(0);
-
-  // Refs to each date-group section so onScrub can jump to them
-  const groupRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  // ── Bucket config (one-time fetch) ──────────────────────────────────────────
 
   useEffect(() => {
     fetch("/api/drive/config")
       .then((r) => r.json())
       .then((data) => {
-        if (data.bucket) {
-          setBucketId(data.bucket._id);
-        } else {
-          setError("Failed to initialize drive storage");
-        }
+        if (data.bucket) setBucketId(data.bucket._id);
+        else setConfigError("Failed to initialize drive storage");
       })
-      .catch(() => setError("Failed to connect to storage"))
+      .catch(() => setConfigError("Failed to connect to storage"))
       .finally(() => setInitialLoading(false));
   }, []);
 
+  // ── All grid data — one request, no pagination ──────────────────────────────
+
   const {
-    fetchNextPage: fetchNextBatch,
-    hasNextPage: hasMorePages,
-    isFetchingNextPage: loadingMore,
-  } = useFileSync({
-    bucketId,
-    userId,
-    limit: 50,
-  });
+    data: gridData,
+    isLoading: gridLoading,
+    isError: gridError,
+  } = useGridObjects(bucketId, { mediaCategory: "image" });
 
-  // Lightweight metadata for the scrubber timeline (dates + counts).
-  // Does not affect gallery display — gallery still uses Dexie local cache.
-  const { data: metaData } = useObjectsMetadata(bucketId, {
-    mediaCategory: "image",
-  });
-  const metadataItems = metaData?.items ?? [];
+  const allPhotos: GridObject[] = gridData?.items ?? [];
 
-  // Pre-compute index → date-label array once. Eliminates new Date() +
-  // toLocaleDateString() inside the 60fps pointer-move hot path.
+  // ── Name decryption ──────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!isUnlocked || !allPhotos.length) {
+      setDecryptedNames((prev) => (Object.keys(prev).length ? {} : prev));
+      return;
+    }
+
+    const run = async () => {
+      const newNames: Record<string, string> = {};
+      for (const photo of allPhotos) {
+        const raw = photo.encryptedDisplayName || photo.encryptedName;
+        if (photo.isEncrypted && raw && !decryptedNames[photo._id]) {
+          try {
+            newNames[photo._id] = await decryptMetadataString(raw, metadataKey);
+          } catch {
+            // leave encrypted name as-is
+          }
+        }
+      }
+      if (Object.keys(newNames).length > 0) {
+        setDecryptedNames((prev) => ({ ...prev, ...newNames }));
+      }
+    };
+
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allPhotos, isUnlocked, metadataKey]);
+
+  // ── Search filter ────────────────────────────────────────────────────────────
+
+  const filteredPhotos = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return allPhotos;
+    return allPhotos.filter((p) => {
+      const name =
+        decryptedNames[p._id] || p.encryptedName || getFileName(p.key);
+      return name.toLowerCase().includes(query);
+    });
+  }, [allPhotos, search, decryptedNames]);
+
+  const grouped = useMemo(() => groupByDate(filteredPhotos), [filteredPhotos]);
+  const groupEntries = useMemo(() => Object.entries(grouped), [grouped]);
+
+  // ── Scrubber state ────────────────────────────────────────────────────────────
+
+  const [scrollProgress, setScrollProgress] = useState(0);
+  const groupRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const groupEntriesRef = useRef<[string, GridObject[]][]>([]);
+  groupEntriesRef.current = groupEntries;
+
+  const lastScrubLabelRef = useRef<string | null>(null);
+  const scrollRafRef = useRef<number | null>(null);
+
+  const sectionOffsetsRef = useRef<
+    Array<{ label: string; top: number; firstIndex: number }>
+  >([]);
+
+  // Pre-compute index → date label from the full unfiltered list (drives scrubber).
   const metaIndexToLabel = useMemo(
     () =>
-      metadataItems.map((item) =>
+      allPhotos.map((item) =>
         new Date(item.createdAt).toLocaleDateString("en-US", {
           month: "long",
           day: "numeric",
           year: "numeric",
         }),
       ),
-    [metadataItems],
+    [allPhotos],
   );
 
-  // Map each date label (same format as groupByDate) → first index in metadataItems.
-  // This lets handleScroll translate "which section is visible" into a 0-1 progress
-  // value that matches the scrubber's photo-count coordinate system.
-  const dateLabelToFirstMetaIndex = useMemo(() => {
+  // Map date label → first index in allPhotos (for scroll progress calculation).
+  const dateLabelToFirstIndex = useMemo(() => {
     const map = new Map<string, number>();
-    for (let i = 0; i < metadataItems.length; i++) {
-      const label = new Date(metadataItems[i].createdAt).toLocaleDateString(
+    for (let i = 0; i < allPhotos.length; i++) {
+      const label = new Date(allPhotos[i].createdAt).toLocaleDateString(
         "en-US",
         { month: "long", day: "numeric", year: "numeric" },
       );
       if (!map.has(label)) map.set(label, i);
     }
     return map;
-  }, [metadataItems]);
+  }, [allPhotos]);
 
-  // Keep a stable ref to the current groupEntries so handleScroll never
-  // needs it as a dep (avoids re-registering the window listener every render).
-  const groupEntriesRef = useRef<[string, ObjectData[]][]>([]);
-
-  // Tracks the last date section the scrubber jumped to; prevents re-firing
-  // scrollIntoView on every pointer-move event within the same section.
-  const lastScrubLabelRef = useRef<string | null>(null);
-
-  // Cached { label, top (offsetTop), firstMetaIndex } per section, rebuilt
-  // after layout — lets handleScroll do a O(log n) binary search instead of
-  // O(n) getBoundingClientRect() reads on every scroll event.
-  const sectionOffsetsRef = useRef<
-    Array<{ label: string; top: number; firstMetaIndex: number }>
-  >([]);
-
-  // RAF handle: ensures we never queue more than one scroll-processing frame.
-  const scrollRafRef = useRef<number | null>(null);
-
-  // Rebuild offsetTop cache after every layout commit and on resize.
-  // Uses groupEntriesRef (a ref, not a dep) so the callback stays stable.
+  // Rebuild offsetTop cache after DOM layout.
   const measureOffsets = useCallback(() => {
-    const result: (typeof sectionOffsetsRef.current) = [];
+    const result: typeof sectionOffsetsRef.current = [];
     for (const [label] of groupEntriesRef.current) {
       const el = groupRefs.current[label];
       if (!el) continue;
       result.push({
         label,
-        // offsetTop is relative to the document body (no positioned ancestors
-        // in the ancestor chain) and is stable between scroll events.
         top: el.offsetTop,
-        firstMetaIndex: dateLabelToFirstMetaIndex.get(label) ?? 0,
+        firstIndex: dateLabelToFirstIndex.get(label) ?? 0,
       });
     }
     sectionOffsetsRef.current = result;
-  }, [dateLabelToFirstMetaIndex]);
+  }, [dateLabelToFirstIndex]);
 
-  // Section-aware scroll progress — O(log n) binary search on pre-cached
-  // offsetTop values, RAF-gated so it never runs more than once per frame.
+  useEffect(() => {
+    const id = requestAnimationFrame(measureOffsets);
+    return () => cancelAnimationFrame(id);
+  }, [measureOffsets, groupEntries]);
+
+  useEffect(() => {
+    window.addEventListener("resize", measureOffsets, { passive: true });
+    return () => window.removeEventListener("resize", measureOffsets);
+  }, [measureOffsets]);
+
+  // RAF-gated binary-search scroll handler.
   const handleScroll = useCallback(() => {
-    if (scrollRafRef.current !== null) return; // frame already queued
+    if (scrollRafRef.current !== null) return;
     scrollRafRef.current = requestAnimationFrame(() => {
       scrollRafRef.current = null;
-
       const offsets = sectionOffsetsRef.current;
-      if (offsets.length === 0 || metadataItems.length === 0) return;
+      if (offsets.length === 0 || allPhotos.length === 0) return;
 
-      // Binary search: find the last section whose offsetTop ≤ scrollY + threshold.
-      // Sections are stored newest-first = ascending offsetTop order.
-      // 76 = topbar (68 px) + 8 px breathing room, matching scroll-mt-[76px].
       const THRESHOLD = 76;
       const scrollY = window.scrollY;
-      let lo = 0, hi = offsets.length - 1, activeIdx = -1;
+      let lo = 0,
+        hi = offsets.length - 1,
+        activeIdx = -1;
       while (lo <= hi) {
         const mid = (lo + hi) >> 1;
         if (offsets[mid].top <= scrollY + THRESHOLD) {
           activeIdx = mid;
           lo = mid + 1;
-        } else {
-          hi = mid - 1;
-        }
+        } else hi = mid - 1;
       }
 
       if (activeIdx === -1) {
@@ -358,124 +397,20 @@ export function PhotosGrid() {
         return;
       }
 
-      const { label, firstMetaIndex } = offsets[activeIdx];
-      // Skip state update when still in the same section — avoids re-renders
-      // while the user scrolls within a single date group.
+      const { label, firstIndex } = offsets[activeIdx];
       if (label === lastScrubLabelRef.current) return;
       lastScrubLabelRef.current = label;
-      setScrollProgress(firstMetaIndex / Math.max(1, metadataItems.length - 1));
+      setScrollProgress(firstIndex / Math.max(1, allPhotos.length - 1));
     });
-  }, [metadataItems.length]);
+  }, [allPhotos.length]);
 
   useEffect(() => {
     window.addEventListener("scroll", handleScroll, { passive: true });
-    handleScroll(); // initialise on mount
+    handleScroll();
     return () => window.removeEventListener("scroll", handleScroll);
   }, [handleScroll]);
 
-  // ── Data derivations (declared before effects that depend on them) ────────
-
-  const localFiles =
-    useLiveQuery(() => {
-      if (!userId || !bucketId) return [];
-      const db = getDb(userId);
-      return db.files.where("bucketId").equals(bucketId).toArray();
-    }, [userId, bucketId]) || [];
-
-  const photos = useMemo(() => {
-    return localFiles
-      .filter(
-        (f) =>
-          f.contentType?.startsWith("image/") || f.mediaCategory === "image",
-      )
-      .map((f) => ({ ...f, _id: f.id }) as unknown as ObjectData)
-      .sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-      );
-  }, [localFiles]);
-
-  useEffect(() => {
-    if (!isUnlocked || !photos.length) {
-      setDecryptedNames((prev) => (Object.keys(prev).length ? {} : prev));
-      return;
-    }
-
-    const decryptMetadata = async () => {
-      const newNames: Record<string, string> = {};
-
-      for (const photo of photos) {
-        const nameToDecrypt = photo.encryptedDisplayName || photo.encryptedName;
-        if (photo.isEncrypted && nameToDecrypt && !decryptedNames[photo.id]) {
-          try {
-            const name = await decryptMetadataString(
-              nameToDecrypt,
-              metadataKey,
-            );
-            newNames[photo.id] = name;
-          } catch (e) {
-            console.error("Failed to decrypt name", e);
-          }
-        }
-      }
-
-      if (Object.keys(newNames).length > 0) {
-        setDecryptedNames((prev) => ({ ...prev, ...newNames }));
-      }
-    };
-
-    decryptMetadata();
-  }, [photos, isUnlocked, metadataKey, decryptedNames]);
-
-  // Memoize the heavy derivations so they only recompute when their inputs
-  // actually change — not on every scroll-progress state update.
-  const filteredPhotos = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    if (!query) return photos;
-    return photos.filter((p) => {
-      const name = decryptedNames[p.id] || p.encryptedName || getFileName(p.key);
-      return name.toLowerCase().includes(query);
-    });
-  }, [photos, search, decryptedNames]);
-
-  const grouped = useMemo(() => groupByDate(filteredPhotos), [filteredPhotos]);
-
-  const groupEntries = useMemo(() => Object.entries(grouped), [grouped]);
-
-  // Keep the ref current so handleScroll / measureOffsets always read the
-  // latest entries without needing groupEntries in their dep arrays.
-  groupEntriesRef.current = groupEntries;
-
-  // Stable photo-click handler — captures filteredPhotos via ref so the
-  // callback identity never changes, letting memo'd grids bail out on
-  // every scroll-progress re-render.
-  const filteredPhotosRef = useRef<ObjectData[]>([]);
-  filteredPhotosRef.current = filteredPhotos;
-  const handlePhotoClick = useCallback(
-    (photo: ObjectData) => openPreview(photo, filteredPhotosRef.current),
-    [openPreview],
-  );
-
-  // ── Effects that reference groupEntries (must follow its declaration) ─────
-
-  // Rebuild the offset cache after React commits to the DOM and whenever
-  // the section list changes (new date groups appear from infinite scroll).
-  // rAF defers reading to after paint so offsetTop is fully settled.
-  useEffect(() => {
-    const id = requestAnimationFrame(measureOffsets);
-    return () => cancelAnimationFrame(id);
-    // groupEntries identity only changes when filtered sections change,
-    // so this fires exactly when new date boundaries appear.
-  }, [measureOffsets, groupEntries]);
-
-  // Re-measure on viewport resize — font/layout changes shift offsetTops.
-  useEffect(() => {
-    window.addEventListener("resize", measureOffsets, { passive: true });
-    return () => window.removeEventListener("resize", measureOffsets);
-  }, [measureOffsets]);
-
-  // Scrub handler: array-index lookup (O(1), no Date/locale parsing) →
-  // dedup against last label → instant-scroll to section DOM node.
+  // Scrub: instant jump to section.
   const handleScrub = useCallback(
     (index: number) => {
       const label = metaIndexToLabel[index];
@@ -489,28 +424,24 @@ export function PhotosGrid() {
     [metaIndexToLabel],
   );
 
-  // ⚡ INFINITE SCROLL OBSERVER LOGIC
-  const observer = useRef<IntersectionObserver | null>(null);
-  const lastElementRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (loadingMore) return;
-      if (observer.current) observer.current.disconnect();
+  // ── Photo click ──────────────────────────────────────────────────────────────
 
-      observer.current = new IntersectionObserver(
-        (entries) => {
-          // If the invisible div intersects the viewport and we have more pages, fetch!
-          if (entries[0].isIntersecting && hasMorePages) {
-            fetchNextBatch();
-          }
-        },
-        // Trigger the fetch when the user is 400px away from the bottom for a seamless experience
-        { rootMargin: "400px" },
-      );
+  const filteredPhotosRef = useRef<GridObject[]>([]);
+  filteredPhotosRef.current = filteredPhotos;
 
-      if (node) observer.current.observe(node);
+  const handlePhotoClick = useCallback(
+    (photo: GridObject) => {
+      // PreviewContext / FilePreviewDialog reads `.id` (not `._id`).
+      // GridObject comes from /api/objects/grid which returns `_id`.
+      // Bridge the gap by spreading `id` alongside the existing fields.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const asLegacy = (p: GridObject) => ({ ...p, id: p._id }) as any;
+      openPreview(asLegacy(photo), filteredPhotosRef.current.map(asLegacy));
     },
-    [loadingMore, hasMorePages, fetchNextBatch],
+    [openPreview],
   );
+
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   if (initialLoading) {
     return (
@@ -522,8 +453,8 @@ export function PhotosGrid() {
 
   return (
     <div className="flex gap-2 items-start">
-      {/* Gallery content — scrolls with the page */}
-      <div ref={galleryRef} className="grow min-w-0">
+      {/* Gallery content */}
+      <div className="grow min-w-0">
         <div className="space-y-6 pb-8">
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -589,15 +520,29 @@ export function PhotosGrid() {
             </div>
           </div>
 
-          {/* Error */}
-          {error && (
+          {/* Config error */}
+          {configError && (
             <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3">
-              {error}
+              {configError}
+            </div>
+          )}
+
+          {/* Grid loading */}
+          {gridLoading && (
+            <div className="flex items-center justify-center py-24">
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+            </div>
+          )}
+
+          {/* Grid error */}
+          {gridError && !gridLoading && (
+            <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3">
+              Failed to load photos
             </div>
           )}
 
           {/* Empty */}
-          {filteredPhotos.length === 0 && !error && (
+          {!gridLoading && !gridError && filteredPhotos.length === 0 && (
             <div className="flex flex-col items-center justify-center py-32 text-center animate-in fade-in slide-in-from-bottom-4 duration-1000">
               <div className="relative mb-6">
                 <div className="w-24 h-24 rounded-3xl bg-primary/5 border border-primary/10 flex items-center justify-center rotate-6 scale-110">
@@ -612,7 +557,7 @@ export function PhotosGrid() {
               </h3>
               <p className="text-sm text-muted-foreground max-w-xs mx-auto mb-8">
                 {search
-                  ? "We couldn't find any photos matching your search. Try different keywords."
+                  ? "We couldn't find any photos matching your search."
                   : "Start building your visual library by uploading images to your vault."}
               </p>
               {!search && (
@@ -626,7 +571,7 @@ export function PhotosGrid() {
             </div>
           )}
 
-          {/* Photo Groups */}
+          {/* Photo groups — all rendered at once; IO on each tile gates thumbnail fetch */}
           {groupEntries.map(([dateLabel, groupPhotos]) => (
             <div
               key={dateLabel}
@@ -663,26 +608,14 @@ export function PhotosGrid() {
               )}
             </div>
           ))}
-
-          {/* ⚡ The Infinite Scroll Sentinel */}
-          {hasMorePages && (
-            <div
-              ref={lastElementRef}
-              className="flex justify-center pt-8 pb-8 w-full"
-            >
-              {loadingMore && (
-                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-              )}
-            </div>
-          )}
         </div>
       </div>
 
-      {/* Timeline scrubber — sticky below the topbar (68 px) on the right */}
-      {metadataItems.length > 0 && (
+      {/* Timeline scrubber */}
+      {allPhotos.length > 0 && (
         <div className="sticky top-[68px] h-[calc(100dvh-68px)] shrink-0">
           <Scrubber
-            items={metadataItems}
+            items={allPhotos}
             scrollProgress={scrollProgress}
             onScrub={handleScrub}
           />

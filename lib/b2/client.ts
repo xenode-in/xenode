@@ -1,7 +1,18 @@
 import { S3Client } from "@aws-sdk/client-s3";
+import { NodeHttpHandler } from "@smithy/node-http-handler";
+import https from "https";
 
 let _client: S3Client | null = null;
 let _publicClient: S3Client | null = null;
+
+/**
+ * Persistent HTTPS agent shared across all B2 requests.
+ * keepAlive=true reuses TCP connections instead of opening a new socket per
+ * request — critical for the thumbnail proxy and batch upload paths where
+ * many small S3 calls fire in quick succession.
+ */
+const _httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 20 });
+const _requestHandler = new NodeHttpHandler({ httpsAgent: _httpsAgent });
 
 /**
  * Get or create the S3 client for B2
@@ -38,6 +49,7 @@ export function getS3Client(): S3Client {
         secretAccessKey: appKey,
       },
       forcePathStyle: true,
+      // requestHandler: _requestHandler,
     });
   }
 
@@ -69,6 +81,7 @@ export function getPublicS3Client(): S3Client {
         secretAccessKey: S3_APPLICATION_KEY.trim(),
       },
       forcePathStyle: true,
+      // requestHandler: _requestHandler,
     });
   }
   return _publicClient;

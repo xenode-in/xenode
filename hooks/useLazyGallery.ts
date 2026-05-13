@@ -37,6 +37,31 @@ export interface ObjectMetadata {
 }
 
 /**
+ * All fields the photo grid needs to render every tile and every scrubber
+ * section, returned in one shot by GET /api/objects/grid.
+ *
+ * Thumbnail *images* still load lazily (useThumbnail + batch-content); this
+ * type just holds the metadata so tiles can be sized and sections built
+ * immediately — even for sections the user hasn't scrolled to yet.
+ */
+export interface GridObject {
+  _id: string;
+  createdAt: string;                 // ISO 8601
+  key: string;                       // original B2 key
+  size: number;
+  thumbnail: string | null;          // B2 key (NOT a signed URL)
+  aspectRatio: number;
+  isEncrypted: boolean;
+  encryptedName: string | null;
+  encryptedDisplayName: string | null;
+  // Preview fields — present when the file has an optimized version
+  optimizedKey: string | null;
+  optimizedIV: string | null;
+  optimizedEncryptedDEK: string | null;
+  optimizedSize: number | null;
+}
+
+/**
  * Full object shape from /api/objects/batch — mirrors /api/objects.
  * Only the fields the gallery actually reads are typed strictly; the
  * rest are passed through for callers that need them.
@@ -96,6 +121,44 @@ export function useObjectsMetadata(
     // server caches for 30s, so we keep the client copy fresh-ish.
     staleTime: 30_000,
     // Hold onto the resolved data so route transitions don't refetch.
+    gcTime: 5 * 60_000,
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// useGridObjects — single upfront fetch of all grid fields
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Fetches all objects for the photo grid in a single request.
+ * Returns every field the grid needs (thumbnail key, aspectRatio, etc.) so
+ * scrubber sections and tile layouts are available immediately — even for
+ * sections far from the current scroll position.
+ *
+ * Thumbnail *images* still load lazily via useThumbnail; this hook only
+ * provides the metadata shell for each tile.
+ */
+export function useGridObjects(
+  bucketId: string | null,
+  opts?: { mediaCategory?: string },
+) {
+  return useQuery({
+    queryKey: ["objects-grid", bucketId, opts?.mediaCategory ?? null],
+    queryFn: async () => {
+      if (!bucketId) return { count: 0, items: [] as GridObject[] };
+      const params = new URLSearchParams({ bucketId });
+      if (opts?.mediaCategory) params.set("mediaCategory", opts.mediaCategory);
+      const res = await fetch(`/api/objects/grid?${params.toString()}`, {
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`grid fetch ${res.status}: ${txt.slice(0, 200)}`);
+      }
+      return (await res.json()) as { count: number; items: GridObject[] };
+    },
+    enabled: !!bucketId,
+    staleTime: 30_000,
     gcTime: 5 * 60_000,
   });
 }

@@ -129,14 +129,5 @@ export async function GET(request: NextRequest) {
     statusCode = err?.message === "Unauthorized" ? 401 : 500;
     errorMessage = err?.message ?? "Internal error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
-  } finally {
-    logRequest({
-      route: "/api/objects/metadata",
-      method: "GET",
-      userId,
-      statusCode,
-      durationMs: Date.now() - startTime,
-      error: errorMessage,
-    });
   }
 }
