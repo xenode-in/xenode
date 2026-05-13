@@ -312,7 +312,8 @@ export function PhotosGrid() {
   const groupEntriesRef = useRef<[string, GridObject[]][]>([]);
   groupEntriesRef.current = groupEntries;
 
-  const lastScrubLabelRef = useRef<string | null>(null);
+  const lastScrubTargetLabelRef = useRef<string | null>(null);
+  const lastActiveScrollLabelRef = useRef<string | null>(null);
   const scrollRafRef = useRef<number | null>(null);
 
   const sectionOffsetsRef = useRef<
@@ -393,13 +394,17 @@ export function PhotosGrid() {
 
       if (activeIdx === -1) {
         setScrollProgress(0);
-        lastScrubLabelRef.current = null;
+        lastActiveScrollLabelRef.current = null;
+        lastScrubTargetLabelRef.current = null;
         return;
       }
 
       const { label, firstIndex } = offsets[activeIdx];
-      if (label === lastScrubLabelRef.current) return;
-      lastScrubLabelRef.current = label;
+      if (label === lastActiveScrollLabelRef.current) return;
+      lastActiveScrollLabelRef.current = label;
+      if (label === lastScrubTargetLabelRef.current) {
+        lastScrubTargetLabelRef.current = null;
+      }
       setScrollProgress(firstIndex / Math.max(1, allPhotos.length - 1));
     });
   }, [allPhotos.length]);
@@ -414,14 +419,20 @@ export function PhotosGrid() {
   const handleScrub = useCallback(
     (index: number) => {
       const label = metaIndexToLabel[index];
-      if (!label || label === lastScrubLabelRef.current) return;
-      lastScrubLabelRef.current = label;
+      if (!label || label === lastScrubTargetLabelRef.current) return;
+
+      const firstIndex = dateLabelToFirstIndex.get(label);
+      if (typeof firstIndex === "number") {
+        setScrollProgress(firstIndex / Math.max(1, allPhotos.length - 1));
+      }
+
+      lastScrubTargetLabelRef.current = label;
       groupRefs.current[label]?.scrollIntoView({
         behavior: "instant",
         block: "start",
       });
     },
-    [metaIndexToLabel],
+    [allPhotos.length, dateLabelToFirstIndex, metaIndexToLabel],
   );
 
   // ── Photo click ──────────────────────────────────────────────────────────────

@@ -70,8 +70,11 @@ export function LazyPhotosGallery({
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [scrollProgress, setScrollProgress] = useState(0);
 
-  /** Label of the last section we scrolled *to* (deduplicates scrub calls). */
-  const lastScrubLabelRef = useRef<string | null>(null);
+  /** Label of the last scrub target, used to deduplicate drag updates. */
+  const lastScrubTargetLabelRef = useRef<string | null>(null);
+
+  /** Label of the section currently reflected by scrollProgress. */
+  const lastActiveScrollLabelRef = useRef<string | null>(null);
 
   /** Refs to each section's root <section> element. */
   const sectionRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -165,14 +168,18 @@ export function LazyPhotosGallery({
 
       if (activeIdx === -1) {
         setScrollProgress(0);
-        lastScrubLabelRef.current = null;
+        lastActiveScrollLabelRef.current = null;
+        lastScrubTargetLabelRef.current = null;
         return;
       }
 
       const { label, indexStart } = offsets[activeIdx];
       // Skip state update if still in the same section.
-      if (label === lastScrubLabelRef.current) return;
-      lastScrubLabelRef.current = label;
+      if (label === lastActiveScrollLabelRef.current) return;
+      lastActiveScrollLabelRef.current = label;
+      if (label === lastScrubTargetLabelRef.current) {
+        lastScrubTargetLabelRef.current = null;
+      }
       setScrollProgress(indexStart / Math.max(1, items.length - 1));
     });
   }, [items.length]);
@@ -190,17 +197,17 @@ export function LazyPhotosGallery({
         year: "numeric",
       });
 
-      if (label === lastScrubLabelRef.current) return;
-      lastScrubLabelRef.current = label;
-
       const container = scrollRef.current;
       const sEl = sectionRefs.current[label];
-      if (sEl && container) {
-        container.scrollTo({
-          top: Math.max(0, sEl.offsetTop + 100),
-          behavior: "smooth",
-        });
-      }
+      if (!sEl || !container || label === lastScrubTargetLabelRef.current) return;
+
+      setScrollProgress(index / Math.max(1, items.length - 1));
+      lastScrubTargetLabelRef.current = label;
+
+      container.scrollTo({
+        top: Math.max(0, sEl.offsetTop + 100),
+        behavior: "smooth",
+      });
     },
     [items],
   );

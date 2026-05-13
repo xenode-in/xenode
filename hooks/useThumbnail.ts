@@ -113,36 +113,40 @@ async function flushBatch() {
 
   if (snapshot.size === 0) return;
 
-  const keys = Array.from(snapshot.keys()).slice(0, MAX_BATCH_KEYS);
+  const keys = Array.from(snapshot.keys());
 
-  try {
-    const res = await fetch("/api/objects/thumbnail/batch", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ keys }),
-    });
+  for (let i = 0; i < keys.length; i += MAX_BATCH_KEYS) {
+    const chunk = keys.slice(i, i + MAX_BATCH_KEYS);
 
-    if (!res.ok) throw new Error(`thumbnail/batch HTTP ${res.status}`);
+    try {
+      const res = await fetch("/api/objects/thumbnail/batch", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keys: chunk }),
+      });
 
-    const { urls } = (await res.json()) as { urls: Record<string, string> };
+      if (!res.ok) throw new Error(`thumbnail/batch HTTP ${res.status}`);
 
-    for (const key of keys) {
-      const url = urls[key];
-      const resolvers = snapshot.get(key) ?? [];
-      if (url) {
-        resolvers.forEach((r) => r.resolve(url));
-      } else {
-        resolvers.forEach((r) =>
-          r.reject(new Error(`No signed URL returned for thumbnail key`)),
-        );
+      const { urls } = (await res.json()) as { urls: Record<string, string> };
+
+      for (const key of chunk) {
+        const url = urls[key];
+        const resolvers = snapshot.get(key) ?? [];
+        if (url) {
+          resolvers.forEach((r) => r.resolve(url));
+        } else {
+          resolvers.forEach((r) =>
+            r.reject(new Error(`No signed URL returned for thumbnail key`)),
+          );
+        }
+        _inFlightPromises.delete(key);
       }
-      _inFlightPromises.delete(key);
-    }
-  } catch (err) {
-    for (const key of keys) {
-      snapshot.get(key)?.forEach((r) => r.reject(err));
-      _inFlightPromises.delete(key);
+    } catch (err) {
+      for (const key of chunk) {
+        snapshot.get(key)?.forEach((r) => r.reject(err));
+        _inFlightPromises.delete(key);
+      }
     }
   }
 }
@@ -167,6 +171,26 @@ function requestUrl(key: string): Promise<string> {
 
   return promise;
 }
+
+function resetThumbnailBatcherForTests() {
+  if (_flushTimer) {
+    clearTimeout(_flushTimer);
+    _flushTimer = null;
+  }
+  _pendingResolvers.clear();
+  _inFlightPromises.clear();
+  _downloadQueue.length = 0;
+  _activeDownloads = 0;
+}
+
+export const __thumbnailBatchTestUtils =
+  process.env.NODE_ENV === "test"
+    ? {
+        flushBatch,
+        requestUrl,
+        resetThumbnailBatcherForTests,
+      }
+    : undefined;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hook
