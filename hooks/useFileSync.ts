@@ -30,6 +30,13 @@ export function useFileSync({
         return { objects: [], hasNextPage: false, nextCursor: null };
 
       let url = `/api/objects?bucketId=${bucketId}&limit=${limit}&sortBy=${sortBy}&sortDir=${sortDir}`;
+
+      // E2EE: server can't sort by encrypted file names, so fetch all
+      // metadata in a single call and let the client sort after decryption.
+      if (sortBy === "name") {
+        url += "&fetchAll=true";
+      }
+
       if (mediaCategory) {
         url += `&mediaCategory=${encodeURIComponent(mediaCategory)}`;
       }

@@ -501,6 +501,41 @@ export default function FilesPage() {
     }
   }, [hasMorePages, isFetchingNextPage, fetchNextBatch]);
 
+  // Keep a stable ref so the observer callback always calls the latest version.
+  const fetchNextPageRef = useRef(fetchNextPage);
+  useEffect(() => {
+    fetchNextPageRef.current = fetchNextPage;
+  });
+
+  // Stable ref to hold the current observer so we can clean it up.
+  const observerRef = useRef<IntersectionObserver | null>(null);
+
+  // Callback ref — fires whenever the sentinel DOM node mounts / unmounts.
+  // This guarantees the observer attaches even if the sentinel isn't in the
+  // initial render (e.g. loading spinner shows first), and survives
+  // sort/filter re-renders without scroll-position side-effects.
+  const sentinelCallbackRef = useCallback((node: HTMLDivElement | null) => {
+    // Tear down previous observer
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+
+    if (!node) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          fetchNextPageRef.current();
+        }
+      },
+      { rootMargin: "200px" },
+    );
+
+    observer.observe(node);
+    observerRef.current = observer;
+  }, []);
+
   useEffect(() => {
     fetch("/api/drive/config")
       .then((r) => r.json())
@@ -1575,6 +1610,19 @@ export default function FilesPage() {
               />
             ))}
           </div>
+        )}
+
+        {/* Infinite-scroll sentinel + loading indicator */}
+        <div ref={sentinelCallbackRef} className="w-full py-1" />
+        {isFetchingNextPage && (
+          <div className="flex items-center justify-center py-6">
+            <Loader2 className="w-5 h-5 animate-spin text-primary" />
+          </div>
+        )}
+        {!hasMorePages && !isEmpty && viewObjects.files.length > 0 && (
+          <p className="text-center text-xs text-muted-foreground/30 py-4">
+            All files loaded
+          </p>
         )}
       </div>
 

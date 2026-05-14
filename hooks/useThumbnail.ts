@@ -31,7 +31,7 @@
  * nodes cache the bytes — subsequent loads cost ~0ms.
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { getDb } from "@/lib/db/local";
 import { useSession } from "@/lib/auth/client";
 
@@ -225,6 +225,11 @@ export const __thumbnailBatchTestUtils =
 /**
  * Fetches, decrypts, and returns a blob URL for a thumbnail B2 key.
  *
+ * When `thumbnail` toggles to `undefined` (e.g. item scrolled out of view),
+ * any in-flight fetch is aborted but the already-loaded blob URL is kept —
+ * so the user sees a cached thumbnail if they scroll back.  Object URLs are
+ * only revoked when replaced by a new load or on full component unmount.
+ *
  * @param thumbnail  B2 key string, base64 data URI, or undefined.
  * @param decryptionKey  CryptoKey used to decrypt `enc:` thumbnails (optional).
  */
@@ -236,22 +241,38 @@ export function useThumbnail(
   const { data: session } = useSession();
   const userId = session?.user?.id;
 
+  // Track the current object URL in a ref so we can revoke it when replaced
+  // or on unmount, WITHOUT revoking it during intermediate effect cleanups
+  // (which would break already-displayed thumbnails).
+  const objectUrlRef = useRef<string | null>(null);
+
+  // Track which thumbnail key the current URL belongs to, so we don't
+  // re-load a thumbnail that's already displayed.
+  const loadedKeyRef = useRef<string | null>(null);
+
   useEffect(() => {
+    // When thumbnail is undefined (item scrolled out of view), abort any
+    // in-flight work but DON'T clear the displayed URL.  The user may
+    // scroll back and the cached thumbnail should still be visible.
     if (!thumbnail) {
-      setUrl(null);
+      return;
+    }
+
+    // Skip re-loading if the current URL already belongs to this key.
+    if (loadedKeyRef.current === thumbnail && objectUrlRef.current) {
       return;
     }
 
     // Legacy base64 thumbnails — serve immediately, no fetch needed.
     if (thumbnail.startsWith("data:")) {
       setUrl(thumbnail);
+      loadedKeyRef.current = thumbnail;
       return;
     }
 
     let cancelled = false;
-    let objectUrl: string | null = null;
     // AbortController cancels the in-flight GET /api/files/ fetch when the
-    // tile unmounts or thumbnail prop changes before the download completes.
+    // tile scrolls out of view or thumbnail prop changes before download completes.
     const abortCtrl = new AbortController();
 
     async function loadThumbnail() {
@@ -267,8 +288,11 @@ export function useThumbnail(
             .update(thumbnail!, { lastAccessed: Date.now() })
             .catch(() => {});
           if (!cancelled) {
-            objectUrl = URL.createObjectURL(cached.blob);
-            setUrl(objectUrl);
+            // Revoke previous object URL before creating new one
+            if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+            objectUrlRef.current = URL.createObjectURL(cached.blob);
+            loadedKeyRef.current = thumbnail!;
+            setUrl(objectUrlRef.current);
           }
           return;
         }
@@ -328,8 +352,11 @@ export function useThumbnail(
         });
 
         if (!cancelled) {
-          objectUrl = URL.createObjectURL(blob);
-          setUrl(objectUrl);
+          // Revoke previous object URL before creating new one
+          if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+          objectUrlRef.current = URL.createObjectURL(blob);
+          loadedKeyRef.current = thumbnail!;
+          setUrl(objectUrlRef.current);
         }
       } catch (err) {
         // Tile scrolled out of view — fetch was intentionally cancelled.
@@ -345,12 +372,23 @@ export function useThumbnail(
     return () => {
       cancelled = true;
       // Abort any in-flight GET /api/files/ request for this thumbnail.
-      // Fires when: thumbnail → undefined (tile left viewport), deps changed,
-      // or the component unmounts.
+      // Fires when: thumbnail → undefined (tile left viewport), deps changed.
+      // We intentionally do NOT revoke objectUrlRef here — the blob URL must
+      // stay valid so the already-rendered <img> doesn't flash/break.
       abortCtrl.abort();
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [thumbnail, decryptionKey, userId]);
 
+  // Revoke the object URL only on full component unmount.
+  useEffect(() => {
+    return () => {
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+    };
+  }, []);
+
   return url;
 }
+
