@@ -31,6 +31,7 @@ import {
   decryptMetadataString,
 } from "@/lib/crypto/fileEncryption";
 import { useThumbnail } from "@/hooks/useThumbnail";
+import { useIsVisible } from "@/hooks/useIsVisible";
 import { MetadataDialog } from "./MetadataDialog";
 
 interface ObjectData {
@@ -97,7 +98,11 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     const { isUnlocked, metadataKey } = useCrypto();
     const [decryptedName, setDecryptedName] = useState<string | null>(null);
     const [decryptedTags, setDecryptedTags] = useState<string[] | null>(null);
-    const decryptedThumbnail = useThumbnail(item.thumbnail, metadataKey);
+    const [visibilityRef, isVisible] = useIsVisible();
+    const decryptedThumbnail = useThumbnail(
+      isVisible ? item.thumbnail : undefined,
+      metadataKey,
+    );
     const [isMetaOpen, setIsMetaOpen] = useState(false);
 
     useEffect(() => {
@@ -194,7 +199,12 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
 
     const content = (
       <TableRow
-        ref={ref}
+        ref={(el) => {
+          // Forward both the parent ref and the visibility observer ref
+          if (typeof ref === "function") ref(el);
+          else if (ref) (ref as React.MutableRefObject<HTMLTableRowElement | null>).current = el;
+          visibilityRef(el);
+        }}
         style={style}
         {...dragHandleProps}
         data-id={item.id}
@@ -456,7 +466,11 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
     const { isUnlocked, metadataKey } = useCrypto();
     const [decryptedName, setDecryptedName] = useState<string | null>(null);
     const [decryptedTags, setDecryptedTags] = useState<string[] | null>(null);
-    const decryptedThumbnail = useThumbnail(item.thumbnail, metadataKey);
+    const [visibilityRef, isVisible] = useIsVisible();
+    const decryptedThumbnail = useThumbnail(
+      isVisible ? item.thumbnail : undefined,
+      metadataKey,
+    );
     const [isMetaOpen, setIsMetaOpen] = useState(false);
 
     useEffect(() => {
@@ -553,7 +567,11 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
 
     const content = (
       <div
-        ref={ref}
+        ref={(el) => {
+          if (typeof ref === "function") ref(el);
+          else if (ref) (ref as React.MutableRefObject<HTMLDivElement | null>).current = el;
+          visibilityRef(el);
+        }}
         style={style}
         {...dragHandleProps}
         onClick={(e) => {

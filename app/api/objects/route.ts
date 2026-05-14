@@ -43,6 +43,13 @@ export async function GET(request: NextRequest) {
       ),
     );
 
+    // When the client needs all objects at once (e.g. for E2EE name sorting
+    // where the server can't sort encrypted names), it passes fetchAll=true.
+    // We skip pagination and return every object in a single response.
+    // The payload is just lightweight metadata so this is safe even for
+    // large libraries.
+    const fetchAll = searchParams.get("fetchAll") === "true";
+
     // Sort options: "date", "size", "type", "name" (name is functionally handled client-side but we map it here just in case)
     const sortByParam = searchParams.get("sortBy") || "date";
     const sortDirParam = searchParams.get("sortDir") || "desc";
@@ -96,8 +103,8 @@ export async function GET(request: NextRequest) {
       query.contentType = { $regex: `^${contentTypeFilter}/`, $options: "i" };
     }
 
-    // Apply composite cursor pagination
-    if (before) {
+    // Apply composite cursor pagination (skipped when fetchAll is true)
+    if (before && !fetchAll) {
       try {
         const cursorPayload = Buffer.from(before, "base64").toString("utf8");
         const cursorData = JSON.parse(cursorPayload);
@@ -126,15 +133,19 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Fetch limit + 1 to detect if another page exists — avoids countDocuments
-    const rawObjects = await StorageObject.find(query)
+    // When fetchAll is true, return every matching object (no limit).
+    // Otherwise fetch limit + 1 to detect if another page exists.
+    const dbQuery = StorageObject.find(query)
       .select(LIST_PROJECTION)
-      .sort(sortConfig)
-      .limit(limit + 1)
-      .lean();
+      .sort(sortConfig);
 
-    const hasNextPage = rawObjects.length > limit;
-    const baseObjects = hasNextPage ? rawObjects.slice(0, limit) : rawObjects;
+    const rawObjects = fetchAll
+      ? await dbQuery.lean()
+      : await dbQuery.limit(limit + 1).lean();
+
+    const hasNextPage = fetchAll ? false : rawObjects.length > limit;
+    const baseObjects =
+      hasNextPage ? rawObjects.slice(0, limit) : rawObjects;
 
     // Pre-sign thumbnail and optimized-preview URLs at list time.
     //
@@ -165,9 +176,9 @@ export async function GET(request: NextRequest) {
       return out;
     });
 
-    // Cursor points to the last item in this page
+    // Cursor points to the last item in this page (not needed for fetchAll)
     let nextCursor = null;
-    if (hasNextPage && objects.length > 0) {
+    if (!fetchAll && hasNextPage && objects.length > 0) {
       const lastItem = objects[objects.length - 1];
       const val = lastItem[sortField as keyof typeof lastItem];
       const cursorObj = {
@@ -180,7 +191,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       objects,
       pagination: {
-        limit,
+        limit: fetchAll ? rawObjects.length : limit,
         hasNextPage,
         nextCursor, // pass this as `before=` on the next request
       },
