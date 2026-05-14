@@ -56,14 +56,35 @@ let _activeDownloads = 0;
 // deadlocking all future downloads.
 const _downloadQueue: Array<() => void> = [];
 
-function acquireSlot(): Promise<void> {
-  return new Promise((resolve) => {
+function acquireSlot(signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+
     if (_activeDownloads < MAX_CONCURRENT_DOWNLOADS) {
       _activeDownloads++; // slot acquired immediately
       resolve();
-    } else {
-      _downloadQueue.push(resolve); // wait; slot transferred by releaseSlot
+      return;
     }
+
+    let settled = false;
+    const waiter = () => {
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    };
+
+    const onAbort = () => {
+      if (settled) return;
+      const idx = _downloadQueue.indexOf(waiter);
+      if (idx !== -1) _downloadQueue.splice(idx, 1);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+    _downloadQueue.push(waiter); // wait; slot transferred by releaseSlot
   });
 }
 
@@ -115,40 +136,45 @@ async function flushBatch() {
 
   const keys = Array.from(snapshot.keys());
 
+  const chunks: string[][] = [];
   for (let i = 0; i < keys.length; i += MAX_BATCH_KEYS) {
-    const chunk = keys.slice(i, i + MAX_BATCH_KEYS);
-
-    try {
-      const res = await fetch("/api/objects/thumbnail/batch", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ keys: chunk }),
-      });
-
-      if (!res.ok) throw new Error(`thumbnail/batch HTTP ${res.status}`);
-
-      const { urls } = (await res.json()) as { urls: Record<string, string> };
-
-      for (const key of chunk) {
-        const url = urls[key];
-        const resolvers = snapshot.get(key) ?? [];
-        if (url) {
-          resolvers.forEach((r) => r.resolve(url));
-        } else {
-          resolvers.forEach((r) =>
-            r.reject(new Error(`No signed URL returned for thumbnail key`)),
-          );
-        }
-        _inFlightPromises.delete(key);
-      }
-    } catch (err) {
-      for (const key of chunk) {
-        snapshot.get(key)?.forEach((r) => r.reject(err));
-        _inFlightPromises.delete(key);
-      }
-    }
+    chunks.push(keys.slice(i, i + MAX_BATCH_KEYS));
   }
+
+  await Promise.all(
+    chunks.map(async (chunk) => {
+      try {
+        const res = await fetch("/api/objects/thumbnail/batch", {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ keys: chunk }),
+        });
+
+        if (!res.ok) throw new Error(`thumbnail/batch HTTP ${res.status}`);
+
+        const { urls } = (await res.json()) as { urls: Record<string, string> };
+
+        for (const key of chunk) {
+          const url = urls[key];
+          const resolvers = snapshot.get(key) ?? [];
+          if (url) {
+            resolvers.forEach((r) => r.resolve(url));
+          } else {
+            resolvers.forEach((r) =>
+              r.reject(new Error(`No signed URL returned for thumbnail key`)),
+            );
+          }
+          _inFlightPromises.delete(key);
+        }
+      } catch (err) {
+        for (const key of chunk) {
+          snapshot.get(key)?.forEach((r) => r.reject(err));
+          _inFlightPromises.delete(key);
+        }
+      }
+    }),
+  );
 }
 
 /**
@@ -252,7 +278,7 @@ export function useThumbnail(
         if (cancelled) return;
 
         // ── 3. Download via proxy with concurrency limit ─────────────────
-        await acquireSlot();
+        await acquireSlot(abortCtrl.signal);
         if (cancelled) {
           releaseSlot();
           return;

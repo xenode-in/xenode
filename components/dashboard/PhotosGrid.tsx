@@ -304,6 +304,7 @@ export function PhotosGrid() {
 
   const grouped = useMemo(() => groupByDate(filteredPhotos), [filteredPhotos]);
   const groupEntries = useMemo(() => Object.entries(grouped), [grouped]);
+  const scrubberItems = filteredPhotos;
 
   // ── Scrubber state ────────────────────────────────────────────────────────────
 
@@ -321,45 +322,26 @@ export function PhotosGrid() {
   >([]);
 
   // Pre-compute index → date label from the full unfiltered list (drives scrubber).
-  const metaIndexToLabel = useMemo(
-    () =>
-      allPhotos.map((item) =>
-        new Date(item.createdAt).toLocaleDateString("en-US", {
-          month: "long",
-          day: "numeric",
-          year: "numeric",
-        }),
-      ),
-    [allPhotos],
-  );
-
   // Map date label → first index in allPhotos (for scroll progress calculation).
-  const dateLabelToFirstIndex = useMemo(() => {
-    const map = new Map<string, number>();
-    for (let i = 0; i < allPhotos.length; i++) {
-      const label = new Date(allPhotos[i].createdAt).toLocaleDateString(
-        "en-US",
-        { month: "long", day: "numeric", year: "numeric" },
-      );
-      if (!map.has(label)) map.set(label, i);
-    }
-    return map;
-  }, [allPhotos]);
-
   // Rebuild offsetTop cache after DOM layout.
   const measureOffsets = useCallback(() => {
     const result: typeof sectionOffsetsRef.current = [];
-    for (const [label] of groupEntriesRef.current) {
+    let runningIndex = 0;
+    for (const [label, photos] of groupEntriesRef.current) {
       const el = groupRefs.current[label];
-      if (!el) continue;
+      if (!el) {
+        runningIndex += photos.length;
+        continue;
+      }
       result.push({
         label,
         top: el.offsetTop,
-        firstIndex: dateLabelToFirstIndex.get(label) ?? 0,
+        firstIndex: runningIndex,
       });
+      runningIndex += photos.length;
     }
     sectionOffsetsRef.current = result;
-  }, [dateLabelToFirstIndex]);
+  }, []);
 
   useEffect(() => {
     const id = requestAnimationFrame(measureOffsets);
@@ -377,7 +359,7 @@ export function PhotosGrid() {
     scrollRafRef.current = requestAnimationFrame(() => {
       scrollRafRef.current = null;
       const offsets = sectionOffsetsRef.current;
-      if (offsets.length === 0 || allPhotos.length === 0) return;
+      if (offsets.length === 0 || scrubberItems.length === 0) return;
 
       const THRESHOLD = 76;
       const scrollY = window.scrollY;
@@ -405,9 +387,9 @@ export function PhotosGrid() {
       if (label === lastScrubTargetLabelRef.current) {
         lastScrubTargetLabelRef.current = null;
       }
-      setScrollProgress(firstIndex / Math.max(1, allPhotos.length - 1));
+      setScrollProgress(firstIndex / Math.max(1, scrubberItems.length - 1));
     });
-  }, [allPhotos.length]);
+  }, [scrubberItems.length]);
 
   useEffect(() => {
     window.addEventListener("scroll", handleScroll, { passive: true });
@@ -418,21 +400,25 @@ export function PhotosGrid() {
   // Scrub: instant jump to section.
   const handleScrub = useCallback(
     (index: number) => {
-      const label = metaIndexToLabel[index];
-      if (!label || label === lastScrubTargetLabelRef.current) return;
+      const offsets = sectionOffsetsRef.current;
+      if (offsets.length === 0) return;
 
-      const firstIndex = dateLabelToFirstIndex.get(label);
-      if (typeof firstIndex === "number") {
-        setScrollProgress(firstIndex / Math.max(1, allPhotos.length - 1));
+      let target = offsets[0];
+      for (let i = 1; i < offsets.length; i++) {
+        if (offsets[i].firstIndex > index) break;
+        target = offsets[i];
       }
 
-      lastScrubTargetLabelRef.current = label;
-      groupRefs.current[label]?.scrollIntoView({
+      if (target.label === lastScrubTargetLabelRef.current) return;
+
+      setScrollProgress(target.firstIndex / Math.max(1, scrubberItems.length - 1));
+      lastScrubTargetLabelRef.current = target.label;
+      groupRefs.current[target.label]?.scrollIntoView({
         behavior: "instant",
         block: "start",
       });
     },
-    [allPhotos.length, dateLabelToFirstIndex, metaIndexToLabel],
+    [scrubberItems.length],
   );
 
   // ── Photo click ──────────────────────────────────────────────────────────────
@@ -623,10 +609,10 @@ export function PhotosGrid() {
       </div>
 
       {/* Timeline scrubber */}
-      {allPhotos.length > 0 && (
+      {scrubberItems.length > 0 && (
         <div className="sticky top-[68px] h-[calc(100dvh-68px)] shrink-0">
           <Scrubber
-            items={allPhotos}
+            items={scrubberItems}
             scrollProgress={scrollProgress}
             onScrub={handleScrub}
           />
