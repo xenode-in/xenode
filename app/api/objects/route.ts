@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
+import { getSignedFileUrl } from "@/lib/b2/cdn";
 import { logRequest } from "@/lib/logRequest";
 
 export const dynamic = "force-dynamic";
@@ -66,7 +67,10 @@ export async function GET(request: NextRequest) {
       _id: bucketId,
       $or: [{ userId }, { userId: "system" }],
     })
-      .select("_id userId")
+      // b2BucketId is needed to sign per-object thumbnail / optimized URLs
+      // below — without it we'd have to make a follow-up DB query in the
+      // map, defeating the purpose of pre-attaching signed URLs.
+      .select("_id userId b2BucketId")
       .lean();
 
     if (!bucket) {
@@ -130,7 +134,36 @@ export async function GET(request: NextRequest) {
       .lean();
 
     const hasNextPage = rawObjects.length > limit;
-    const objects = hasNextPage ? rawObjects.slice(0, limit) : rawObjects;
+    const baseObjects = hasNextPage ? rawObjects.slice(0, limit) : rawObjects;
+
+    // Pre-sign thumbnail and optimized-preview URLs at list time.
+    //
+    // generateFileToken() is time-windowed (rounded to the start of the
+    // current hour), so the URLs are byte-identical for every object key
+    // within the same hour — Azure CDN can cache them aggressively at the
+    // edge. Doing this here saves the client a round-trip per asset:
+    // before, the gallery used to call /api/objects/thumbnail?key=X for
+    // every single thumbnail (3000+ extra HTTP calls on a big library).
+    //
+    // The per-object signing cost is just two HMAC-SHA256s — well under
+    // 1ms at this scale and dwarfed by the Mongo round-trip we already
+    // paid above.
+    const objects = baseObjects.map((o) => {
+      const out: typeof o & {
+        thumbnailUrl?: string;
+        optimizedUrl?: string;
+      } = o;
+      if (o.thumbnail) {
+        out.thumbnailUrl = getSignedFileUrl(bucket.b2BucketId, o.thumbnail);
+      }
+      if ((o as any).optimizedKey) {
+        out.optimizedUrl = getSignedFileUrl(
+          bucket.b2BucketId,
+          (o as any).optimizedKey,
+        );
+      }
+      return out;
+    });
 
     // Cursor points to the last item in this page
     let nextCursor = null;

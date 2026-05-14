@@ -1,40 +1,18 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, useRef } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, memo } from "react";
 import { usePreview } from "@/contexts/PreviewContext";
 import { Loader2, ImageOff, LayoutGrid, Grid3x3, Rows3 } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
-import {
-  decryptMetadataString,
-  decryptFile,
-} from "@/lib/crypto/fileEncryption";
+import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
 import { useThumbnail } from "@/hooks/useThumbnail";
+import { GridObject, useGridObjects } from "@/hooks/useLazyGallery";
+import { Scrubber } from "@/components/dashboard/Scrubber";
 
-import { useSession } from "@/lib/auth/client";
-import { useFileSync } from "@/hooks/useFileSync";
-import { getDb } from "@/lib/db/local";
-import { useLiveQuery } from "dexie-react-hooks";
-import { motion, AnimatePresence } from "framer-motion";
-
-interface ObjectData {
-  id: string;
-  key: string;
-  size: number;
-  contentType: string;
-  createdAt: string;
-  thumbnail?: string;
-  isEncrypted?: boolean;
-  tags?: string[];
-  position?: number;
-  encryptedName?: string;
-  encryptedDisplayName?: string;
-  optimizedKey?: string;
-  optimizedIV?: string;
-  optimizedEncryptedDEK?: string;
-  optimizedSize?: number;
-  aspectRatio?: number;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
 
 type GridDensity = "large" | "medium" | "small";
 
@@ -48,8 +26,8 @@ function getFileName(key: string) {
   return key.split("/").pop() || key;
 }
 
-function groupByDate(photos: ObjectData[]) {
-  const groups: Record<string, ObjectData[]> = {};
+function groupByDate(photos: GridObject[]) {
+  const groups: Record<string, GridObject[]> = {};
   photos.forEach((p) => {
     const date = new Date(p.createdAt);
     const label = date.toLocaleDateString("en-US", {
@@ -63,287 +41,113 @@ function groupByDate(photos: ObjectData[]) {
   return groups;
 }
 
-function PhotoThumbnail({
+// ─────────────────────────────────────────────────────────────────────────────
+// Thumbnail tile
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PhotoThumbnail = memo(function PhotoThumbnail({
   photo,
   onPhotoClick,
   decryptedName,
   metadataKey,
-  privateKey,
-  className = "",
 }: {
-  photo: ObjectData;
-  onPhotoClick: (p: ObjectData) => void;
+  photo: GridObject;
+  onPhotoClick: (p: GridObject) => void;
   decryptedName?: string;
   metadataKey: CryptoKey | null;
-  privateKey: CryptoKey | null;
-  className?: string;
 }) {
-  const [optimizedUrl, setOptimizedUrl] = useState<string | null>(null);
-  const [rawUrl, setRawUrl] = useState<string | null>(null);
-  const [loadingOptimized, setLoadingOptimized] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const thumbUrl = useThumbnail(photo.thumbnail, metadataKey);
-
-  const observerRef = useRef<HTMLDivElement>(null);
-  const [hasBeenVisible, setHasBeenVisible] = useState(false);
-  const loadedForId = useRef<string | null>(null);
+  const tileRef = useRef<HTMLDivElement | null>(null);
+  const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    const current = observerRef.current;
-    if (!current) return;
-    const obs = new IntersectionObserver(
-      (entries) => {
-        if (entries[0].isIntersecting) {
-          setHasBeenVisible(true);
-          obs.disconnect();
+    const el = tileRef.current;
+    if (!el) return;
+
+    let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          if (hideTimer !== null) {
+            clearTimeout(hideTimer);
+            hideTimer = null;
+          }
+          setVisible(true);
+        } else {
+          hideTimer = setTimeout(() => setVisible(false), 150);
         }
       },
-      { rootMargin: "400px" },
+      { rootMargin: "400px 0px", threshold: 0 },
     );
-    obs.observe(current);
-    return () => obs.disconnect();
+    io.observe(el);
+    return () => {
+      io.disconnect();
+      if (hideTimer !== null) clearTimeout(hideTimer);
+    };
   }, []);
 
-  // Quick debug — add this temporarily
-  useEffect(() => {
-    if (hasBeenVisible) {
-      console.log("[Debug] photo fields:", {
-        id: photo.id,
-        optimizedKey: photo.optimizedKey,
-        optimizedEncryptedDEK: photo.optimizedEncryptedDEK,
-        optimizedIV: photo.optimizedIV,
-        aspectRatio: photo.aspectRatio,
-      });
-    }
-  }, [hasBeenVisible]);
-
-  useEffect(() => {
-    // Skip if not visible, no keys, no optimized version, already loaded, or failed
-    if (
-      !hasBeenVisible ||
-      !metadataKey ||
-      !privateKey ||
-      !photo.optimizedKey ||
-      failed ||
-      loadedForId.current === photo.id
-    )
-      return;
-
-    let cancelled = false;
-
-    const load = async () => {
-      setLoadingOptimized(true);
-      try {
-        const res = await fetch(`/api/objects/${photo.id}?preview=true`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-
-        // Must have encrypted DEK and IV to decrypt
-        if (!data.encryptedDEK || !data.iv) {
-          throw new Error("Missing decryption params");
-        }
-
-        const fileRes = await fetch(data.url);
-        if (!fileRes.ok)
-          throw new Error(`File fetch failed: ${fileRes.status}`);
-        const ciphertext = await fileRes.arrayBuffer();
-
-        // Preview is always WebP — don't trust data.contentType
-        // which will be "application/octet-stream" for encrypted files
-        const blob = await decryptFile(
-          ciphertext,
-          data.encryptedDEK,
-          data.iv,
-          privateKey,
-          "image/webp",
-        );
-
-        if (!cancelled) {
-          const url = URL.createObjectURL(blob);
-          setOptimizedUrl(url);
-          loadedForId.current = photo.id;
-        }
-      } catch (err) {
-        console.error(
-          `[PhotoThumbnail] Failed to load optimized for ${photo.id}:`,
-          err,
-        );
-        if (!cancelled) setFailed(true);
-      } finally {
-        if (!cancelled) setLoadingOptimized(false);
-      }
-    };
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    hasBeenVisible,
-    photo.id,
-    photo.optimizedKey,
+  const thumbUrl = useThumbnail(
+    visible && photo.thumbnail ? photo.thumbnail : undefined,
     metadataKey,
-    privateKey,
-    failed,
-  ]);
-
-  useEffect(() => {
-    // Only run if no optimizedKey and we're visible
-    if (!hasBeenVisible || photo.optimizedKey || !metadataKey || failed) return;
-    if (photo.isEncrypted && !privateKey) return;
-
-    let cancelled = false;
-
-    const load = async () => {
-      try {
-        const res = await fetch(`/api/objects/${photo.id}`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-
-        const fileRes = await fetch(data.url);
-        if (!fileRes.ok) throw new Error(`File fetch failed: ${fileRes.status}`);
-        const ciphertext = await fileRes.arrayBuffer();
-
-        let blob: Blob;
-
-        if (photo.isEncrypted && data.encryptedDEK && data.iv && privateKey) {
-          blob = await decryptFile(
-            ciphertext,
-            data.encryptedDEK,
-            data.iv,
-            privateKey,
-            photo.contentType || "image/png",
-          );
-        } else {
-          blob = new Blob([ciphertext], {
-            type: photo.contentType || "image/png",
-          });
-        }
-
-        if (!cancelled) {
-          setRawUrl(URL.createObjectURL(blob));
-        }
-      } catch (err) {
-        console.error(
-          `[PhotoThumbnail] Failed to load raw file for ${photo.id}:`,
-          err,
-        );
-      }
-    };
-
-    load();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    hasBeenVisible,
-    photo.id,
-    photo.optimizedKey,
-    photo.isEncrypted,
-    metadataKey,
-    privateKey,
-    failed,
-  ]);
-
-  // Cleanup blob URLs on unmount or when urls change
-  useEffect(() => {
-    return () => {
-      if (optimizedUrl) URL.revokeObjectURL(optimizedUrl);
-    };
-  }, [optimizedUrl]);
-
-  useEffect(() => {
-    return () => {
-      if (rawUrl) URL.revokeObjectURL(rawUrl);
-    };
-  }, [rawUrl]);
-
-  const displayUrl = optimizedUrl || rawUrl || thumbUrl;
-  const isReady = !!optimizedUrl || !!rawUrl;
+  );
 
   return (
     <div
-      ref={observerRef}
+      ref={tileRef}
       onClick={() => onPhotoClick(photo)}
-      className={`relative w-full rounded-2xl overflow-hidden bg-secondary border border-border/50 cursor-pointer group ${className}`}
+      className="relative w-full rounded-2xl overflow-hidden bg-secondary border border-border/50 cursor-pointer group"
       style={
         photo.aspectRatio && photo.aspectRatio > 0
           ? { aspectRatio: `${photo.aspectRatio}` }
           : { aspectRatio: "1/1" }
       }
     >
-      {/* Blurred thumbnail placeholder — always rendered, fades out */}
-      <div className="absolute inset-0 z-0">
-        {thumbUrl ? (
-          <img
-            src={thumbUrl}
-            alt=""
-            className={`w-full h-full object-cover blur-lg scale-110 transition-opacity duration-700 ${isReady ? "opacity-0" : "opacity-100"}`}
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center bg-secondary/50">
-            {loadingOptimized && (
-              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground/20" />
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Main image — optimized WebP or raw fallback */}
-      {(optimizedUrl || rawUrl) && (
-        <motion.img
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          src={optimizedUrl || rawUrl || ""}
-          loading="lazy"
+      {thumbUrl ? (
+        <img
+          src={thumbUrl}
           alt={decryptedName || getFileName(photo.key)}
-          className="relative z-10 w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+          decoding="async"
+          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
         />
-      )}
-
-      {/* No thumbnail and no optimized and not loading — show placeholder */}
-      {!displayUrl && !loadingOptimized && (
-        <div className="relative z-10 w-full flex items-center justify-center aspect-square bg-secondary-900/50">
-          <ImageOff className="w-8 h-8 text-muted-foreground/20" />
+      ) : (
+        <div className="relative w-full h-full overflow-hidden rounded-2xl bg-zinc-900">
+          <div className="absolute inset-0 -translate-x-full animate-[shimmer_1.5s_infinite] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
         </div>
       )}
 
-      {/* Loading spinner overlay when no thumb yet */}
-      {loadingOptimized && !thumbUrl && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center">
-          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground/30" />
-        </div>
-      )}
-
-      {/* Hover overlay — refined Pinterest style */}
-      <div className="absolute inset-0 z-20 bg-black/0 group-hover:bg-black/10 transition-all duration-300 flex flex-col justify-end">
+      {/* Hover overlay */}
+      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all duration-300 flex flex-col justify-end">
         <div className="p-4 translate-y-2 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500 bg-gradient-to-t from-black/60 via-black/20 to-transparent">
           <p className="text-white text-sm font-medium truncate drop-shadow-md">
             {decryptedName || photo.encryptedName || getFileName(photo.key)}
           </p>
-          <div className="flex items-center gap-2 mt-0.5">
-            <span className="text-white/60 text-[10px] uppercase tracking-wider font-bold">
-              {formatBytes(photo.size)}
-            </span>
-          </div>
+          {photo.size > 0 && (
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="text-white/60 text-[10px] uppercase tracking-wider font-bold">
+                {formatBytes(photo.size)}
+              </span>
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
-}
+});
 
-function MasonryGrid({
+// ─────────────────────────────────────────────────────────────────────────────
+// Grid layout variants
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MasonryGrid = memo(function MasonryGrid({
   photos,
   onPhotoClick,
   decryptedNames,
   metadataKey,
-  privateKey,
 }: {
-  photos: ObjectData[];
-  onPhotoClick: (p: ObjectData) => void;
+  photos: GridObject[];
+  onPhotoClick: (p: GridObject) => void;
   decryptedNames: Record<string, string>;
   metadataKey: CryptoKey | null;
-  privateKey: CryptoKey | null;
 }) {
   const [columnCount, setColumnCount] = useState(2);
 
@@ -361,7 +165,7 @@ function MasonryGrid({
   }, []);
 
   const columns = useMemo(() => {
-    const cols: ObjectData[][] = Array.from({ length: columnCount }, () => []);
+    const cols: GridObject[][] = Array.from({ length: columnCount }, () => []);
     photos.forEach((photo, i) => {
       cols[i % columnCount].push(photo);
     });
@@ -372,46 +176,33 @@ function MasonryGrid({
     <div className="flex gap-4">
       {columns.map((column, i) => (
         <div key={i} className="flex-1 flex flex-col gap-4">
-          <AnimatePresence initial={false}>
-            {column.map((photo) => (
-              <motion.div
-                key={photo.id}
-                layout
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                transition={{ duration: 0.4, ease: [0.23, 1, 0.32, 1] }}
-              >
-                <PhotoThumbnail
-                  photo={photo}
-                  onPhotoClick={onPhotoClick}
-                  decryptedName={decryptedNames[photo.id]}
-                  metadataKey={metadataKey}
-                  privateKey={privateKey}
-                />
-              </motion.div>
-            ))}
-          </AnimatePresence>
+          {column.map((photo) => (
+            <PhotoThumbnail
+              key={photo._id}
+              photo={photo}
+              onPhotoClick={onPhotoClick}
+              decryptedName={decryptedNames[photo._id]}
+              metadataKey={metadataKey}
+            />
+          ))}
         </div>
       ))}
     </div>
   );
-}
+});
 
-function UniformGrid({
+const UniformGrid = memo(function UniformGrid({
   photos,
   density,
   onPhotoClick,
   decryptedNames,
   metadataKey,
-  privateKey,
 }: {
-  photos: ObjectData[];
+  photos: GridObject[];
   density: GridDensity;
-  onPhotoClick: (p: ObjectData) => void;
+  onPhotoClick: (p: GridObject) => void;
   decryptedNames: Record<string, string>;
   metadataKey: CryptoKey | null;
-  privateKey: CryptoKey | null;
 }) {
   return (
     <div
@@ -419,22 +210,25 @@ function UniformGrid({
     >
       {photos.map((photo) => (
         <PhotoThumbnail
-          key={photo.id}
+          key={photo._id}
           photo={photo}
           onPhotoClick={onPhotoClick}
-          decryptedName={decryptedNames[photo.id]}
+          decryptedName={decryptedNames[photo._id]}
           metadataKey={metadataKey}
-          privateKey={privateKey}
         />
       ))}
     </div>
   );
-}
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main component
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function PhotosGrid() {
   const [bucketId, setBucketId] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [configError, setConfigError] = useState("");
   const [search, setSearch] = useState("");
   const [gridMode, setGridMode] = useState<"masonry" | GridDensity>("masonry");
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>(
@@ -442,119 +236,209 @@ export function PhotosGrid() {
   );
 
   const { openPreview } = usePreview();
-  const { isUnlocked, metadataKey, privateKey } = useCrypto();
-  const { data: session } = useSession();
-  const userId = session?.user?.id || null;
+  const { isUnlocked, metadataKey } = useCrypto();
+
+  // ── Bucket config (one-time fetch) ──────────────────────────────────────────
 
   useEffect(() => {
     fetch("/api/drive/config")
       .then((r) => r.json())
       .then((data) => {
-        if (data.bucket) {
-          setBucketId(data.bucket._id);
-        } else {
-          setError("Failed to initialize drive storage");
-        }
+        if (data.bucket) setBucketId(data.bucket._id);
+        else setConfigError("Failed to initialize drive storage");
       })
-      .catch(() => setError("Failed to connect to storage"))
+      .catch(() => setConfigError("Failed to connect to storage"))
       .finally(() => setInitialLoading(false));
   }, []);
 
+  // ── All grid data — one request, no pagination ──────────────────────────────
+
   const {
-    fetchNextPage: fetchNextBatch,
-    hasNextPage: hasMorePages,
-    isFetchingNextPage: loadingMore,
-  } = useFileSync({
-    bucketId,
-    userId,
-    limit: 50,
-  });
+    data: gridData,
+    isLoading: gridLoading,
+    isError: gridError,
+  } = useGridObjects(bucketId, { mediaCategory: "image" });
 
-  const localFiles =
-    useLiveQuery(() => {
-      if (!userId || !bucketId) return [];
-      const db = getDb(userId);
-      return db.files.where("bucketId").equals(bucketId).toArray();
-    }, [userId, bucketId]) || [];
+  const allPhotos: GridObject[] = gridData?.items ?? [];
 
-  const photos = useMemo(() => {
-    return localFiles
-      .filter(
-        (f) =>
-          f.contentType?.startsWith("image/") || f.mediaCategory === "image",
-      )
-      .map((f) => ({ ...f, _id: f.id }) as unknown as ObjectData)
-      .sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-      );
-  }, [localFiles]);
+  // ── Name decryption ──────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!isUnlocked || !photos.length) {
+    if (!isUnlocked || !allPhotos.length) {
       setDecryptedNames((prev) => (Object.keys(prev).length ? {} : prev));
       return;
     }
 
-    const decryptMetadata = async () => {
+    const run = async () => {
       const newNames: Record<string, string> = {};
-
-      for (const photo of photos) {
-        const nameToDecrypt = photo.encryptedDisplayName || photo.encryptedName;
-        if (photo.isEncrypted && nameToDecrypt && !decryptedNames[photo.id]) {
+      for (const photo of allPhotos) {
+        const raw = photo.encryptedDisplayName || photo.encryptedName;
+        if (photo.isEncrypted && raw && !decryptedNames[photo._id]) {
           try {
-            const name = await decryptMetadataString(
-              nameToDecrypt,
-              metadataKey,
-            );
-            newNames[photo.id] = name;
-          } catch (e) {
-            console.error("Failed to decrypt name", e);
+            newNames[photo._id] = await decryptMetadataString(raw, metadataKey);
+          } catch {
+            // leave encrypted name as-is
           }
         }
       }
-
       if (Object.keys(newNames).length > 0) {
         setDecryptedNames((prev) => ({ ...prev, ...newNames }));
       }
     };
 
-    decryptMetadata();
-  }, [photos, isUnlocked, metadataKey, decryptedNames]);
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allPhotos, isUnlocked, metadataKey]);
 
-  // ⚡ INFINITE SCROLL OBSERVER LOGIC
-  const observer = useRef<IntersectionObserver | null>(null);
-  const lastElementRef = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (loadingMore) return;
-      if (observer.current) observer.current.disconnect();
+  // ── Search filter ────────────────────────────────────────────────────────────
 
-      observer.current = new IntersectionObserver(
-        (entries) => {
-          // If the invisible div intersects the viewport and we have more pages, fetch!
-          if (entries[0].isIntersecting && hasMorePages) {
-            fetchNextBatch();
-          }
-        },
-        // Trigger the fetch when the user is 400px away from the bottom for a seamless experience
-        { rootMargin: "400px" },
-      );
+  const filteredPhotos = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return allPhotos;
+    return allPhotos.filter((p) => {
+      const name =
+        decryptedNames[p._id] || p.encryptedName || getFileName(p.key);
+      return name.toLowerCase().includes(query);
+    });
+  }, [allPhotos, search, decryptedNames]);
 
-      if (node) observer.current.observe(node);
+  const grouped = useMemo(() => groupByDate(filteredPhotos), [filteredPhotos]);
+  const groupEntries = useMemo(() => Object.entries(grouped), [grouped]);
+  const scrubberItems = filteredPhotos;
+
+  // ── Scrubber state ────────────────────────────────────────────────────────────
+
+  const [scrollProgress, setScrollProgress] = useState(0);
+  const groupRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const groupEntriesRef = useRef<[string, GridObject[]][]>([]);
+  groupEntriesRef.current = groupEntries;
+
+  const lastScrubTargetLabelRef = useRef<string | null>(null);
+  const lastActiveScrollLabelRef = useRef<string | null>(null);
+  const scrollRafRef = useRef<number | null>(null);
+
+  const sectionOffsetsRef = useRef<
+    Array<{ label: string; top: number; firstIndex: number }>
+  >([]);
+
+  // Pre-compute index → date label from the full unfiltered list (drives scrubber).
+  // Map date label → first index in allPhotos (for scroll progress calculation).
+  // Rebuild offsetTop cache after DOM layout.
+  const measureOffsets = useCallback(() => {
+    const result: typeof sectionOffsetsRef.current = [];
+    let runningIndex = 0;
+    for (const [label, photos] of groupEntriesRef.current) {
+      const el = groupRefs.current[label];
+      if (!el) {
+        runningIndex += photos.length;
+        continue;
+      }
+      result.push({
+        label,
+        top: el.offsetTop,
+        firstIndex: runningIndex,
+      });
+      runningIndex += photos.length;
+    }
+    sectionOffsetsRef.current = result;
+  }, []);
+
+  useEffect(() => {
+    const id = requestAnimationFrame(measureOffsets);
+    return () => cancelAnimationFrame(id);
+  }, [measureOffsets, groupEntries]);
+
+  useEffect(() => {
+    window.addEventListener("resize", measureOffsets, { passive: true });
+    return () => window.removeEventListener("resize", measureOffsets);
+  }, [measureOffsets]);
+
+  // RAF-gated binary-search scroll handler.
+  const handleScroll = useCallback(() => {
+    if (scrollRafRef.current !== null) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      const offsets = sectionOffsetsRef.current;
+      if (offsets.length === 0 || scrubberItems.length === 0) return;
+
+      const THRESHOLD = 76;
+      const scrollY = window.scrollY;
+      let lo = 0,
+        hi = offsets.length - 1,
+        activeIdx = -1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (offsets[mid].top <= scrollY + THRESHOLD) {
+          activeIdx = mid;
+          lo = mid + 1;
+        } else hi = mid - 1;
+      }
+
+      if (activeIdx === -1) {
+        setScrollProgress(0);
+        lastActiveScrollLabelRef.current = null;
+        lastScrubTargetLabelRef.current = null;
+        return;
+      }
+
+      const { label, firstIndex } = offsets[activeIdx];
+      if (label === lastActiveScrollLabelRef.current) return;
+      lastActiveScrollLabelRef.current = label;
+      if (label === lastScrubTargetLabelRef.current) {
+        lastScrubTargetLabelRef.current = null;
+      }
+      setScrollProgress(firstIndex / Math.max(1, scrubberItems.length - 1));
+    });
+  }, [scrubberItems.length]);
+
+  useEffect(() => {
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll();
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [handleScroll]);
+
+  // Scrub: instant jump to section.
+  const handleScrub = useCallback(
+    (index: number) => {
+      const offsets = sectionOffsetsRef.current;
+      if (offsets.length === 0) return;
+
+      let target = offsets[0];
+      for (let i = 1; i < offsets.length; i++) {
+        if (offsets[i].firstIndex > index) break;
+        target = offsets[i];
+      }
+
+      if (target.label === lastScrubTargetLabelRef.current) return;
+
+      setScrollProgress(target.firstIndex / Math.max(1, scrubberItems.length - 1));
+      lastScrubTargetLabelRef.current = target.label;
+      groupRefs.current[target.label]?.scrollIntoView({
+        behavior: "instant",
+        block: "start",
+      });
     },
-    [loadingMore, hasMorePages, fetchNextBatch],
+    [scrubberItems.length],
   );
 
-  const filteredPhotos = search.trim()
-    ? photos.filter((p) => {
-        const name =
-          decryptedNames[p.id] || p.encryptedName || getFileName(p.key);
-        return name.toLowerCase().includes(search.toLowerCase());
-      })
-    : photos;
+  // ── Photo click ──────────────────────────────────────────────────────────────
 
-  const grouped = groupByDate(filteredPhotos);
-  const groupEntries = Object.entries(grouped);
+  const filteredPhotosRef = useRef<GridObject[]>([]);
+  filteredPhotosRef.current = filteredPhotos;
+
+  const handlePhotoClick = useCallback(
+    (photo: GridObject) => {
+      // PreviewContext / FilePreviewDialog reads `.id` (not `._id`).
+      // GridObject comes from /api/objects/grid which returns `_id`.
+      // Bridge the gap by spreading `id` alongside the existing fields.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const asLegacy = (p: GridObject) => ({ ...p, id: p._id }) as any;
+      openPreview(asLegacy(photo), filteredPhotosRef.current.map(asLegacy));
+    },
+    [openPreview],
+  );
+
+  // ── Render ────────────────────────────────────────────────────────────────────
 
   if (initialLoading) {
     return (
@@ -565,147 +449,173 @@ export function PhotosGrid() {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">Photos</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {filteredPhotos.length} image
-            {filteredPhotos.length !== 1 ? "s" : ""}
-          </p>
-        </div>
+    <div className="flex gap-2 items-start">
+      {/* Gallery content */}
+      <div className="grow min-w-0">
+        <div className="space-y-6 pb-8">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-semibold text-foreground">Photos</h1>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                {filteredPhotos.length} image
+                {filteredPhotos.length !== 1 ? "s" : ""}
+              </p>
+            </div>
 
-        <div className="flex items-center gap-2">
-          {/* Search */}
-          <div className="relative group/search">
-            <input
-              type="text"
-              placeholder="Search Photos"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="h-10 pl-10 pr-4 rounded-xl bg-secondary/50 backdrop-blur-md border border-border/50 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/40 focus:ring-4 focus:ring-primary/5 transition-all w-48 sm:w-64"
-            />
-            <svg
-              className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/30 group-focus-within/search:text-primary/60 transition-colors"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
-              />
-            </svg>
-          </div>
-
-          {/* Grid density toggle */}
-          <div className="flex items-center bg-secondary/30 backdrop-blur-md rounded-xl p-1 border border-border/50">
-            {(["masonry", "large", "medium", "small"] as const).map((mode) => {
-              const icons: Record<string, React.ReactNode> = {
-                masonry: <LayoutGrid className="w-3.5 h-3.5" />,
-                large: <Rows3 className="w-3.5 h-3.5" />,
-                medium: <Grid3x3 className="w-3.5 h-3.5" />,
-                small: <LayoutGrid className="w-3 h-3" />,
-              };
-              return (
-                <button
-                  key={mode}
-                  onClick={() => setGridMode(mode)}
-                  className={`w-7 h-7 flex items-center justify-center rounded-md transition-colors ${
-                    gridMode === mode
-                      ? "bg-secondary text-foreground"
-                      : "text-muted-foreground/40 hover:text-foreground"
-                  }`}
+            <div className="flex items-center gap-2">
+              {/* Search */}
+              <div className="relative group/search">
+                <input
+                  type="text"
+                  placeholder="Search Photos"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="h-10 pl-10 pr-4 rounded-xl bg-secondary/50 backdrop-blur-md border border-border/50 text-sm text-foreground placeholder:text-muted-foreground/40 focus:outline-none focus:border-primary/40 focus:ring-4 focus:ring-primary/5 transition-all w-48 sm:w-64"
+                />
+                <svg
+                  className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/30 group-focus-within/search:text-primary/60 transition-colors"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
                 >
-                  {icons[mode]}
-                </button>
-              );
-            })}
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"
+                  />
+                </svg>
+              </div>
+
+              {/* Grid density toggle */}
+              <div className="flex items-center bg-secondary/30 backdrop-blur-md rounded-xl p-1 border border-border/50">
+                {(["masonry", "large", "medium", "small"] as const).map(
+                  (mode) => {
+                    const icons: Record<string, React.ReactNode> = {
+                      masonry: <LayoutGrid className="w-3.5 h-3.5" />,
+                      large: <Rows3 className="w-3.5 h-3.5" />,
+                      medium: <Grid3x3 className="w-3.5 h-3.5" />,
+                      small: <LayoutGrid className="w-3 h-3" />,
+                    };
+                    return (
+                      <button
+                        key={mode}
+                        onClick={() => setGridMode(mode)}
+                        className={`w-7 h-7 flex items-center justify-center rounded-md transition-colors ${
+                          gridMode === mode
+                            ? "bg-secondary text-foreground"
+                            : "text-muted-foreground/40 hover:text-foreground"
+                        }`}
+                      >
+                        {icons[mode]}
+                      </button>
+                    );
+                  },
+                )}
+              </div>
+            </div>
           </div>
+
+          {/* Config error */}
+          {configError && (
+            <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3">
+              {configError}
+            </div>
+          )}
+
+          {/* Grid loading */}
+          {gridLoading && (
+            <div className="flex items-center justify-center py-24">
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+            </div>
+          )}
+
+          {/* Grid error */}
+          {gridError && !gridLoading && (
+            <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3">
+              Failed to load photos
+            </div>
+          )}
+
+          {/* Empty */}
+          {!gridLoading && !gridError && filteredPhotos.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-32 text-center animate-in fade-in slide-in-from-bottom-4 duration-1000">
+              <div className="relative mb-6">
+                <div className="w-24 h-24 rounded-3xl bg-primary/5 border border-primary/10 flex items-center justify-center rotate-6 scale-110">
+                  <ImageOff className="w-10 h-10 text-primary/20 -rotate-6" />
+                </div>
+                <div className="absolute -top-2 -right-2 w-8 h-8 rounded-full bg-background border border-border flex items-center justify-center shadow-lg">
+                  <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                </div>
+              </div>
+              <h3 className="text-lg font-semibold text-foreground mb-1">
+                {search ? "No matches found" : "Your gallery is empty"}
+              </h3>
+              <p className="text-sm text-muted-foreground max-w-xs mx-auto mb-8">
+                {search
+                  ? "We couldn't find any photos matching your search."
+                  : "Start building your visual library by uploading images to your vault."}
+              </p>
+              {!search && (
+                <a
+                  href="/dashboard/files"
+                  className="inline-flex items-center justify-center px-6 h-11 rounded-full bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-all shadow-lg shadow-primary/20 hover:-translate-y-0.5 active:translate-y-0"
+                >
+                  Upload First Photo
+                </a>
+              )}
+            </div>
+          )}
+
+          {/* Photo groups — all rendered at once; IO on each tile gates thumbnail fetch */}
+          {groupEntries.map(([dateLabel, groupPhotos]) => (
+            <div
+              key={dateLabel}
+              ref={(el) => {
+                groupRefs.current[dateLabel] = el;
+              }}
+              className="space-y-4 scroll-mt-[76px]"
+            >
+              <div className="sticky top-[68px] z-30 py-2 -mx-4 px-4 bg-background/80 backdrop-blur-md border-b border-border/0 data-stuck:border-border/50 transition-colors">
+                <p className="text-sm font-semibold text-foreground/70 flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary/40" />
+                  {dateLabel}
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-bold ml-auto">
+                    {groupPhotos.length} item
+                    {groupPhotos.length !== 1 ? "s" : ""}
+                  </span>
+                </p>
+              </div>
+              {gridMode === "masonry" ? (
+                <MasonryGrid
+                  photos={groupPhotos}
+                  onPhotoClick={handlePhotoClick}
+                  decryptedNames={decryptedNames}
+                  metadataKey={metadataKey}
+                />
+              ) : (
+                <UniformGrid
+                  photos={groupPhotos}
+                  density={gridMode as GridDensity}
+                  onPhotoClick={handlePhotoClick}
+                  decryptedNames={decryptedNames}
+                  metadataKey={metadataKey}
+                />
+              )}
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Error */}
-      {error && (
-        <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3">
-          {error}
-        </div>
-      )}
-
-      {/* Empty */}
-      {filteredPhotos.length === 0 && !error && (
-        <div className="flex flex-col items-center justify-center py-32 text-center animate-in fade-in slide-in-from-bottom-4 duration-1000">
-          <div className="relative mb-6">
-            <div className="w-24 h-24 rounded-3xl bg-primary/5 border border-primary/10 flex items-center justify-center rotate-6 scale-110">
-              <ImageOff className="w-10 h-10 text-primary/20 -rotate-6" />
-            </div>
-            <div className="absolute -top-2 -right-2 w-8 h-8 rounded-full bg-background border border-border flex items-center justify-center shadow-lg">
-              <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-            </div>
-          </div>
-          <h3 className="text-lg font-semibold text-foreground mb-1">
-            {search ? "No matches found" : "Your gallery is empty"}
-          </h3>
-          <p className="text-sm text-muted-foreground max-w-xs mx-auto mb-8">
-            {search
-              ? "We couldn't find any photos matching your search. Try different keywords."
-              : "Start building your visual library by uploading images to your vault."}
-          </p>
-          {!search && (
-            <a
-              href="/dashboard/files"
-              className="inline-flex items-center justify-center px-6 h-11 rounded-full bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-all shadow-lg shadow-primary/20 hover:-translate-y-0.5 active:translate-y-0"
-            >
-              Upload First Photo
-            </a>
-          )}
-        </div>
-      )}
-      {/* Photo Groups */}
-      {groupEntries.map(([dateLabel, groupPhotos]) => (
-        <div key={dateLabel} className="space-y-4">
-          <div className="sticky top-0 z-30 py-2 -mx-4 px-4 bg-background/80 backdrop-blur-md border-b border-border/0 data-stuck:border-border/50 transition-colors">
-            <p className="text-sm font-semibold text-foreground/70 flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-primary/40" />
-              {dateLabel}
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-bold ml-auto">
-                {groupPhotos.length} item{groupPhotos.length !== 1 ? "s" : ""}
-              </span>
-            </p>
-          </div>
-          {gridMode === "masonry" ? (
-            <MasonryGrid
-              photos={groupPhotos}
-              onPhotoClick={(photo) => openPreview(photo, filteredPhotos)}
-              decryptedNames={decryptedNames}
-              metadataKey={metadataKey}
-              privateKey={privateKey}
-            />
-          ) : (
-            <UniformGrid
-              photos={groupPhotos}
-              density={gridMode as GridDensity}
-              onPhotoClick={(photo) => openPreview(photo, filteredPhotos)}
-              decryptedNames={decryptedNames}
-              metadataKey={metadataKey}
-              privateKey={privateKey}
-            />
-          )}
-        </div>
-      ))}
-
-      {/* ⚡ The Infinite Scroll Sentinel */}
-      {hasMorePages && (
-        <div
-          ref={lastElementRef}
-          className="flex justify-center pt-8 pb-8 w-full"
-        >
-          {loadingMore && (
-            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-          )}
+      {/* Timeline scrubber */}
+      {scrubberItems.length > 0 && (
+        <div className="sticky top-[68px] h-[calc(100dvh-68px)] shrink-0">
+          <Scrubber
+            items={scrubberItems}
+            scrollProgress={scrollProgress}
+            onScrub={handleScrub}
+          />
         </div>
       )}
     </div>
