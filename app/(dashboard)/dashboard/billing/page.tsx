@@ -1,10 +1,12 @@
 import UpgradePlanModal from "@/components/dashboard/UpgradePlanModal";
-import RefundButton from "@/components/dashboard/RefundButton";
+import SubscriptionManageCard from "@/components/dashboard/SubscriptionManageCard";
 import { FileText, AlertTriangle } from "lucide-react";
 import { getServerSession } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
 import Payment from "@/models/Payment";
+import Subscription from "@/models/Subscription";
+import SubscriptionInvoice from "@/models/SubscriptionInvoice";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
@@ -33,13 +35,33 @@ export default async function BillingPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let payments: any[] = [];
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let subscription: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let invoices: any[] = [];
+
   if (session?.user?.id) {
     await dbConnect();
-    [usage, payments] = await Promise.all([
+    [usage, payments, subscription] = await Promise.all([
       Usage.findOne({ userId: session.user.id }),
       Payment.find({ userId: session.user.id }).sort({ createdAt: -1 }).lean(),
+      Subscription.findOne({ userId: session.user.id })
+        .sort({ createdAt: -1 })
+        .lean(),
     ]);
+    if (subscription?.subscription_id) {
+      invoices = await SubscriptionInvoice.find({
+        subscription_id: subscription.subscription_id,
+      })
+        .sort({ billing_date: -1 })
+        .limit(50)
+        .lean();
+    }
   }
+
+  const invoiceByPaymentId = new Map<string, { number: string | null }>(
+    invoices.map((inv) => [inv.payment_id, { number: inv.number ?? null }]),
+  );
 
   const isPaidPlan = usage?.plan && usage.plan !== "free";
   const planName = usage?.plan
@@ -146,6 +168,27 @@ export default async function BillingPage() {
         </Alert>
       )}
 
+      {/* ── Manage subscription ── */}
+      {subscription && subscription.subscription_id && (
+        <SubscriptionManageCard
+          status={subscription.status}
+          subscriptionId={subscription.subscription_id}
+          cancelAtPeriodEnd={subscription.cancelAtPeriodEnd || false}
+          nextChargeAt={
+            subscription.current_period_end?.toISOString?.() ??
+            subscription.endDate?.toISOString?.() ??
+            null
+          }
+          amount={
+            (Number(subscription.metadata?.basePlanAmount) ||
+              (subscription.metadata?.basePlanAmountINR ?? 0) * 100) / 100
+          }
+          planLabel={
+            PLAN_DISPLAY_NAMES[subscription.planSlug] || subscription.planSlug
+          }
+        />
+      )}
+
       {/* ── Current Plan ── */}
       <div className="rounded-xl border border-border bg-card p-6">
         <div className="flex items-center justify-between mb-4">
@@ -218,6 +261,9 @@ export default async function BillingPage() {
                 <thead className="border-b border-border">
                   <tr>
                     <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Invoice
+                    </th>
+                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Date
                     </th>
                     <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -240,6 +286,10 @@ export default async function BillingPage() {
                       key={payment._id.toString()}
                       className="hover:bg-accent/40 transition-colors"
                     >
+                      <td className="px-5 py-4 whitespace-nowrap font-mono text-xs text-muted-foreground">
+                        {invoiceByPaymentId.get(payment.payment_id)?.number ||
+                          "—"}
+                      </td>
                       <td className="px-5 py-4 whitespace-nowrap text-foreground">
                         {new Date(payment.createdAt).toLocaleDateString(
                           undefined,
@@ -280,20 +330,11 @@ export default async function BillingPage() {
                         {payment.planName}
                       </td>
                       <td className="px-5 py-4 text-right">
-                        {payment.status === "success" && (
+                        {payment.status === "success" ? (
                           <button className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
                             <FileText className="h-3.5 w-3.5" /> PDF
                           </button>
-                        )}
-                        {payment.status === "success" &&
-                          Date.now() - new Date(payment.createdAt).getTime() <=
-                            30 * 24 * 60 * 60 * 1000 && (
-                            <RefundButton
-                              paymentId={payment._id.toString()}
-                              amount={payment.amount}
-                            />
-                          )}
-                        {payment.status !== "success" && (
+                        ) : (
                           <span className="text-muted-foreground">-</span>
                         )}
                       </td>

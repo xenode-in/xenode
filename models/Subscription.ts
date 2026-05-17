@@ -3,6 +3,12 @@ import type { BillingCycle } from "@/types/pricing";
 
 export interface ISubscription extends Document {
   userId: string;
+  /**
+   * Billing account this subscription is attached to. Today always equals
+   * `userId` (every user is their own one-person account). Reserved for
+   * future team / org billing without requiring a schema migration.
+   */
+  accountId?: string | null;
   planSlug: string;
   status:
     | "created"
@@ -38,6 +44,7 @@ export interface ISubscription extends Document {
 const SubscriptionSchema = new Schema<ISubscription>(
   {
     userId: { type: String, required: true, index: true },
+    accountId: { type: String, default: null, index: true },
     planSlug: { type: String, required: true },
     status: {
       type: String,

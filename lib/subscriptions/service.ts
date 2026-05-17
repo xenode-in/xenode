@@ -6,7 +6,7 @@ import {
   getPlanBySlugFromDB,
   getPricingConfig,
 } from "@/lib/config/getPricingConfig";
-import { resolveActiveCampaign } from "@/lib/pricing/pricingService";
+import { getActiveCampaign } from "@/lib/billing/campaigns";
 import type { BillingCycle } from "@/types/pricing";
 import Coupon from "@/models/Coupon";
 import { PricingConfig } from "@/models/PricingConfig";
@@ -16,6 +16,7 @@ import SubscriptionOffer, {
   type ISubscriptionOffer,
 } from "@/models/SubscriptionOffer";
 import SubscriptionInvoice from "@/models/SubscriptionInvoice";
+import { nextSequence } from "@/models/Counter";
 import WebhookLog from "@/models/WebhookLog";
 import Usage from "@/models/Usage";
 import { User } from "@/models/User";
@@ -58,7 +59,7 @@ export interface RecurringFirstCyclePricing {
   /** Amount to charge on the first cycle (after all discounts) */
   firstCycleAmountPaise: number;
   /** Active limited campaign, if any */
-  limitedCampaign: ReturnType<typeof resolveActiveCampaign> | null;
+  limitedCampaign: Awaited<ReturnType<typeof getActiveCampaign>> | null;
   /** Active subscription offer from the database, if any */
   activeOffer: ISubscriptionOffer | null;
   /** Validated coupon, if one was provided */
@@ -158,18 +159,24 @@ export async function getRecurringPlanContext(
     throw new Error("Recurring plan is not configured for this billing cycle");
   }
 
-  const campaign = resolveActiveCampaign(pricing.campaign ?? null);
+  const campaign = await getActiveCampaign({
+    planSlug,
+    cycle: billingCycle,
+    legacyCampaign: pricing.campaign ?? null,
+  });
   const limitedCampaign =
     campaign &&
-    campaign.discountDuration === "limited" &&
-    (campaign.discountCycles ?? 0) === 1
+    campaign.duration === "limited" &&
+    (campaign.cycles ?? 0) === 1 &&
+    campaign.discountPercent
       ? campaign
       : null;
 
   const baseAmountPaise = Math.round(pricingEntry.priceINR * 100);
-  const offerAmountPaise = limitedCampaign
-    ? computeDiscountedAmount(baseAmountPaise, limitedCampaign.discountPercent)
-    : null;
+  const offerAmountPaise =
+    limitedCampaign && limitedCampaign.discountPercent
+      ? computeDiscountedAmount(baseAmountPaise, limitedCampaign.discountPercent)
+      : null;
 
   return {
     plan,
@@ -349,35 +356,19 @@ export async function createRazorpayRecurringPlan(args: {
 
 // ─── Coupon Consumption ───────────────────────────────────────────────────────
 
+import { redeemCoupon } from "@/lib/billing/coupons";
+
 export async function consumeCouponRedemptionIfNeeded(args: {
   couponId?: string | null;
   userId: string;
   txnid: string;
 }) {
-  if (!args.couponId) {
-    return false;
-  }
-
-  await dbConnect();
-
-  const result = await Coupon.updateOne(
-    {
-      _id: args.couponId,
-      "usedBy.txnid": { $ne: args.txnid },
-    },
-    {
-      $inc: { usedCount: 1 },
-      $push: {
-        usedBy: {
-          userId: args.userId,
-          usedAt: new Date(),
-          txnid: args.txnid,
-        },
-      },
-    },
-  );
-
-  return result.modifiedCount > 0;
+  if (!args.couponId) return false;
+  return redeemCoupon({
+    couponId: args.couponId,
+    userId: args.userId,
+    txnid: args.txnid,
+  });
 }
 
 // ─── Admin Plan Management ────────────────────────────────────────────────────
@@ -582,12 +573,18 @@ export async function createSubscriptionInvoiceIfMissing(args: {
     return { invoice: existing, created: false };
   }
 
+  const billingDate = new Date();
+  const year = billingDate.getUTCFullYear();
+  const seq = await nextSequence(`invoice:${year}`);
+  const number = `XEN-${year}-${String(seq).padStart(5, "0")}`;
+
   const invoice = await SubscriptionInvoice.create({
+    number,
     subscription_id: args.subscriptionId,
     payment_id: args.paymentId,
     amount: args.amountPaise / 100,
     status: args.status || "paid",
-    billing_date: new Date(),
+    billing_date: billingDate,
     metadata: args.metadata || {},
   });
 

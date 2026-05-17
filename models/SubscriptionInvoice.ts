@@ -1,6 +1,8 @@
 import mongoose, { Schema, Document, Model } from "mongoose";
 
 export interface ISubscriptionInvoice extends Document {
+  /** Human-friendly invoice number: XEN-{YYYY}-{seq} */
+  number?: string;
   subscription_id: string; // Razorpay subscription ID
   payment_id: string;      // Razorpay payment ID
   amount: number;
@@ -13,6 +15,7 @@ export interface ISubscriptionInvoice extends Document {
 
 const SubscriptionInvoiceSchema = new Schema<ISubscriptionInvoice>(
   {
+    number: { type: String, unique: true, sparse: true, index: true },
     subscription_id: { type: String, required: true, index: true },
     payment_id: { type: String, required: true, unique: true, index: true },
     amount: { type: Number, required: true },

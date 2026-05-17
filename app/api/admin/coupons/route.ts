@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/admin/session";
 import dbConnect from "@/lib/mongodb";
 import Coupon from "@/models/Coupon";
+import { isValidRazorpayOfferId } from "@/lib/payment/razorpayUtils";
 
 export async function GET() {
   const session = await getAdminSession();
@@ -47,6 +48,19 @@ export async function POST(req: NextRequest) {
   }
   if (discountType === "percent" && (discountValue <= 0 || discountValue > 100)) {
     return NextResponse.json({ error: "Percent discount must be 1–100" }, { status: 400 });
+  }
+  if (
+    typeof razorpayOfferId === "string" &&
+    razorpayOfferId.trim() &&
+    !isValidRazorpayOfferId(razorpayOfferId.trim())
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "razorpayOfferId must match the Razorpay format `offer_` + 14 alphanumeric characters.",
+      },
+      { status: 400 },
+    );
   }
 
   await dbConnect();

@@ -13,7 +13,6 @@ import { getYearlySavingsPercent, getMonthlyEquivalentForYearly } from "@/lib/pr
 
 interface Props {
   plan: CheckoutPlan;
-  prorationCredit: number;
   finalAmount: number;
   appliedCoupon: CouponResult | null;
 }
@@ -27,13 +26,9 @@ const CYCLE_LABEL: Record<string, string> = {
 
 export default function OrderSummary({
   plan,
-  prorationCredit,
   finalAmount,
   appliedCoupon,
 }: Props) {
-  const campaignPrice = plan.originalPrice - plan.campaignDiscount;
-  const couponDiscount = appliedCoupon?.discountAmount ?? 0;
-
   const isYearly = plan.billingCycle === "yearly";
   const monthlyEquiv = isYearly ? getMonthlyEquivalentForYearly(plan.pricing) : null;
   const yearlySavings = isYearly ? getYearlySavingsPercent(plan.pricing) : null;
@@ -90,14 +85,6 @@ export default function OrderSummary({
         </div>
       )}
 
-      {/* Proration credit */}
-      {prorationCredit > 0 && (
-        <div className="flex justify-between text-sm">
-          <span className="text-muted-foreground">Proration credit</span>
-          <span className="text-green-500 font-medium">−₹{prorationCredit}</span>
-        </div>
-      )}
-
       <Separator />
 
       {/* Total */}
@@ -114,7 +101,7 @@ export default function OrderSummary({
         </div>
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
           <Lock className="w-3.5 h-3.5 text-primary" />
-          Secure Payment via PayU
+          Secure Payment via Razorpay
         </div>
       </div>
     </div>
