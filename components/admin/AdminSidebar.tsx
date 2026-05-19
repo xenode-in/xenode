@@ -13,7 +13,6 @@ import {
   Layers,
   DollarSign,
   Ticket,
-  Activity,
   FileText,
   AlertTriangle,
   Webhook,
@@ -77,12 +76,6 @@ const navItems = [
     roles: ["super_admin", "admin"],
   },
   {
-    href: "/admin/dashboard/subscriptions/offers",
-    label: "Sub Offers",
-    icon: Ticket,
-    roles: ["super_admin", "admin"],
-  },
-  {
     href: "/admin/dashboard/subscriptions/plans",
     label: "Sub Plans",
     icon: Layers,
@@ -117,12 +110,6 @@ const navItems = [
     label: "Audit Log",
     icon: ScrollText,
     roles: ["super_admin", "admin"],
-  },
-  {
-    href: "/admin/dashboard/simulator",
-    label: "Billing Simulator",
-    icon: Activity,
-    roles: ["super_admin"],
   },
   {
     href: "/admin/dashboard/blogs",

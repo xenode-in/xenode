@@ -15,12 +15,7 @@
  */
 
 import dbConnect from "@/lib/mongodb";
-import { PricingConfig, IPlan, ICampaign } from "@/models/PricingConfig";
-import {
-  getEffectivePriceForCycle,
-  getBasePriceForCycle,
-  resolveActiveCampaign,
-} from "@/lib/pricing/pricingService";
+import { PricingConfig, IPlan } from "@/models/PricingConfig";
 import type { BillingCycle } from "@/types/pricing";
 
 // ─── Default seed data ───────────────────────────────────────────────────────
@@ -110,7 +105,6 @@ const DEFAULT_PLANS: IPlan[] = [
 
 export interface PricingData {
   plans: IPlan[];
-  campaign: ICampaign | null;
 }
 
 // ─── Core fetcher ─────────────────────────────────────────────────────────────
@@ -124,14 +118,12 @@ export async function getPricingConfig(): Promise<PricingData> {
   if (!config) {
     config = await PricingConfig.create({
       plans: DEFAULT_PLANS,
-      campaign: null,
       updatedBy: "system",
     });
   }
 
   return {
     plans: config.plans as IPlan[],
-    campaign: (config.campaign as ICampaign) ?? null,
   };
 }
 
@@ -162,53 +154,3 @@ export async function getPlanByRazorpayPlanIdFromDB(
   return undefined;
 }
 
-/**
- * Server-authoritative price map.
- * Accepts a billing cycle (default: monthly) and applies active campaign discount.
- *
- * Replaces the old PLAN_CONFIG from plans.ts.
- * Used by PayU route to set the authoritative charge amount.
- */
-export async function getPlanConfigFromDB(
-  cycle: BillingCycle = "monthly",
-  userPlan?: string,
-): Promise<
-  Record<
-    string,
-    {
-      storageLimitBytes: number;
-      priceINR: number;
-      basePriceINR: number;
-      campaignType: "forever" | "limited" | null;
-      campaignCyclesLeft: number | null;
-    }
-  >
-> {
-  const { plans, campaign } = await getPricingConfig();
-
-  const activeCampaign = resolveActiveCampaign(campaign, userPlan);
-
-  return Object.fromEntries(
-    plans.map((p) => {
-      const basePrice = getBasePriceForCycle(p.pricing, cycle);
-      const price = getEffectivePriceForCycle(
-        p.pricing,
-        cycle,
-        activeCampaign?.discountPercent,
-      );
-      return [
-        p.name,
-        {
-          storageLimitBytes: p.storageLimitBytes,
-          priceINR: price,
-          basePriceINR: basePrice,
-          campaignType: activeCampaign ? activeCampaign.discountDuration : null,
-          campaignCyclesLeft:
-            activeCampaign && activeCampaign.discountDuration === "limited"
-              ? activeCampaign.discountCycles
-              : null,
-        },
-      ];
-    }),
-  );
-}

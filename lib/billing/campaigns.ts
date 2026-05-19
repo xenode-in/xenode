@@ -4,10 +4,7 @@ import type { BillingCycle } from "@/types/pricing";
 
 /**
  * CampaignService — resolves which campaign (if any) applies to a checkout
- * context. Reads the dedicated Campaign collection; routes that previously
- * depended on `PricingConfig.campaign` should call `resolveActiveCampaign()`
- * in `lib/pricing/pricingService.ts` which falls back to the legacy field
- * when no Campaign rows match.
+ * context. Single source of truth: the `Campaign` collection.
  */
 
 export interface ResolveArgs {
@@ -111,67 +108,37 @@ export async function resolveActiveCampaignFromCollection(
 }
 
 /**
- * Unified active-campaign resolution: tries the `Campaign` collection first,
- * then falls back to the legacy `PricingConfig.campaign` embedded field. Use
- * this from any route that needs the currently-active campaign for a given
- * (plan, cycle, user) combination.
- *
- * The fallback path will be removed in v1.1 once admin tooling has been used
- * to migrate live campaigns into the collection.
+ * Active-campaign resolution for a given (plan, cycle, user) combination.
+ * Reads the `Campaign` collection — the single source of truth.
  */
 export async function getActiveCampaign(args: {
   planSlug: string;
   cycle: BillingCycle;
   userPlanSlug?: string | null;
-  legacyCampaign?: {
-    isActive: boolean;
-    startDate: Date;
-    endDate: Date;
-    discountPercent: number;
-    name: string;
-    badge: string;
-    discountDuration?: "forever" | "limited";
-    discountCycles?: number | null;
-    targetAudience?: "all" | "free_only";
-  } | null;
   now?: Date;
 }): Promise<ResolvedCampaign | null> {
-  const now = args.now ?? new Date();
+  return resolveActiveCampaignFromCollection(args);
+}
 
-  const fromCollection = await resolveActiveCampaignFromCollection({
-    planSlug: args.planSlug,
-    cycle: args.cycle,
-    userPlanSlug: args.userPlanSlug,
-    now,
-  });
-  if (fromCollection) return fromCollection;
+/**
+ * Returns the highest-priority active campaign for marketing display, regardless
+ * of which plan/cycle it targets. Used by the public pricing page to surface a
+ * single "Sale" badge across plan cards.
+ */
+export async function getHeadlineCampaign(
+  now: Date = new Date(),
+): Promise<ResolvedCampaign | null> {
+  await dbConnect();
 
-  // DEPRECATED: remove after v1.1
-  const legacy = args.legacyCampaign;
-  if (!legacy || !legacy.isActive) return null;
-  if (now < new Date(legacy.startDate) || now > new Date(legacy.endDate)) {
-    return null;
-  }
-  const audience = legacy.targetAudience ?? "all";
-  if (
-    audience === "free_only" &&
-    args.userPlanSlug &&
-    args.userPlanSlug !== "free"
-  ) {
-    return null;
-  }
-  return {
-    id: "legacy",
-    slug: "legacy",
-    name: legacy.name,
-    discountPercent: legacy.discountPercent,
-    flatDiscountPaise: null,
-    badge: legacy.badge,
-    duration: legacy.discountDuration ?? "forever",
-    cycles: legacy.discountCycles ?? null,
-    razorpayOfferId: null,
-    priority: 100,
-  };
+  const candidate = await Campaign.findOne({
+    isActive: true,
+    startsAt: { $lte: now },
+    endsAt: { $gte: now },
+  })
+    .sort({ priority: 1, endsAt: 1 })
+    .exec();
+
+  return candidate ? toResolved(candidate) : null;
 }
 
 /**

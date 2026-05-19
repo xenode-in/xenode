@@ -2,11 +2,8 @@
  * app/api/admin/pricing/route.ts
  *
  * Admin-only endpoint to read and update pricing configuration.
- *
- * REFACTORED (multi-cycle):
- *   - PATCH validation now checks for pricing[] array instead of scalar priceINR.
- *   - Each plan must have at least one entry with cycle: "monthly".
- *   - Revalidates /pricing and /dashboard/billing on update.
+ * Only plan prices live here — promotional campaigns live in the dedicated
+ * Campaign collection (managed via /admin/dashboard/billing/campaigns).
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -31,7 +28,7 @@ export async function GET() {
 
 // ─── PATCH ────────────────────────────────────────────────────────────────────
 
-/** Update plans and/or campaign, then bust Next.js route cache */
+/** Update plans, then bust Next.js route cache */
 export async function PATCH(req: NextRequest) {
   const session = await getAdminSession();
   if (!session)
@@ -88,17 +85,6 @@ export async function PATCH(req: NextRequest) {
     }
 
     update.plans = body.plans;
-  }
-
-  // ── Validate campaign ─────────────────────────────────────────────────────
-  if (body.campaign !== undefined) {
-    update.campaign = body.campaign
-      ? {
-          ...body.campaign,
-          startDate: new Date(body.campaign.startDate),
-          endDate: new Date(body.campaign.endDate),
-        }
-      : null;
   }
 
   // ── Persist ───────────────────────────────────────────────────────────────

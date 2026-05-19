@@ -1,13 +1,9 @@
 /**
  * PricingConfig.ts — Mongoose model for dynamic pricing configuration.
  *
- * SCHEMA CHANGE (multi-cycle refactor):
- *   - Replaced single `priceINR: number` with `pricing: IPlanPricing[]`
- *   - Each entry in pricing[] covers one BillingCycle (monthly, yearly, etc.)
- *   - Backward compat: old documents with priceINR are handled by the
- *     migration script at scripts/migratePricingToMultiCycle.ts
- *
- * See lib/pricing/pricingService.ts for all price calculation logic.
+ * Single source of truth for plan prices and storage limits. Campaign / promo
+ * data lives in the dedicated `Campaign` collection (`models/Campaign.ts`) —
+ * not here.
  */
 
 import mongoose, { Schema, Document } from "mongoose";
@@ -27,24 +23,8 @@ export interface IPlan {
   isPopular?: boolean;
 }
 
-export interface ICampaign {
-  name: string;
-  discountPercent: number;
-  startDate: Date;
-  endDate: Date;
-  isActive: boolean;
-  badge: string;
-  /** "forever" (lifetime lock-in) or "limited" (X billing cycles) */
-  discountDuration: "forever" | "limited";
-  /** If limited, how many billing cycles the discount lasts */
-  discountCycles: number | null;
-  /** Restrict campaigns to certain users */
-  targetAudience: "all" | "free_only";
-}
-
 export interface IPricingConfig extends Document {
   plans: IPlan[];
-  campaign: ICampaign | null;
   updatedBy: string;
   updatedAt: Date;
 }
@@ -83,24 +63,11 @@ const PlanSchema = new Schema<IPlan>({
   isPopular: { type: Boolean, default: false },
 });
 
-const CampaignSchema = new Schema<ICampaign>({
-  name: String,
-  discountPercent: { type: Number, min: 1, max: 100 },
-  startDate: Date,
-  endDate: Date,
-  isActive: { type: Boolean, default: true },
-  badge: { type: String, default: "" },
-  discountDuration: { type: String, enum: ["forever", "limited"], default: "forever" },
-  discountCycles: { type: Number, default: null },
-  targetAudience: { type: String, enum: ["all", "free_only"], default: "all" },
-});
-
 // ─── Root schema ─────────────────────────────────────────────────────────────
 
 const PricingConfigSchema = new Schema<IPricingConfig>(
   {
     plans: [PlanSchema],
-    campaign: { type: CampaignSchema, default: null },
     updatedBy: { type: String, default: "" },
   },
   { timestamps: true }

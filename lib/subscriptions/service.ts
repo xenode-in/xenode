@@ -2,19 +2,11 @@ import crypto from "crypto";
 import mongoose from "mongoose";
 import dbConnect from "@/lib/mongodb";
 import razorpay from "@/lib/razorpay";
-import {
-  getPlanBySlugFromDB,
-  getPricingConfig,
-} from "@/lib/config/getPricingConfig";
+import { getPlanBySlugFromDB } from "@/lib/config/getPricingConfig";
 import { getActiveCampaign } from "@/lib/billing/campaigns";
 import type { BillingCycle } from "@/types/pricing";
-import Coupon from "@/models/Coupon";
-import { PricingConfig } from "@/models/PricingConfig";
 import Payment from "@/models/Payment";
 import Subscription from "@/models/Subscription";
-import SubscriptionOffer, {
-  type ISubscriptionOffer,
-} from "@/models/SubscriptionOffer";
 import SubscriptionInvoice from "@/models/SubscriptionInvoice";
 import { nextSequence } from "@/models/Counter";
 import WebhookLog from "@/models/WebhookLog";
@@ -29,41 +21,6 @@ type UserSubscriptionStatus =
   | "halted"
   | "cancelled";
 
-interface ValidatedRecurringCoupon {
-  id: string;
-  code: string;
-  discountAmountPaise: number;
-  discountLabel: string;
-}
-
-/**
- * Pricing context for creating a recurring subscription.
- * Used by the /api/subscriptions/create route to decide whether a
- * discounted first-cycle plan is needed and whether to schedule a
- * base-plan upgrade via the Razorpay Update Subscription API.
- */
-export interface RecurringFirstCyclePricing {
-  plan: NonNullable<Awaited<ReturnType<typeof getPlanBySlugFromDB>>>;
-  pricingEntry: {
-    cycle: BillingCycle;
-    priceINR: number;
-    razorpayPlanId?: string;
-  };
-  billingCycle: BillingCycle;
-  /** Full base price in paise (no discounts applied) */
-  baseAmountPaise: number;
-  /** Amount to charge on the first cycle (after all discounts) */
-  firstCycleAmountPaise: number;
-  /** Active limited campaign, if any */
-  limitedCampaign: Awaited<ReturnType<typeof getActiveCampaign>> | null;
-  /** Active subscription offer from the database, if any */
-  activeOffer: ISubscriptionOffer | null;
-  /** Validated coupon, if one was provided */
-  coupon: ValidatedRecurringCoupon | null;
-  /** Whether the first cycle price differs from the base price */
-  hasFirstCycleDiscount: boolean;
-}
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 export function computeDiscountedAmount(
@@ -71,17 +28,6 @@ export function computeDiscountedAmount(
   discountPercent: number,
 ) {
   return Math.max(1, Math.round(amount * (1 - discountPercent / 100)));
-}
-
-export async function getActiveSubscriptionOffer(now: Date = new Date()) {
-  await dbConnect();
-  return SubscriptionOffer.findOne({
-    isActive: true,
-    validFrom: { $lte: now },
-    $or: [{ validUntil: null }, { validUntil: { $gte: now } }],
-  })
-    .sort({ createdAt: -1 })
-    .lean<ISubscriptionOffer | null>();
 }
 
 function getRazorpayPeriodConfig(cycle: BillingCycle) {
@@ -103,10 +49,7 @@ export async function getRecurringPlanContext(
   planSlug: string,
   billingCycle: BillingCycle,
 ) {
-  const [plan, pricing] = await Promise.all([
-    getPlanBySlugFromDB(planSlug),
-    getPricingConfig(),
-  ]);
+  const plan = await getPlanBySlugFromDB(planSlug);
 
   if (!plan) {
     throw new Error("Invalid plan");
@@ -128,7 +71,6 @@ export async function getRecurringPlanContext(
   const campaign = await getActiveCampaign({
     planSlug,
     cycle: billingCycle,
-    legacyCampaign: pricing.campaign ?? null,
   });
   const limitedCampaign =
     campaign &&
@@ -150,143 +92,6 @@ export async function getRecurringPlanContext(
     limitedCampaign,
     baseAmountPaise,
     offerAmountPaise,
-  };
-}
-
-// ─── Coupon Validation ────────────────────────────────────────────────────────
-
-function computeCouponDiscountPaise(args: {
-  amountPaise: number;
-  discountType: "percent" | "flat";
-  discountValue: number;
-}) {
-  if (args.discountType === "percent") {
-    return Math.round(args.amountPaise * (args.discountValue / 100));
-  }
-
-  return Math.min(Math.round(args.discountValue * 100), args.amountPaise - 100);
-}
-
-export async function validateRecurringCoupon(args: {
-  code: string;
-  userId: string;
-  planSlug: string;
-  amountPaise: number;
-}) {
-  await dbConnect();
-
-  const normalizedCode = args.code.trim().toUpperCase();
-  if (!normalizedCode) {
-    throw new Error("Enter a coupon code");
-  }
-
-  const coupon = await Coupon.findOne({
-    code: normalizedCode,
-    isActive: true,
-  }).lean();
-
-  if (!coupon) {
-    throw new Error("Invalid coupon code");
-  }
-
-  const now = new Date();
-  if (now < new Date(coupon.validFrom)) {
-    throw new Error("This coupon is not yet valid");
-  }
-
-  if (now > new Date(coupon.validTo)) {
-    throw new Error("This coupon has expired");
-  }
-
-  if (coupon.maxUses > 0 && coupon.usedCount >= coupon.maxUses) {
-    throw new Error("This coupon has reached its usage limit");
-  }
-
-  if (coupon.type === "user" && coupon.targetUserId !== args.userId) {
-    throw new Error("This coupon is not valid for your account");
-  }
-
-  const userUses = coupon.usedBy.filter(
-    (entry) => entry.userId === args.userId,
-  ).length;
-  if (userUses >= coupon.perUserLimit) {
-    throw new Error("You have already used this coupon");
-  }
-
-  if (
-    coupon.applicablePlans.length > 0 &&
-    !coupon.applicablePlans.includes(args.planSlug)
-  ) {
-    throw new Error(
-      `This coupon is only valid for: ${coupon.applicablePlans.join(", ")} plans`,
-    );
-  }
-
-  const discountAmountPaise = computeCouponDiscountPaise({
-    amountPaise: args.amountPaise,
-    discountType: coupon.discountType,
-    discountValue: coupon.discountValue,
-  });
-
-  return {
-    id: coupon._id.toString(),
-    code: coupon.code,
-    discountAmountPaise,
-    discountLabel:
-      coupon.discountType === "percent"
-        ? `${coupon.discountValue}% off`
-        : `Rs.${coupon.discountValue} off`,
-  } satisfies ValidatedRecurringCoupon;
-}
-
-// ─── Pricing Resolution ──────────────────────────────────────────────────────
-
-/**
- * Computes the full pricing context for creating a recurring subscription.
- * Resolves campaign offers, subscription offers, and coupon discounts
- * to determine the first-cycle amount and whether a discounted plan is needed.
- */
-export async function getRecurringFirstCyclePricing(args: {
-  userId: string;
-  planSlug: string;
-  billingCycle: BillingCycle;
-  couponCode?: string | null;
-}): Promise<RecurringFirstCyclePricing> {
-  const [planContext, activeOffer] = await Promise.all([
-    getRecurringPlanContext(args.planSlug, args.billingCycle),
-    getActiveSubscriptionOffer(),
-  ]);
-
-  const campaignAdjustedAmountPaise =
-    planContext.offerAmountPaise ?? planContext.baseAmountPaise;
-  const coupon = args.couponCode
-    ? await validateRecurringCoupon({
-        code: args.couponCode,
-        userId: args.userId,
-        planSlug: args.planSlug,
-        amountPaise: campaignAdjustedAmountPaise,
-      })
-    : null;
-
-  const firstCycleAmountPaise = coupon
-    ? Math.max(100, campaignAdjustedAmountPaise - coupon.discountAmountPaise)
-    : campaignAdjustedAmountPaise;
-
-  return {
-    plan: planContext.plan,
-    pricingEntry: {
-      cycle: planContext.pricingEntry.cycle as BillingCycle,
-      priceINR: planContext.pricingEntry.priceINR,
-      razorpayPlanId: planContext.pricingEntry.razorpayPlanId,
-    },
-    billingCycle: args.billingCycle,
-    baseAmountPaise: planContext.baseAmountPaise,
-    firstCycleAmountPaise,
-    limitedCampaign: planContext.limitedCampaign,
-    activeOffer: activeOffer ?? null,
-    coupon,
-    hasFirstCycleDiscount:
-      firstCycleAmountPaise !== planContext.baseAmountPaise,
   };
 }
 

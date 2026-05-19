@@ -11,14 +11,10 @@ import { unstable_noStore as noStore } from "next/cache";
 import { getServerSession } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import mongoose from "mongoose";
-import {
-  getPlanBySlugFromDB,
-  getPricingConfig,
-} from "@/lib/config/getPricingConfig";
+import { getPlanBySlugFromDB } from "@/lib/config/getPricingConfig";
 import { getEffectivePriceForCycle } from "@/lib/pricing/pricingService";
 import CheckoutPage from "@/components/checkout/CheckoutPage";
 import type { BillingCycle } from "@/types/pricing";
-import { getActiveSubscriptionOffer } from "@/lib/subscriptions/service";
 import { getActiveCampaign } from "@/lib/billing/campaigns";
 
 export const metadata = {
@@ -50,11 +46,6 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
   const plan = planSlug ? await getPlanBySlugFromDB(planSlug) : undefined;
   if (!plan) redirect("/pricing");
 
-  const [{ campaign }, activeSubscriptionOffer] = await Promise.all([
-    getPricingConfig(),
-    getActiveSubscriptionOffer(),
-  ]);
-
   let originalPrice: number;
   try {
     originalPrice = getEffectivePriceForCycle(plan.pricing, billingCycle);
@@ -65,7 +56,6 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
   const activeCampaign = await getActiveCampaign({
     planSlug: plan.slug,
     cycle: billingCycle,
-    legacyCampaign: campaign ?? null,
   });
   const campaignDiscount =
     activeCampaign && activeCampaign.discountPercent
@@ -107,7 +97,7 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
         campaignBadge: activeCampaign?.badge ?? null,
         campaignDiscountPercent: activeCampaign?.discountPercent ?? null,
         subscriptionOffer:
-          activeCampaign?.duration === "limited" &&
+          activeCampaign &&
           activeCampaign.discountPercent &&
           billingCycle !== "lifetime"
             ? {
@@ -119,15 +109,7 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
                   activeCampaign.discountPercent,
                 ),
               }
-            : activeSubscriptionOffer &&
-                activeSubscriptionOffer.originalAmount === originalPrice * 100
-              ? {
-                  name: activeSubscriptionOffer.name,
-                  discountPercent: activeSubscriptionOffer.discountPercent,
-                  discountedAmount:
-                    activeSubscriptionOffer.discountedAmount / 100,
-                }
-              : null,
+            : null,
       }}
       user={{
         id: session.user.id,

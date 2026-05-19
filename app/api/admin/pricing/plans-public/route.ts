@@ -1,14 +1,15 @@
 /**
- * Public API — serves live plans + active campaign to client components.
+ * Public API — serves live plans + headline campaign to client components.
  * Requires authenticated user session (not admin session).
  * Used by: UpgradePlanModal, OnboardingForm.
  *
- * Returns campaign so client components can show discounted prices.
- * Base prices are always included so clients can show strikethrough.
+ * Returns the highest-priority active Campaign (if any) so client components
+ * can show discounted prices with strikethrough.
  */
 import { NextResponse } from "next/server";
 import { getServerSession } from "@/lib/auth/session";
 import { getPricingConfig } from "@/lib/config/getPricingConfig";
+import { getHeadlineCampaign } from "@/lib/billing/campaigns";
 import Usage from "@/models/Usage";
 import Payment from "@/models/Payment";
 import dbConnect from "@/lib/mongodb";
@@ -31,17 +32,24 @@ export async function GET() {
     .lean();
   const currentCycle = lastPayment?.billingCycle || "monthly";
 
-  const { plans, campaign } = await getPricingConfig();
+  const [{ plans }, headline] = await Promise.all([
+    getPricingConfig(),
+    getHeadlineCampaign(),
+  ]);
 
-  // Only surface the campaign if it's actually active and within date range
-  const now = new Date();
-  const activeCampaign =
-    campaign?.isActive &&
-    now >= new Date(campaign.startDate) &&
-    now <= new Date(campaign.endDate) &&
-    (campaign.targetAudience === "all" || (campaign.targetAudience === "free_only" && currentPlan === "free"))
-      ? campaign
+  // Headline campaign is shown unless its targetAudience excludes this user.
+  const campaign =
+    headline &&
+    (headline.discountPercent ?? 0) > 0 &&
+    headline.razorpayOfferId
+      ? {
+          name: headline.name,
+          discountPercent: headline.discountPercent,
+          badge: headline.badge,
+          discountDuration: headline.duration,
+          discountCycles: headline.cycles,
+        }
       : null;
 
-  return NextResponse.json({ plans, campaign: activeCampaign, currentPlan, currentCycle, isGracePeriod, isPlanExpired });
+  return NextResponse.json({ plans, campaign, currentPlan, currentCycle, isGracePeriod, isPlanExpired });
 }
