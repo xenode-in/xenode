@@ -3,7 +3,10 @@ import dbConnect from "@/lib/mongodb";
 import razorpay from "@/lib/razorpay";
 import { getServerSession } from "@/lib/auth/session";
 import Subscription from "@/models/Subscription";
-import { getRecurringPlanContext } from "@/lib/subscriptions/service";
+import {
+  getRecurringPlanContext,
+  syncUserSubscriptionState,
+} from "@/lib/subscriptions/service";
 import { changePlanSchema } from "@/lib/billing/validation/schemas";
 import { parseJson, jsonError, BillingError } from "@/lib/billing/http";
 import { findActiveSubscription } from "@/lib/billing/subscriptions";
@@ -12,7 +15,7 @@ import {
   cachedResponse,
   withIdempotency,
 } from "@/lib/billing/idempotency";
-import { emitBillingEvent } from "@/lib/billing/events";
+import { BillingEventType, emitBillingEvent } from "@/lib/billing/events";
 
 /**
  * POST /api/subscriptions/change-plan
@@ -129,6 +132,7 @@ export async function POST(request: NextRequest) {
               effectiveAt: sub.current_period_end?.toISOString() ?? null,
               newPlanSlug: input.newPlanSlug,
               newBillingCycle: input.newBillingCycle,
+              newRazorpayPlanId,
             }
           : null,
       lastPlanChangeAt: new Date().toISOString(),
@@ -137,8 +141,28 @@ export async function POST(request: NextRequest) {
     if (input.effective === "immediate") {
       sub.planSlug = input.newPlanSlug;
       sub.billingCycle = input.newBillingCycle;
+      // Keep metadata in sync with the new plan so downstream syncs use the
+      // correct base price and Razorpay plan id (storage limit is resolved
+      // from PricingConfig by planSlug inside syncUserSubscriptionState).
+      sub.metadata = {
+        ...sub.metadata,
+        basePlanAmount: newPlanContext.baseAmountPaise,
+        basePlanAmountINR: newPlanContext.baseAmountPaise / 100,
+        razorpayPlanId: newRazorpayPlanId,
+        planName: newPlanContext.plan.name,
+      };
     }
     await sub.save();
+
+    if (input.effective === "immediate") {
+      await syncUserSubscriptionState({
+        userId,
+        subscriptionDocId: sub._id,
+        status: "active",
+        expiresAt: sub.current_period_end || sub.endDate,
+        autopayActive: true,
+      });
+    }
 
     await emitBillingEvent({
       type:
@@ -164,12 +188,39 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    // Emit a credit-pending event for downgrades that leave the user with
+    // unused paid days. Finance / admin can process actual Razorpay refunds
+    // against this; we don't auto-issue refunds here.
+    const creditOwedINR = proration
+      ? Math.max(0, proration.unusedCreditINR - proration.newPlanChargeForRemainingINR)
+      : 0;
+    if (creditOwedINR > 0 && sub.subscription_id) {
+      await emitBillingEvent({
+        type: BillingEventType.PRORATION_CREDIT_PENDING,
+        userId,
+        actorType: "user",
+        actorId: userId,
+        subjectType: "subscription",
+        subjectId: sub.subscription_id,
+        payload: {
+          creditOwedINR,
+          unusedCreditINR: proration?.unusedCreditINR,
+          newPlanChargeForRemainingINR: proration?.newPlanChargeForRemainingINR,
+          daysRemaining: proration?.daysRemaining,
+          fromPlanSlug: sub.metadata?.previousPlanSlug,
+          toPlanSlug: input.newPlanSlug,
+          effective: input.effective,
+        },
+      });
+    }
+
     const body = {
       success: true,
       effective: input.effective,
       newPlanSlug: input.newPlanSlug,
       newBillingCycle: input.newBillingCycle,
       proration,
+      creditOwedINR,
     };
     await idempotency.complete(200, body);
     return NextResponse.json(body);

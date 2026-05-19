@@ -36,9 +36,7 @@ export async function GET(request: NextRequest) {
       },
       currentPeriodEnd: subscription.current_period_end || subscription.endDate || null,
       offerApplied: subscription.offerApplied || false,
-      nextBillingAmount: getNextBillingAmount({
-        basePlanAmount: Number(subscription.metadata?.basePlanAmount) || undefined,
-      }),
+      nextBillingAmount: getNextBillingAmount(subscription),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to fetch status";

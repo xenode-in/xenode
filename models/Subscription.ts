@@ -30,7 +30,6 @@ export interface ISubscription extends Document {
   current_period_end?: Date;
   paid_count?: number;
   total_count?: number;
-  cancel_at_cycle_end?: boolean;
   offerApplied?: boolean;
   chargeCount?: number;
   cancelAtPeriodEnd?: boolean;
@@ -76,7 +75,6 @@ const SubscriptionSchema = new Schema<ISubscription>(
     current_period_end: { type: Date },
     paid_count: { type: Number, default: 0 },
     total_count: { type: Number },
-    cancel_at_cycle_end: { type: Boolean, default: false },
     offerApplied: { type: Boolean, default: false, index: true },
     chargeCount: { type: Number, default: 0 },
     cancelAtPeriodEnd: { type: Boolean, default: false },

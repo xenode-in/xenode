@@ -9,6 +9,8 @@ import {
   createSubscriptionPaymentIfMissing,
   syncUserSubscriptionState,
 } from "@/lib/subscriptions/service";
+import { SUBSCRIPTION_GRACE_PERIOD_MS } from "@/lib/subscriptions/constants";
+import { getPlanByRazorpayPlanIdFromDB } from "@/lib/config/getPricingConfig";
 import { BillingEventType, emitBillingEvent } from "@/lib/billing/events";
 
 /**
@@ -102,6 +104,8 @@ const handleRefundProcessed: Handler = async (ctx) => {
 
     // Downgrade user to free immediately. The Razorpay subscription, if any,
     // should be cancelled separately by an admin or via subscription.cancelled.
+    // Field set matches /api/cron/expire-plans so a refunded user looks
+    // identical to a naturally-lapsed one.
     await Usage.findOneAndUpdate(
       { userId: payment.userId },
       {
@@ -109,9 +113,14 @@ const handleRefundProcessed: Handler = async (ctx) => {
           plan: "free",
           storageLimitBytes: FREE_TIER_LIMIT_BYTES,
           planExpiresAt: new Date(),
+          planPriceINR: 0,
+          basePlanPriceINR: 0,
+          campaignType: null,
+          campaignCyclesLeft: null,
           isGracePeriod: false,
           gracePeriodEndsAt: null,
           autopayActive: false,
+          lastRenewalTxnid: null,
         },
       },
       { session },
@@ -269,6 +278,47 @@ const handleSubscriptionCharged: Handler = async (ctx) => {
     autopayActive: true,
   });
 
+  // Decrement limited-campaign cycle counter and record the renewal txnid.
+  // Guarded on invoiceResult.created so webhook replay doesn't double-count.
+  if (invoiceResult.created) {
+    const txnidUpdate: Record<string, unknown> = {};
+    if (typeof paymentEntity?.id === "string") {
+      txnidUpdate.lastRenewalTxnid = paymentEntity.id;
+    }
+
+    // Atomic decrement only when cycles remain. If this drops to zero,
+    // the next charge's findOneAndUpdate clears the campaign (see below).
+    await Usage.findOneAndUpdate(
+      {
+        userId: sub.userId,
+        campaignType: "limited",
+        campaignCyclesLeft: { $gt: 0 },
+      },
+      {
+        $inc: { campaignCyclesLeft: -1 },
+        ...(Object.keys(txnidUpdate).length ? { $set: txnidUpdate } : {}),
+      },
+    );
+
+    // Clear the campaign once it's fully consumed.
+    await Usage.updateOne(
+      {
+        userId: sub.userId,
+        campaignType: "limited",
+        campaignCyclesLeft: { $lte: 0 },
+      },
+      { $set: { campaignType: null, campaignCyclesLeft: null } },
+    );
+
+    // Fallback for users without an active campaign — still record the txnid.
+    if (Object.keys(txnidUpdate).length) {
+      await Usage.updateOne(
+        { userId: sub.userId, campaignType: { $ne: "limited" } },
+        { $set: txnidUpdate },
+      );
+    }
+  }
+
   await emitBillingEvent({
     type: BillingEventType.SUBSCRIPTION_CHARGED,
     userId: sub.userId,
@@ -305,27 +355,25 @@ const setStatusAndSync = async (
   }
   await sub.save();
 
+  // For halted subscriptions, flip Usage to grace in the same atomic write so
+  // the UI banner appears immediately and there's no window where the user is
+  // halted-without-grace.
+  const gracePeriod =
+    newStatus === "halted"
+      ? {
+          active: true,
+          endsAt: new Date(Date.now() + SUBSCRIPTION_GRACE_PERIOD_MS),
+        }
+      : undefined;
+
   await syncUserSubscriptionState({
     userId: sub.userId,
     subscriptionDocId: sub._id,
     status: userStatus,
     expiresAt: sub.current_period_end || sub.endDate || null,
     autopayActive: userStatus === "active",
+    gracePeriod,
   });
-
-  // For halted subscriptions, flip Usage to grace early so the UI banner appears
-  // immediately instead of waiting for the daily cron.
-  if (newStatus === "halted") {
-    await Usage.updateOne(
-      { userId: sub.userId, isGracePeriod: false },
-      {
-        $set: {
-          isGracePeriod: true,
-          gracePeriodEndsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-        },
-      },
-    );
-  }
 
   await emitBillingEvent({
     type: eventType,
@@ -385,6 +433,16 @@ const handleSubscriptionCancelled: Handler = (ctx) =>
  * Refresh our local Subscription doc from the webhook payload's subscription
  * entity. Idempotent — calling repeatedly is a no-op when state already matches.
  *
+ * Two paths apply the new plan locally:
+ *   1. `metadata.scheduledChange` set by /change-plan in period_end mode — when
+ *      the entity's plan_id matches the scheduled Razorpay plan id, we promote
+ *      its newPlanSlug/newBillingCycle into the Subscription doc.
+ *   2. Razorpay-dashboard or out-of-band plan swaps — we reverse-lookup the
+ *      plan_id in PricingConfig and apply.
+ *
+ * After either path, syncUserSubscriptionState updates Usage so storage limits
+ * track the new plan immediately.
+ *
  * https://razorpay.com/docs/webhooks/payloads/subscriptions/
  */
 const handleSubscriptionUpdated: Handler = async (ctx) => {
@@ -400,17 +458,67 @@ const handleSubscriptionUpdated: Handler = async (ctx) => {
   }
   if (snap.paid_count !== undefined) sub.paid_count = snap.paid_count;
 
-  // Pull the new plan_id forward so our local planSlug stays in sync when an
-  // immediate change applied. Slug isn't on the entity — we keep whatever was
-  // already on the doc (set by /change-plan in immediate mode).
-  if (typeof subEntity?.plan_id === "string") {
+  const incomingPlanId =
+    typeof subEntity?.plan_id === "string" ? subEntity.plan_id : null;
+  const previousRazorpayPlanId =
+    typeof sub.metadata?.razorpayPlanId === "string"
+      ? sub.metadata.razorpayPlanId
+      : null;
+  const planIdChanged =
+    incomingPlanId !== null && incomingPlanId !== previousRazorpayPlanId;
+
+  let planApplied = false;
+  if (planIdChanged && incomingPlanId) {
+    const scheduled = (sub.metadata?.scheduledChange ?? null) as {
+      newPlanSlug?: string;
+      newBillingCycle?: string;
+      newRazorpayPlanId?: string;
+    } | null;
+
+    if (
+      scheduled &&
+      scheduled.newRazorpayPlanId === incomingPlanId &&
+      scheduled.newPlanSlug
+    ) {
+      sub.planSlug = scheduled.newPlanSlug;
+      if (scheduled.newBillingCycle) {
+        sub.billingCycle = scheduled.newBillingCycle as typeof sub.billingCycle;
+      }
+      planApplied = true;
+    } else {
+      const lookup = await getPlanByRazorpayPlanIdFromDB(incomingPlanId);
+      if (lookup) {
+        sub.planSlug = lookup.plan.slug;
+        sub.billingCycle = lookup.cycle;
+        planApplied = true;
+      }
+    }
+  }
+
+  if (incomingPlanId) {
     sub.metadata = {
       ...sub.metadata,
-      razorpayPlanId: subEntity.plan_id,
+      razorpayPlanId: incomingPlanId,
       lastUpdatedFromWebhook: new Date().toISOString(),
+      ...(planApplied
+        ? {
+            scheduledChange: null,
+            previousPlanSlug: sub.metadata?.previousPlanSlug ?? sub.planSlug,
+          }
+        : {}),
     };
   }
   await sub.save();
+
+  if (planApplied && sub.status === "active") {
+    await syncUserSubscriptionState({
+      userId: sub.userId,
+      subscriptionDocId: sub._id,
+      status: "active",
+      expiresAt: sub.current_period_end || sub.endDate,
+      autopayActive: true,
+    });
+  }
 
   await emitBillingEvent({
     type: "subscription.updated",
@@ -421,9 +529,10 @@ const handleSubscriptionUpdated: Handler = async (ctx) => {
     subjectId: sub.subscription_id ?? sub._id.toString(),
     payload: {
       planSlug: sub.planSlug,
-      razorpayPlanId: subEntity?.plan_id ?? null,
+      razorpayPlanId: incomingPlanId,
       quantity: subEntity?.quantity ?? null,
       remainingCount: subEntity?.remaining_count ?? null,
+      planApplied,
     },
   });
   return { status: "processed" };
@@ -489,6 +598,59 @@ const handleDispute: Handler = async (ctx) => {
   return { status: "processed" };
 };
 
+/**
+ * `subscription.upcoming` fires ~24h before Razorpay attempts the next charge.
+ * Audit-only here — surface it on BillingEvent so future notification hooks
+ * (email, push) can pick it up without touching the webhook entry point.
+ */
+const handleSubscriptionUpcoming: Handler = async (ctx) => {
+  const subEntity = ctx.event.payload?.subscription?.entity;
+  const sub = await loadSubscription(subEntity);
+  const snap = readSubscriptionSnapshot(subEntity);
+
+  await emitBillingEvent({
+    type: "subscription.upcoming",
+    userId: sub?.userId ?? null,
+    actorType: "webhook",
+    actorId: ctx.eventId,
+    subjectType: "subscription",
+    subjectId: sub?.subscription_id ?? subEntity?.id ?? null,
+    payload: {
+      nextChargeAt: snap.current_period_end?.toISOString() ?? null,
+      planSlug: sub?.planSlug ?? null,
+      amountPaise:
+        typeof sub?.metadata?.basePlanAmount === "number"
+          ? sub.metadata.basePlanAmount
+          : null,
+    },
+  });
+  return { status: "processed" };
+};
+
+/**
+ * `invoice.paid` is sent by Razorpay when a subscription invoice settles. For
+ * subscription-only billing, `subscription.charged` is the authoritative event
+ * that creates the local SubscriptionInvoice + Payment rows. We accept this
+ * event as already-handled to keep Razorpay's retry loop happy, and audit it
+ * for cross-checking.
+ */
+const handleInvoicePaid: Handler = async (ctx) => {
+  const invoiceEntity = ctx.event.payload?.invoice?.entity;
+  await emitBillingEvent({
+    type: "invoice.paid",
+    actorType: "webhook",
+    actorId: ctx.eventId,
+    subjectType: "invoice",
+    subjectId: invoiceEntity?.id ?? null,
+    payload: {
+      subscriptionId: invoiceEntity?.subscription_id ?? null,
+      paymentId: invoiceEntity?.payment_id ?? null,
+      amount: invoiceEntity?.amount ?? null,
+    },
+  });
+  return { status: "processed" };
+};
+
 // ─── Registry ─────────────────────────────────────────────────────────────
 
 const REGISTRY: Record<string, Handler> = {
@@ -505,6 +667,9 @@ const REGISTRY: Record<string, Handler> = {
   "subscription.cancelled": handleSubscriptionCancelled,
   "subscription.completed": handleSubscriptionCompleted,
   "subscription.updated": handleSubscriptionUpdated,
+  "subscription.upcoming": handleSubscriptionUpcoming,
+
+  "invoice.paid": handleInvoicePaid,
 
   "payment.dispute.created": handleDispute,
   "payment.dispute.lost": handleDispute,

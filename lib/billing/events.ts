@@ -87,6 +87,8 @@ export const BillingEventType = {
   PAYMENT_RETRY_NEEDED: "payment.retry_needed",
   PAYMENT_DISPUTE_CREATED: "payment.dispute.created",
 
+  PRORATION_CREDIT_PENDING: "proration.credit_pending",
+
   COUPON_REDEEMED: "coupon.redeemed",
   COUPON_REJECTED: "coupon.rejected",
 

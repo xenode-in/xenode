@@ -26,7 +26,11 @@ import { BillingEventType, emitBillingEvent } from "@/lib/billing/events";
  * unhandled events stops retries; returning 4xx/5xx for failures keeps them.
  */
 
-const SUBSCRIPTION_EVENT_PREFIXES = ["subscription.", "payment.dispute."];
+const SUBSCRIPTION_EVENT_PREFIXES = [
+  "subscription.",
+  "payment.dispute.",
+  "invoice.",
+];
 
 function computeEventId(rawBody: string, parsed: any): string {
   const explicit =

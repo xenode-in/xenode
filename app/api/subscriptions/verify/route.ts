@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import dbConnect from "@/lib/mongodb";
 import razorpay from "@/lib/razorpay";
 import Subscription from "@/models/Subscription";
+import SubscriptionInvoice from "@/models/SubscriptionInvoice";
 import {
   consumeCouponRedemptionIfNeeded,
   createSubscriptionPaymentIfMissing,
@@ -67,6 +68,17 @@ export async function POST(request: NextRequest) {
     });
     if (!subscriptionDoc) {
       return NextResponse.json({ error: "Subscription not found" }, { status: 404 });
+    }
+
+    // Idempotency guard: if the webhook handler already processed this payment
+    // (invoice exists AND subscription is active) we're done. Both /verify and
+    // subscription.activated/charged paths can fire concurrently — the invoice
+    // row is the natural key for "this activation already happened".
+    const existingInvoice = await SubscriptionInvoice.findOne({
+      payment_id: razorpay_payment_id,
+    }).lean();
+    if (existingInvoice && subscriptionDoc.status === "active") {
+      return NextResponse.json({ success: true, alreadyProcessed: true });
     }
 
     const fetchedSubscription = await razorpay.subscriptions.fetch(razorpay_subscription_id);

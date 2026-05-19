@@ -198,7 +198,6 @@ export async function cancelSubscription(args: CancelArgs): Promise<{
 
   if (args.cancelAtPeriodEnd) {
     sub.cancelAtPeriodEnd = true;
-    sub.cancel_at_cycle_end = true;
   } else {
     sub.status = "cancelled";
   }
