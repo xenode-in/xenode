@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import dbConnect from "@/lib/mongodb";
 import razorpay from "@/lib/razorpay";
 import { getServerSession } from "@/lib/auth/session";
-import Subscription from "@/models/Subscription";
+import Subscription, { type ISubscription } from "@/models/Subscription";
 import { ACTIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscriptions/constants";
 import {
   getRecurringPlanContext,
@@ -18,6 +18,27 @@ import {
   isValidRazorpayOfferId,
   paymentLogger,
 } from "@/lib/payment/razorpayUtils";
+
+/**
+ * Returns true if a subscription is an "abandoned checkout" — the row was
+ * written when the user clicked Subscribe, but they never authorized the
+ * Razorpay mandate, so no charge ever happened. We cancel these on retry so
+ * the user isn't permanently locked out by their own browser-close.
+ *
+ * Intentionally restricted to `status === "created"` (and not "authenticated")
+ * to avoid cancelling a real mandate that Razorpay is about to auto-charge.
+ * An authenticated-but-uncharged sub with a stuck first charge should be
+ * resolved manually via the admin panel or the reconcile cron.
+ */
+function isAbandonedCheckout(sub: Pick<
+  ISubscription,
+  "status" | "chargeCount" | "paid_count"
+>): boolean {
+  if (sub.status !== "created") return false;
+  if ((sub.chargeCount ?? 0) > 0) return false;
+  if ((sub.paid_count ?? 0) > 0) return false;
+  return true;
+}
 
 /**
  * POST /api/subscriptions/create
@@ -59,18 +80,62 @@ export async function POST(request: NextRequest) {
 
     await dbConnect();
 
-    // Reject if the user already has an active/pending subscription.
+    // Look for any subscription that would block creating a new one.
     const existing = await Subscription.findOne({
       userId,
       status: { $in: [...ACTIVE_SUBSCRIPTION_STATUSES] },
-    }).lean();
+    });
+
     if (existing) {
-      await idempotency.fail();
-      throw new BillingError(
-        409,
-        "An active or pending subscription already exists",
-        "subscription_exists",
-      );
+      // Abandoned-checkout cleanup: the row exists but the user never
+      // authorized / never paid. Cancel both the Razorpay sub (best-effort)
+      // and the local doc, then fall through to create a fresh subscription.
+      // Without this, closing the Razorpay modal once locks the user out
+      // forever with 409 subscription_exists.
+      if (isAbandonedCheckout(existing)) {
+        if (existing.subscription_id) {
+          try {
+            await razorpay.subscriptions.cancel(existing.subscription_id, {
+              cancel_at_cycle_end: false,
+            } as never);
+          } catch (cancelError) {
+            // The Razorpay sub might already be cancelled / expired upstream.
+            // Log but don't fail — the local cleanup is what matters.
+            paymentLogger.error(
+              `Failed to cancel abandoned Razorpay sub ${existing.subscription_id}; continuing`,
+              cancelError,
+            );
+          }
+        }
+        existing.status = "cancelled";
+        existing.metadata = {
+          ...existing.metadata,
+          cancelledAt: new Date().toISOString(),
+          cancelledReason: "abandoned_checkout",
+        };
+        await existing.save();
+
+        await emitBillingEvent({
+          type: BillingEventType.SUBSCRIPTION_CANCELLED,
+          userId,
+          actorType: "system",
+          actorId: "create-route-cleanup",
+          subjectType: "subscription",
+          subjectId: existing.subscription_id ?? existing._id.toString(),
+          payload: {
+            reason: "abandoned_checkout",
+            planSlug: existing.planSlug,
+            billingCycle: existing.billingCycle,
+          },
+        });
+      } else {
+        await idempotency.fail();
+        throw new BillingError(
+          409,
+          "An active or pending subscription already exists",
+          "subscription_exists",
+        );
+      }
     }
 
     const planContext = await getRecurringPlanContext(
