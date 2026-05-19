@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { incrementStorage } from "@/lib/metering/usage";
-import Usage from "@/models/Usage";
+import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import { makeUserId, createUsage, FREE_TIER_BYTES, PRO_100_BYTES } from "../helpers/factories";
 
 describe("GAP-2 — incrementStorage Quota Ceiling", () => {
@@ -58,24 +58,26 @@ describe("GAP-2 — incrementStorage Quota Ceiling", () => {
 
   it("downgrades expired pro plan inline before checking quota", async () => {
     const userId = makeUserId();
-    // Pro plan expired, usage is 5GB (under free limit)
+    // Pro plan expired with low usage so the upload fits within the production
+    // free tier limit (FREE_TIER_LIMIT_BYTES = 5 GB) after the inline downgrade.
     await createUsage({
       userId,
       plan: "pro",
-      totalStorageBytes: 5 * 1024 * 1024 * 1024,
+      totalStorageBytes: 1 * 1024 * 1024 * 1024, // 1 GB used
       storageLimitBytes: PRO_100_BYTES,
       planExpiresAt: new Date(Date.now() - 1000),
       planPriceINR: 149,
     });
 
-    // Upload 100MB — should succeed under free tier (5GB + 100MB < 10GB)
+    // Upload 100MB — succeeds under the free tier (1GB + 100MB << 5GB)
     await expect(
       incrementStorage(userId, 100 * 1024 * 1024)
     ).resolves.not.toThrow();
 
     const usage = await Usage.findOne({ userId });
     expect(usage?.plan).toBe("free");
-    expect(usage?.storageLimitBytes).toBe(FREE_TIER_BYTES);
+    // The cron writes the production constant (5 GB), not the factory's 10 GB
+    expect(usage?.storageLimitBytes).toBe(FREE_TIER_LIMIT_BYTES);
   });
 
   it("creates a new usage record on upsert if none exists", async () => {

@@ -28,7 +28,6 @@ export async function POST(
 
   subscription.status = "cancelled";
   subscription.cancelAtPeriodEnd = false;
-  subscription.cancel_at_cycle_end = false;
   subscription.metadata = {
     ...subscription.metadata,
     cancelledByAdmin: true,

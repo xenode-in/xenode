@@ -4,15 +4,11 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Lock } from "lucide-react";
 import Script from "next/script";
-import { useRouter } from "next/navigation";
 import type { CheckoutPlan, CheckoutUser, CouponResult } from "./CheckoutPage";
-import PaymentMethodToggle from "./PaymentMethodToggle";
 import AddressSection from "./AddressSection";
 import CouponInput from "./CouponInput";
 import SubscribeButton from "@/components/SubscribeButton";
-import { getEffectivePriceForCycle } from "@/lib/pricing/pricingService";
 
 const addressSchema = z.object({
   name: z.string().optional(),
@@ -31,7 +27,6 @@ const schema = z.object({
   phone: z
     .string()
     .regex(/^[6-9]\d{9}$/, "Enter a valid 10-digit Indian mobile number"),
-  paymentMethod: z.enum(["autopay", "direct"]),
   address: addressSchema,
 });
 
@@ -40,7 +35,6 @@ export type CheckoutFormValues = z.infer<typeof schema>;
 interface CheckoutFormProps {
   plan: CheckoutPlan;
   user: CheckoutUser;
-  prorationCredit: number;
   finalAmount: number;
   onCouponChange: (result: CouponResult | null) => void;
   appliedCoupon: CouponResult | null;
@@ -54,21 +48,16 @@ export default function CheckoutForm({
   appliedCoupon,
 }: CheckoutFormProps) {
   const [serverError, setServerError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const [razorpayLoaded, setRazorpayLoaded] = useState(false);
-  const router = useRouter();
 
   const {
     register,
-    handleSubmit,
     watch,
-    setValue,
     formState: { errors },
   } = useForm<CheckoutFormValues>({
     resolver: zodResolver(schema),
     defaultValues: {
       phone: user.phone || "",
-      paymentMethod: "direct",
       address: {
         name: user.billingAddress?.name || "",
         line1: user.billingAddress?.line1 || "",
@@ -80,119 +69,14 @@ export default function CheckoutForm({
     },
   });
 
-  const paymentMethod = watch("paymentMethod");
   const recurringPlanId = plan.pricing.find(
     (entry) => entry.cycle === plan.billingCycle,
   )?.razorpayPlanId;
   const isSubscriptionEligible =
     plan.billingCycle !== "lifetime" && Boolean(recurringPlanId);
 
-  const cycleBasePrice = getEffectivePriceForCycle(
-    plan.pricing,
-    plan.billingCycle,
-  );
   const couponBasePrice = Math.max(1, plan.originalPrice - plan.campaignDiscount);
-
-  const handlePayment = async (values: CheckoutFormValues) => {
-    setServerError(null);
-    setIsSubmitting(true);
-
-    try {
-      if (values.paymentMethod === "autopay") {
-        if (!isSubscriptionEligible) {
-          throw new Error(
-            "Recurring subscriptions are only available for billing cycles with Razorpay recurring configured.",
-          );
-        }
-
-        return;
-      }
-
-      const res = await fetch("/api/payment/razorpay/create-order", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amount: finalAmount,
-          planName: plan.name,
-          planSlug: plan.slug,
-          billingCycle: plan.billingCycle,
-          couponCode: appliedCoupon?.code ?? null,
-          storageLimitBytes: plan.storageLimitBytes,
-          planPriceINR: plan.originalPrice,
-          basePlanPriceINR: cycleBasePrice,
-          notes: {
-            phone: values.phone,
-          },
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to initiate order");
-      }
-
-      if (!window.Razorpay) {
-        throw new Error("Razorpay SDK not loaded. Please refresh the page.");
-      }
-
-      const options = {
-        key: data.keyId,
-        amount: data.amount,
-        currency: data.currency,
-        name: "Xenode",
-        description: `Upgrade to ${plan.name}`,
-        order_id: data.orderId,
-        handler: async (response: {
-          razorpay_order_id: string;
-          razorpay_payment_id: string;
-          razorpay_signature: string;
-        }) => {
-          const verifyRes = await fetch("/api/payment/razorpay/verify", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              razorpay_order_id: response.razorpay_order_id,
-              razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_signature: response.razorpay_signature,
-            }),
-          });
-
-          const verifyData = await verifyRes.json();
-          if (verifyRes.ok) {
-            router.push(
-              `/payment/success?txnid=${response.razorpay_order_id}&plan=${plan.name}&amount=${finalAmount}`,
-            );
-            return;
-          }
-
-          setServerError(verifyData.error || "Verification failed");
-        },
-        prefill: {
-          name: user.name,
-          email: user.email,
-          contact: values.phone,
-          method: "upi",
-        },
-        theme: { color: "#111111" },
-        modal: {
-          ondismiss: () => {
-            setIsSubmitting(false);
-          },
-        },
-      };
-
-      const rzp = new window.Razorpay(options);
-      rzp.open();
-    } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : "Something went wrong. Please try again.";
-      setServerError(message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  const phone = watch("phone");
 
   return (
     <>
@@ -201,11 +85,7 @@ export default function CheckoutForm({
         crossOrigin="anonymous"
         onLoad={() => setRazorpayLoaded(true)}
       />
-      <form
-        onSubmit={handleSubmit(handlePayment)}
-        className="space-y-4"
-        noValidate
-      >
+      <form className="space-y-4" noValidate>
         <p className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">
           Payment Details
         </p>
@@ -262,32 +142,17 @@ export default function CheckoutForm({
           defaultOpen={!!user.billingAddress?.name}
         />
 
-        <div className="rounded-xl border border-border bg-card p-5 space-y-3">
-          <p className="text-sm font-semibold text-foreground">
-            Payment Method
+        <div className="rounded-xl border border-primary/20 bg-primary/5 px-4 py-3">
+          <p className="text-xs text-muted-foreground">
+            <span className="font-semibold text-foreground">How it works: </span>
+            {isSubscriptionEligible
+              ? `You'll approve a UPI mandate in your UPI app. ${
+                  plan.subscriptionOffer || appliedCoupon
+                    ? `The first cycle is Rs.${finalAmount.toFixed(2)}, then renewals continue at Rs.${plan.originalPrice.toFixed(2)}/${plan.billingCycle} automatically.`
+                    : `Renewals continue at Rs.${plan.originalPrice.toFixed(2)}/${plan.billingCycle} automatically.`
+                }`
+              : "Recurring subscriptions are not available for this plan or billing cycle."}
           </p>
-          <PaymentMethodToggle
-            value={paymentMethod}
-            onChange={(value) => setValue("paymentMethod", value)}
-          />
-          {paymentMethod === "autopay" ? (
-            <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3">
-              <p className="text-xs text-muted-foreground">
-                <span className="font-semibold text-foreground">
-                  How it works:{" "}
-                </span>
-                {isSubscriptionEligible
-                  ? `You'll approve a UPI mandate in your UPI app. ${
-                      plan.subscriptionOffer || appliedCoupon
-                        ? `The first cycle is Rs.${finalAmount.toFixed(
-                            2,
-                          )}, then renewals continue at Rs.${plan.originalPrice.toFixed(2)}/${plan.billingCycle} automatically.`
-                        : `Renewals continue at Rs.${plan.originalPrice.toFixed(2)}/${plan.billingCycle} automatically.`
-                    }`
-                  : "Recurring subscriptions are only available for billing cycles with Razorpay recurring configured."}
-              </p>
-            </div>
-          ) : null}
         </div>
 
         {serverError ? (
@@ -296,48 +161,23 @@ export default function CheckoutForm({
           </div>
         ) : null}
 
-        {paymentMethod === "autopay" ? (
-          <SubscribeButton
-            phone={watch("phone")}
-            planSlug={plan.slug}
-            planName={plan.name}
-            billingCycle={plan.billingCycle}
-            couponCode={appliedCoupon?.code ?? null}
-            disabled={
-              Boolean(errors.phone) ||
-              !razorpayLoaded ||
-              !isSubscriptionEligible
-            }
-            offerLabel={
-              plan.subscriptionOffer
-                ? `${plan.subscriptionOffer.name}: ${plan.subscriptionOffer.discountPercent}% off first cycle`
-                : null
-            }
-            user={{ name: user.name, email: user.email }}
-            onError={(message) => setServerError(message || null)}
-            onSettled={() => setIsSubmitting(false)}
-          />
-        ) : (
-          <button
-            type="submit"
-            disabled={isSubmitting || !razorpayLoaded}
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60 shadow-md"
-          >
-            {isSubmitting ? (
-              <>
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent" />
-                Processing...
-              </>
-            ) : !razorpayLoaded ? (
-              "Loading Payment..."
-            ) : (
-              <>
-                <Lock className="h-4 w-4" /> Pay Rs.{finalAmount.toFixed(2)}{" "}
-                securely
-              </>
-            )}
-          </button>
-        )}
+        <SubscribeButton
+          phone={phone}
+          planSlug={plan.slug}
+          planName={plan.name}
+          billingCycle={plan.billingCycle}
+          couponCode={appliedCoupon?.code ?? null}
+          disabled={
+            Boolean(errors.phone) || !razorpayLoaded || !isSubscriptionEligible
+          }
+          offerLabel={
+            plan.subscriptionOffer
+              ? `${plan.subscriptionOffer.name}: ${plan.subscriptionOffer.discountPercent}% off first cycle`
+              : null
+          }
+          user={{ name: user.name, email: user.email }}
+          onError={(message) => setServerError(message || null)}
+        />
 
         <p className="text-center text-xs text-muted-foreground">
           By completing this purchase you agree to Xenode&apos;s{" "}

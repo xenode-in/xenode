@@ -15,6 +15,8 @@ import type { BillingCycle } from "@/types/pricing";
 export interface IPayment extends Document {
   _id: mongoose.Types.ObjectId;
   userId: string;
+  /** Billing account this payment is attributed to. Today equals userId; reserved for team billing. */
+  accountId?: string | null;
   amount: number;
   currency: string;
   status:
@@ -57,6 +59,7 @@ const PaymentSchema = new Schema<IPayment>(
       required: [true, "User ID is required"],
       index: true,
     },
+    accountId: { type: String, default: null, index: true },
     amount: {
       type: Number,
       required: true,

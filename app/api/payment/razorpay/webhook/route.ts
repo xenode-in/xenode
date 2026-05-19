@@ -1,136 +1,165 @@
 import { NextResponse } from "next/server";
+import crypto from "crypto";
 import dbConnect from "@/lib/mongodb";
 import WebhookLog from "@/models/WebhookLog";
 import {
   verifyRazorpaySignature,
   paymentLogger,
 } from "@/lib/payment/razorpayUtils";
-import { fulfillOrder, processRefund } from "@/lib/payment/fulfillmentService";
-import Payment from "@/models/Payment";
+import { dispatchWebhookEvent } from "@/lib/billing/webhooks/handlers";
+import { BillingEventType, emitBillingEvent } from "@/lib/billing/events";
 
-export async function POST(req: Request) {
-  let webhookLogId: string | null = null;
+/**
+ * Unified Razorpay webhook endpoint.
+ *
+ * Security & idempotency contract (in order):
+ *   1. Read raw body and `x-razorpay-signature` header.
+ *   2. Verify HMAC-SHA256 against BOTH the order/payment secret and the
+ *      subscription secret (Razorpay sends both kinds of events to the same
+ *      URL when configured that way). If neither verifies, 401 — no DB writes.
+ *   3. Compute a stable eventId (event.id from payload, fall back to body hash).
+ *   4. Upsert a WebhookLog row keyed by eventId. If already `processed`, return
+ *      200 immediately (replay). If `failed`, allow retry.
+ *   5. Dispatch via `lib/billing/webhooks/handlers.ts`. Mark log accordingly.
+ *
+ * Razorpay retries on non-2xx for ~24h. Returning 2xx for verified-but-
+ * unhandled events stops retries; returning 4xx/5xx for failures keeps them.
+ */
 
+const SUBSCRIPTION_EVENT_PREFIXES = [
+  "subscription.",
+  "payment.dispute.",
+  "invoice.",
+];
+
+function computeEventId(rawBody: string, parsed: any): string {
+  const explicit =
+    (typeof parsed?.id === "string" && parsed.id) ||
+    (typeof parsed?.event_id === "string" && parsed.event_id);
+  if (explicit) return explicit;
+  return crypto.createHash("sha256").update(rawBody).digest("hex");
+}
+
+function verifyAgainstEitherSecret(
+  rawBody: string,
+  signature: string,
+  eventType: string,
+): boolean {
+  const isSubscriptionEvent = SUBSCRIPTION_EVENT_PREFIXES.some((p) =>
+    eventType.startsWith(p),
+  );
+
+  const orderSecret = process.env.RAZORPAY_WEBHOOK_SECRET || "";
+  const subSecret =
+    process.env.RAZORPAY_SUBSCRIPTION_WEBHOOK_SECRET || orderSecret;
+
+  // Prefer the matching secret first, then fall back.
+  const primary = isSubscriptionEvent ? subSecret : orderSecret;
+  const fallback = isSubscriptionEvent ? orderSecret : subSecret;
+
+  return (
+    verifyRazorpaySignature(rawBody, signature, primary) ||
+    (fallback !== primary &&
+      verifyRazorpaySignature(rawBody, signature, fallback))
+  );
+}
+
+export async function POST(request: Request) {
+  const rawBody = await request.text();
+  const signature = request.headers.get("x-razorpay-signature") || "";
+
+  if (!rawBody || !signature) {
+    return NextResponse.json(
+      { error: "Missing body or signature" },
+      { status: 400 },
+    );
+  }
+
+  let parsed: any;
   try {
-    const rawBody = await req.text();
-    const signature = req.headers.get("x-razorpay-signature") || "";
-    const secret = process.env.RAZORPAY_WEBHOOK_SECRET || "";
+    parsed = JSON.parse(rawBody);
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
 
-    // 1. Basic Validation
-    if (!rawBody || !signature) {
-      return NextResponse.json({ error: "Missing data" }, { status: 400 });
-    }
+  const eventType: string =
+    typeof parsed?.event === "string" ? parsed.event : "unknown";
 
-    const event = JSON.parse(rawBody);
-    const eventType = event.event;
-    const eventId = event.id;
+  // 1. Verify signature BEFORE any DB write. Tampered events never land in the log.
+  if (!verifyAgainstEitherSecret(rawBody, signature, eventType)) {
+    paymentLogger.error(`Razorpay webhook signature failed (${eventType})`);
+    // Fire-and-forget audit (does not log payload to avoid amplifying junk).
+    await emitBillingEvent({
+      type: BillingEventType.WEBHOOK_INVALID_SIGNATURE,
+      actorType: "webhook",
+      actorId: null,
+      subjectType: "webhook",
+      payload: { eventType },
+    });
+    return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
+  }
 
-    await dbConnect();
+  await dbConnect();
+  const eventId = computeEventId(rawBody, parsed);
 
-    // 2. Log Entry (Pre-processing)
-    const log = await WebhookLog.create({
+  // 2. Upsert log keyed by eventId. Atomically detect first-seen vs replay.
+  const upsert = await WebhookLog.findOneAndUpdate(
+    { eventId },
+    {
+      $setOnInsert: {
+        eventId,
+        eventType,
+        gateway: "razorpay",
+        payload: parsed,
+        status: "pending",
+      },
+    },
+    { upsert: true, new: true, includeResultMetadata: true },
+  );
+
+  // includeResultMetadata returns { value, lastErrorObject }
+  const inserted = !!(upsert as any)?.lastErrorObject?.upserted;
+  const log = (upsert as any)?.value ?? upsert;
+
+  if (!inserted && log?.status === "processed") {
+    paymentLogger.info(`Replay of processed webhook ${eventId} — short-circuit`);
+    return NextResponse.json({ success: true, replay: true });
+  }
+
+  // 3. Dispatch.
+  try {
+    const result = await dispatchWebhookEvent({
       eventId,
       eventType,
-      gateway: "razorpay",
-      payload: event,
-      status: "pending",
+      event: parsed,
+      source: "razorpay",
     });
-    webhookLogId = log._id as any;
 
-    // 3. Signature Verification
-    if (!verifyRazorpaySignature(rawBody, signature, secret)) {
-      paymentLogger.error(`Invalid signature for webhook event ${eventId}`);
-      await WebhookLog.findByIdAndUpdate(webhookLogId, {
-        status: "failed",
-        errorMessage: "Invalid signature",
-      });
-      return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
-    }
-
-    // 4. Event Dispatching
-    paymentLogger.info(
-      `Processing Razorpay Webhook [${eventType}] - ${eventId}`,
+    await WebhookLog.updateOne(
+      { eventId },
+      {
+        $set: {
+          status: result.status === "failed" ? "failed" : result.status,
+          errorMessage: result.message ?? null,
+        },
+      },
     );
 
-    switch (eventType) {
-      case "payment.captured":
-      case "order.paid": {
-        const paymentData =
-          event.payload.payment?.entity || event.payload.order?.entity;
-        const orderId = paymentData.order_id || paymentData.id;
-        const paymentId = paymentData.id || event.payload.payment?.entity?.id;
-
-        const result = await fulfillOrder(orderId, paymentId, event);
-        if (result.success) {
-          await WebhookLog.findByIdAndUpdate(webhookLogId, {
-            status: "processed",
-          });
-        } else {
-          await WebhookLog.findByIdAndUpdate(webhookLogId, {
-            status: "failed",
-            errorMessage: result.error,
-          });
-        }
-        break;
-      }
-
-      case "refund.processed": {
-        const refundData = event.payload.refund.entity;
-        const paymentId = refundData.payment_id;
-        const refundId = refundData.id;
-
-        const result = await processRefund(paymentId, refundId, event);
-        if (result.success) {
-          await WebhookLog.findByIdAndUpdate(webhookLogId, {
-            status: "processed",
-          });
-        } else {
-          await WebhookLog.findByIdAndUpdate(webhookLogId, {
-            status: "failed",
-            errorMessage: result.error,
-          });
-        }
-        break;
-      }
-
-      case "payment.failed": {
-        const failedData = event.payload.payment.entity;
-        const orderId = failedData.order_id;
-
-        await Payment.findOneAndUpdate(
-          { order_id: orderId },
-          {
-            $set: {
-              status: "failed",
-              gatewayResponse: event,
-              metadata: { error_description: failedData.error_description },
-            },
-          },
-          { upsert: true },
-        );
-        await WebhookLog.findByIdAndUpdate(webhookLogId, {
-          status: "processed",
-        });
-        break;
-      }
-
-      default:
-        paymentLogger.info(`Ignoring unhandled webhook event: ${eventType}`);
-        await WebhookLog.findByIdAndUpdate(webhookLogId, { status: "ignored" });
-        break;
+    if (result.status === "failed") {
+      return NextResponse.json(
+        { error: result.message ?? "Handler failed" },
+        { status: 500 },
+      );
     }
-
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, handled: result.status });
   } catch (error: any) {
-    paymentLogger.error("Webhook processing error", error);
-    if (webhookLogId) {
-      await WebhookLog.findByIdAndUpdate(webhookLogId, {
-        status: "failed",
-        errorMessage: error.message,
-      });
-    }
+    paymentLogger.error("Webhook dispatch threw", error);
+    await WebhookLog.updateOne(
+      { eventId },
+      { $set: { status: "failed", errorMessage: error?.message } },
+    );
     return NextResponse.json(
-      { error: error.message || "Internal error" },
+      { error: error?.message ?? "Internal error" },
       { status: 500 },
     );
   }

@@ -12,6 +12,8 @@ export const PRO_TIER_LIMIT_BYTES: null = null;               // Unlimited
 export interface IUsage extends Document {
   _id: mongoose.Types.ObjectId;
   userId: string;
+  /** Billing account this usage rolls up under. Today always equals userId. */
+  accountId?: string | null;
   totalStorageBytes: number;
   totalEgressBytes: number;
   totalObjects: number;
@@ -42,6 +44,7 @@ export interface IUsage extends Document {
 const UsageSchema = new Schema<IUsage>(
   {
     userId: { type: String, required: true, unique: true, index: true },
+    accountId: { type: String, default: null, index: true },
     totalStorageBytes: { type: Number, default: 0, min: 0 },
     totalEgressBytes:  { type: Number, default: 0, min: 0 },
     totalObjects:      { type: Number, default: 0, min: 0 },

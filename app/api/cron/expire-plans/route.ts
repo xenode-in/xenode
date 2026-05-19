@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import dbConnect from "@/lib/mongodb";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import Subscription from "@/models/Subscription";
+import { SUBSCRIPTION_GRACE_PERIOD_MS } from "@/lib/subscriptions/constants";
 
 /**
  * Cron endpoint — runs daily at midnight UTC.
@@ -24,14 +25,13 @@ export async function GET(req: NextRequest) {
     const now = new Date();
     let expiredCount = 0;
 
-    const gracePeriodDays = 7;
-    const graceMs = gracePeriodDays * 24 * 60 * 60 * 1000;
-
-    const newDate = new Date(now.getTime() + graceMs);
+    const graceEndsAt = new Date(now.getTime() + SUBSCRIPTION_GRACE_PERIOD_MS);
 
     // --- Step 1a: Grant Grace Period to recently expired non-autopay users ---
     // If a user's plan just expired naturally (autopay was off or manual payment)
-    // and they aren't already in a grace period, grant them 7 days.
+    // and they aren't already in a grace period, grant them the standard window.
+    // planExpiresAt is intentionally NOT overwritten — the grace deadline lives
+    // on gracePeriodEndsAt so the UI can still show the real expiry date.
     const graceResult = await Usage.updateMany(
       {
         plan: { $ne: "free" },
@@ -41,10 +41,9 @@ export async function GET(req: NextRequest) {
       {
         $set: {
           isGracePeriod: true,
-          gracePeriodEndsAt: newDate,
-          planExpiresAt: newDate,
-        }
-      }
+          gracePeriodEndsAt: graceEndsAt,
+        },
+      },
     );
 
     // --- Step 1b: Expire lapsed plans (Grace period ended) ---

@@ -57,24 +57,19 @@ export interface CouponResult {
 interface CheckoutPageProps {
   plan: CheckoutPlan;
   user: CheckoutUser;
-  prorationCredit: number;
   finalAmount: number;
 }
 
 export default function CheckoutPage({
   plan,
   user,
-  prorationCredit,
   finalAmount,
 }: CheckoutPageProps) {
   const [appliedCoupon, setAppliedCoupon] = useState<CouponResult | null>(null);
 
   const campaignPrice = plan.originalPrice - plan.campaignDiscount;
   const couponDiscount = appliedCoupon?.discountAmount ?? 0;
-  const computedFinalAmount = Math.max(
-    1,
-    campaignPrice - couponDiscount - prorationCredit,
-  );
+  const computedFinalAmount = Math.max(1, campaignPrice - couponDiscount);
 
   return (
     <div className="min-h-screen w-full bg-background text-foreground">
@@ -112,7 +107,6 @@ export default function CheckoutPage({
             <CheckoutForm
               plan={plan}
               user={user}
-              prorationCredit={prorationCredit}
               finalAmount={computedFinalAmount || finalAmount}
               onCouponChange={setAppliedCoupon}
               appliedCoupon={appliedCoupon}
@@ -123,7 +117,6 @@ export default function CheckoutPage({
           <aside className="w-full lg:w-[360px] lg:shrink-0 lg:sticky lg:top-[88px]">
             <OrderSummary
               plan={plan}
-              prorationCredit={prorationCredit}
               finalAmount={computedFinalAmount || finalAmount}
               appliedCoupon={appliedCoupon}
             />

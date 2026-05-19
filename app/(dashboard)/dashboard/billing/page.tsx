@@ -1,10 +1,12 @@
 import UpgradePlanModal from "@/components/dashboard/UpgradePlanModal";
-import RefundButton from "@/components/dashboard/RefundButton";
+import SubscriptionManageCard from "@/components/dashboard/SubscriptionManageCard";
 import { FileText, AlertTriangle } from "lucide-react";
 import { getServerSession } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
 import Payment from "@/models/Payment";
+import Subscription from "@/models/Subscription";
+import SubscriptionInvoice from "@/models/SubscriptionInvoice";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
@@ -33,13 +35,33 @@ export default async function BillingPage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let payments: any[] = [];
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let subscription: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let invoices: any[] = [];
+
   if (session?.user?.id) {
     await dbConnect();
-    [usage, payments] = await Promise.all([
+    [usage, payments, subscription] = await Promise.all([
       Usage.findOne({ userId: session.user.id }),
       Payment.find({ userId: session.user.id }).sort({ createdAt: -1 }).lean(),
+      Subscription.findOne({ userId: session.user.id })
+        .sort({ createdAt: -1 })
+        .lean(),
     ]);
+    if (subscription?.subscription_id) {
+      invoices = await SubscriptionInvoice.find({
+        subscription_id: subscription.subscription_id,
+      })
+        .sort({ billing_date: -1 })
+        .limit(50)
+        .lean();
+    }
   }
+
+  const invoiceByPaymentId = new Map<string, { number: string | null }>(
+    invoices.map((inv) => [inv.payment_id, { number: inv.number ?? null }]),
+  );
 
   const isPaidPlan = usage?.plan && usage.plan !== "free";
   const planName = usage?.plan
@@ -104,46 +126,97 @@ export default async function BillingPage() {
       {((usage?.isGracePeriod && usage?.gracePeriodEndsAt) ||
         (isPaidPlan &&
           usage?.planExpiresAt &&
-          new Date(usage.planExpiresAt).getTime() < Date.now())) && (
-        <Alert
-          variant="destructive"
-          className="bg-destructive/10 border-destructive/20 text-destructive"
-        >
-          <AlertTriangle className="h-4 w-4" />
-          <AlertTitle className="font-semibold">
-            {usage?.isGracePeriod
-              ? "Action Required: Payment Failed"
-              : "Action Required: Plan Expired"}
-          </AlertTitle>
-          <AlertDescription className="mt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <span>
-              {usage?.isGracePeriod ? (
-                <>
-                  To prevent your plan from downgrading to the Free Tier, please
-                  renew your subscription before{" "}
-                  <strong className="font-semibold">
-                    {formatDate(usage.gracePeriodEndsAt)}
-                  </strong>{" "}
-                  ({daysLeft} {daysLeft === 1 ? "day" : "days"} left).
-                </>
-              ) : (
-                <>
-                  Your subscription has expired. Please renew your plan
-                  immediately to avoid service interruption or downgrade to the
-                  Free Tier ({daysLeft} {daysLeft === 1 ? "day" : "days"} left).
-                </>
-              )}
-            </span>
-            <Button
-              asChild
-              size="sm"
+          new Date(usage.planExpiresAt).getTime() < Date.now())) &&
+        (() => {
+          // Halted subscriptions: the autopay mandate exists but the latest
+          // charge failed. /api/subscriptions/create would 409 — route the user
+          // back to Razorpay's hosted retry page (authorizationUrl) instead.
+          const isHalted =
+            subscription?.status === "halted" ||
+            subscription?.status === "past_due" ||
+            subscription?.status === "pending";
+          const authorizationUrl =
+            typeof subscription?.metadata?.authorizationUrl === "string"
+              ? subscription.metadata.authorizationUrl
+              : null;
+          // Prefer the subscription's recorded cycle (set at creation), then
+          // the most recent payment, then fall back to monthly. Guards against
+          // admin-granted paid plans with no payment history.
+          const renewCycle =
+            (typeof subscription?.billingCycle === "string"
+              ? subscription.billingCycle
+              : null) ||
+            payments[0]?.billingCycle ||
+            "monthly";
+          const renewHref =
+            isHalted && authorizationUrl
+              ? authorizationUrl
+              : `/checkout?plan=${usage.plan}&cycle=${renewCycle}`;
+          const ctaLabel = isHalted ? "Retry Payment" : "Renew Now";
+
+          return (
+            <Alert
               variant="destructive"
-              className="shrink-0"
+              className="bg-destructive/10 border-destructive/20 text-destructive"
             >
-              <Link href={`/checkout?plan=${usage.plan}&cycle=${payments.length > 0 ? payments[0].billingCycle : "monthly"}`}>Renew Now</Link>
-            </Button>
-          </AlertDescription>
-        </Alert>
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle className="font-semibold">
+                {usage?.isGracePeriod
+                  ? "Action Required: Payment Failed"
+                  : "Action Required: Plan Expired"}
+              </AlertTitle>
+              <AlertDescription className="mt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <span>
+                  {usage?.isGracePeriod ? (
+                    <>
+                      To prevent your plan from downgrading to the Free Tier,
+                      please renew your subscription before{" "}
+                      <strong className="font-semibold">
+                        {formatDate(usage.gracePeriodEndsAt)}
+                      </strong>{" "}
+                      ({daysLeft} {daysLeft === 1 ? "day" : "days"} left).
+                    </>
+                  ) : (
+                    <>
+                      Your subscription has expired. Please renew your plan
+                      immediately to avoid service interruption or downgrade to
+                      the Free Tier ({daysLeft}{" "}
+                      {daysLeft === 1 ? "day" : "days"} left).
+                    </>
+                  )}
+                </span>
+                <Button
+                  asChild
+                  size="sm"
+                  variant="destructive"
+                  className="shrink-0"
+                >
+                  <Link href={renewHref}>{ctaLabel}</Link>
+                </Button>
+              </AlertDescription>
+            </Alert>
+          );
+        })()}
+
+      {/* ── Manage subscription ── */}
+      {subscription && subscription.subscription_id && (
+        <SubscriptionManageCard
+          status={subscription.status}
+          subscriptionId={subscription.subscription_id}
+          cancelAtPeriodEnd={subscription.cancelAtPeriodEnd || false}
+          nextChargeAt={
+            subscription.current_period_end?.toISOString?.() ??
+            subscription.endDate?.toISOString?.() ??
+            null
+          }
+          amount={
+            (Number(subscription.metadata?.basePlanAmount) ||
+              (subscription.metadata?.basePlanAmountINR ?? 0) * 100) / 100
+          }
+          planLabel={
+            PLAN_DISPLAY_NAMES[subscription.planSlug] || subscription.planSlug
+          }
+        />
       )}
 
       {/* ── Current Plan ── */}
@@ -218,6 +291,9 @@ export default async function BillingPage() {
                 <thead className="border-b border-border">
                   <tr>
                     <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Invoice
+                    </th>
+                    <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                       Date
                     </th>
                     <th className="px-5 py-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -240,6 +316,10 @@ export default async function BillingPage() {
                       key={payment._id.toString()}
                       className="hover:bg-accent/40 transition-colors"
                     >
+                      <td className="px-5 py-4 whitespace-nowrap font-mono text-xs text-muted-foreground">
+                        {invoiceByPaymentId.get(payment.payment_id)?.number ||
+                          "—"}
+                      </td>
                       <td className="px-5 py-4 whitespace-nowrap text-foreground">
                         {new Date(payment.createdAt).toLocaleDateString(
                           undefined,
@@ -280,20 +360,11 @@ export default async function BillingPage() {
                         {payment.planName}
                       </td>
                       <td className="px-5 py-4 text-right">
-                        {payment.status === "success" && (
+                        {payment.status === "success" ? (
                           <button className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
                             <FileText className="h-3.5 w-3.5" /> PDF
                           </button>
-                        )}
-                        {payment.status === "success" &&
-                          Date.now() - new Date(payment.createdAt).getTime() <=
-                            30 * 24 * 60 * 60 * 1000 && (
-                            <RefundButton
-                              paymentId={payment._id.toString()}
-                              amount={payment.amount}
-                            />
-                          )}
-                        {payment.status !== "success" && (
+                        ) : (
                           <span className="text-muted-foreground">-</span>
                         )}
                       </td>

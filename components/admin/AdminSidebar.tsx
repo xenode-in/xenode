@@ -15,6 +15,11 @@ import {
   Ticket,
   Activity,
   FileText,
+  AlertTriangle,
+  Webhook,
+  BarChart3,
+  Megaphone,
+  ScrollText,
 } from "lucide-react";
 
 interface AdminSidebarProps {
@@ -81,6 +86,36 @@ const navItems = [
     href: "/admin/dashboard/subscriptions/plans",
     label: "Sub Plans",
     icon: Layers,
+    roles: ["super_admin", "admin"],
+  },
+  {
+    href: "/admin/dashboard/billing/analytics",
+    label: "Revenue Analytics",
+    icon: BarChart3,
+    roles: ["super_admin", "admin"],
+  },
+  {
+    href: "/admin/dashboard/billing/campaigns",
+    label: "Campaigns",
+    icon: Megaphone,
+    roles: ["super_admin", "admin"],
+  },
+  {
+    href: "/admin/dashboard/billing/failed-payments",
+    label: "Failed Payments",
+    icon: AlertTriangle,
+    roles: ["super_admin", "admin"],
+  },
+  {
+    href: "/admin/dashboard/billing/webhooks",
+    label: "Webhooks",
+    icon: Webhook,
+    roles: ["super_admin", "admin"],
+  },
+  {
+    href: "/admin/dashboard/billing/audit",
+    label: "Audit Log",
+    icon: ScrollText,
     roles: ["super_admin", "admin"],
   },
   {

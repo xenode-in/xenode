@@ -3,12 +3,40 @@ import { NextRequest, NextResponse } from "next/server";
 import dbConnect from "@/lib/mongodb";
 import razorpay from "@/lib/razorpay";
 import Subscription from "@/models/Subscription";
+import SubscriptionInvoice from "@/models/SubscriptionInvoice";
 import {
   consumeCouponRedemptionIfNeeded,
   createSubscriptionPaymentIfMissing,
   createSubscriptionInvoiceIfMissing,
   syncUserSubscriptionState,
 } from "@/lib/subscriptions/service";
+
+/**
+ * Razorpay subscription handler signature:
+ *   generated_signature = HMAC_SHA256(payment_id + "|" + subscription_id, KEY_SECRET)
+ * Uses constant-time comparison.
+ */
+function verifySubscriptionSignature(
+  paymentId: string,
+  subscriptionId: string,
+  signature: string,
+  secret: string,
+): boolean {
+  if (!signature || !secret) return false;
+  const expected = crypto
+    .createHmac("sha256", secret)
+    .update(`${paymentId}|${subscriptionId}`)
+    .digest("hex");
+  if (expected.length !== signature.length) return false;
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(expected, "hex"),
+      Buffer.from(signature, "hex"),
+    );
+  } catch {
+    return false;
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -22,14 +50,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
-    // Verify signature per Razorpay docs:
-    // generated_signature = hmac_sha256(razorpay_payment_id + "|" + subscription_id, secret)
-    const expectedSignature = crypto
-      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET!)
-      .update(`${razorpay_payment_id}|${razorpay_subscription_id}`)
-      .digest("hex");
-
-    if (expectedSignature !== razorpay_signature) {
+    if (
+      !verifySubscriptionSignature(
+        razorpay_payment_id,
+        razorpay_subscription_id,
+        razorpay_signature,
+        process.env.RAZORPAY_KEY_SECRET || "",
+      )
+    ) {
       return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
     }
 
@@ -40,6 +68,17 @@ export async function POST(request: NextRequest) {
     });
     if (!subscriptionDoc) {
       return NextResponse.json({ error: "Subscription not found" }, { status: 404 });
+    }
+
+    // Idempotency guard: if the webhook handler already processed this payment
+    // (invoice exists AND subscription is active) we're done. Both /verify and
+    // subscription.activated/charged paths can fire concurrently — the invoice
+    // row is the natural key for "this activation already happened".
+    const existingInvoice = await SubscriptionInvoice.findOne({
+      payment_id: razorpay_payment_id,
+    }).lean();
+    if (existingInvoice && subscriptionDoc.status === "active") {
+      return NextResponse.json({ success: true, alreadyProcessed: true });
     }
 
     const fetchedSubscription = await razorpay.subscriptions.fetch(razorpay_subscription_id);

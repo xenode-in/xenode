@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import razorpay from "@/lib/razorpay";
-import dbConnect from "@/lib/mongodb";
 import { getServerSession } from "@/lib/auth/session";
-import Subscription from "@/models/Subscription";
+import { cancelSubscriptionSchema } from "@/lib/billing/validation/schemas";
+import { parseJson, jsonError } from "@/lib/billing/http";
+import { cancelSubscription } from "@/lib/billing/subscriptions";
+import {
+  cachedResponse,
+  withIdempotency,
+} from "@/lib/billing/idempotency";
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,34 +14,36 @@ export async function POST(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+    const userId = session.user.id;
 
-    const { subscriptionId } = await request.json().catch(() => ({ subscriptionId: null }));
+    const input = await parseJson(request, cancelSubscriptionSchema);
 
-    await dbConnect();
+    const idempotency = await withIdempotency({
+      request,
+      userId,
+      route: "subscriptions.cancel",
+      body: input,
+    });
+    const replay = cachedResponse(idempotency);
+    if (replay) return replay;
 
-    const subscriptionDoc = subscriptionId
-      ? await Subscription.findOne({
-          userId: session.user.id,
-          subscription_id: subscriptionId,
-        })
-      : await Subscription.findOne({ userId: session.user.id }).sort({ createdAt: -1 });
+    const result = await cancelSubscription({
+      userId,
+      subscriptionId: input.subscriptionId,
+      cancelAtPeriodEnd: input.cancelAtPeriodEnd,
+      actorType: "user",
+      actorId: userId,
+    });
 
-    if (!subscriptionDoc?.subscription_id) {
-      return NextResponse.json({ error: "Subscription not found" }, { status: 404 });
-    }
-
-    await razorpay.subscriptions.cancel(subscriptionDoc.subscription_id, {
-      cancel_at_cycle_end: true,
-    } as never);
-
-    subscriptionDoc.cancelAtPeriodEnd = true;
-    subscriptionDoc.cancel_at_cycle_end = true;
-    await subscriptionDoc.save();
-
-    return NextResponse.json({ success: true });
+    const body = {
+      success: true,
+      status: result.status,
+      cancelAtPeriodEnd: result.cancelAtPeriodEnd,
+      alreadyCancelled: result.alreadyCancelled,
+    };
+    await idempotency.complete(200, body);
+    return NextResponse.json(body);
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to cancel subscription";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return jsonError(error);
   }
 }

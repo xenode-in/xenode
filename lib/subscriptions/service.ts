@@ -6,7 +6,7 @@ import {
   getPlanBySlugFromDB,
   getPricingConfig,
 } from "@/lib/config/getPricingConfig";
-import { resolveActiveCampaign } from "@/lib/pricing/pricingService";
+import { getActiveCampaign } from "@/lib/billing/campaigns";
 import type { BillingCycle } from "@/types/pricing";
 import Coupon from "@/models/Coupon";
 import { PricingConfig } from "@/models/PricingConfig";
@@ -16,14 +16,11 @@ import SubscriptionOffer, {
   type ISubscriptionOffer,
 } from "@/models/SubscriptionOffer";
 import SubscriptionInvoice from "@/models/SubscriptionInvoice";
+import { nextSequence } from "@/models/Counter";
 import WebhookLog from "@/models/WebhookLog";
-import Usage from "@/models/Usage";
+import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import { User } from "@/models/User";
-import {
-  BASE_MONTHLY_AMOUNT_PAISE,
-  SUBSCRIPTION_GRACE_PERIOD_DAYS,
-  SUBSCRIPTION_PLAN_SLUG,
-} from "./constants";
+import { SUBSCRIPTION_GRACE_PERIOD_DAYS } from "./constants";
 
 type UserSubscriptionStatus =
   | "none"
@@ -58,7 +55,7 @@ export interface RecurringFirstCyclePricing {
   /** Amount to charge on the first cycle (after all discounts) */
   firstCycleAmountPaise: number;
   /** Active limited campaign, if any */
-  limitedCampaign: ReturnType<typeof resolveActiveCampaign> | null;
+  limitedCampaign: Awaited<ReturnType<typeof getActiveCampaign>> | null;
   /** Active subscription offer from the database, if any */
   activeOffer: ISubscriptionOffer | null;
   /** Validated coupon, if one was provided */
@@ -85,36 +82,6 @@ export async function getActiveSubscriptionOffer(now: Date = new Date()) {
   })
     .sort({ createdAt: -1 })
     .lean<ISubscriptionOffer | null>();
-}
-
-export async function ensureBasePlanConfig() {
-  await dbConnect();
-  const pricingConfig = await PricingConfig.findOne();
-  if (!pricingConfig) {
-    throw new Error("Pricing configuration not found");
-  }
-
-  const planIndex = pricingConfig.plans.findIndex(
-    (plan: { slug: string }) => plan.slug === SUBSCRIPTION_PLAN_SLUG,
-  );
-  if (planIndex === -1) {
-    throw new Error(
-      `PricingConfig is missing the "${SUBSCRIPTION_PLAN_SLUG}" plan`,
-    );
-  }
-
-  const monthlyEntry = pricingConfig.plans[planIndex].pricing.find(
-    (entry: { cycle: string }) => entry.cycle === "monthly",
-  );
-  if (!monthlyEntry?.razorpayPlanId) {
-    throw new Error("Base monthly Razorpay plan is not configured");
-  }
-
-  return {
-    config: pricingConfig,
-    plan: pricingConfig.plans[planIndex],
-    monthlyEntry,
-  };
 }
 
 function getRazorpayPeriodConfig(cycle: BillingCycle) {
@@ -158,18 +125,24 @@ export async function getRecurringPlanContext(
     throw new Error("Recurring plan is not configured for this billing cycle");
   }
 
-  const campaign = resolveActiveCampaign(pricing.campaign ?? null);
+  const campaign = await getActiveCampaign({
+    planSlug,
+    cycle: billingCycle,
+    legacyCampaign: pricing.campaign ?? null,
+  });
   const limitedCampaign =
     campaign &&
-    campaign.discountDuration === "limited" &&
-    (campaign.discountCycles ?? 0) === 1
+    campaign.duration === "limited" &&
+    (campaign.cycles ?? 0) === 1 &&
+    campaign.discountPercent
       ? campaign
       : null;
 
   const baseAmountPaise = Math.round(pricingEntry.priceINR * 100);
-  const offerAmountPaise = limitedCampaign
-    ? computeDiscountedAmount(baseAmountPaise, limitedCampaign.discountPercent)
-    : null;
+  const offerAmountPaise =
+    limitedCampaign && limitedCampaign.discountPercent
+      ? computeDiscountedAmount(baseAmountPaise, limitedCampaign.discountPercent)
+      : null;
 
   return {
     plan,
@@ -349,78 +322,19 @@ export async function createRazorpayRecurringPlan(args: {
 
 // ─── Coupon Consumption ───────────────────────────────────────────────────────
 
+import { redeemCoupon } from "@/lib/billing/coupons";
+
 export async function consumeCouponRedemptionIfNeeded(args: {
   couponId?: string | null;
   userId: string;
   txnid: string;
 }) {
-  if (!args.couponId) {
-    return false;
-  }
-
-  await dbConnect();
-
-  const result = await Coupon.updateOne(
-    {
-      _id: args.couponId,
-      "usedBy.txnid": { $ne: args.txnid },
-    },
-    {
-      $inc: { usedCount: 1 },
-      $push: {
-        usedBy: {
-          userId: args.userId,
-          usedAt: new Date(),
-          txnid: args.txnid,
-        },
-      },
-    },
-  );
-
-  return result.modifiedCount > 0;
-}
-
-// ─── Admin Plan Management ────────────────────────────────────────────────────
-
-export async function updatePricingBasePlan(razorpayPlanId: string) {
-  const { config } = await ensureBasePlanConfig();
-  const nextPlans = config.plans.map(
-    (plan: { slug: string; pricing: unknown[] }) => {
-      const plainPlan = JSON.parse(JSON.stringify(plan)) as Record<
-        string,
-        unknown
-      > & {
-        slug: string;
-        pricing: Array<Record<string, unknown> & { cycle: string }>;
-      };
-
-      if (plainPlan.slug !== "max") {
-        return plainPlan;
-      }
-
-      return {
-        ...plainPlan,
-        pricing: plainPlan.pricing.map((entry) =>
-          entry.cycle === "monthly"
-            ? {
-                ...entry,
-                priceINR: BASE_MONTHLY_AMOUNT_PAISE / 100,
-                razorpayPlanId,
-              }
-            : entry,
-        ),
-      };
-    },
-  );
-
-  await PricingConfig.updateOne(
-    { _id: config._id },
-    {
-      $set: {
-        plans: nextPlans,
-      },
-    },
-  );
+  if (!args.couponId) return false;
+  return redeemCoupon({
+    couponId: args.couponId,
+    userId: args.userId,
+    txnid: args.txnid,
+  });
 }
 
 // ─── Webhook Helpers ──────────────────────────────────────────────────────────
@@ -478,6 +392,12 @@ export async function syncUserSubscriptionState(args: {
   status: UserSubscriptionStatus;
   expiresAt?: Date | null;
   autopayActive?: boolean;
+  /**
+   * Set explicit grace-period state in the same atomic write. Used by halted/
+   * past_due webhooks so the banner flips on without a second updateOne race.
+   * If omitted, grace-period flags are cleared when expiresAt is provided.
+   */
+  gracePeriod?: { active: boolean; endsAt: Date | null };
 }) {
   await dbConnect();
 
@@ -501,7 +421,8 @@ export async function syncUserSubscriptionState(args: {
     const subscription = args.subscriptionDocId
       ? await Subscription.findById(args.subscriptionDocId).lean()
       : null;
-    usageUpdate.plan = subscription?.planSlug || "free";
+    const planSlug = subscription?.planSlug || "free";
+    usageUpdate.plan = planSlug;
     usageUpdate.planActivatedAt = subscription?.startDate || new Date();
     usageUpdate.planExpiresAt = expiresAt;
     usageUpdate.planPriceINR =
@@ -510,6 +431,24 @@ export async function syncUserSubscriptionState(args: {
       0;
     usageUpdate.basePlanPriceINR =
       subscription?.metadata?.basePlanAmountINR ?? 0;
+
+    // Resolve storage limit from the pricing config. Paid plans get the
+    // per-plan ceiling; free / unknown plans fall back to the 5 GB default.
+    // Without this, paid users stay locked at FREE_TIER_LIMIT_BYTES.
+    if (planSlug && planSlug !== "free") {
+      const plan = await getPlanBySlugFromDB(planSlug);
+      if (plan && typeof plan.storageLimitBytes === "number") {
+        usageUpdate.storageLimitBytes = plan.storageLimitBytes;
+      }
+    } else {
+      usageUpdate.storageLimitBytes = FREE_TIER_LIMIT_BYTES;
+    }
+  }
+
+  if (args.gracePeriod) {
+    usageUpdate.isGracePeriod = args.gracePeriod.active;
+    usageUpdate.gracePeriodEndsAt = args.gracePeriod.endsAt;
+  } else if (expiresAt) {
     usageUpdate.isGracePeriod = false;
     usageUpdate.gracePeriodEndsAt = null;
   }
@@ -582,12 +521,18 @@ export async function createSubscriptionInvoiceIfMissing(args: {
     return { invoice: existing, created: false };
   }
 
+  const billingDate = new Date();
+  const year = billingDate.getUTCFullYear();
+  const seq = await nextSequence(`invoice:${year}`);
+  const number = `XEN-${year}-${String(seq).padStart(5, "0")}`;
+
   const invoice = await SubscriptionInvoice.create({
+    number,
     subscription_id: args.subscriptionId,
     payment_id: args.paymentId,
     amount: args.amountPaise / 100,
     status: args.status || "paid",
-    billing_date: new Date(),
+    billing_date: billingDate,
     metadata: args.metadata || {},
   });
 
@@ -642,14 +587,19 @@ export async function getCurrentSubscriptionForUser(userId: string) {
 }
 
 /**
- * Returns the next billing amount in INR.
- * With the single-subscription model, after the first discounted cycle
- * the Razorpay subscription has already been upgraded to the base plan,
- * so the next billing amount is always the base plan price.
+ * Returns the next billing amount in INR for a subscription, or null if it
+ * can't be determined from the doc. The amount lives on `metadata.basePlanAmount`
+ * (paise) — pull it from the source rather than asking callers to destructure.
+ *
+ * Returns null instead of a hardcoded fallback so the UI can render "—" when
+ * the price isn't known, instead of showing a wrong (Max-plan) number.
  */
-export function getNextBillingAmount(subscription: {
-  status?: string;
-  basePlanAmount?: number;
-}) {
-  return (subscription.basePlanAmount ?? BASE_MONTHLY_AMOUNT_PAISE) / 100;
+export function getNextBillingAmount(
+  subscription: { metadata?: Record<string, unknown> | null } | null,
+): number | null {
+  if (!subscription?.metadata) return null;
+  const raw = subscription.metadata.basePlanAmount;
+  const paise = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(paise) || paise <= 0) return null;
+  return paise / 100;
 }

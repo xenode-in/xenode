@@ -146,6 +146,23 @@ export async function getPlanBySlugFromDB(
 }
 
 /**
+ * Reverse lookup: find the plan + cycle that owns a given razorpayPlanId.
+ * Used by the subscription.updated webhook to translate Razorpay's plan id
+ * back into our planSlug after a period-end plan change.
+ */
+export async function getPlanByRazorpayPlanIdFromDB(
+  razorpayPlanId: string,
+): Promise<{ plan: IPlan; cycle: BillingCycle } | undefined> {
+  if (!razorpayPlanId) return undefined;
+  const { plans } = await getPricingConfig();
+  for (const plan of plans) {
+    const match = plan.pricing.find((p) => p.razorpayPlanId === razorpayPlanId);
+    if (match) return { plan, cycle: match.cycle };
+  }
+  return undefined;
+}
+
+/**
  * Server-authoritative price map.
  * Accepts a billing cycle (default: monthly) and applies active campaign discount.
  *

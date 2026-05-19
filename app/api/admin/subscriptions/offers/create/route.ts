@@ -3,6 +3,7 @@ import { getAdminSession } from "@/lib/admin/session";
 import dbConnect from "@/lib/mongodb";
 import SubscriptionOffer from "@/models/SubscriptionOffer";
 import { getActiveSubscriptionOffer } from "@/lib/subscriptions/service";
+import { isValidRazorpayOfferId } from "@/lib/payment/razorpayUtils";
 
 /**
  * POST /api/admin/subscriptions/offers/create
@@ -39,11 +40,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (!razorpayOfferId || !razorpayOfferId.startsWith("offer_")) {
+  if (!isValidRazorpayOfferId(razorpayOfferId)) {
     return NextResponse.json(
       {
         error:
-          "razorpayOfferId is required. Create an offer on the Razorpay Dashboard and paste the ID (e.g., offer_JHD834hjbxzhd38d).",
+          "razorpayOfferId must match the Razorpay format `offer_` + 14 alphanumeric characters (20 chars total). Create the offer on the Razorpay Dashboard and paste the exact ID.",
       },
       { status: 400 },
     );

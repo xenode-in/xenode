@@ -1,12 +1,12 @@
 {
   "crons": [
     {
-      "path": "/api/payment/payu/pre-debit",
-      "schedule": "30 3 * * *"
+      "path": "/api/cron/expire-plans",
+      "schedule": "0 0 * * *"
     },
     {
-      "path": "/api/payment/payu/charge-recurring",
-      "schedule": "30 3 * * *"
+      "path": "/api/cron/reconcile-subscriptions",
+      "schedule": "0 1 * * *"
     }
   ]
 }
