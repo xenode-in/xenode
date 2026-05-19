@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import Script from "next/script";
+import { AlertTriangle } from "lucide-react";
 import type { CheckoutPlan, CheckoutUser, CouponResult } from "./CheckoutPage";
 import AddressSection from "./AddressSection";
 import CouponInput from "./CouponInput";
@@ -158,6 +159,42 @@ export default function CheckoutForm({
         {serverError ? (
           <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
             <p className="text-sm text-destructive">{serverError}</p>
+          </div>
+        ) : null}
+
+        {(appliedCoupon || plan.subscriptionOffer) && isSubscriptionEligible ? (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-4 space-y-3">
+            <div className="flex items-start gap-2.5">
+              <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 flex-shrink-0" />
+              <div className="space-y-1.5">
+                <p className="text-sm font-semibold text-foreground">
+                  Tap &ldquo;Select Offer&rdquo; on the Razorpay screen
+                </p>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  When the Razorpay payment window opens, your discount will be
+                  listed as <span className="font-semibold text-foreground">Select Offer</span>{" "}
+                  — tap it and confirm the offer to get the discounted price.
+                  If you skip this step you&apos;ll be charged the full ₹
+                  {plan.originalPrice.toFixed(2)}.
+                </p>
+              </div>
+            </div>
+
+            {/* ─────────────────────────────────────────────────────────────
+                IMAGE PLACEHOLDERS — drop screenshots into
+                  public/checkout-help/select-offer-step1.png
+                  public/checkout-help/select-offer-step2.png
+                then swap the <div> placeholders below for
+                  <Image src="/checkout-help/select-offer-step1.png" ... />
+                ───────────────────────────────────────────────────────────── */}
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex aspect-[3/4] items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 px-2 text-center text-[10px] uppercase tracking-wider text-muted-foreground">
+                Step 1: tap Select Offer
+              </div>
+              <div className="flex aspect-[3/4] items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 px-2 text-center text-[10px] uppercase tracking-wider text-muted-foreground">
+                Step 2: confirm to apply
+              </div>
+            </div>
           </div>
         ) : null}
 

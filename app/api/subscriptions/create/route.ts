@@ -4,10 +4,8 @@ import razorpay from "@/lib/razorpay";
 import { getServerSession } from "@/lib/auth/session";
 import Subscription, { type ISubscription } from "@/models/Subscription";
 import { ACTIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscriptions/constants";
-import {
-  getRecurringPlanContext,
-  getActiveSubscriptionOffer,
-} from "@/lib/subscriptions/service";
+import { getRecurringPlanContext } from "@/lib/subscriptions/service";
+import { getActiveCampaign } from "@/lib/billing/campaigns";
 import { createSubscriptionSchema } from "@/lib/billing/validation/schemas";
 import { parseJson, jsonError, BillingError } from "@/lib/billing/http";
 import { validateCoupon } from "@/lib/billing/coupons";
@@ -175,26 +173,29 @@ export async function POST(request: NextRequest) {
     }
 
     if (!offerId) {
-      const activeOffer = await getActiveSubscriptionOffer();
-      if (activeOffer?.razorpayOfferId) {
+      const activeCampaign = await getActiveCampaign({
+        planSlug: input.planSlug,
+        cycle: input.billingCycle,
+      });
+      if (activeCampaign?.razorpayOfferId) {
         // Admin-configured fallback: a bad offer must NOT block checkout.
         // Skip + emit an audit event so the admin can spot the misconfig.
-        if (isValidRazorpayOfferId(activeOffer.razorpayOfferId)) {
-          offerId = activeOffer.razorpayOfferId;
+        if (isValidRazorpayOfferId(activeCampaign.razorpayOfferId)) {
+          offerId = activeCampaign.razorpayOfferId;
           offerSource = "campaign";
-          discountPercent = activeOffer.discountPercent;
+          discountPercent = activeCampaign.discountPercent;
         } else {
           paymentLogger.error(
-            `Skipping malformed campaign offer_id: ${activeOffer.razorpayOfferId}`,
+            `Skipping malformed campaign offer_id: ${activeCampaign.razorpayOfferId}`,
           );
           await emitBillingEvent({
             type: "campaign.invalid_offer_id",
             actorType: "system",
             actorId: null,
-            subjectType: "subscription_offer",
-            subjectId: activeOffer._id?.toString?.() ?? null,
+            subjectType: "campaign",
+            subjectId: activeCampaign.id,
             payload: {
-              razorpayOfferId: activeOffer.razorpayOfferId,
+              razorpayOfferId: activeCampaign.razorpayOfferId,
               expectedPattern: "^offer_[A-Za-z0-9]{14}$",
             },
           });

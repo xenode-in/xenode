@@ -45,7 +45,14 @@ export default async function BillingPage() {
     [usage, payments, subscription] = await Promise.all([
       Usage.findOne({ userId: session.user.id }),
       Payment.find({ userId: session.user.id }).sort({ createdAt: -1 }).lean(),
-      Subscription.findOne({ userId: session.user.id })
+      // Only surface manageable subscriptions. Cancelled / completed / expired
+      // rows still exist for audit + invoice history but shouldn't appear in
+      // the "Manage Subscription" card. Without this filter, an abandoned
+      // checkout leaves a ghost row that the UI treats as live.
+      Subscription.findOne({
+        userId: session.user.id,
+        status: { $nin: ["cancelled", "completed", "expired"] },
+      })
         .sort({ createdAt: -1 })
         .lean(),
     ]);

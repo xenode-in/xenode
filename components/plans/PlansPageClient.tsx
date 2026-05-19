@@ -9,8 +9,16 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useSession } from "@/lib/auth/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import type { IPlan, ICampaign } from "@/models/PricingConfig";
+import type { IPlan } from "@/models/PricingConfig";
 import type { BillingCycle } from "@/types/pricing";
+
+interface PlanPageCampaign {
+  name: string;
+  discountPercent: number;
+  badge: string;
+  discountDuration: "forever" | "limited";
+  discountCycles: number | null;
+}
 import {
   getEffectivePriceForCycle,
   getYearlySavingsPercent,
@@ -56,7 +64,7 @@ export default function PlansPageClient() {
   const router = useRouter();
   const { data: session } = useSession();
   const [plans, setPlans] = useState<IPlan[]>([]);
-  const [campaign, setCampaign] = useState<ICampaign | null>(null);
+  const [campaign, setCampaign] = useState<PlanPageCampaign | null>(null);
   const [currentPlan, setCurrentPlan] = useState<string>("free");
   const [currentCycle, setCurrentCycle] = useState<BillingCycle>("monthly");
   const [isGracePeriod, setIsGracePeriod] = useState<boolean>(false);

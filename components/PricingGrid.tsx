@@ -22,16 +22,21 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { IPlan } from "@/models/PricingConfig";
 import type { BillingCycle } from "@/types/pricing";
-import type { ActiveCampaign } from "@/lib/pricing/pricingService";
 import {
   getEffectivePriceForCycle,
   getYearlySavingsPercent,
   getMonthlyEquivalentForYearly,
 } from "@/lib/pricing/pricingService";
 
+interface HeadlineCampaign {
+  name: string;
+  discountPercent: number;
+  badge: string;
+}
+
 interface Props {
   plans: IPlan[];
-  campaign: ActiveCampaign | null;
+  campaign: HeadlineCampaign | null;
   compact?: boolean;
 }
 
