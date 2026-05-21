@@ -2,41 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import dbConnect from "@/lib/mongodb";
 import razorpay from "@/lib/razorpay";
 import { getServerSession } from "@/lib/auth/session";
-import Subscription, { type ISubscription } from "@/models/Subscription";
-import { ACTIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscriptions/constants";
+import Subscription from "@/models/Subscription";
 import { getRecurringPlanContext } from "@/lib/subscriptions/service";
 import { getActiveCampaign } from "@/lib/billing/campaigns";
 import { createSubscriptionSchema } from "@/lib/billing/validation/schemas";
 import { parseJson, jsonError, BillingError } from "@/lib/billing/http";
 import { validateCoupon } from "@/lib/billing/coupons";
 import { cachedResponse, withIdempotency } from "@/lib/billing/idempotency";
-import { BillingEventType, emitBillingEvent } from "@/lib/billing/events";
+import { emitBillingEvent } from "@/lib/billing/events";
 import {
   cleanNotes,
   isValidRazorpayOfferId,
   paymentLogger,
 } from "@/lib/payment/razorpayUtils";
-
-/**
- * Returns true if a subscription is an "abandoned checkout" — the row was
- * written when the user clicked Subscribe, but they never authorized the
- * Razorpay mandate, so no charge ever happened. We cancel these on retry so
- * the user isn't permanently locked out by their own browser-close.
- *
- * Intentionally restricted to `status === "created"` (and not "authenticated")
- * to avoid cancelling a real mandate that Razorpay is about to auto-charge.
- * An authenticated-but-uncharged sub with a stuck first charge should be
- * resolved manually via the admin panel or the reconcile cron.
- */
-function isAbandonedCheckout(sub: Pick<
-  ISubscription,
-  "status" | "chargeCount" | "paid_count"
->): boolean {
-  if (sub.status !== "created") return false;
-  if ((sub.chargeCount ?? 0) > 0) return false;
-  if ((sub.paid_count ?? 0) > 0) return false;
-  return true;
-}
 
 /**
  * POST /api/subscriptions/create
@@ -78,62 +56,20 @@ export async function POST(request: NextRequest) {
 
     await dbConnect();
 
-    // Look for any subscription that would block creating a new one.
+    // Block if user already has an active/authorized subscription.
+    // "created" is excluded — subscription docs are no longer written until
+    // payment is confirmed, so that status won't appear here.
     const existing = await Subscription.findOne({
       userId,
-      status: { $in: [...ACTIVE_SUBSCRIPTION_STATUSES] },
+      status: { $in: ["authenticated", "active", "pending", "halted"] },
     });
-
     if (existing) {
-      // Abandoned-checkout cleanup: the row exists but the user never
-      // authorized / never paid. Cancel both the Razorpay sub (best-effort)
-      // and the local doc, then fall through to create a fresh subscription.
-      // Without this, closing the Razorpay modal once locks the user out
-      // forever with 409 subscription_exists.
-      if (isAbandonedCheckout(existing)) {
-        if (existing.subscription_id) {
-          try {
-            await razorpay.subscriptions.cancel(existing.subscription_id, {
-              cancel_at_cycle_end: false,
-            } as never);
-          } catch (cancelError) {
-            // The Razorpay sub might already be cancelled / expired upstream.
-            // Log but don't fail — the local cleanup is what matters.
-            paymentLogger.error(
-              `Failed to cancel abandoned Razorpay sub ${existing.subscription_id}; continuing`,
-              cancelError,
-            );
-          }
-        }
-        existing.status = "cancelled";
-        existing.metadata = {
-          ...existing.metadata,
-          cancelledAt: new Date().toISOString(),
-          cancelledReason: "abandoned_checkout",
-        };
-        await existing.save();
-
-        await emitBillingEvent({
-          type: BillingEventType.SUBSCRIPTION_CANCELLED,
-          userId,
-          actorType: "system",
-          actorId: "create-route-cleanup",
-          subjectType: "subscription",
-          subjectId: existing.subscription_id ?? existing._id.toString(),
-          payload: {
-            reason: "abandoned_checkout",
-            planSlug: existing.planSlug,
-            billingCycle: existing.billingCycle,
-          },
-        });
-      } else {
-        await idempotency.fail();
-        throw new BillingError(
-          409,
-          "An active or pending subscription already exists",
-          "subscription_exists",
-        );
-      }
+      await idempotency.fail();
+      throw new BillingError(
+        409,
+        "An active or pending subscription already exists",
+        "subscription_exists",
+      );
     }
 
     const planContext = await getRecurringPlanContext(
@@ -221,6 +157,8 @@ export async function POST(request: NextRequest) {
           ? 120
           : 360;
 
+    // All fields needed to reconstruct the Subscription doc at payment time
+    // are stored in Razorpay notes — no MongoDB write happens here.
     const subscriptionPayload: Record<string, unknown> = {
       plan_id: planContext.pricingEntry.razorpayPlanId,
       total_count: maxTotalCount,
@@ -233,7 +171,16 @@ export async function POST(request: NextRequest) {
         billingCycle: input.billingCycle,
         phone: input.phone || null,
         couponCode: couponCodeUsed,
-        amountPaise: String(baseAmountPaise),
+        couponId,
+        offerApplied: String(offerApplied),
+        offerSource: offerSource || null,
+        offerId: offerId || null,
+        discountPercent: discountPercent !== null ? String(discountPercent) : null,
+        basePlanAmount: String(baseAmountPaise),
+        basePlanAmountINR: String(baseAmountPaise / 100),
+        firstCycleAmount: String(firstCycleAmountPaise),
+        firstCycleAmountINR: String(firstCycleAmountPaise / 100),
+        razorpayPlanId: planContext.pricingEntry.razorpayPlanId,
       }),
     };
     if (offerId) subscriptionPayload.offer_id = offerId;
@@ -241,56 +188,6 @@ export async function POST(request: NextRequest) {
     const razorpaySubscription = await razorpay.subscriptions.create(
       subscriptionPayload as never,
     );
-
-    const subscriptionDoc = await Subscription.create({
-      userId,
-      planSlug: planContext.plan.slug,
-      status: "created",
-      subscription_id: razorpaySubscription.id,
-      billingCycle: input.billingCycle,
-      startDate: new Date(),
-      endDate: new Date(),
-      total_count: maxTotalCount,
-      autoRenew: true,
-      gateway: "razorpay",
-      offerApplied,
-      chargeCount: 0,
-      cancelAtPeriodEnd: false,
-      metadata: {
-        authorizationUrl: razorpaySubscription.short_url,
-        offerSource,
-        offerId,
-        discountPercent,
-        couponId,
-        couponCode: couponCodeUsed,
-        basePlanAmount: baseAmountPaise,
-        basePlanAmountINR: baseAmountPaise / 100,
-        firstCycleAmount: firstCycleAmountPaise,
-        firstCycleAmountINR: firstCycleAmountPaise / 100,
-        planName: planContext.plan.name,
-        billingCycle: input.billingCycle,
-        razorpayPlanId: planContext.pricingEntry.razorpayPlanId,
-      },
-    });
-
-    await emitBillingEvent({
-      type: BillingEventType.SUBSCRIPTION_CREATED,
-      userId,
-      actorType: "user",
-      actorId: userId,
-      subjectType: "subscription",
-      subjectId: razorpaySubscription.id,
-      payload: {
-        planSlug: planContext.plan.slug,
-        billingCycle: input.billingCycle,
-        offerSource,
-        offerApplied,
-        discountPercent,
-        basePlanAmountPaise: baseAmountPaise,
-        firstCycleAmountPaise,
-        subscriptionDocId: subscriptionDoc._id.toString(),
-      },
-    });
 
     const responseBody = {
       subscriptionId: razorpaySubscription.id,

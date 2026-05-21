@@ -66,7 +66,51 @@ async function loadSubscription(entity: any) {
     typeof entity?.id === "string" ? entity.id : null;
   if (!razorpaySubscriptionId) return null;
   await dbConnect();
-  return Subscription.findOne({ subscription_id: razorpaySubscriptionId });
+
+  // Atomic upsert: if the doc already exists return it as-is; if not, create
+  // it from the Razorpay webhook payload notes. This handles the case where
+  // the user paid but the browser crashed before /verify was called.
+  const notes = ((entity.notes as Record<string, string>) || {});
+  const baseAmount = Number(notes.basePlanAmount) || 0;
+  const firstCycleAmount = Number(notes.firstCycleAmount) || baseAmount;
+
+  return Subscription.findOneAndUpdate(
+    { subscription_id: razorpaySubscriptionId },
+    {
+      $setOnInsert: {
+        userId: notes.userId || null,
+        planSlug: notes.planSlug || null,
+        status: "created",
+        subscription_id: razorpaySubscriptionId,
+        billingCycle: notes.billingCycle || "monthly",
+        startDate: new Date(),
+        endDate: new Date(),
+        total_count: entity.total_count ?? 360,
+        autoRenew: true,
+        gateway: "razorpay",
+        offerApplied: notes.offerApplied === "true",
+        chargeCount: 0,
+        paid_count: 0,
+        cancelAtPeriodEnd: false,
+        metadata: {
+          authorizationUrl: entity.short_url ?? null,
+          offerSource: notes.offerSource || null,
+          offerId: notes.offerId || null,
+          discountPercent: notes.discountPercent ? Number(notes.discountPercent) : null,
+          couponId: notes.couponId || null,
+          couponCode: notes.couponCode || null,
+          basePlanAmount: baseAmount,
+          basePlanAmountINR: Number(notes.basePlanAmountINR) || 0,
+          firstCycleAmount,
+          firstCycleAmountINR: Number(notes.firstCycleAmountINR) || 0,
+          planName: notes.planName || notes.planSlug || "",
+          billingCycle: notes.billingCycle || "monthly",
+          razorpayPlanId: notes.razorpayPlanId || "",
+        },
+      },
+    },
+    { upsert: true, new: true },
+  );
 }
 
 // ─── Refund handler (subscription payments are refundable via Razorpay) ───

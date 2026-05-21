@@ -10,6 +10,7 @@ import {
   createSubscriptionInvoiceIfMissing,
   syncUserSubscriptionState,
 } from "@/lib/subscriptions/service";
+import { BillingEventType, emitBillingEvent } from "@/lib/billing/events";
 
 /**
  * Razorpay subscription handler signature:
@@ -63,11 +64,58 @@ export async function POST(request: NextRequest) {
 
     await dbConnect();
 
-    const subscriptionDoc = await Subscription.findOne({
+    // Fetch from Razorpay first — notes contain all metadata needed to
+    // reconstruct the Subscription doc if it doesn't exist yet (i.e. the user
+    // paid without the doc having been pre-created).
+    const fetchedSubscription = await razorpay.subscriptions.fetch(razorpay_subscription_id);
+    const rzpNotes = ((fetchedSubscription as any).notes || {}) as Record<string, string>;
+
+    let subscriptionDoc = await Subscription.findOne({
       subscription_id: razorpay_subscription_id,
     });
+
+    const wasNewlyCreated = !subscriptionDoc;
     if (!subscriptionDoc) {
-      return NextResponse.json({ error: "Subscription not found" }, { status: 404 });
+      const baseAmount = Number(rzpNotes.basePlanAmount) || 0;
+      const firstCycleAmount = Number(rzpNotes.firstCycleAmount) || baseAmount;
+      subscriptionDoc = await Subscription.create({
+        userId: rzpNotes.userId,
+        planSlug: rzpNotes.planSlug,
+        status: "created",
+        subscription_id: razorpay_subscription_id,
+        billingCycle: rzpNotes.billingCycle || "monthly",
+        startDate: new Date(),
+        endDate: new Date(),
+        total_count: (fetchedSubscription as any).total_count ?? 360,
+        autoRenew: true,
+        gateway: "razorpay",
+        offerApplied: rzpNotes.offerApplied === "true",
+        chargeCount: 0,
+        paid_count: 0,
+        cancelAtPeriodEnd: false,
+        metadata: {
+          authorizationUrl: (fetchedSubscription as any).short_url ?? null,
+          offerSource: rzpNotes.offerSource || null,
+          offerId: rzpNotes.offerId || null,
+          discountPercent: rzpNotes.discountPercent ? Number(rzpNotes.discountPercent) : null,
+          couponId: rzpNotes.couponId || null,
+          couponCode: rzpNotes.couponCode || null,
+          basePlanAmount: baseAmount,
+          basePlanAmountINR: Number(rzpNotes.basePlanAmountINR) || 0,
+          firstCycleAmount,
+          firstCycleAmountINR: Number(rzpNotes.firstCycleAmountINR) || 0,
+          planName: rzpNotes.planName || rzpNotes.planSlug || "",
+          billingCycle: rzpNotes.billingCycle || "monthly",
+          razorpayPlanId: rzpNotes.razorpayPlanId || "",
+        },
+      });
+    }
+
+    if (!subscriptionDoc?.userId) {
+      return NextResponse.json(
+        { error: "Subscription not found and could not be reconstructed from payment data" },
+        { status: 404 },
+      );
     }
 
     // Idempotency guard: if the webhook handler already processed this payment
@@ -80,8 +128,6 @@ export async function POST(request: NextRequest) {
     if (existingInvoice && subscriptionDoc.status === "active") {
       return NextResponse.json({ success: true, alreadyProcessed: true });
     }
-
-    const fetchedSubscription = await razorpay.subscriptions.fetch(razorpay_subscription_id);
 
     // Use the first-cycle amount from our metadata (which accounts for any offer discount)
     const amountPaise =
@@ -113,6 +159,23 @@ export async function POST(request: NextRequest) {
     );
     subscriptionDoc.paid_count = Math.max(subscriptionDoc.paid_count ?? 0, 1);
     await subscriptionDoc.save();
+
+    if (wasNewlyCreated) {
+      await emitBillingEvent({
+        type: BillingEventType.SUBSCRIPTION_CREATED,
+        userId: subscriptionDoc.userId,
+        actorType: "user",
+        actorId: subscriptionDoc.userId,
+        subjectType: "subscription",
+        subjectId: razorpay_subscription_id,
+        payload: {
+          planSlug: subscriptionDoc.planSlug,
+          billingCycle: subscriptionDoc.billingCycle,
+          offerApplied: subscriptionDoc.offerApplied,
+          source: "verify_route",
+        },
+      });
+    }
 
     await createSubscriptionPaymentIfMissing({
       userId: subscriptionDoc.userId,
