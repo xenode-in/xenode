@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import localFont from "next/font/local";
 import { Libre_Baskerville } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/providers/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { QueryProvider } from "@/components/providers/QueryProvider";
+import CampaignBannerServer from "@/components/banner/CampaignBannerServer";
 
 const suisseIntl = localFont({
   src: "../public/fonts/SuisseIntl-Regular.ttf",
@@ -182,6 +184,9 @@ export default function RootLayout({
             enableSystem
             disableTransitionOnChange
           >
+            <Suspense fallback={null}>
+              <CampaignBannerServer />
+            </Suspense>
             {children}
           </ThemeProvider>
           <Toaster />
