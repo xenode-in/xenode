@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState, Suspense, lazy } from "react";
+import { useEffect, useRef, useState, Suspense, lazy, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Mail, Loader2, CheckCircle2 } from "lucide-react";
+import { Mail, Loader2 } from "lucide-react";
 import { useSession, authClient } from "@/lib/auth/client";
 import { toast } from "sonner";
 
@@ -14,120 +14,138 @@ const Dithering = lazy(() =>
   })),
 );
 
-function getOnboardedFlag(user: unknown): boolean {
-  if (!user || typeof user !== "object" || !("onboarded" in user)) {
-    return false;
-  }
-
-  return !!(user as { onboarded?: boolean }).onboarded;
-}
+const OTP_LENGTH = 6;
+const RESEND_COOLDOWN = 60;
 
 function VerifyEmailContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const emailParam = searchParams.get("email");
-  const errorParam = searchParams.get("error");
   const { data: session, isPending } = useSession();
-  const [isResending, setIsResending] = useState(false);
+
+  const [otp, setOtp] = useState<string[]>(Array(OTP_LENGTH).fill(""));
+  const [isSending, setIsSending] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
   const [isHovered, setIsHovered] = useState(false);
-  const [resendCount, setResendCount] = useState(0);
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+  const hasSentRef = useRef(false);
 
-  const targetEmail = session?.user?.email || emailParam;
+  const targetEmail = emailParam || session?.user?.email || "";
   const isVerified = !!session?.user?.emailVerified;
-  const isOnboarded = getOnboardedFlag(session?.user);
 
-  // Handle errors from the email link
+  // Redirect already-verified users
   useEffect(() => {
-    if (errorParam === "TOKEN_EXPIRED") {
-      toast.error("Your verification link has expired. Please request a new one.");
-    } else if (errorParam === "INVALID_TOKEN") {
-      toast.error("Invalid verification link. Please request a new one.");
-    } else if (errorParam) {
-      toast.error("Failed to verify email. Please try again.");
+    if (!isPending && isVerified) {
+      const onboarded = (session?.user as { onboarded?: boolean } | undefined)?.onboarded;
+      router.replace(onboarded ? "/dashboard" : "/onboarding");
     }
-  }, [errorParam]);
+  }, [isPending, isVerified, router, session]);
 
-  // Poll for verification status
+  // Redirect if no email context
   useEffect(() => {
-    if (!targetEmail) return;
-
-    if (isVerified && !isOnboarded) {
-      toast.success("Email verified successfully!");
-      router.push("/onboarding");
-      return;
+    if (!isPending && !targetEmail) {
+      router.replace("/login");
     }
+  }, [isPending, targetEmail, router]);
 
-    if (isVerified && isOnboarded) {
-      toast.success("Email verified successfully!");
-      router.push("/dashboard");
-      return;
-    }
+  // Send OTP once on mount
+  useEffect(() => {
+    if (!targetEmail || hasSentRef.current) return;
+    hasSentRef.current = true;
+    void sendOtp();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetEmail]);
 
-    const interval = setInterval(async () => {
-      // Refresh session data to check for verification update
-      const { data } = await authClient.getSession();
-      if (!data?.user?.emailVerified) {
-        return;
-      }
+  // Cooldown countdown
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const id = setInterval(() => setCooldown((c) => c - 1), 1000);
+    return () => clearInterval(id);
+  }, [cooldown]);
 
-      const onboarded = getOnboardedFlag(data.user);
-
-      if (onboarded || data.user.emailVerified) {
-        toast.success("Email verified successfully!");
-        router.push(onboarded ? "/dashboard" : "/onboarding");
-      }
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, [isOnboarded, isVerified, router, targetEmail]);
-
-  const handleResend = async () => {
-    if (!targetEmail) return;
-    
-    if (resendCount >= 5) {
-      toast.error("You've requested too many verification emails. Please check your spam folder or wait a while.");
-      return;
-    }
-    
-    setIsResending(true);
+  const sendOtp = useCallback(async () => {
+    if (!targetEmail || isSending) return;
+    setIsSending(true);
     try {
-      const { error } = await authClient.sendVerificationEmail({
+      const { error } = await authClient.emailOtp.sendVerificationOtp({
         email: targetEmail,
-        callbackURL: `${window.location.origin}/onboarding`,
+        type: "email-verification",
       });
-      
       if (error) {
-        toast.error(error.message || "Failed to resend email");
+        toast.error(error.message || "Failed to send code");
       } else {
-        setResendCount(prev => prev + 1);
-        toast.success("Verification email resent!");
+        setCooldown(RESEND_COOLDOWN);
       }
     } catch {
-      toast.error("Something went wrong");
+      toast.error("Something went wrong sending the code");
     } finally {
-      setIsResending(false);
+      setIsSending(false);
+    }
+  }, [targetEmail, isSending]);
+
+  const handleChange = (index: number, value: string) => {
+    // Accept paste of full OTP
+    if (value.length > 1) {
+      const digits = value.replace(/\D/g, "").slice(0, OTP_LENGTH).split("");
+      const next = [...otp];
+      digits.forEach((d, i) => { next[i] = d; });
+      setOtp(next);
+      const focusIdx = Math.min(digits.length, OTP_LENGTH - 1);
+      inputRefs.current[focusIdx]?.focus();
+      return;
+    }
+
+    const digit = value.replace(/\D/g, "");
+    const next = [...otp];
+    next[index] = digit;
+    setOtp(next);
+
+    if (digit && index < OTP_LENGTH - 1) {
+      inputRefs.current[index + 1]?.focus();
     }
   };
 
-  // If there's no session and no email param, user shouldn't be here
-  useEffect(() => {
-      if (!isPending) {
-        if (!session && !emailParam) {
-          router.push("/login");
-        } else if (isVerified && !isOnboarded) {
-          router.push("/onboarding");
-        } else if (isVerified && isOnboarded) {
-          router.push("/dashboard");
+  const handleKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Backspace" && !otp[index] && index > 0) {
+      inputRefs.current[index - 1]?.focus();
+    }
+  };
+
+  const handleVerify = async () => {
+    const code = otp.join("");
+    if (code.length < OTP_LENGTH) {
+      toast.error("Enter the full 6-digit code");
+      return;
+    }
+
+    setIsVerifying(true);
+    try {
+      const { error } = await authClient.emailOtp.verifyEmail({
+        email: targetEmail,
+        otp: code,
+      });
+
+      if (error) {
+        const msg = error.message || "Invalid code";
+        if (msg.toLowerCase().includes("expired")) {
+          toast.error("Code expired. Request a new one.");
+        } else {
+          toast.error(msg);
         }
+        setOtp(Array(OTP_LENGTH).fill(""));
+        inputRefs.current[0]?.focus();
+        return;
       }
-  }, [
-    emailParam,
-    isOnboarded,
-    isPending,
-    isVerified,
-    router,
-    session,
-  ]);
+
+      toast.success("Email verified!");
+      router.push("/onboarding");
+    } catch {
+      toast.error("Something went wrong. Please try again.");
+    } finally {
+      setIsVerifying(false);
+    }
+  };
 
   if (isPending) {
     return (
@@ -137,13 +155,11 @@ function VerifyEmailContent() {
     );
   }
 
-  if ((!session && !emailParam) || (isVerified && isOnboarded)) {
-    return null;
-  }
+  if (!targetEmail || isVerified) return null;
 
   return (
     <div className="flex h-screen w-full bg-background overflow-hidden">
-      {/* Left panel - Dithering Animation */}
+      {/* Left panel */}
       <div
         className="hidden lg:flex lg:w-1/2 relative flex-col justify-between overflow-hidden border-r border-border bg-card"
         onMouseEnter={() => setIsHovered(true)}
@@ -162,7 +178,6 @@ function VerifyEmailContent() {
             />
           </div>
         </Suspense>
-
         <div className="relative z-10 p-12 h-full flex flex-col justify-between text-foreground">
           <Link href="/" className="inline-block">
             <span className="text-4xl font-brand italic text-foreground tracking-tight drop-shadow-sm">
@@ -182,8 +197,8 @@ function VerifyEmailContent() {
 
       {/* Right panel */}
       <div className="flex-1 flex flex-col justify-center px-8 sm:px-16 md:px-24 py-12 overflow-y-auto items-center">
-        <div className="w-full max-w-md mx-auto space-y-8 text-center">
-          <div className="lg:hidden mb-10">
+        <div className="w-full max-w-md mx-auto space-y-8">
+          <div className="lg:hidden mb-10 text-center">
             <Link href="/">
               <span className="text-4xl font-brand italic text-foreground">
                 Xenode
@@ -191,102 +206,75 @@ function VerifyEmailContent() {
             </Link>
           </div>
 
-          <div className="mx-auto w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-6">
+          <div className="mx-auto w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center">
             <Mail className="w-8 h-8 text-primary" />
           </div>
 
-          <div className="space-y-3">
-            <h1 className="text-4xl font-semibold tracking-tight text-foreground">
-              {isVerified ? "Email verified" : "Check your email"}
+          <div className="space-y-2 text-center">
+            <h1 className="text-3xl font-semibold tracking-tight text-foreground">
+              Check your email
             </h1>
             <p className="text-base text-muted-foreground">
-              {isVerified ? (
-                <>
-                  Your email has been verified for{" "}
-                  <span className="font-medium text-foreground">
-                    {targetEmail}
-                  </span>
-                </>
-              ) : (
-                <>
-                  We&apos;ve sent a verification link to{" "}
-                  <span className="font-medium text-foreground">
-                    {targetEmail}
-                  </span>
-                </>
-              )}
+              We sent a 6-digit code to{" "}
+              <span className="font-medium text-foreground">{targetEmail}</span>
             </p>
           </div>
 
-          <div className="bg-muted/50 rounded-2xl p-6 border border-border mt-8 text-left flex gap-4 items-start">
-            <div className="mt-1">
-              <CheckCircle2 className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <h3 className="font-medium text-foreground">
-                {isVerified ? "Continuing to setup" : "Waiting for verification"}
-              </h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                {isVerified
-                  ? "Your account is verified. We'll take you back to onboarding and securely ask for your password again if vault setup still needs it."
-                  : "This page will automatically update once you click the link in your email."}
-              </p>
-            </div>
+          {/* OTP input boxes */}
+          <div className="flex gap-3 justify-center">
+            {Array.from({ length: OTP_LENGTH }).map((_, i) => (
+              <input
+                key={i}
+                ref={(el) => { inputRefs.current[i] = el; }}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={OTP_LENGTH}
+                value={otp[i] || ""}
+                onChange={(e) => handleChange(i, e.target.value)}
+                onKeyDown={(e) => handleKeyDown(i, e)}
+                onFocus={(e) => e.target.select()}
+                className="w-12 h-14 text-center text-xl font-semibold border-2 rounded-lg bg-background text-foreground border-border focus:border-primary focus:outline-none transition-colors"
+                autoComplete={i === 0 ? "one-time-code" : "off"}
+              />
+            ))}
           </div>
 
-          <div className="pt-8 space-y-4">
-            {!isVerified ? (
-              <Button
-                variant="outline"
-                onClick={handleResend}
-                disabled={isResending}
-                className="w-full h-12"
+          <Button
+            onClick={handleVerify}
+            disabled={isVerifying || otp.join("").length < OTP_LENGTH}
+            className="w-full h-12 text-base font-medium"
+          >
+            {isVerifying && <Loader2 className="w-5 h-5 animate-spin mr-2" />}
+            Verify email
+          </Button>
+
+          <div className="text-center space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Didn&apos;t receive the code?{" "}
+              <button
+                onClick={sendOtp}
+                disabled={isSending || cooldown > 0}
+                className="text-primary hover:underline font-medium disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed"
               >
-                {isResending ? (
-                  <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                ) : null}
-                Resend verification email
-              </Button>
-            ) : null}
-            
-            <p className="text-sm text-muted-foreground flex flex-col gap-2">
-              {isVerified ? (
-                <span>
-                  Need to continue on this device?{" "}
-                  <button
-                    onClick={() => router.push("/onboarding")}
-                    className="text-primary hover:underline font-medium"
-                  >
-                    Continue to onboarding
-                  </button>
-                </span>
-              ) : (
-                <span>
-                  Verified on this device?{" "}
-                  <button
-                    onClick={() => {
-                      router.refresh();
-                    }}
-                    className="text-primary hover:underline font-medium"
-                  >
-                    Refresh status
-                  </button>
-                </span>
-              )}
-              <span>
-                Need to use a different email?{" "}
-                <button
-                  onClick={async () => {
-                    if (session) {
-                      await authClient.signOut();
-                    }
-                    router.push("/login");
-                  }}
-                  className="text-primary hover:underline font-medium"
-                >
-                  Sign out
-                </button>
-              </span>
+                {isSending
+                  ? "Sending…"
+                  : cooldown > 0
+                    ? `Resend in ${cooldown}s`
+                    : "Resend code"}
+              </button>
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Wrong account?{" "}
+              <button
+                onClick={async () => {
+                  if (session) await authClient.signOut();
+                  router.push("/login");
+                }}
+                className="text-primary hover:underline font-medium"
+              >
+                Sign out
+              </button>
             </p>
           </div>
         </div>
@@ -297,11 +285,13 @@ function VerifyEmailContent() {
 
 export default function VerifyEmailPage() {
   return (
-    <Suspense fallback={
-      <div className="flex h-screen items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    }>
+    <Suspense
+      fallback={
+        <div className="flex h-screen items-center justify-center bg-background">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      }
+    >
       <VerifyEmailContent />
     </Suspense>
   );

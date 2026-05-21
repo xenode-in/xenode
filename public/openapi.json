@@ -1,0 +1,2123 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "Xenode Internal API",
+    "description": "🔒 **INTERNAL USE ONLY** — This API reference is for internal development and integration purposes. All endpoints require authentication via session cookie or API key bearer token.\n\nXenode is a zero-knowledge encrypted cloud storage platform. The backend never sees raw file contents or unencrypted keys. All E2EE operations (encrypt, decrypt, key wrapping) are performed client-side.",
+    "version": "0.1.0",
+    "contact": {
+      "name": "Xenode Engineering"
+    }
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Current environment"
+    }
+  ],
+  "tags": [
+    { "name": "Auth", "description": "Authentication, sessions, email verification, password recovery" },
+    { "name": "Passkeys", "description": "WebAuthn passkey registration and login" },
+    { "name": "Buckets", "description": "Top-level storage containers" },
+    { "name": "Objects", "description": "File & folder CRUD, listing, metadata" },
+    { "name": "Uploads", "description": "Direct-to-B2 upload flow (presign → upload → complete)" },
+    { "name": "Thumbnails", "description": "Thumbnail URL resolution and batch content delivery" },
+    { "name": "Grid", "description": "Photo grid and gallery-optimized endpoints" },
+    { "name": "Direct Shares", "description": "User-to-user encrypted file sharing" },
+    { "name": "Link Shares", "description": "Public share links with tokens" },
+    { "name": "Keys", "description": "Cryptographic vault & API key management" },
+    { "name": "Subscriptions", "description": "Plan lifecycle — create, verify, pause, resume, cancel, change" },
+    { "name": "Billing", "description": "Invoices, coupon validation" },
+    { "name": "Payments", "description": "Razorpay webhooks and subscription payment processing" },
+    { "name": "Migrations", "description": "Google Photos migration jobs" },
+    { "name": "Drive", "description": "Drive configuration and system bucket setup" },
+    { "name": "Onboarding", "description": "User onboarding flow" },
+    { "name": "Sync", "description": "Offline/cache sync support" },
+    { "name": "Cron", "description": "Scheduled tasks (plan expiry, subscription reconciliation)" },
+    { "name": "Changelog", "description": "Product changelog entries" },
+    { "name": "Waitlist", "description": "Waitlist signups" },
+    { "name": "Admin", "description": "Admin panel — users, stats, billing, blogs, coupons, subscriptions" }
+  ],
+  "security": [
+    { "bearerAuth": [] },
+    { "cookieAuth": [] }
+  ],
+  "paths": {
+
+    "/api/auth/{...all}": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "Auth endpoints (better-auth catch-all)",
+        "description": "All authentication routes handled by better-auth. Includes sign-up, sign-in, email verification, Google OAuth, session management, and token refresh.\n\n**Session:** 7-day expiry, auto-refresh every 24h.\n**Custom fields:** `user.onboarded`, `user.encryptByDefault`.",
+        "parameters": [
+          { "name": "...all", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Auth operation successful" },
+          "401": { "description": "Unauthorized" },
+          "429": { "description": "Rate limited (verification email: 3 per 10 min)" }
+        }
+      },
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Auth endpoints (better-auth catch-all)",
+        "parameters": [
+          { "name": "...all", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Auth operation successful" },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+
+    "/api/auth/check-email": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Check email availability",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["email"],
+                "properties": {
+                  "email": { "type": "string", "format": "email" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Email check result", "content": { "application/json": { "schema": { "type": "object", "properties": { "ok": { "type": "boolean" } } } } } },
+          "400": { "description": "Email required" }
+        }
+      }
+    },
+
+    "/api/auth/verify-password": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Verify current password",
+        "description": "Verifies the user's current password before sensitive operations.",
+        "responses": {
+          "200": { "description": "Password verified" },
+          "401": { "description": "Invalid password" }
+        }
+      }
+    },
+
+    "/api/auth/accounts": {
+      "get": {
+        "tags": ["Auth"],
+        "summary": "List linked accounts",
+        "description": "Returns all OAuth/credential accounts linked to the authenticated user.",
+        "responses": {
+          "200": { "description": "List of linked accounts" }
+        }
+      }
+    },
+
+    "/api/auth/recovery/bootstrap": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Bootstrap account recovery",
+        "description": "Initiates the account recovery process for vault/key recovery.",
+        "responses": {
+          "200": { "description": "Recovery bootstrapped" },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+
+    "/api/auth/recovery/complete": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Complete account recovery",
+        "description": "Finalizes the recovery process and restores vault access.",
+        "responses": {
+          "200": { "description": "Recovery completed" },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+
+    "/api/passkey": {
+      "get": {
+        "tags": ["Passkeys"],
+        "summary": "List registered passkeys",
+        "responses": {
+          "200": { "description": "List of passkeys" },
+          "401": { "description": "Unauthorized" }
+        }
+      },
+      "delete": {
+        "tags": ["Passkeys"],
+        "summary": "Delete a passkey",
+        "responses": {
+          "200": { "description": "Passkey deleted" },
+          "401": { "description": "Unauthorized" }
+        }
+      }
+    },
+
+    "/api/passkey/register/start": {
+      "post": {
+        "tags": ["Passkeys"],
+        "summary": "Start passkey registration",
+        "description": "Generates WebAuthn registration options for the user's browser.",
+        "responses": {
+          "200": { "description": "Registration options returned" }
+        }
+      }
+    },
+
+    "/api/passkey/register/finish": {
+      "post": {
+        "tags": ["Passkeys"],
+        "summary": "Finish passkey registration",
+        "description": "Verifies and stores the WebAuthn credential after user confirmation.",
+        "responses": {
+          "200": { "description": "Passkey registered" }
+        }
+      }
+    },
+
+    "/api/passkey/login/start": {
+      "post": {
+        "tags": ["Passkeys"],
+        "summary": "Start passkey login",
+        "description": "Generates WebAuthn authentication options.",
+        "responses": {
+          "200": { "description": "Authentication options returned" }
+        }
+      }
+    },
+
+    "/api/passkey/login/finish": {
+      "post": {
+        "tags": ["Passkeys"],
+        "summary": "Finish passkey login",
+        "description": "Verifies the WebAuthn assertion and creates a session.",
+        "responses": {
+          "200": { "description": "Login successful, session created" }
+        }
+      }
+    },
+
+    "/api/buckets": {
+      "get": {
+        "tags": ["Buckets"],
+        "summary": "List all buckets",
+        "responses": {
+          "200": {
+            "description": "List of buckets",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "buckets": { "type": "array", "items": { "$ref": "#/components/schemas/Bucket" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Buckets"],
+        "summary": "Create a bucket",
+        "description": "Rate-limited to 5 requests per minute per user.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name"],
+                "properties": {
+                  "name": { "type": "string", "example": "My Vault" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Bucket created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Bucket" } } } },
+          "409": { "description": "Bucket name conflict" },
+          "429": { "description": "Rate limited" }
+        }
+      }
+    },
+
+    "/api/buckets/{id}": {
+      "delete": {
+        "tags": ["Buckets"],
+        "summary": "Delete a bucket",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Bucket deleted" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+
+    "/api/drive/config": {
+      "get": {
+        "tags": ["Drive"],
+        "summary": "Get drive configuration",
+        "description": "Returns the system bucket and user's root prefix. Auto-creates the global B2 bucket if it doesn't exist yet.",
+        "responses": {
+          "200": {
+            "description": "Drive config",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "bucket": { "$ref": "#/components/schemas/Bucket" },
+                    "rootPrefix": { "type": "string", "example": "users/user_abc123/" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/objects": {
+      "get": {
+        "tags": ["Objects"],
+        "summary": "List files and folders (paginated)",
+        "description": "Returns files and folders with full metadata, signed thumbnail/optimized URLs. Supports pagination, filtering by bucket/folder, content type, and media category.",
+        "parameters": [
+          { "name": "bucketId", "in": "query", "schema": { "type": "string" } },
+          { "name": "folderId", "in": "query", "schema": { "type": "string" } },
+          { "name": "contentType", "in": "query", "schema": { "type": "string" }, "description": "Filter by content type prefix (e.g. 'image')" },
+          { "name": "mediaCategory", "in": "query", "schema": { "type": "string" }, "description": "Filter by media category" },
+          { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of objects",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "objects": { "type": "array", "items": { "$ref": "#/components/schemas/StorageObject" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/objects/{id}": {
+      "get": {
+        "tags": ["Objects"],
+        "summary": "Get file download URL",
+        "description": "Returns pre-signed download URL (or chunk URLs for chunked files) with encryption metadata.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Download details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "url": { "type": "string", "format": "uri" },
+                    "chunkUrls": { "type": "array", "items": { "type": "string", "format": "uri" } },
+                    "isEncrypted": { "type": "boolean" },
+                    "encryptedDEK": { "type": "string" },
+                    "iv": { "type": "string" },
+                    "encryptedName": { "type": "string" },
+                    "contentType": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "description": "Object not found" }
+        }
+      },
+      "patch": {
+        "tags": ["Objects"],
+        "summary": "Update object metadata (tags, position)",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "tags": { "type": "array", "items": { "type": "string" }, "example": ["work", "important"] },
+                  "position": { "type": "integer", "example": 1 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Object updated" },
+          "404": { "description": "Not found" }
+        }
+      },
+      "delete": {
+        "tags": ["Objects"],
+        "summary": "Delete a file or folder",
+        "description": "Deletes from B2 storage and frees storage quota.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Object deleted" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+
+    "/api/objects/{id}/content": {
+      "get": {
+        "tags": ["Objects"],
+        "summary": "Get file content / stream URL",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "File content or stream URL" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+
+    "/api/objects/{id}/metadata": {
+      "get": {
+        "tags": ["Objects"],
+        "summary": "Get single object metadata",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Object metadata" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+
+    "/api/objects/{id}/update-content": {
+      "post": {
+        "tags": ["Objects"],
+        "summary": "Update file content (re-upload)",
+        "description": "Replaces the binary content of an existing object with a new version.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Content updated" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+
+    "/api/objects/{id}/complete-update": {
+      "post": {
+        "tags": ["Objects"],
+        "summary": "Complete content update",
+        "description": "Finalizes a content update after direct-to-B2 re-upload.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Update completed" }
+        }
+      }
+    },
+
+    "/api/objects/folder": {
+      "post": {
+        "tags": ["Objects"],
+        "summary": "Create a virtual folder",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["name", "bucketId"],
+                "properties": {
+                  "name": { "type": "string", "example": "Documents" },
+                  "parentId": { "type": "string" },
+                  "bucketId": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Folder created" }
+        }
+      },
+      "delete": {
+        "tags": ["Objects"],
+        "summary": "Delete a folder",
+        "responses": {
+          "200": { "description": "Folder deleted" }
+        }
+      }
+    },
+
+    "/api/objects/move": {
+      "post": {
+        "tags": ["Objects"],
+        "summary": "Move files or folders",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["objectIds", "destinationFolderId"],
+                "properties": {
+                  "objectIds": { "type": "array", "items": { "type": "string" } },
+                  "destinationFolderId": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Objects moved" }
+        }
+      }
+    },
+
+    "/api/objects/reorder": {
+      "patch": {
+        "tags": ["Objects"],
+        "summary": "Reorder objects in a bucket",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["bucketId", "items"],
+                "properties": {
+                  "bucketId": { "type": "string" },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": { "type": "string" },
+                        "position": { "type": "integer" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Items reordered" }
+        }
+      }
+    },
+
+    "/api/objects/metadata": {
+      "get": {
+        "tags": ["Grid"],
+        "summary": "Get lightweight object metadata (IDs + dates only)",
+        "description": "Returns `{ _id, createdAt }` for every object in a bucket in a single unpaginated response. Used by the gallery to layout placeholders and the scrubber timeline. ~25 KB gzipped for 5,000 photos.",
+        "parameters": [
+          { "name": "bucketId", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "contentType", "in": "query", "schema": { "type": "string" } },
+          { "name": "mediaCategory", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lightweight metadata list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": { "type": "integer" },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "_id": { "type": "string" },
+                          "createdAt": { "type": "string", "format": "date-time" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/objects/grid": {
+      "get": {
+        "tags": ["Grid"],
+        "summary": "Get grid-optimized object data",
+        "description": "Returns all fields needed to render the photo grid (thumbnail key, aspect ratio, dates, encryption status) in a single request — no pagination. ~55 KB gzipped for ~1,700 photos.",
+        "parameters": [
+          { "name": "bucketId", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "mediaCategory", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Grid items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": { "type": "integer" },
+                    "items": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/GridItem" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/objects/batch": {
+      "post": {
+        "tags": ["Grid"],
+        "summary": "Batch-fetch objects by IDs (viewport-driven)",
+        "description": "Returns full object data with signed thumbnail/optimized URLs for a batch of IDs. Max 200 IDs per request. Uses POST to avoid URL length limits and prevent CDN caching of short-TTL signed URLs.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["bucketId", "ids"],
+                "properties": {
+                  "bucketId": { "type": "string" },
+                  "ids": { "type": "array", "items": { "type": "string" }, "maxItems": 200 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Object map keyed by ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": { "$ref": "#/components/schemas/StorageObject" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/objects/presign-upload": {
+      "post": {
+        "tags": ["Uploads"],
+        "summary": "Request pre-signed upload URL",
+        "description": "Generates a pre-signed URL for direct-to-B2 upload. Checks storage quotas.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["bucketId", "fileSize", "fileType", "fileName"],
+                "properties": {
+                  "bucketId": { "type": "string" },
+                  "fileSize": { "type": "integer", "example": 1048576 },
+                  "fileType": { "type": "string", "example": "image/jpeg" },
+                  "fileName": { "type": "string", "example": "photo.jpg" },
+                  "prefix": { "type": "string", "description": "Optional virtual path prefix" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pre-signed upload URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "uploadUrl": { "type": "string", "format": "uri" },
+                    "objectKey": { "type": "string" },
+                    "bucketId": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "402": { "description": "Storage quota exceeded", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QuotaExceededError" } } } }
+        }
+      }
+    },
+
+    "/api/objects/presign-upload-multipart": {
+      "post": {
+        "tags": ["Uploads"],
+        "summary": "Request multipart pre-signed upload URLs",
+        "description": "For very large files. Generates multipart pre-signed URLs for chunked direct-to-B2 upload.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["bucketId", "fileSize", "fileType", "fileName"],
+                "properties": {
+                  "bucketId": { "type": "string" },
+                  "fileSize": { "type": "integer" },
+                  "fileType": { "type": "string" },
+                  "fileName": { "type": "string" },
+                  "prefix": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Multipart upload URLs generated" },
+          "402": { "description": "Storage quota exceeded" }
+        }
+      }
+    },
+
+    "/api/objects/complete-upload": {
+      "post": {
+        "tags": ["Uploads"],
+        "summary": "Complete upload (notify backend)",
+        "description": "After direct-to-B2 upload succeeds, notifies backend to save metadata, apply E2EE details, and increment storage quota.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["objectKey", "bucketId", "size", "contentType"],
+                "properties": {
+                  "objectKey": { "type": "string", "example": "users/user_id/folder/photo.jpg" },
+                  "bucketId": { "type": "string" },
+                  "size": { "type": "integer", "example": 1048576 },
+                  "contentType": { "type": "string", "example": "image/jpeg" },
+                  "isEncrypted": { "type": "boolean", "default": false },
+                  "encryptedDEK": { "type": "string", "description": "Base64 encrypted Data Encryption Key" },
+                  "iv": { "type": "string", "description": "Base64 Initialization Vector" },
+                  "encryptedName": { "type": "string" },
+                  "isChunked": { "type": "boolean", "default": false }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "Upload completed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StorageObject" } } } }
+        }
+      }
+    },
+
+    "/api/objects/upload": {
+      "post": {
+        "tags": ["Uploads"],
+        "summary": "Upload file via server (multipart/form-data)",
+        "description": "Alternative to the presign flow. Uploads file through the Next.js server directly to B2. Uses `multipart/form-data`. Enforces storage access and quota.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["file", "bucketId"],
+                "properties": {
+                  "file": { "type": "string", "format": "binary" },
+                  "bucketId": { "type": "string" },
+                  "encryptedName": { "type": "string" },
+                  "isEncrypted": { "type": "string", "enum": ["true", "false"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "File uploaded", "content": { "application/json": { "schema": { "type": "object", "properties": { "object": { "$ref": "#/components/schemas/StorageObject" } } } } } },
+          "402": { "description": "Subscription required or quota exceeded" },
+          "502": { "description": "B2 upload failure" }
+        }
+      }
+    },
+
+    "/api/objects/update-metadata": {
+      "post": {
+        "tags": ["Objects"],
+        "summary": "Update object metadata (migration)",
+        "description": "Updates metadata for a storage object, typically after a Google Photos migration upload. Accepts `takenAt`, `createdAt`, `description`, `googlePhotosUrl`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["objectKey"],
+                "properties": {
+                  "objectKey": { "type": "string" },
+                  "bucketId": { "type": "string" },
+                  "takenAt": { "type": "number", "description": "Unix timestamp (seconds)" },
+                  "createdAt": { "type": "number", "description": "Unix timestamp (seconds)" },
+                  "description": { "type": "string" },
+                  "googlePhotosUrl": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Metadata updated" },
+          "404": { "description": "Object not found" }
+        }
+      }
+    },
+
+    "/api/objects/thumbnail": {
+      "get": {
+        "tags": ["Thumbnails"],
+        "summary": "Get thumbnail URL by key",
+        "description": "Returns a signed download URL for a thumbnail by its B2 key. Auth is optional for `shares/` prefixed keys.",
+        "parameters": [
+          { "name": "key", "in": "query", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Signed thumbnail URL", "content": { "application/json": { "schema": { "type": "object", "properties": { "url": { "type": "string", "format": "uri" } } } } } },
+          "403": { "description": "Forbidden — key doesn't belong to user" }
+        }
+      }
+    },
+
+    "/api/objects/thumbnail/batch": {
+      "post": {
+        "tags": ["Thumbnails"],
+        "summary": "Batch-fetch thumbnail content",
+        "description": "Returns signed thumbnail URLs for multiple objects at once.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "keys": { "type": "array", "items": { "type": "string" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Batch thumbnail URLs" }
+        }
+      }
+    },
+
+    "/api/share": {
+      "get": {
+        "tags": ["Link Shares"],
+        "summary": "List outbound share links",
+        "responses": {
+          "200": { "description": "List of shares" }
+        }
+      },
+      "post": {
+        "tags": ["Link Shares"],
+        "summary": "Create a share link",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["objectId", "accessType"],
+                "properties": {
+                  "objectId": { "type": "string" },
+                  "accessType": { "type": "string", "enum": ["download", "view"] },
+                  "expiresIn": { "type": "integer", "description": "Hours until expiry", "example": 24 },
+                  "maxDownloads": { "type": "integer", "example": 5 },
+                  "password": { "type": "string" },
+                  "shareEncryptedDEK": { "type": "string" },
+                  "shareKeyIv": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Share link created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": { "type": "string" },
+                    "shareUrl": { "type": "string", "format": "uri" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/share/shared-with-me": {
+      "get": {
+        "tags": ["Link Shares"],
+        "summary": "List inbound shares",
+        "responses": {
+          "200": { "description": "Files shared with the user" }
+        }
+      }
+    },
+
+    "/api/share/{token}": {
+      "get": {
+        "tags": ["Link Shares"],
+        "summary": "Get share link details",
+        "parameters": [
+          { "name": "token", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Share details (may require password)" },
+          "404": { "description": "Share not found or expired" }
+        }
+      },
+      "patch": {
+        "tags": ["Link Shares"],
+        "summary": "Update share link settings",
+        "parameters": [
+          { "name": "token", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Share updated" }
+        }
+      },
+      "delete": {
+        "tags": ["Link Shares"],
+        "summary": "Revoke a share link",
+        "parameters": [
+          { "name": "token", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Share revoked" }
+        }
+      }
+    },
+
+    "/api/share/{token}/download": {
+      "post": {
+        "tags": ["Link Shares"],
+        "summary": "Download shared file",
+        "description": "Validates access (password if required) and returns a signed download URL.",
+        "parameters": [
+          { "name": "token", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Download URL returned" },
+          "404": { "description": "Share not found" }
+        }
+      }
+    },
+
+    "/api/share/{token}/stream": {
+      "post": {
+        "tags": ["Link Shares"],
+        "summary": "Stream shared file",
+        "description": "Returns a streaming URL for preview/playback of shared content.",
+        "parameters": [
+          { "name": "token", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Stream URL returned" }
+        }
+      }
+    },
+
+    "/api/direct-shares": {
+      "post": {
+        "tags": ["Direct Shares"],
+        "summary": "Create a direct share (user-to-user)",
+        "description": "Shares an encrypted file directly with specific users. Each recipient gets a wrapped share key for their own vault.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["objectId", "recipients"],
+                "properties": {
+                  "objectId": { "type": "string" },
+                  "shareEncryptedDEK": { "type": "string" },
+                  "shareKeyIv": { "type": "string" },
+                  "shareEncryptedName": { "type": "string" },
+                  "shareEncryptedContentType": { "type": "string" },
+                  "shareEncryptedThumbnail": { "type": "string" },
+                  "recipients": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["recipientUserId", "recipientEmail", "wrappedShareKey"],
+                      "properties": {
+                        "recipientUserId": { "type": "string" },
+                        "recipientEmail": { "type": "string", "format": "email" },
+                        "wrappedShareKey": { "type": "string" },
+                        "accessType": { "type": "string", "enum": ["download", "view"], "default": "download" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Direct share created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "directShareId": { "type": "string" },
+                    "recipientCount": { "type": "integer" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": ["Direct Shares"],
+        "summary": "List outbound direct shares",
+        "responses": {
+          "200": { "description": "List of direct shares created by the user" }
+        }
+      }
+    },
+
+    "/api/direct-shares/shared-with-me": {
+      "get": {
+        "tags": ["Direct Shares"],
+        "summary": "List inbound direct shares",
+        "responses": {
+          "200": { "description": "Files shared directly with the user" }
+        }
+      }
+    },
+
+    "/api/direct-shares/recipients": {
+      "post": {
+        "tags": ["Direct Shares"],
+        "summary": "Search/resolve recipients",
+        "description": "Looks up users by email for the direct share recipient picker.",
+        "responses": {
+          "200": { "description": "Matching recipients" }
+        }
+      }
+    },
+
+    "/api/direct-shares/{id}": {
+      "get": {
+        "tags": ["Direct Shares"],
+        "summary": "Get direct share details",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Direct share details" },
+          "404": { "description": "Not found" }
+        }
+      },
+      "delete": {
+        "tags": ["Direct Shares"],
+        "summary": "Revoke a direct share",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Direct share revoked" }
+        }
+      }
+    },
+
+    "/api/direct-shares/{id}/download": {
+      "get": {
+        "tags": ["Direct Shares"],
+        "summary": "Download direct-shared file",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Download URL" }
+        }
+      }
+    },
+
+    "/api/direct-shares/{id}/stream": {
+      "get": {
+        "tags": ["Direct Shares"],
+        "summary": "Stream direct-shared file",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Stream URL" }
+        }
+      }
+    },
+
+    "/api/keys/vault": {
+      "get": {
+        "tags": ["Keys"],
+        "summary": "Get vault configuration",
+        "responses": {
+          "200": { "description": "Vault config" }
+        }
+      },
+      "post": {
+        "tags": ["Keys"],
+        "summary": "Setup vault",
+        "description": "Initializes the user's cryptographic vault for E2EE operations.",
+        "responses": {
+          "201": { "description": "Vault created" }
+        }
+      }
+    },
+
+    "/api/keys": {
+      "get": {
+        "tags": ["Keys"],
+        "summary": "List API keys",
+        "description": "Returns up to 10 API keys for the authenticated user.",
+        "responses": {
+          "200": { "description": "List of API keys" }
+        }
+      },
+      "post": {
+        "tags": ["Keys"],
+        "summary": "Create API key",
+        "responses": {
+          "201": { "description": "API key created" }
+        }
+      }
+    },
+
+    "/api/keys/{id}": {
+      "delete": {
+        "tags": ["Keys"],
+        "summary": "Revoke API key",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "API key revoked" }
+        }
+      }
+    },
+
+    "/api/subscriptions/create": {
+      "post": {
+        "tags": ["Subscriptions"],
+        "summary": "Create subscription",
+        "description": "Creates a Razorpay recurring subscription. Supports coupon codes and auto-applied campaign offers. Idempotent with `Idempotency-Key` header.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["planSlug", "billingCycle"],
+                "properties": {
+                  "planSlug": { "type": "string", "example": "pro" },
+                  "billingCycle": { "type": "string", "enum": ["monthly", "quarterly", "yearly"] },
+                  "couponCode": { "type": "string" },
+                  "phone": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Subscription created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "subscriptionId": { "type": "string" },
+                    "razorpayKeyId": { "type": "string" },
+                    "shortUrl": { "type": "string" },
+                    "offerApplied": { "type": "boolean" },
+                    "offerSource": { "type": "string", "enum": ["coupon", "campaign", null] },
+                    "amount": { "type": "number", "description": "Amount in INR" }
+                  }
+                }
+              }
+            }
+          },
+          "409": { "description": "Active subscription already exists" }
+        }
+      }
+    },
+
+    "/api/subscriptions/verify": {
+      "post": {
+        "tags": ["Subscriptions"],
+        "summary": "Verify subscription payment",
+        "description": "Verifies Razorpay payment signature after checkout.",
+        "responses": {
+          "200": { "description": "Payment verified" }
+        }
+      }
+    },
+
+    "/api/subscriptions/status": {
+      "get": {
+        "tags": ["Subscriptions"],
+        "summary": "Get subscription status",
+        "responses": {
+          "200": {
+            "description": "Current subscription status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "enum": ["none", "active", "pending", "halted", "cancelled", "paused"] },
+                    "subscription": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "id": { "type": "string" },
+                        "subscriptionId": { "type": "string" },
+                        "cancelAtPeriodEnd": { "type": "boolean" },
+                        "authorizationUrl": { "type": "string", "nullable": true }
+                      }
+                    },
+                    "currentPeriodEnd": { "type": "string", "format": "date-time", "nullable": true },
+                    "offerApplied": { "type": "boolean" },
+                    "nextBillingAmount": { "type": "number", "nullable": true }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/subscriptions/change-plan": {
+      "post": {
+        "tags": ["Subscriptions"],
+        "summary": "Change subscription plan",
+        "description": "Upgrade or downgrade. Supports `immediate` or `period_end` effective modes. Computes proration informationally. Idempotent.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["newPlanSlug", "newBillingCycle", "effective"],
+                "properties": {
+                  "newPlanSlug": { "type": "string" },
+                  "newBillingCycle": { "type": "string", "enum": ["monthly", "quarterly", "yearly"] },
+                  "effective": { "type": "string", "enum": ["immediate", "period_end"] }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Plan changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "effective": { "type": "string" },
+                    "newPlanSlug": { "type": "string" },
+                    "newBillingCycle": { "type": "string" },
+                    "proration": { "type": "object", "nullable": true },
+                    "creditOwedINR": { "type": "number" }
+                  }
+                }
+              }
+            }
+          },
+          "404": { "description": "No active subscription" },
+          "409": { "description": "Subscription not active" }
+        }
+      }
+    },
+
+    "/api/subscriptions/pause": {
+      "post": {
+        "tags": ["Subscriptions"],
+        "summary": "Pause subscription",
+        "responses": {
+          "200": { "description": "Subscription paused" }
+        }
+      }
+    },
+
+    "/api/subscriptions/resume": {
+      "post": {
+        "tags": ["Subscriptions"],
+        "summary": "Resume subscription",
+        "responses": {
+          "200": { "description": "Subscription resumed" }
+        }
+      }
+    },
+
+    "/api/subscriptions/cancel": {
+      "post": {
+        "tags": ["Subscriptions"],
+        "summary": "Cancel subscription",
+        "responses": {
+          "200": { "description": "Subscription cancelled" }
+        }
+      }
+    },
+
+    "/api/billing/invoices": {
+      "get": {
+        "tags": ["Billing"],
+        "summary": "List invoices",
+        "description": "Returns up to 100 invoices for the authenticated user, newest first. Joined with subscription data for plan/cycle info.",
+        "responses": {
+          "200": {
+            "description": "Invoice list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "invoices": {
+                      "type": "array",
+                      "items": { "$ref": "#/components/schemas/Invoice" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+
+    "/api/billing/invoices/{id}": {
+      "get": {
+        "tags": ["Billing"],
+        "summary": "Get invoice details",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Invoice details" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+
+    "/api/coupons/validate": {
+      "post": {
+        "tags": ["Billing"],
+        "summary": "Validate a coupon code",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["code"],
+                "properties": {
+                  "code": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Coupon valid" },
+          "400": { "description": "Invalid coupon" }
+        }
+      }
+    },
+
+    "/api/payment/razorpay/webhook": {
+      "post": {
+        "tags": ["Payments"],
+        "summary": "Razorpay payment webhook",
+        "description": "Receives Razorpay payment event webhooks (payment.authorized, payment.captured, payment.failed, etc.).",
+        "security": [],
+        "responses": {
+          "200": { "description": "Webhook processed" }
+        }
+      }
+    },
+
+    "/api/payment/razorpay/subscription/webhook": {
+      "post": {
+        "tags": ["Payments"],
+        "summary": "Razorpay subscription webhook",
+        "description": "Handles subscription lifecycle events (subscription.activated, subscription.charged, subscription.cancelled, etc.).",
+        "security": [],
+        "responses": {
+          "200": { "description": "Webhook processed" }
+        }
+      }
+    },
+
+    "/api/migrations": {
+      "get": {
+        "tags": ["Migrations"],
+        "summary": "List migration jobs",
+        "description": "Returns all Google Photos migration jobs for the authenticated user.",
+        "responses": {
+          "200": { "description": "List of migration jobs" }
+        }
+      }
+    },
+
+    "/api/migrations/{id}": {
+      "get": {
+        "tags": ["Migrations"],
+        "summary": "Get migration job details",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Migration job details" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+
+    "/api/migrations/{id}/progress": {
+      "get": {
+        "tags": ["Migrations"],
+        "summary": "Get migration progress",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Current progress" }
+        }
+      }
+    },
+
+    "/api/migrations/{id}/cancel": {
+      "post": {
+        "tags": ["Migrations"],
+        "summary": "Cancel a migration job",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Migration cancelled" }
+        }
+      }
+    },
+
+    "/api/migrations/debug/flush-redis": {
+      "post": {
+        "tags": ["Migrations"],
+        "summary": "Flush Redis migration cache (debug)",
+        "description": "⚠️ Debug endpoint — flushes migration-related Redis keys.",
+        "responses": {
+          "200": { "description": "Redis flushed" }
+        }
+      }
+    },
+
+    "/api/files/sync": {
+      "get": {
+        "tags": ["Sync"],
+        "summary": "Get sync state",
+        "description": "Returns current sync state for keeping mobile app caches up to date.",
+        "responses": {
+          "200": { "description": "Sync state" }
+        }
+      }
+    },
+
+    "/api/files/{bucket}/{...key}": {
+      "get": {
+        "tags": ["Objects"],
+        "summary": "Get file by bucket and key path",
+        "description": "Direct file access via bucket name and full key path.",
+        "parameters": [
+          { "name": "bucket", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "...key", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "File data or download URL" }
+        }
+      }
+    },
+
+    "/api/onboarding/complete": {
+      "post": {
+        "tags": ["Onboarding"],
+        "summary": "Complete onboarding",
+        "description": "Sets `user.onboarded` to `true`.",
+        "responses": {
+          "200": { "description": "Onboarding completed" }
+        }
+      }
+    },
+
+    "/api/changelog": {
+      "get": {
+        "tags": ["Changelog"],
+        "summary": "List changelog entries",
+        "responses": {
+          "200": { "description": "Changelog entries" }
+        }
+      }
+    },
+
+    "/api/changelog/{slug}": {
+      "get": {
+        "tags": ["Changelog"],
+        "summary": "Get changelog entry by slug",
+        "parameters": [
+          { "name": "slug", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Changelog entry" },
+          "404": { "description": "Not found" }
+        }
+      }
+    },
+
+    "/api/waitlist": {
+      "post": {
+        "tags": ["Waitlist"],
+        "summary": "Join waitlist",
+        "security": [],
+        "responses": {
+          "200": { "description": "Added to waitlist" }
+        }
+      },
+      "get": {
+        "tags": ["Waitlist"],
+        "summary": "Get waitlist entries",
+        "responses": {
+          "200": { "description": "Waitlist data" }
+        }
+      }
+    },
+
+    "/api/cron/expire-plans": {
+      "get": {
+        "tags": ["Cron"],
+        "summary": "Expire overdue plans",
+        "description": "Scheduled job that expires plans past their end date. Requires `Authorization: Bearer <CRON_SECRET>`.",
+        "security": [{ "cronAuth": [] }],
+        "responses": {
+          "200": { "description": "Expiry job completed" }
+        }
+      }
+    },
+
+    "/api/cron/reconcile-subscriptions": {
+      "get": {
+        "tags": ["Cron"],
+        "summary": "Reconcile subscriptions with Razorpay",
+        "description": "Syncs local subscription state with Razorpay. Requires `Authorization: Bearer <CRON_SECRET>`.",
+        "security": [{ "cronAuth": [] }],
+        "responses": {
+          "200": { "description": "Reconciliation completed" }
+        }
+      }
+    },
+
+    "/api/admin/login": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Admin login",
+        "security": [],
+        "responses": {
+          "200": { "description": "Admin session created" },
+          "401": { "description": "Invalid credentials" }
+        }
+      }
+    },
+
+    "/api/admin/logout": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Admin logout",
+        "responses": {
+          "200": { "description": "Admin session destroyed" }
+        }
+      }
+    },
+
+    "/api/admin/me": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Get current admin profile",
+        "responses": {
+          "200": { "description": "Admin profile" },
+          "401": { "description": "Not authenticated" }
+        }
+      }
+    },
+
+    "/api/admin/stats": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Get platform statistics",
+        "description": "Returns aggregate stats: total users, storage usage, active subscriptions, revenue, etc.",
+        "responses": {
+          "200": { "description": "Platform stats" }
+        }
+      }
+    },
+
+    "/api/admin/logs": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Get audit logs",
+        "responses": {
+          "200": { "description": "Audit logs" }
+        }
+      }
+    },
+
+    "/api/admin/users": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List all users",
+        "responses": {
+          "200": { "description": "User list" }
+        }
+      }
+    },
+
+    "/api/admin/users/{userId}": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Get user details",
+        "parameters": [
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "User details" }
+        }
+      },
+      "patch": {
+        "tags": ["Admin"],
+        "summary": "Update user",
+        "parameters": [
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "User updated" }
+        }
+      },
+      "delete": {
+        "tags": ["Admin"],
+        "summary": "Delete user",
+        "parameters": [
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "User deleted" }
+        }
+      }
+    },
+
+    "/api/admin/users/{userId}/plan": {
+      "patch": {
+        "tags": ["Admin"],
+        "summary": "Update user plan (admin override)",
+        "parameters": [
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Plan updated" }
+        }
+      }
+    },
+
+    "/api/admin/users/{userId}/storage": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Get user storage usage",
+        "parameters": [
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Storage usage" }
+        }
+      }
+    },
+
+    "/api/admin/admins": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List admin accounts",
+        "responses": {
+          "200": { "description": "Admin list" }
+        }
+      },
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Create admin account",
+        "responses": {
+          "201": { "description": "Admin created" }
+        }
+      }
+    },
+
+    "/api/admin/admins/{adminId}": {
+      "delete": {
+        "tags": ["Admin"],
+        "summary": "Delete admin account",
+        "parameters": [
+          { "name": "adminId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Admin deleted" }
+        }
+      }
+    },
+
+    "/api/admin/subscriptions": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List all subscriptions",
+        "responses": {
+          "200": { "description": "Subscription list" }
+        }
+      }
+    },
+
+    "/api/admin/subscriptions/plans/create": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Create subscription plan",
+        "responses": {
+          "201": { "description": "Plan created" }
+        }
+      }
+    },
+
+    "/api/admin/subscriptions/{id}/cancel": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Admin-cancel a subscription",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Subscription cancelled" }
+        }
+      }
+    },
+
+    "/api/admin/pricing": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Get pricing configuration",
+        "responses": {
+          "200": { "description": "Pricing config" }
+        }
+      },
+      "patch": {
+        "tags": ["Admin"],
+        "summary": "Update pricing configuration",
+        "responses": {
+          "200": { "description": "Pricing updated" }
+        }
+      }
+    },
+
+    "/api/admin/pricing/plans-public": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Get public pricing plans",
+        "security": [],
+        "responses": {
+          "200": { "description": "Public pricing plans" }
+        }
+      }
+    },
+
+    "/api/admin/coupons": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List coupons",
+        "responses": {
+          "200": { "description": "Coupon list" }
+        }
+      },
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Create coupon",
+        "responses": {
+          "201": { "description": "Coupon created" }
+        }
+      }
+    },
+
+    "/api/admin/coupons/{id}": {
+      "patch": {
+        "tags": ["Admin"],
+        "summary": "Update coupon",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Coupon updated" }
+        }
+      },
+      "delete": {
+        "tags": ["Admin"],
+        "summary": "Delete coupon",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Coupon deleted" }
+        }
+      }
+    },
+
+    "/api/admin/billing/analytics": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Get billing analytics",
+        "description": "Revenue, MRR, churn, conversion metrics.",
+        "responses": {
+          "200": { "description": "Billing analytics" }
+        }
+      }
+    },
+
+    "/api/admin/billing/audit": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Get billing audit log",
+        "responses": {
+          "200": { "description": "Billing audit events" }
+        }
+      }
+    },
+
+    "/api/admin/billing/failed-payments": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List failed payments",
+        "responses": {
+          "200": { "description": "Failed payment list" }
+        }
+      }
+    },
+
+    "/api/admin/billing/campaigns": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List billing campaigns",
+        "responses": {
+          "200": { "description": "Campaign list" }
+        }
+      },
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Create billing campaign",
+        "responses": {
+          "201": { "description": "Campaign created" }
+        }
+      }
+    },
+
+    "/api/admin/billing/campaigns/{id}": {
+      "patch": {
+        "tags": ["Admin"],
+        "summary": "Update billing campaign",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Campaign updated" }
+        }
+      },
+      "delete": {
+        "tags": ["Admin"],
+        "summary": "Delete billing campaign",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Campaign deleted" }
+        }
+      }
+    },
+
+    "/api/admin/billing/webhooks": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List webhook events",
+        "responses": {
+          "200": { "description": "Webhook event list" }
+        }
+      }
+    },
+
+    "/api/admin/billing/webhooks/{id}": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Get webhook event details",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Webhook event details" }
+        }
+      }
+    },
+
+    "/api/admin/billing/webhooks/{id}/replay": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Replay a webhook event",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Webhook replayed" }
+        }
+      }
+    },
+
+    "/api/admin/blogs": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "List blog posts",
+        "responses": {
+          "200": { "description": "Blog list" }
+        }
+      },
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Create blog post",
+        "responses": {
+          "201": { "description": "Blog created" }
+        }
+      },
+      "put": {
+        "tags": ["Admin"],
+        "summary": "Update blog post",
+        "responses": {
+          "200": { "description": "Blog updated" }
+        }
+      },
+      "delete": {
+        "tags": ["Admin"],
+        "summary": "Delete blog post",
+        "responses": {
+          "200": { "description": "Blog deleted" }
+        }
+      }
+    },
+
+    "/api/admin/blogs/preview": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Preview blog post (MDX render)",
+        "responses": {
+          "200": { "description": "Rendered preview" }
+        }
+      }
+    },
+
+    "/api/admin/blogs/migrate": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Migrate blog posts",
+        "responses": {
+          "200": { "description": "Migration completed" }
+        }
+      }
+    },
+
+    "/api/admin/upload": {
+      "post": {
+        "tags": ["Admin"],
+        "summary": "Admin file upload",
+        "description": "Upload files for admin purposes (blog images, etc.).",
+        "responses": {
+          "200": { "description": "File uploaded" }
+        }
+      }
+    }
+  },
+
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "API key authentication. Generate keys via `POST /api/keys`."
+      },
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "better-auth.session_token",
+        "description": "Session cookie managed by better-auth. 7-day expiry, auto-refreshes every 24h."
+      },
+      "cronAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Cron job secret token (CRON_SECRET env var)."
+      }
+    },
+    "schemas": {
+      "Bucket": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "name": { "type": "string" },
+          "b2BucketId": { "type": "string" },
+          "userId": { "type": "string" },
+          "region": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "StorageObject": {
+        "type": "object",
+        "properties": {
+          "_id": { "type": "string" },
+          "key": { "type": "string", "description": "Opaque B2 object key" },
+          "bucketId": { "type": "string" },
+          "userId": { "type": "string" },
+          "size": { "type": "integer" },
+          "contentType": { "type": "string" },
+          "encryptedContentType": { "type": "string" },
+          "isFolder": { "type": "boolean" },
+          "isEncrypted": { "type": "boolean" },
+          "encryptedDEK": { "type": "string" },
+          "iv": { "type": "string" },
+          "encryptedName": { "type": "string" },
+          "encryptedDisplayName": { "type": "string" },
+          "isChunked": { "type": "boolean" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "position": { "type": "integer" },
+          "mediaCategory": { "type": "string" },
+          "thumbnail": { "type": "string", "description": "B2 key for thumbnail" },
+          "thumbnailUrl": { "type": "string", "format": "uri", "description": "Pre-signed thumbnail URL" },
+          "optimizedKey": { "type": "string" },
+          "optimizedUrl": { "type": "string", "format": "uri" },
+          "optimizedEncryptedDEK": { "type": "string" },
+          "optimizedIV": { "type": "string" },
+          "optimizedSize": { "type": "integer" },
+          "aspectRatio": { "type": "number" },
+          "b2FileId": { "type": "string" },
+          "takenAt": { "type": "string", "format": "date-time" },
+          "description": { "type": "string" },
+          "googlePhotosUrl": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "GridItem": {
+        "type": "object",
+        "description": "Lightweight object data for grid rendering. No signed URLs — thumbnails load lazily via useThumbnail.",
+        "properties": {
+          "_id": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "key": { "type": "string" },
+          "size": { "type": "integer" },
+          "thumbnail": { "type": "string", "nullable": true },
+          "aspectRatio": { "type": "number", "default": 1 },
+          "isEncrypted": { "type": "boolean" },
+          "encryptedName": { "type": "string", "nullable": true },
+          "encryptedDisplayName": { "type": "string", "nullable": true },
+          "optimizedKey": { "type": "string", "nullable": true },
+          "optimizedIV": { "type": "string", "nullable": true },
+          "optimizedEncryptedDEK": { "type": "string", "nullable": true },
+          "optimizedSize": { "type": "integer", "nullable": true }
+        }
+      },
+      "Invoice": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "number": { "type": "string", "nullable": true },
+          "paymentId": { "type": "string" },
+          "subscriptionId": { "type": "string" },
+          "amount": { "type": "number" },
+          "status": { "type": "string" },
+          "billingDate": { "type": "string", "format": "date-time" },
+          "plan": { "type": "string", "nullable": true },
+          "cycle": { "type": "string", "nullable": true }
+        }
+      },
+      "QuotaExceededError": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string", "example": "storage_quota_exceeded" },
+          "message": { "type": "string" },
+          "currentBytes": { "type": "integer" },
+          "limitBytes": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

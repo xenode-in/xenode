@@ -17,21 +17,12 @@ import {
   Moon,
   Sun,
   Monitor,
-  Shield,
   ArrowRight,
-  ExternalLink,
   ChevronLeft,
   CheckCircle2,
-  KeyRound,
   ShieldCheck,
   Copy,
   Download,
-  AlertTriangle,
-  Eye,
-  EyeOff,
-  HardDrive,
-  Lock,
-  Zap,
   Loader2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -50,8 +41,6 @@ import {
 } from "@/components/ui/form";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 
@@ -82,11 +71,6 @@ export function OnboardingForm() {
   // Vault password (read from session storage invisibly)
   const [kit] = useState(() => generateRecoveryKit());
   const [vaultPassword, setVaultPassword] = useState("");
-  const [missingVaultBootstrap, setMissingVaultBootstrap] = useState(false);
-  const [resumePassword, setResumePassword] = useState("");
-  const [resumePasswordConfirm, setResumePasswordConfirm] = useState("");
-  const [resumeError, setResumeError] = useState("");
-  const [isVerifyingPassword, setIsVerifyingPassword] = useState(false);
 
   // Step 2: recovery kit
   const [kitSaved, setKitSaved] = useState(false);
@@ -97,14 +81,15 @@ export function OnboardingForm() {
 
   useEffect(() => {
     setMounted(true);
-    // Pre-fill vault password from sessionStorage if available
     const pw = sessionStorage.getItem("xenode-vault-pw");
     if (pw) {
       setVaultPassword(pw);
     } else {
-      setMissingVaultBootstrap(true);
+      // Session storage cleared (page refresh / new tab) — restart from login
+      toast.error("Session expired. Please sign in again to set up your vault.");
+      router.replace("/login");
     }
-  }, []);
+  }, [router]);
 
   // Fetch live plans from DB when component mounts
   useEffect(() => {
@@ -170,7 +155,6 @@ export function OnboardingForm() {
     startTransition(async () => {
       try {
         if (!vaultPassword) {
-          setMissingVaultBootstrap(true);
           throw new Error("Missing vault bootstrap password");
         }
 
@@ -222,113 +206,6 @@ export function OnboardingForm() {
   }
 
   if (!mounted) return null;
-
-  if (missingVaultBootstrap) {
-    const handleResumeOnboarding = async () => {
-      if (resumePassword.length < 8) {
-        setResumeError("Enter your account password to continue.");
-        return;
-      }
-
-      if (resumePassword !== resumePasswordConfirm) {
-        setResumeError("Passwords do not match.");
-        return;
-      }
-
-      setIsVerifyingPassword(true);
-      setResumeError("");
-
-      try {
-        const res = await fetch("/api/auth/verify-password", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ password: resumePassword }),
-        });
-        const data = await res.json().catch(() => ({}));
-
-        if (!res.ok) {
-          throw new Error(data.error || "Failed to verify password");
-        }
-
-        sessionStorage.setItem("xenode-vault-pw", resumePassword);
-        setVaultPassword(resumePassword);
-        setMissingVaultBootstrap(false);
-        toast.success("Password confirmed. Continue with vault setup.");
-      } catch (error) {
-        const message =
-          error instanceof Error ? error.message : "Failed to verify password";
-        setResumeError(message);
-      } finally {
-        setIsVerifyingPassword(false);
-      }
-    };
-
-    return (
-      <Card className="border-none shadow-none md:border-solid md:shadow-md bg-transparent md:bg-card">
-        <CardContent className="pt-6 space-y-6">
-          <div className="space-y-2 text-center">
-            <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-              Resume onboarding securely
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              Your email is verified. To finish vault setup on this tab or
-              device, confirm the same password you use to sign in to Xenode.
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="resume-password">Account password</Label>
-              <Input
-                id="resume-password"
-                type="password"
-                value={resumePassword}
-                onChange={(e) => setResumePassword(e.target.value)}
-                placeholder="Enter your account password"
-                autoComplete="current-password"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="resume-password-confirm">Confirm password</Label>
-              <Input
-                id="resume-password-confirm"
-                type="password"
-                value={resumePasswordConfirm}
-                onChange={(e) => setResumePasswordConfirm(e.target.value)}
-                placeholder="Re-enter your password"
-                autoComplete="current-password"
-              />
-            </div>
-
-            {resumeError ? (
-              <p className="text-sm text-destructive">{resumeError}</p>
-            ) : null}
-
-            <Button
-              className="w-full"
-              onClick={handleResumeOnboarding}
-              disabled={isVerifyingPassword}
-            >
-              {isVerifyingPassword ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : null}
-              Confirm password and continue
-            </Button>
-
-            <Button
-              type="button"
-              variant="ghost"
-              className="w-full"
-              onClick={() => router.push("/login")}
-            >
-              Sign in with a different account
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
 
   const slideVariants = {
     hidden: { opacity: 0, x: 20 },
