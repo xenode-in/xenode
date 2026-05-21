@@ -177,10 +177,7 @@ export async function POST(request: NextRequest) {
         offerId: offerId || null,
         discountPercent: discountPercent !== null ? String(discountPercent) : null,
         basePlanAmount: String(baseAmountPaise),
-        basePlanAmountINR: String(baseAmountPaise / 100),
         firstCycleAmount: String(firstCycleAmountPaise),
-        firstCycleAmountINR: String(firstCycleAmountPaise / 100),
-        razorpayPlanId: planContext.pricingEntry.razorpayPlanId,
       }),
     };
     if (offerId) subscriptionPayload.offer_id = offerId;
