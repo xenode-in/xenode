@@ -2,15 +2,18 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Check, Zap } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { ArrowLeft } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSession } from "@/lib/auth/client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { IPlan } from "@/models/PricingConfig";
 import type { BillingCycle } from "@/types/pricing";
+import {
+  getEffectivePriceForCycle,
+  getYearlySavingsPercent,
+} from "@/lib/pricing/pricingService";
 
 interface PlanPageCampaign {
   name: string;
@@ -18,37 +21,6 @@ interface PlanPageCampaign {
   badge: string;
   discountDuration: "forever" | "limited";
   discountCycles: number | null;
-}
-import {
-  getEffectivePriceForCycle,
-  getYearlySavingsPercent,
-  getMonthlyEquivalentForYearly,
-} from "@/lib/pricing/pricingService";
-
-function PlanSkeletons() {
-  return (
-    <div className="flex items-end justify-center gap-4 px-4">
-      {[false, false, true, false].map((pop, i) => (
-        <div
-          key={i}
-          className={cn(
-            "flex-1 max-w-[280px] rounded-2xl border border-border bg-card p-6 space-y-4",
-            pop ? "py-10" : "",
-          )}
-        >
-          <Skeleton className="h-3 w-16" />
-          <Skeleton className="h-8 w-24" />
-          <Skeleton className="h-4 w-20" />
-          <div className="space-y-2 pt-2">
-            {Array.from({ length: 5 }).map((_, j) => (
-              <Skeleton key={j} className="h-3.5 w-full" />
-            ))}
-          </div>
-          <Skeleton className="h-11 w-full mt-4" />
-        </div>
-      ))}
-    </div>
-  );
 }
 
 const PLAN_WEIGHTS: Record<string, number> = {
@@ -59,6 +31,113 @@ const PLAN_WEIGHTS: Record<string, number> = {
   max: 4,
   enterprise: 5,
 };
+
+/**
+ * Per-card visual theme — light + dark variants.
+ *   - `cardClass`  — full-card vertical gradient + border
+ *   - `headerGlow` — blurred top-area gradient that simulates the fluid art graphic
+ *   - `accent`     — colored check / accent text
+ */
+const CARD_THEMES = [
+  {
+    cardClass:
+      "bg-gradient-to-b from-blue-50 to-blue-100/40 border-blue-200/60 " +
+      "dark:from-[#0e1530] dark:to-[#0a0d20] dark:border-[#1a2348]",
+    headerGlow:
+      "from-blue-400/50 via-indigo-400/30 to-transparent dark:from-blue-500/45 dark:via-indigo-500/25",
+    accent: "text-blue-600 dark:text-blue-200",
+  },
+  {
+    cardClass:
+      "bg-gradient-to-b from-purple-50 to-pink-100/40 border-purple-200/60 " +
+      "dark:from-[#1d1330] dark:to-[#2b1a40] dark:border-[#3a2450]",
+    headerGlow:
+      "from-pink-400/50 via-purple-400/35 to-transparent dark:from-pink-500/45 dark:via-purple-500/30",
+    accent: "text-purple-600 dark:text-purple-200",
+  },
+  {
+    cardClass:
+      "bg-gradient-to-b from-teal-50 to-cyan-100/40 border-teal-200/60 " +
+      "dark:from-[#0a1f25] dark:to-[#0a1820] dark:border-[#1a3038]",
+    headerGlow:
+      "from-teal-400/50 via-cyan-400/30 to-transparent dark:from-teal-500/45 dark:via-cyan-500/25",
+    accent: "text-teal-600 dark:text-teal-200",
+  },
+  {
+    cardClass:
+      "bg-gradient-to-b from-emerald-50 to-green-100/40 border-emerald-200/60 " +
+      "dark:from-[#0a1f17] dark:to-[#091812] dark:border-[#1a3028]",
+    headerGlow:
+      "from-emerald-400/50 via-[#7cb686]/35 to-transparent dark:from-emerald-500/45 dark:via-[#7cb686]/30",
+    accent: "text-emerald-600 dark:text-[#7cb686]",
+  },
+];
+
+const POPULAR_BUTTON =
+  "bg-gradient-to-r from-pink-500 via-purple-500 to-indigo-500 text-white border-0 hover:opacity-90 shadow-md";
+const DEFAULT_BUTTON =
+  "bg-white/70 hover:bg-white text-gray-800 border border-gray-200 " +
+  "dark:bg-white/5 dark:hover:bg-white/10 dark:text-gray-200 dark:border-white/10";
+
+const PLAN_DESCRIPTIONS: Record<string, string> = {
+  basic:
+    "Essential encrypted storage for individuals exploring secure file sharing.",
+  pro: "More space and advanced features for freelancers and small teams.",
+  plus: "Advanced storage with priority support for growing teams.",
+  max: "Maximum capacity with enterprise-grade security and access.",
+};
+
+const containerVariants = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.08, delayChildren: 0.15 } },
+};
+
+const cardVariants = {
+  hidden: { opacity: 0, y: 28 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.5, ease: "easeOut" as const },
+  },
+};
+
+const CheckIcon = ({ className }: { className?: string }) => (
+  <svg
+    className={cn("w-4 h-4 flex-shrink-0", className)}
+    fill="none"
+    viewBox="0 0 24 24"
+    stroke="currentColor"
+    strokeWidth="2"
+  >
+    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+    <circle cx="12" cy="12" r="10" />
+  </svg>
+);
+
+function PlanSkeletons() {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div
+          key={i}
+          className="rounded-3xl border border-border bg-card p-7 space-y-4"
+        >
+          <Skeleton className="h-40 w-full -mt-7 -mx-7 mb-3 rounded-none" />
+          <Skeleton className="h-5 w-24" />
+          <Skeleton className="h-3 w-full" />
+          <Skeleton className="h-3 w-3/4" />
+          <Skeleton className="h-9 w-32" />
+          <Skeleton className="h-11 w-full" />
+          <div className="space-y-2 pt-2">
+            {Array.from({ length: 4 }).map((_, j) => (
+              <Skeleton key={j} className="h-3.5 w-full" />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function PlansPageClient() {
   const router = useRouter();
@@ -81,7 +160,7 @@ export default function PlansPageClient() {
         if (data.currentPlan) setCurrentPlan(data.currentPlan);
         if (data.currentCycle) {
           setCurrentCycle(data.currentCycle);
-          setCycle(data.currentCycle); // default view to their current cycle
+          setCycle(data.currentCycle);
         }
         if (data.isGracePeriod) setIsGracePeriod(data.isGracePeriod);
         if (data.isPlanExpired) setIsPlanExpired(data.isPlanExpired);
@@ -99,13 +178,17 @@ export default function PlansPageClient() {
     window.location.assign(`/checkout?plan=${slug}&cycle=${cycle}`);
   };
 
-  // Savings % for toggle badge (use first paid plan as reference)
   const toggleSavings =
     plans.length > 0 ? getYearlySavingsPercent(plans[0].pricing) : null;
 
+  const visiblePlans = plans.filter(
+    (plan) =>
+      (PLAN_WEIGHTS[plan.slug] ?? 0) >= (PLAN_WEIGHTS[currentPlan] ?? 0),
+  );
+
   return (
     <div className="min-h-screen bg-background">
-      {/* ── Page header ───────────────────────────────────── */}
+      {/* Sticky page header */}
       <div className="border-b border-border bg-background/80 backdrop-blur-sm sticky top-0 z-10">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-3 px-4 sm:px-6">
           <button
@@ -120,225 +203,266 @@ export default function PlansPageClient() {
         </div>
       </div>
 
-      {/* ── Main content ──────────────────────────────────── */}
       <main className="mx-auto max-w-6xl px-4 py-16 sm:px-6">
         {/* Title */}
-        <div className="mb-4 text-center">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.55, ease: "easeOut" }}
+          className="mb-4 text-center"
+        >
           <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-5xl">
             Simple, transparent pricing
           </h1>
           <p className="mt-3 text-lg text-muted-foreground">
             No contracts. No surprise fees.
           </p>
-        </div>
+        </motion.div>
 
-        {/* ── Billing Cycle Toggle ─────────────────────────── */}
-        <div className="flex justify-center mt-8 mb-4">
-          <div className="inline-flex items-center gap-1 rounded-xl bg-muted p-1 border border-border">
-            <button
-              onClick={() => setCycle("monthly")}
-              className={cn(
-                "px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200",
-                cycle === "monthly"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              Monthly
-            </button>
-            <button
-              onClick={() => setCycle("yearly")}
-              className={cn(
-                "flex items-center gap-2 px-5 py-1.5 rounded-lg text-sm font-semibold transition-all duration-200",
-                cycle === "yearly"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-            >
-              Yearly
-              {toggleSavings && toggleSavings > 0 && (
-                <span className="bg-primary/15 text-primary text-[10px] font-bold px-1.5 py-0.5 rounded-full">
-                  Save {toggleSavings}%
+        {/* Billing Cycle Toggle */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.12 }}
+          className="flex justify-center mt-8 mb-10"
+        >
+          <div className="relative inline-flex items-center gap-0.5 rounded-xl bg-muted border border-border p-1">
+            {(["yearly", "monthly"] as BillingCycle[]).map((c) => (
+              <button
+                key={c}
+                onClick={() => setCycle(c)}
+                className={cn(
+                  "relative flex items-center gap-2 px-5 py-1.5 rounded-lg text-sm font-semibold transition-colors duration-200 z-10",
+                  cycle === c
+                    ? "text-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {cycle === c && (
+                  <motion.div
+                    layoutId="plans-cycle-indicator"
+                    className="absolute inset-0 bg-background rounded-lg shadow-sm"
+                    style={{ zIndex: -1 }}
+                    transition={{ type: "spring", bounce: 0.15, duration: 0.45 }}
+                  />
+                )}
+                <span className="relative">
+                  {c === "yearly" ? "Annual" : "Monthly"}
                 </span>
-              )}
-            </button>
+                {c === "yearly" && toggleSavings && toggleSavings > 0 && (
+                  <span className="relative bg-foreground/10 text-foreground/80 text-[10px] font-semibold px-1.5 py-0.5 rounded-full">
+                    Save {toggleSavings}%
+                  </span>
+                )}
+              </button>
+            ))}
           </div>
-        </div>
-
-        {/* Campaign banner */}
-        {campaign && (
-          <div className="mx-auto mb-10 flex max-w-lg items-center justify-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-5 py-2">
-            <Zap className="h-3.5 w-3.5 text-primary" />
-            <span className="text-sm font-semibold text-primary">
-              {campaign.badge} {campaign.name} — {campaign.discountPercent}% off
-              all plans!
-            </span>
-          </div>
-        )}
+        </motion.div>
 
         {/* Cards */}
         {loading ? (
-          <div className="mt-10">
-            <PlanSkeletons />
-          </div>
+          <PlanSkeletons />
         ) : plans.length === 0 ? (
           <p className="mt-20 text-center text-muted-foreground">
             No plans available.
           </p>
         ) : (
-          <div className="mt-10 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-center">
-            {plans
-              .filter(
-                (plan) =>
-                  (PLAN_WEIGHTS[plan.slug] ?? 0) >=
-                  (PLAN_WEIGHTS[currentPlan] ?? 0),
-              )
-              .map((plan) => {
-                const basePrice = getEffectivePriceForCycle(
-                  plan.pricing,
-                  cycle,
-                );
-                const finalPrice = getEffectivePriceForCycle(
-                  plan.pricing,
-                  cycle,
-                  campaign?.discountPercent,
-                );
-                const isDiscounted = finalPrice !== basePrice;
-                const monthlyEquiv =
-                  cycle === "yearly"
-                    ? getMonthlyEquivalentForYearly(plan.pricing)
-                    : null;
-                const pop = plan.isPopular;
+          <motion.div
+            variants={containerVariants}
+            initial="hidden"
+            animate="visible"
+            className={cn(
+              "grid gap-5 mx-auto",
+              visiblePlans.length === 1 && "max-w-sm",
+              visiblePlans.length === 2 &&
+                "grid-cols-1 sm:grid-cols-2 max-w-3xl",
+              visiblePlans.length === 3 &&
+                "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 max-w-5xl",
+              visiblePlans.length >= 4 &&
+                "grid-cols-1 sm:grid-cols-2 lg:grid-cols-4",
+            )}
+          >
+            {visiblePlans.map((plan, idx) => {
+              const theme = CARD_THEMES[idx % CARD_THEMES.length];
+              const basePrice = getEffectivePriceForCycle(plan.pricing, cycle);
+              const finalPrice = getEffectivePriceForCycle(
+                plan.pricing,
+                cycle,
+                campaign?.discountPercent,
+              );
+              const isDiscounted = finalPrice !== basePrice;
+              const isPop = plan.isPopular;
+              const description =
+                PLAN_DESCRIPTIONS[plan.slug] ??
+                `${plan.storage} of secure E2EE storage.`;
+              const isCurrentPlan =
+                plan.slug === currentPlan &&
+                cycle === currentCycle &&
+                !isGracePeriod &&
+                !isPlanExpired;
+              const sameCycleAsCurrent =
+                plan.slug === currentPlan && cycle === currentCycle;
 
-                return (
+              return (
+                <motion.div
+                  key={plan.name}
+                  variants={cardVariants}
+                  whileHover={{ y: -8, transition: { duration: 0.3 } }}
+                  className={cn(
+                    "group relative flex flex-col rounded-3xl border overflow-hidden",
+                    "shadow-lg dark:shadow-2xl",
+                    theme.cardClass,
+                  )}
+                >
+                  {/* Top art glow */}
                   <div
-                    key={plan.name}
+                    aria-hidden
                     className={cn(
-                      "relative flex flex-col rounded-2xl border bg-card transition-all duration-200",
-                      "w-full sm:flex-1 sm:max-w-[280px]",
-                      pop ? "px-6 py-10 sm:-my-4" : "px-6 py-8",
-                      pop
-                        ? "border-primary shadow-[0_0_0_1px_hsl(var(--primary)/0.4),0_12px_48px_hsl(var(--primary)/0.18)] z-10"
-                        : "border-border hover:border-primary/30 opacity-95 hover:opacity-100",
-                      "hover:-translate-y-1 hover:shadow-xl",
+                      "pointer-events-none absolute top-0 left-0 right-0 h-40 opacity-70 blur-2xl bg-gradient-to-b",
+                      theme.headerGlow,
                     )}
-                  >
-                    {/* Popular badge */}
-                    {pop && (
-                      <div className="absolute -top-4 left-1/2 -translate-x-1/2">
-                        <Badge className="bg-primary text-primary-foreground text-[11px] font-bold uppercase tracking-widest px-4 py-1 rounded-full shadow">
-                          Most Popular
-                        </Badge>
-                      </div>
-                    )}
+                  />
 
-                    {/* Price */}
-                    <div className="mb-1">
-                      {isDiscounted && (
-                        <span className="text-sm text-muted-foreground line-through mr-1.5">
-                          ₹{basePrice}
-                        </span>
-                      )}
-                      <span
-                        className={cn(
-                          "text-4xl font-extrabold tracking-tight",
-                          pop ? "text-primary" : "text-foreground",
-                        )}
-                      >
-                        ₹{finalPrice}
+                  {/* Save% badge — tab hanging from top */}
+                  {isDiscounted && (
+                    <motion.div
+                      initial={{ y: -8, opacity: 0 }}
+                      animate={{ y: 0, opacity: 1 }}
+                      transition={{ delay: 0.3, duration: 0.35 }}
+                      className="absolute top-0 right-6 z-20 flex flex-col items-center bg-gray-900 dark:bg-black text-white text-xs font-semibold px-3 py-3 rounded-b-xl shadow-lg"
+                    >
+                      <span className="text-gray-400 text-[10px] leading-tight">
+                        Save
                       </span>
-                      <span className="ml-1.5 text-sm text-muted-foreground">
-                        /{cycle === "yearly" ? "yr" : "month"}
+                      <span className="leading-tight">
+                        {campaign?.discountPercent}%
                       </span>
+                    </motion.div>
+                  )}
+
+                  {/* Card body */}
+                  <div className="relative z-10 flex flex-col flex-1 p-7">
+                    {/* Header info */}
+                    <div className="mb-7 mt-4">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <h3 className="text-xl font-medium text-gray-900 dark:text-white">
+                          {plan.name}
+                        </h3>
+                        {isCurrentPlan ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 backdrop-blur-sm px-2 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                            Active
+                          </span>
+                        ) : isPop ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-white/70 dark:bg-white/10 backdrop-blur-sm px-2 py-0.5 text-[10px] font-semibold text-gray-800 dark:text-white border border-gray-300/60 dark:border-white/15">
+                            <span className="h-1.5 w-1.5 rounded-full bg-purple-500 dark:bg-purple-300 animate-pulse" />
+                            Popular
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="text-[13px] text-gray-600 dark:text-gray-400 leading-relaxed min-h-[2.5rem]">
+                        {description}
+                      </p>
                     </div>
 
-                    {/* Yearly per-month equivalent */}
-                    {monthlyEquiv && (
-                      <p className="mb-3 text-xs text-muted-foreground">
-                        ₹{monthlyEquiv}/mo · billed annually
-                      </p>
-                    )}
-                    {!monthlyEquiv && <div className="mb-3" />}
+                    {/* Price */}
+                    <AnimatePresence mode="wait">
+                      <motion.div
+                        key={`${finalPrice}-${cycle}`}
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: 6 }}
+                        transition={{ duration: 0.18 }}
+                        className="flex items-baseline gap-2 mb-6 flex-wrap"
+                      >
+                        {isDiscounted && (
+                          <span className="text-sm text-gray-400 dark:text-gray-500 line-through">
+                            ₹{basePrice}
+                          </span>
+                        )}
+                        <span className="text-4xl font-semibold text-gray-900 dark:text-white tracking-tight">
+                          ₹{finalPrice}
+                        </span>
+                        <span className="text-sm text-gray-500">
+                          / {cycle === "yearly" ? "yearly" : "monthly"}
+                        </span>
+                      </motion.div>
+                    </AnimatePresence>
 
-                    {/* Plan name */}
-                    <h3 className="mb-2 text-xl font-bold text-foreground">
-                      {plan.name}
-                    </h3>
+                    {/* CTA — glassmorphism shimmer on hover */}
+                    <button
+                      onClick={() => handleSelect(plan.slug)}
+                      disabled={isCurrentPlan}
+                      className={cn(
+                        "relative w-full py-3 px-4 rounded-xl text-sm font-medium overflow-hidden mb-8",
+                        "transition-all duration-300 active:scale-[0.98]",
+                        "disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100",
+                        isPop ? POPULAR_BUTTON : DEFAULT_BUTTON,
+                      )}
+                      style={{
+                        backdropFilter: "blur(6px)",
+                        WebkitBackdropFilter: "blur(6px)",
+                      }}
+                    >
+                      {!isCurrentPlan && (
+                        <span
+                          aria-hidden
+                          className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000 ease-out pointer-events-none"
+                          style={{
+                            background:
+                              "linear-gradient(110deg, transparent 30%, rgba(255,255,255,0.35) 50%, transparent 70%)",
+                          }}
+                        />
+                      )}
+                      <span className="relative">
+                        {sameCycleAsCurrent
+                          ? isGracePeriod || isPlanExpired
+                            ? "Renew Plan"
+                            : "Current Plan"
+                          : plan.slug === currentPlan
+                            ? `Switch to ${cycle === "yearly" ? "Annual" : "Monthly"}`
+                            : `Get ${plan.name}`}
+                      </span>
+                    </button>
 
-                    {/* Storage label */}
-                    <p className="mb-5 text-sm text-muted-foreground">
-                      {plan.storage} E2EE storage
-                    </p>
+                    <hr className="border-t border-gray-200/70 dark:border-white/5 mb-7" />
 
                     {/* Features */}
-                    <ul className="mb-8 flex-1 space-y-2.5">
-                      {plan.features.map((f, i) => (
-                        <li
-                          key={i}
-                          className="flex items-start gap-2.5 text-sm"
-                        >
-                          <span
-                            className={cn(
-                              "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full",
-                              pop
-                                ? "bg-primary/15 text-primary"
-                                : "bg-muted text-muted-foreground",
-                            )}
+                    <div className="flex-grow">
+                      <h4 className="text-[15px] font-medium text-gray-900 dark:text-white mb-4">
+                        Features
+                      </h4>
+                      <ul className="space-y-3">
+                        {plan.features.map((feature, i) => (
+                          <li
+                            key={i}
+                            className="flex items-start text-sm text-gray-700 dark:text-gray-300"
                           >
-                            <Check className="h-2.5 w-2.5" />
-                          </span>
-                          <span
-                            className={
-                              pop ? "text-foreground" : "text-muted-foreground"
-                            }
-                          >
-                            {f}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-
-                    {/* CTA */}
-                    <Button
-                      onClick={() => handleSelect(plan.slug)}
-                      disabled={
-                        plan.slug === currentPlan &&
-                        cycle === currentCycle &&
-                        !isGracePeriod &&
-                        !isPlanExpired
-                      }
-                      variant={pop ? "default" : "outline"}
-                      className={cn(
-                        "w-full h-11 font-semibold",
-                        pop && "shadow-md",
-                        plan.slug === currentPlan &&
-                          cycle === currentCycle &&
-                          !isGracePeriod &&
-                          !isPlanExpired &&
-                          "opacity-50 cursor-not-allowed",
-                      )}
-                    >
-                      {plan.slug === currentPlan && cycle === currentCycle
-                        ? isGracePeriod || isPlanExpired
-                          ? "Renew Plan"
-                          : "Current Plan"
-                        : plan.slug === currentPlan && cycle !== currentCycle
-                          ? `Switch to ${cycle === "yearly" ? "Yearly" : "Monthly"}`
-                          : pop
-                            ? "Upgrade"
-                            : `Get ${plan.name}`}
-                    </Button>
+                            <CheckIcon
+                              className={cn("mr-3 mt-0.5", theme.accent)}
+                            />
+                            <span>{feature}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                   </div>
-                );
-              })}
-          </div>
+                </motion.div>
+              );
+            })}
+          </motion.div>
         )}
 
         {/* Footer note */}
-        <p className="mt-12 text-center text-xs text-muted-foreground">
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.7 }}
+          className="mt-12 text-center text-xs text-muted-foreground"
+        >
           All plans include End-to-End Encryption and a 30-day refund policy.
           You can cancel anytime from your billing page.
-        </p>
+        </motion.p>
       </main>
     </div>
   );

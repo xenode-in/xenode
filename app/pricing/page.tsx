@@ -85,21 +85,6 @@ export default function PricingPage() {
         <Suspense fallback={<div>Loading pricing...</div>}>
           <PricingComparison />
         </Suspense>
-
-        {/* CTA Section */}
-        <section className="px-8 pb-20">
-          <div className="max-w-[600px] mx-auto text-center">
-            <h3 className="text-2xl md:text-3xl font-semibold mb-4 text-foreground">
-              Ready to keep your data private?
-            </h3>
-
-            <Link href="/">
-              <Button className="bg-primary text-primary-foreground hover:bg-primary/90 uppercase tracking-wider font-semibold h-12 px-8 text-base transition-all duration-200 hover:-translate-y-0.5">
-                Join Waitlist Now
-              </Button>
-            </Link>
-          </div>
-        </section>
       </main>
 
       {/* Footer */}
