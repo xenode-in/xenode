@@ -17,6 +17,7 @@ import {
   Users,
   CloudDownload,
   Image,
+  LifeBuoy,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -61,6 +62,7 @@ const sidebarItems = [
   { label: "Usage", href: "/dashboard/usage", icon: BarChart3 },
   // { label: "API Keys", href: "/dashboard/keys", icon: Key },
   { label: "Billing", href: "/dashboard/billing", icon: CreditCard },
+  { label: "Support", href: "/dashboard/support", icon: LifeBuoy },
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 

@@ -19,6 +19,8 @@ import {
   BarChart3,
   Megaphone,
   ScrollText,
+  MessageSquare,
+  RefreshCcw,
 } from "lucide-react";
 
 interface AdminSidebarProps {
@@ -97,6 +99,18 @@ const navItems = [
     href: "/admin/dashboard/billing/failed-payments",
     label: "Failed Payments",
     icon: AlertTriangle,
+    roles: ["super_admin", "admin"],
+  },
+  {
+    href: "/admin/dashboard/billing/refunds",
+    label: "Refunds",
+    icon: RefreshCcw,
+    roles: ["super_admin", "admin"],
+  },
+  {
+    href: "/admin/dashboard/support",
+    label: "Support Tickets",
+    icon: MessageSquare,
     roles: ["super_admin", "admin"],
   },
   {

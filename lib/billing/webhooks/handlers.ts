@@ -3,6 +3,9 @@ import dbConnect from "@/lib/mongodb";
 import Payment from "@/models/Payment";
 import Subscription from "@/models/Subscription";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
+import RefundRequest from "@/models/RefundRequest";
+import SupportTicket from "@/models/SupportTicket";
+import { User } from "@/models/User";
 import {
   consumeCouponRedemptionIfNeeded,
   createSubscriptionInvoiceIfMissing,
@@ -12,6 +15,9 @@ import {
 import { SUBSCRIPTION_GRACE_PERIOD_MS } from "@/lib/subscriptions/constants";
 import { getPlanByRazorpayPlanIdFromDB } from "@/lib/config/getPricingConfig";
 import { BillingEventType, emitBillingEvent } from "@/lib/billing/events";
+import { findRefundRequestForWebhook } from "@/lib/refunds/processor";
+import { addReply } from "@/lib/support/tickets";
+import { notifyRefundCompleted } from "@/lib/email/notifications";
 
 /**
  * Webhook event dispatcher — subscriptions only.
@@ -113,7 +119,120 @@ async function loadSubscription(entity: any) {
   );
 }
 
-// ─── Refund handler (subscription payments are refundable via Razorpay) ───
+// ─── Refund handlers (subscription payments are refundable via Razorpay) ──
+
+/**
+ * `refund.created` — Razorpay accepted the refund and is processing it.
+ *
+ * We don't downgrade the user here; we wait for `refund.processed` to confirm
+ * the money actually moved. This handler updates RefundRequest.status to
+ * "processing" so the admin UI reflects reality.
+ */
+const handleRefundCreated: Handler = async (ctx) => {
+  const refundData = ctx.event.payload?.refund?.entity;
+  if (!refundData?.id || !refundData?.payment_id) {
+    return { status: "ignored", message: "No refund entity" };
+  }
+
+  await dbConnect();
+
+  const refundRequest = await findRefundRequestForWebhook({
+    razorpayRefundId: refundData.id,
+    razorpayPaymentId: refundData.payment_id,
+  });
+
+  if (refundRequest && refundRequest.status !== "completed") {
+    refundRequest.razorpayRefundId =
+      refundRequest.razorpayRefundId ?? refundData.id;
+    if (refundRequest.status === "approved" || refundRequest.status === "pending") {
+      refundRequest.status = "processing";
+    }
+    await refundRequest.save();
+  }
+
+  // Always update Payment row so the user's billing page reflects the in-flight
+  // refund even when the request was initiated outside our system (Razorpay
+  // dashboard).
+  await Payment.updateOne(
+    { payment_id: refundData.payment_id, status: { $ne: "refunded" } },
+    {
+      $set: {
+        status: "refund_initiated",
+        refund_id: refundData.id,
+        refund_status: "processing",
+      },
+    },
+  );
+
+  await emitBillingEvent({
+    type: "refund.created",
+    userId: refundRequest?.userId ?? null,
+    actorType: "webhook",
+    actorId: ctx.eventId,
+    subjectType: "refund",
+    subjectId: refundRequest ? String(refundRequest._id) : refundData.id,
+    payload: {
+      refundId: refundData.id,
+      paymentId: refundData.payment_id,
+      amount: refundData.amount,
+    },
+  });
+
+  return { status: "processed" };
+};
+
+/**
+ * `refund.failed` — Razorpay tried to refund but the upstream bank rejected.
+ *
+ * Roll Payment back to "success" so it doesn't appear stuck, and mark the
+ * RefundRequest as "failed" so admins can retry or escalate.
+ */
+const handleRefundFailed: Handler = async (ctx) => {
+  const refundData = ctx.event.payload?.refund?.entity;
+  if (!refundData?.id || !refundData?.payment_id) {
+    return { status: "ignored", message: "No refund entity" };
+  }
+
+  await dbConnect();
+
+  const refundRequest = await findRefundRequestForWebhook({
+    razorpayRefundId: refundData.id,
+    razorpayPaymentId: refundData.payment_id,
+  });
+
+  if (refundRequest && refundRequest.status !== "completed") {
+    refundRequest.status = "failed";
+    refundRequest.failureReason =
+      refundData.error_description || refundData.status_reason || "Refund failed at gateway";
+    await refundRequest.save();
+  }
+
+  await Payment.updateOne(
+    { payment_id: refundData.payment_id, status: { $in: ["refund_initiated", "refund_pending"] } },
+    {
+      $set: {
+        status: "success",
+        refund_status: "failed",
+      },
+    },
+  );
+
+  await emitBillingEvent({
+    type: "refund.failed",
+    userId: refundRequest?.userId ?? null,
+    actorType: "webhook",
+    actorId: ctx.eventId,
+    subjectType: "refund",
+    subjectId: refundRequest ? String(refundRequest._id) : refundData.id,
+    payload: {
+      refundId: refundData.id,
+      paymentId: refundData.payment_id,
+      reason: refundData.error_description || refundData.status_reason,
+    },
+  });
+
+  return { status: "processed" };
+};
 
 const handleRefundProcessed: Handler = async (ctx) => {
   const refundData = ctx.event.payload?.refund?.entity;
@@ -140,6 +259,7 @@ const handleRefundProcessed: Handler = async (ctx) => {
 
     payment.status = "refunded";
     payment.refund_id = refundData.id;
+    payment.refund_status = "processed";
     payment.gatewayResponse = {
       ...payment.gatewayResponse,
       refundEvent: ctx.event,
@@ -176,7 +296,62 @@ const handleRefundProcessed: Handler = async (ctx) => {
       { session },
     );
 
+    // Find the matching RefundRequest (if any) and mark completed. This is
+    // outside the transaction because RefundRequest writes don't share state
+    // with the Payment/Usage/Subscription consistency requirement.
     await session.commitTransaction();
+
+    const refundRequest = await findRefundRequestForWebhook({
+      razorpayRefundId: refundData.id,
+      razorpayPaymentId: refundData.payment_id,
+    });
+
+    if (refundRequest && refundRequest.status !== "completed") {
+      refundRequest.status = "completed";
+      refundRequest.razorpayRefundId = refundData.id;
+      refundRequest.refundedAt = new Date();
+      await refundRequest.save();
+
+      // Post a final system reply on the ticket + notify the user.
+      const ticket = await SupportTicket.findById(refundRequest.ticketId);
+      if (ticket) {
+        if (ticket.status !== "closed") {
+          await addReply({
+            ticketId: String(ticket._id),
+            authorType: "system",
+            authorId: "system",
+            authorName: "Xenode Refunds",
+            message: `Refund of ${refundRequest.currency} ${refundRequest.amount.toFixed(2)} has settled. Your account has been moved to the free plan.`,
+            isInternal: false,
+          });
+          // Auto-resolve the ticket — user can still reply to reopen.
+          ticket.status = "resolved";
+          ticket.resolvedAt = new Date();
+          ticket.resolvedBy = "system";
+          await ticket.save();
+        }
+
+        await notifyRefundCompleted({
+          userEmail: ticket.userEmail,
+          userName: ticket.userName,
+          amount: refundRequest.amount,
+          currency: refundRequest.currency,
+          ticketId: String(ticket._id),
+        });
+      } else {
+        // Best-effort: email the user directly using User collection.
+        const user = await User.findById(payment.userId).lean();
+        if (user?.email) {
+          await notifyRefundCompleted({
+            userEmail: user.email,
+            userName: user.name || user.email,
+            amount: payment.amount,
+            currency: payment.currency,
+            ticketId: String(refundRequest._id),
+          });
+        }
+      }
+    }
 
     await emitBillingEvent({
       type: BillingEventType.PAYMENT_REFUNDED,
@@ -188,11 +363,14 @@ const handleRefundProcessed: Handler = async (ctx) => {
       payload: {
         refundId: refundData.id,
         amount: payment.amount,
+        refundRequestId: refundRequest ? String(refundRequest._id) : null,
       },
     });
     return { status: "processed" };
   } catch (error: any) {
-    await session.abortTransaction();
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
     return { status: "failed", message: error?.message ?? "Refund failed" };
   } finally {
     session.endSession();
@@ -699,7 +877,9 @@ const handleInvoicePaid: Handler = async (ctx) => {
 
 const REGISTRY: Record<string, Handler> = {
   "payment.failed": handlePaymentFailed,
+  "refund.created": handleRefundCreated,
   "refund.processed": handleRefundProcessed,
+  "refund.failed": handleRefundFailed,
 
   "subscription.authenticated": handleSubscriptionAuthenticated,
   "subscription.activated": handleSubscriptionActivated,

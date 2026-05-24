@@ -1,12 +1,13 @@
 import UpgradePlanModal from "@/components/dashboard/UpgradePlanModal";
 import SubscriptionManageCard from "@/components/dashboard/SubscriptionManageCard";
-import { FileText, AlertTriangle } from "lucide-react";
+import { FileText, AlertTriangle, RefreshCcw, CheckCircle2 } from "lucide-react";
 import { getServerSession } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
 import Payment from "@/models/Payment";
 import Subscription from "@/models/Subscription";
 import SubscriptionInvoice from "@/models/SubscriptionInvoice";
+import RefundRequest from "@/models/RefundRequest";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
@@ -39,10 +40,12 @@ export default async function BillingPage() {
   let subscription: any = null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let invoices: any[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let activeRefund: any = null;
 
   if (session?.user?.id) {
     await dbConnect();
-    [usage, payments, subscription] = await Promise.all([
+    [usage, payments, subscription, activeRefund] = await Promise.all([
       Usage.findOne({ userId: session.user.id }),
       Payment.find({ userId: session.user.id }).sort({ createdAt: -1 }).lean(),
       // Only surface manageable subscriptions. Cancelled / completed / expired
@@ -52,6 +55,15 @@ export default async function BillingPage() {
       Subscription.findOne({
         userId: session.user.id,
         status: { $nin: ["cancelled", "completed", "expired"] },
+      })
+        .sort({ createdAt: -1 })
+        .lean(),
+      // Latest non-terminal refund request — drives the in-progress banner.
+      // "completed" refunds don't need a banner (the plan downgrade is the
+      // visible signal); "denied"/"failed" surface in the support ticket.
+      RefundRequest.findOne({
+        userId: session.user.id,
+        status: { $in: ["pending", "approved", "processing"] },
       })
         .sort({ createdAt: -1 })
         .lean(),
@@ -128,6 +140,17 @@ export default async function BillingPage() {
           <UpgradePlanModal />
         </div>
       </div>
+
+      {/* ── Refund in progress banner ── */}
+      {activeRefund && (
+        <RefundInProgressBanner
+          status={activeRefund.status}
+          amount={activeRefund.amount}
+          currency={activeRefund.currency}
+          ticketId={String(activeRefund.ticketId)}
+          createdAt={activeRefund.createdAt}
+        />
+      )}
 
       {/* ── Grace Period Banner ── */}
       {((usage?.isGracePeriod && usage?.gracePeriodEndsAt) ||
@@ -279,6 +302,27 @@ export default async function BillingPage() {
         </div>
       </div>
 
+      {/* ── Need help? ── */}
+      {isPaidPlan && !activeRefund && (
+        <div className="rounded-xl border border-border bg-card p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-foreground">Need help or a refund?</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              We offer a 14-day money-back guarantee on first payments. All requests go
+              through our support team.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Button asChild variant="outline" size="sm">
+              <Link href="/dashboard/support">Support</Link>
+            </Button>
+            <Button asChild size="sm">
+              <Link href="/dashboard/billing/refund">Request refund</Link>
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* ── Invoice History ── */}
       <div>
         <h3 className="text-lg font-medium text-foreground mb-4">
@@ -349,9 +393,10 @@ export default async function BillingPage() {
                           <span className="inline-flex items-center rounded-full bg-orange-500/10 border border-orange-500/20 px-2.5 py-0.5 text-xs font-medium text-orange-600 dark:text-orange-400">
                             Refunded
                           </span>
-                        ) : payment.status === "refund_pending" ? (
+                        ) : payment.status === "refund_pending" ||
+                          payment.status === "refund_initiated" ? (
                           <span className="inline-flex items-center rounded-full bg-yellow-500/10 border border-yellow-500/20 px-2.5 py-0.5 text-xs font-medium text-yellow-600 dark:text-yellow-400">
-                            Refund Pending
+                            Refund Processing
                           </span>
                         ) : payment.status === "failed" ? (
                           <span className="inline-flex items-center rounded-full bg-destructive/10 border border-destructive/20 px-2.5 py-0.5 text-xs font-medium text-destructive">
@@ -381,6 +426,80 @@ export default async function BillingPage() {
               </table>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Banner shown on the billing page while a refund request is active.
+ *
+ * Three states map cleanly from RefundRequest.status:
+ *   pending    → "Under review" (admin hasn't decided yet)
+ *   approved   → "Approved, contacting Razorpay" (transient — usually flips to
+ *                processing within seconds)
+ *   processing → "Refund in progress" (Razorpay has accepted; bank settling)
+ */
+function RefundInProgressBanner({
+  status,
+  amount,
+  currency,
+  ticketId,
+  createdAt,
+}: {
+  status: "pending" | "approved" | "processing";
+  amount: number;
+  currency: string;
+  ticketId: string;
+  createdAt: Date;
+}) {
+  const headline =
+    status === "pending"
+      ? "Refund request under review"
+      : status === "approved"
+        ? "Refund approved — processing"
+        : "Refund in progress";
+
+  const description =
+    status === "pending"
+      ? "Our team is reviewing your request. You'll receive an email within 1-2 business days."
+      : status === "approved"
+        ? "Your refund has been approved and is being sent to Razorpay for processing."
+        : "Your refund is being processed and should arrive in your account within 5-7 business days.";
+
+  const Icon = status === "pending" ? RefreshCcw : CheckCircle2;
+  const requestedOn = new Date(createdAt).toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+
+  return (
+    <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-5">
+      <div className="flex items-start gap-3">
+        <Icon
+          className={`w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5 ${
+            status === "pending" ? "animate-spin" : ""
+          }`}
+          style={status === "pending" ? { animationDuration: "3s" } : undefined}
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-foreground">{headline}</p>
+              <p className="text-xs text-muted-foreground mt-1">{description}</p>
+              <p className="text-xs text-muted-foreground mt-2">
+                <span className="font-medium text-foreground">
+                  {currency} {amount.toFixed(2)}
+                </span>
+                {" · "}Requested on {requestedOn}
+              </p>
+            </div>
+            <Button asChild variant="outline" size="sm" className="shrink-0">
+              <Link href={`/dashboard/support/${ticketId}`}>View request</Link>
+            </Button>
+          </div>
         </div>
       </div>
     </div>
