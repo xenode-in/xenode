@@ -12,6 +12,7 @@ import { getPricingConfig } from "@/lib/config/getPricingConfig";
 import { getHeadlineCampaign } from "@/lib/billing/campaigns";
 import Usage from "@/models/Usage";
 import Payment from "@/models/Payment";
+import Subscription from "@/models/Subscription";
 import dbConnect from "@/lib/mongodb";
 
 export async function GET() {
@@ -32,6 +33,24 @@ export async function GET() {
     .lean();
   const currentCycle = lastPayment?.billingCycle || "monthly";
 
+  // Surface the active subscription's period end so the plans page can show
+  // "Switches to Monthly on <date>" when a yearly user picks Monthly. Only
+  // manageable subscriptions count — cancelled/expired ones aren't a context
+  // for plan changes.
+  const activeSub = await Subscription.findOne({
+    userId: session.user.id,
+    status: { $nin: ["cancelled", "completed", "expired"] },
+  })
+    .sort({ createdAt: -1 })
+    .select("current_period_end endDate subscription_id status")
+    .lean();
+  const hasActiveSubscription = !!activeSub?.subscription_id;
+  const currentPeriodEnd = activeSub
+    ? activeSub.current_period_end?.toISOString() ??
+      activeSub.endDate?.toISOString() ??
+      null
+    : null;
+
   const [{ plans }, headline] = await Promise.all([
     getPricingConfig(),
     getHeadlineCampaign(),
@@ -51,5 +70,14 @@ export async function GET() {
         }
       : null;
 
-  return NextResponse.json({ plans, campaign, currentPlan, currentCycle, isGracePeriod, isPlanExpired });
+  return NextResponse.json({
+    plans,
+    campaign,
+    currentPlan,
+    currentCycle,
+    isGracePeriod,
+    isPlanExpired,
+    hasActiveSubscription,
+    currentPeriodEnd,
+  });
 }

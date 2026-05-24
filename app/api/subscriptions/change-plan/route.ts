@@ -86,6 +86,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Yearly → monthly is allowed but ALWAYS deferred to period end. Yearly
+    // subscribers paid for the year upfront with the annual discount applied;
+    // switching to monthly mid-cycle would owe them a refund and lose the
+    // discount we already granted. Industry standard (Notion, GitHub, Slack,
+    // Linear, Vercel) is to honor the annual commitment and apply the cycle
+    // change at renewal. We coerce `effective` here so the rest of the
+    // pipeline doesn't need branching.
+    const isYearlyToMonthly =
+      sub.billingCycle === "yearly" && input.newBillingCycle === "monthly";
+    const effective: "immediate" | "period_end" = isYearlyToMonthly
+      ? "period_end"
+      : input.effective;
+
     const newPlanContext = await getRecurringPlanContext(
       input.newPlanSlug,
       input.newBillingCycle,
@@ -118,7 +131,7 @@ export async function POST(request: NextRequest) {
     // The razorpay-node SDK's `update()` maps to PATCH internally.
     await razorpay.subscriptions.update(sub.subscription_id, {
       plan_id: newRazorpayPlanId,
-      schedule_change_at: input.effective === "immediate" ? "now" : "cycle_end",
+      schedule_change_at: effective === "immediate" ? "now" : "cycle_end",
       customer_notify: true,
     } as never);
 
@@ -127,7 +140,7 @@ export async function POST(request: NextRequest) {
       previousPlanSlug: sub.planSlug,
       previousBillingCycle: sub.billingCycle,
       scheduledChange:
-        input.effective === "period_end"
+        effective === "period_end"
           ? {
               effectiveAt: sub.current_period_end?.toISOString() ?? null,
               newPlanSlug: input.newPlanSlug,
@@ -137,8 +150,11 @@ export async function POST(request: NextRequest) {
           : null,
       lastPlanChangeAt: new Date().toISOString(),
       lastProration: proration,
+      // Track whether this period_end was forced by the yearly→monthly rule
+      // so the UI can show "scheduled" messaging without re-deriving intent.
+      cycleChangeForcedDeferred: isYearlyToMonthly,
     };
-    if (input.effective === "immediate") {
+    if (effective === "immediate") {
       sub.planSlug = input.newPlanSlug;
       sub.billingCycle = input.newBillingCycle;
       // Keep metadata in sync with the new plan so downstream syncs use the
@@ -154,7 +170,7 @@ export async function POST(request: NextRequest) {
     }
     await sub.save();
 
-    if (input.effective === "immediate") {
+    if (effective === "immediate") {
       await syncUserSubscriptionState({
         userId,
         subscriptionDocId: sub._id,
@@ -166,7 +182,7 @@ export async function POST(request: NextRequest) {
 
     await emitBillingEvent({
       type:
-        input.effective === "immediate"
+        effective === "immediate"
           ? "subscription.plan_changed"
           : "subscription.plan_change_scheduled",
       userId,
@@ -183,7 +199,9 @@ export async function POST(request: NextRequest) {
           planSlug: input.newPlanSlug,
           billingCycle: input.newBillingCycle,
         },
-        effective: input.effective,
+        effective,
+        requestedEffective: input.effective,
+        forcedDeferred: isYearlyToMonthly,
         proration,
       },
     });
@@ -209,14 +227,20 @@ export async function POST(request: NextRequest) {
           daysRemaining: proration?.daysRemaining,
           fromPlanSlug: sub.metadata?.previousPlanSlug,
           toPlanSlug: input.newPlanSlug,
-          effective: input.effective,
+          effective,
         },
       });
     }
 
     const body = {
       success: true,
-      effective: input.effective,
+      effective,
+      requestedEffective: input.effective,
+      forcedDeferred: isYearlyToMonthly,
+      effectiveAt:
+        effective === "period_end"
+          ? sub.current_period_end?.toISOString() ?? null
+          : null,
       newPlanSlug: input.newPlanSlug,
       newBillingCycle: input.newBillingCycle,
       proration,
