@@ -11,6 +11,7 @@ import {
   ExternalLink,
   Clock,
   ShieldCheck,
+  Wallet,
 } from "lucide-react";
 
 interface RefundDetail {
@@ -80,6 +81,7 @@ export default function AdminRefundDetailPage({
   );
   const [showApproveConfirm, setShowApproveConfirm] = useState(false);
   const [showDenyForm, setShowDenyForm] = useState(false);
+  const [insufficientBalance, setInsufficientBalance] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -102,6 +104,7 @@ export default function AdminRefundDetailPage({
     if (actionLoading) return;
     setActionLoading("approve");
     setError(null);
+    setInsufficientBalance(false);
     try {
       const res = await fetch(`/api/admin/refunds/${id}/approve`, {
         method: "POST",
@@ -109,7 +112,17 @@ export default function AdminRefundDetailPage({
         body: JSON.stringify({ note: approveNote || undefined }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to approve");
+      if (!res.ok) {
+        // Surface the insufficient-balance case as its own banner so the admin
+        // knows it's retryable, not a hard failure.
+        if (data.code === "razorpay_insufficient_balance") {
+          setInsufficientBalance(true);
+          setShowApproveConfirm(false);
+          await load();
+          return;
+        }
+        throw new Error(data.error || "Failed to approve");
+      }
       setShowApproveConfirm(false);
       setApproveNote("");
       await load();
@@ -292,6 +305,48 @@ export default function AdminRefundDetailPage({
               )}
             </div>
           )}
+
+          {/* Insufficient-balance retry banner. Surfaces both from the latest
+              click (insufficientBalance state) and from a previous attempt
+              recorded on the request (failureReason mentions balance). */}
+          {isPending &&
+            (insufficientBalance ||
+              (refund.failureReason &&
+                /balance/i.test(refund.failureReason))) && (
+              <div className="rounded-xl border border-orange-500/30 bg-orange-500/5 p-5">
+                <div className="flex items-start gap-3">
+                  <Wallet className="w-5 h-5 text-orange-400 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 space-y-2">
+                    <p className="text-sm font-medium text-orange-100">
+                      Razorpay balance is too low to process this refund
+                    </p>
+                    <p className="text-xs text-orange-200/80">
+                      No money has been refunded yet. Top up your Razorpay
+                      settlement balance or wait for new captures to clear, then
+                      click <strong>Approve</strong> again. This request will
+                      stay pending until you retry.
+                    </p>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <a
+                        href="https://dashboard.razorpay.com/app/funds"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-orange-600"
+                      >
+                        Open Razorpay funds dashboard
+                        <ExternalLink className="w-3 h-3 ml-1.5" />
+                      </a>
+                      <button
+                        onClick={() => void load()}
+                        className="inline-flex items-center rounded-lg border border-orange-500/40 px-3 py-1.5 text-xs font-medium text-orange-100 hover:bg-orange-500/10"
+                      >
+                        Refresh
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
           {/* Action panel */}
           {isPending && (

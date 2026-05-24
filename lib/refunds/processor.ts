@@ -6,6 +6,29 @@ import Payment from "@/models/Payment";
 import { BillingError } from "@/lib/billing/http";
 import { emitBillingEvent } from "@/lib/billing/events";
 import { cancelSubscription } from "@/lib/billing/subscriptions";
+import { isRazorpaySDKError } from "@/lib/payment/razorpayUtils";
+
+/**
+ * Razorpay returns this when the merchant's settlement balance can't cover the
+ * refund. The exact code is `BAD_REQUEST_ERROR`; we match on the description
+ * keyword because Razorpay reuses BAD_REQUEST_ERROR for many causes.
+ *
+ *   "Your account does not have enough balance to carry out the refund
+ *    operation. You can add funds to your account from your Razorpay
+ *    dashboard or capture new payments."
+ *
+ * Treated as RETRYABLE — admin tops up via the Razorpay dashboard and
+ * re-clicks "Approve". The RefundRequest stays in `pending`, Payment is rolled
+ * back to `success`, no money moves.
+ */
+function isInsufficientBalanceError(error: unknown): boolean {
+  if (!isRazorpaySDKError(error)) return false;
+  const description = error.error?.description?.toLowerCase() ?? "";
+  return (
+    description.includes("not have enough balance") ||
+    description.includes("insufficient balance")
+  );
+}
 
 /**
  * Refund processor — server-side initiation of an admin-approved refund.
@@ -128,10 +151,51 @@ export async function initiateRefund(
       } as never,
     )) as { id?: string; status?: string; amount?: number };
   } catch (error: unknown) {
-    // Roll back Payment status so the request can be retried.
+    // Always roll back the Payment status — no money moved.
     payment.status = "success";
     await payment.save();
 
+    // Insufficient merchant balance is a transient, retryable condition. Keep
+    // the RefundRequest in `pending` so the admin can simply top up and
+    // re-click Approve, no need to recreate the request or unwind a "failed"
+    // state. We still record what happened on the request for visibility.
+    if (isInsufficientBalanceError(error)) {
+      refundRequest.status = "pending";
+      refundRequest.decidedBy = null;
+      refundRequest.decidedAt = null;
+      // Preserve the admin's note from this attempt but tag it as a retry hint.
+      refundRequest.failureReason =
+        "Razorpay account balance was insufficient at last attempt. Add funds in the Razorpay dashboard and try again.";
+      refundRequest.metadata = {
+        ...refundRequest.metadata,
+        lastInsufficientBalanceAt: new Date().toISOString(),
+        lastInsufficientBalanceBy: args.adminUsername,
+      };
+      await refundRequest.save();
+
+      await emitBillingEvent({
+        type: "refund.retry_needed",
+        userId: refundRequest.userId,
+        actorType: "admin",
+        actorId: args.adminId,
+        subjectType: "refund",
+        subjectId: String(refundRequest._id),
+        payload: {
+          reason: "insufficient_balance",
+          paymentId: refundRequest.razorpayPaymentId,
+        },
+      });
+
+      throw new BillingError(
+        402,
+        "Razorpay account doesn't have enough balance to process this refund. Add funds via the Razorpay dashboard, then click Approve again.",
+        "razorpay_insufficient_balance",
+      );
+    }
+
+    // Any other Razorpay/SDK error — treat as a hard failure so the admin can
+    // investigate. The request can still be retried by re-running approve
+    // (initiateRefund is idempotent on already-completed/processing requests).
     refundRequest.status = "failed";
     refundRequest.failureReason =
       error instanceof Error ? error.message : "Razorpay refund call failed";
