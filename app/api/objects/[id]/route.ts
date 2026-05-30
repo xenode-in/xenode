@@ -100,6 +100,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       mediaCategory: object.mediaCategory ?? null,
       contentType: contentTypeToUse,
       size: sizeToUse,
+      updatedAt: object.updatedAt ?? null, // editor conflict-detection baseline
       chunkSize: object.chunkSize ?? null,
       chunkCount: object.chunkCount ?? null,
       chunkIvs: object.chunkIvs ?? null,

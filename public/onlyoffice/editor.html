@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Xenode document editor</title>
+  <style>
+    html, body { height: 100%; width: 100%; margin: 0; padding: 0; overflow: hidden; background: #fff; }
+    #x-ph { position: absolute; inset: 0; }
+    /* ONLYOFFICE replaces #x-ph with its own iframe; force it to fill the frame
+       (otherwise it stays at the default 300x150 and never initializes). */
+    iframe[name="frameEditor"] { position: absolute; inset: 0; width: 100% !important; height: 100% !important; border: 0; }
+  </style>
+</head>
+<body>
+  <!--
+    public/onlyoffice/editor.html  — Xenode's E2EE ONLYOFFICE inner page.
+
+    This page runs INSIDE the shell's sandboxed iframe (sandbox="allow-scripts
+    allow-same-origin"), served same-origin from /onlyoffice/ under a locked-down
+    CSP (connect-src 'self' — no cross-origin egress). It:
+
+      1. Receives DECRYPTED document bytes from the main window via postMessage
+         (same-origin, transferable — never a network hop).
+      2. Converts them to ONLYOFFICE's internal "Editor.bin" with the x2t WASM
+         converter (runs here, in the egress-locked frame).
+      3. Boots ONLYOFFICE's own UI (DocsAPI.DocEditor, CryptPad's offline shim)
+         pointed at a blob: URL of that bin — no Document Server involved.
+      4. Plays the role of the Document Server via connectMockServer().
+
+    SECURITY (do not weaken): plaintext bytes received here, the bin derived from
+    them, and any image/font data MUST stay inside this frame. They are never
+    written to localStorage/sessionStorage/IndexedDB, never logged, and (thanks
+    to the CSP) cannot be sent cross-origin. The only thing that leaves is, on an
+    explicit save, the re-serialized document bytes posted back to the SAME-ORIGIN
+    main window for re-encryption + upload.
+
+    Vendored engine assets (AGPL-3.0) live under /onlyoffice/. See
+    scripts/vendor-onlyoffice.mjs and THIRD-PARTY-NOTICE.txt.
+  -->
+  <div id="x-ph"></div>
+
+  <script>
+  (function () {
+    "use strict";
+
+    // ── Same-origin parent channel ────────────────────────────────────────────
+    // We ONLY ever talk to our own embedder, and only same-origin.
+    var PARENT_ORIGIN = window.location.origin;
+    var parentWin = window.parent;
+    var PLACEHOLDER = "x-ph";
+
+    function post(msg, transfer) {
+      try { parentWin.postMessage(msg, PARENT_ORIGIN, transfer || []); } catch (e) { /* noop */ }
+    }
+    // Lightweight breadcrumb channel for debugging during integration. Carries
+    // NO document content — only short status strings.
+    function log(m) { post({ kind: "xenode:log", message: String(m) }); }
+
+    // Surface uncaught errors / rejections to the parent during integration.
+    window.addEventListener("error", function (e) {
+      var where = (e.filename || "").split("/").slice(-1)[0];
+      log("window.error: " + (e.message || "") + " @ " + where + ":" + (e.lineno || 0));
+    });
+    window.addEventListener("unhandledrejection", function (e) {
+      var r = e.reason;
+      log("unhandledrejection: " + (r && r.message ? r.message : String(r)));
+    });
+
+    // ── State ─────────────────────────────────────────────────────────────────
+    // CryptPad's api.js shim hangs a few things off a global `APP` object (e.g.
+    // connectMockServer sets window.APP.getImageURL). Provide it.
+    window.APP = window.APP || {};
+
+    var docEditor = null;       // CryptPad DocsAPI.DocEditor wrapper instance
+    var started = false;        // guard: init only once
+    var changesIndex = 0;
+    var dirtyFired = false;
+    var docFormat = "docx";
+    var docEditable = true;
+    var binBlobUrl = null;
+    var myOOId = Math.floor(Math.random() * 1e9);
+    var myIndex = 2;            // history-keeper takes index 1 (see below)
+
+    // ── x2t (Emscripten WASM CLI) ──────────────────────────────────────────────
+    var x2tModule = null;
+    var x2tReadyPromise = null;
+
+    function loadX2T() {
+      if (x2tReadyPromise) return x2tReadyPromise;
+      x2tReadyPromise = new Promise(function (resolve, reject) {
+        // Emscripten reads a pre-defined global Module. locateFile is REQUIRED so
+        // 'x2t.wasm' resolves under /onlyoffice/x2t/ rather than relative to this
+        // page (/onlyoffice/editor.html).
+        window.Module = {
+          locateFile: function (path) { return "/onlyoffice/x2t/" + path; },
+          noInitialRun: true,
+          onRuntimeInitialized: function () {
+            var m = window.Module;
+            ["/working", "/working/media", "/working/fonts", "/working/themes"].forEach(function (d) {
+              try { m.FS.mkdir(d); } catch (e) { /* exists */ }
+            });
+            x2tModule = m;
+            resolve(m);
+          },
+          onAbort: function (e) { reject(new Error("x2t aborted: " + e)); },
+          print: function (t) { log("x2t: " + t); },
+          printErr: function (t) { log("x2t!: " + t); },
+        };
+        var s = document.createElement("script");
+        // ABSOLUTE url required: x2t.js's pre-js runs `new URL(script.getAttribute('src'))`,
+        // which throws "Invalid URL" on a root-relative path (no base). An absolute
+        // src also lets Emscripten derive the wasm directory (it overwrites locateFile
+        // to `prefix + path`, where prefix is this script's own directory).
+        s.src = window.location.origin + "/onlyoffice/x2t/x2t.js";
+        s.async = true;
+        s.onerror = function () { reject(new Error("Failed to load x2t.js")); };
+        document.head.appendChild(s);
+      });
+      return x2tReadyPromise;
+    }
+
+    // Single x2t invocation: write input + params XML to the in-memory FS, run
+    // main1, read the output. Format is inferred from the file EXTENSIONS in the
+    // params (no numeric format codes needed) — this mirrors CryptPad's driver.
+    function x2tRun(inputName, inputBytes, outputExt) {
+      var m = x2tModule;
+      m.FS.writeFile("/working/" + inputName, inputBytes);
+      var outName = inputName + "." + outputExt;
+      var params =
+        '<?xml version="1.0" encoding="utf-8"?>' +
+        '<TaskQueueDataConvert xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">' +
+        "<m_sFileFrom>/working/" + inputName + "</m_sFileFrom>" +
+        "<m_sThemeDir>/working/themes</m_sThemeDir>" +
+        "<m_sFileTo>/working/" + outName + "</m_sFileTo>" +
+        "<m_bIsNoBase64>false</m_bIsNoBase64>" +
+        "</TaskQueueDataConvert>";
+      m.FS.writeFile("/working/params.xml", params);
+      var ret;
+      try {
+        ret = m.ccall("main1", "number", ["string"], ["/working/params.xml"]);
+      } catch (e) {
+        throw new Error("x2t conversion crashed: " + (e && e.message ? e.message : e));
+      }
+      if (ret !== 0) throw new Error("x2t conversion failed (code " + ret + ") for " + inputName + " -> " + outputExt);
+      return m.FS.readFile("/working/" + outName); // Uint8Array
+    }
+
+    // ODF inputs must pass through their MS-Office equivalent before the bin.
+    var ODF_TO_MS = { odt: "docx", ods: "xlsx", odp: "pptx" };
+
+    function convertToBin(format, bytes) {
+      var fileName = "document." + format;
+      var data = new Uint8Array(bytes);
+      var inter = ODF_TO_MS[format];
+      if (inter) { data = x2tRun(fileName, data, inter); fileName += "." + inter; }
+      return x2tRun(fileName, data, "bin");
+    }
+
+    // binData is the STRING ONLYOFFICE returns from asc_nativeGetFile (a "DOCY;..."
+    // text-encoded bin). Write it to x2t's FS verbatim — wrapping it in a
+    // Uint8Array would corrupt it. x2t reads it (UTF-8) as the bin input.
+    function convertFromBin(binData, targetFormat) {
+      var fileName = "document.bin";
+      var data = binData;
+      var inter = ODF_TO_MS[targetFormat]; // bin -> docx -> odt, etc.
+      if (inter) { data = x2tRun(fileName, data, inter); fileName += "." + inter; }
+      return x2tRun(fileName, data, targetFormat);
+    }
+
+    // ── ONLYOFFICE DocsAPI (CryptPad offline shim) ─────────────────────────────
+    function loadApiJs() {
+      return new Promise(function (resolve, reject) {
+        if (window.DocsAPI && window.DocsAPI.DocEditor) return resolve();
+        var s = document.createElement("script");
+        s.src = "/onlyoffice/web-apps/apps/api/documents/api.js";
+        s.async = true;
+        s.onload = function () {
+          // The shim assigns DocsAPI.DocEditor synchronously at eval; it loads
+          // api-orig.js asynchronously but the wrapper awaits that internally.
+          if (window.DocsAPI && window.DocsAPI.DocEditor) resolve();
+          else reject(new Error("api.js loaded but DocsAPI.DocEditor is missing"));
+        };
+        s.onerror = function () { reject(new Error("Failed to load api.js")); };
+        document.head.appendChild(s);
+      });
+    }
+
+    function docTypeFor(format) {
+      if (["xlsx", "xls", "ods", "csv"].indexOf(format) >= 0) return "cell";
+      if (["pptx", "ppt", "odp"].indexOf(format) >= 0) return "slide";
+      if (format === "pdf") return "pdf";
+      return "word";
+    }
+
+    function sendToOO(obj) { if (docEditor) docEditor.sendMessageToOO(obj); }
+
+    // The mock "Document Server". For a single, local user there are no real
+    // collaborators and no prior history: initial changes are empty and the
+    // document itself is delivered as the Editor.bin blob URL (config.document.url,
+    // echoed by the shim's handleAuth).
+    function getParticipants() {
+      return {
+        index: myIndex,
+        list: [
+          { id: "1", idOriginal: "1", username: "History", indexUser: 1,
+            connectionId: String(myOOId) + "-hk", isCloseCoAuthoring: false, view: false },
+          { id: String(myOOId) + myIndex, idOriginal: String(myOOId), username: "You", indexUser: myIndex,
+            connectionId: String(myOOId) + "-me", isCloseCoAuthoring: false, view: false },
+        ],
+      };
+    }
+
+    function onMessageFromOO(obj) {
+      var type = obj && obj.type;
+      switch (type) {
+        case "auth":
+          // Handled by the CryptPad shim (handleAuth) — nothing to do here.
+          break;
+        case "isSaveLock":
+          // Grant the save lock immediately (we are the only writer).
+          sendToOO({ type: "saveLock", saveLock: false });
+          break;
+        case "getLock":
+          sendToOO({ type: "getLock", locks: {} });
+          break;
+        case "getMessages":
+          sendToOO({ type: "message" });
+          break;
+        case "cursor":
+          break;
+        case "saveChanges":
+          // A user edit produced OT changes. Mark dirty (drives auto-save) and
+          // release the save lock so the editor keeps accepting input.
+          if (!dirtyFired) { dirtyFired = true; post({ kind: "xenode:dirty" }); }
+          changesIndex++;
+          sendToOO({ type: "unSaveLock", index: changesIndex, time: Date.now() });
+          break;
+        case "unLockDocument":
+          if (obj.isSave) sendToOO({ type: "unSaveLock", index: changesIndex, time: -1 });
+          break;
+        default:
+          // Other protocol messages are no-ops for the single-user offline case.
+          break;
+      }
+    }
+
+    function boot(format, editable, binBytes) {
+      var dt = docTypeFor(format);
+      binBlobUrl = URL.createObjectURL(new Blob([binBytes]));
+
+      var config = {
+        document: {
+          fileType: format,
+          key: "xenode-" + myOOId,
+          title: "document." + format,
+          url: binBlobUrl,
+          permissions: { edit: editable, download: true, print: true, comment: false, review: editable },
+        },
+        documentType: dt,
+        editorConfig: {
+          mode: editable ? "edit" : "view",
+          lang: "en",
+          user: { id: String(myOOId), name: "You" },
+          customization: {
+            compactHeader: true,
+            chat: false,
+            comments: false,
+            hideRightMenu: true,
+            plugins: false,
+            about: false,
+            feedback: false,
+            help: false,
+            uiTheme: "theme-classic-light",
+          },
+        },
+        events: {
+          onAppReady: function () { log("onAppReady"); },
+          onDocumentReady: function () { log("onDocumentReady"); post({ kind: "xenode:ready" }); },
+          onError: function (e) {
+            var d = e && e.data;
+            var m = (d && (d.errorDescription || d.errorCode)) || (e && e.message) || "editor error";
+            log("onError " + JSON.stringify(e));
+            post({ kind: "xenode:error", message: String(m) });
+          },
+        },
+      };
+
+      docEditor = new DocsAPI.DocEditor(PLACEHOLDER, config);
+      docEditor.connectMockServer({
+        onMessage: onMessageFromOO,
+        getParticipants: getParticipants,
+        getInitialChanges: function () { return []; },
+        getImageURL: function () { return Promise.resolve(""); },
+        onAuth: function () { log("auth handshake complete"); },
+      });
+    }
+
+    // ── Lifecycle driven by the main-window engine ─────────────────────────────
+    async function handleInit(msg) {
+      docFormat = msg.format;
+      docEditable = !!msg.editable;
+      log("init: format=" + docFormat + " editable=" + docEditable +
+          " bytes=" + (msg.document && msg.document.byteLength));
+      await loadX2T();
+      log("x2t runtime ready");
+      var bin = convertToBin(docFormat, msg.document);
+      log("converted to Editor.bin (" + (bin && bin.length) + " bytes)");
+      await loadApiJs();
+      log("DocsAPI ready");
+      boot(docFormat, docEditable, bin);
+    }
+
+    // The ONLYOFFICE editor instance lives in the nested frameEditor (the first
+    // child frame). asc_nativeGetFile() serializes the live document to Editor.bin
+    // (this is exactly how CryptPad extracts content — see inner.js getContent).
+    function getEditorApi() {
+      try {
+        var w = window.frames[0];
+        return w && (w.editor || w.editorCell) || null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // Serialize the live document → Editor.bin → x2t convert to the target format
+    // (e.g. docx). All plaintext stays in this egress-locked frame; only the final
+    // bytes are handed to the same-origin main window for re-encryption + upload.
+    async function handleSave(id, targetFormat) {
+      var ed = getEditorApi();
+      if (!ed || typeof ed.asc_nativeGetFile !== "function") {
+        throw new Error("Editor is not ready to save yet.");
+      }
+      await loadX2T();
+      var bin = ed.asc_nativeGetFile(); // Uint8Array (Editor.bin)
+      if (!bin || !bin.length) throw new Error("Editor returned an empty document.");
+      var fmt = targetFormat || docFormat;
+      var out = convertFromBin(bin, fmt); // Uint8Array
+      if (!out || !out.length) throw new Error("Conversion to " + fmt + " produced no output.");
+      // Hand back a tight ArrayBuffer (transferred to the main window by the caller).
+      return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength);
+    }
+
+    window.addEventListener("message", function (ev) {
+      if (ev.origin !== PARENT_ORIGIN || ev.source !== parentWin) return;
+      var msg = ev.data;
+      if (!msg || typeof msg !== "object") return;
+      switch (msg.kind) {
+        case "xenode:init":
+          if (started) return;
+          started = true;
+          handleInit(msg).catch(function (err) {
+            post({ kind: "xenode:error", message: (err && err.message) || "init failed" });
+          });
+          break;
+        case "xenode:save":
+          handleSave(msg.id, msg.format).then(function (bytes) {
+            post({ kind: "xenode:saved", id: msg.id, document: bytes }, [bytes]);
+          }).catch(function (err) {
+            post({ kind: "xenode:saveError", id: msg.id, message: (err && err.message) || "save failed" });
+          });
+          break;
+        case "xenode:destroy":
+          try { if (docEditor) docEditor.destroyEditor(); } catch (e) { /* noop */ }
+          docEditor = null;
+          break;
+        default:
+          break;
+      }
+    });
+
+    // Tell the engine we're alive and ready to receive the document.
+    post({ kind: "xenode:frame-ready" });
+  })();
+  </script>
+</body>
+</html>

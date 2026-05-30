@@ -4,7 +4,7 @@ const NOOP = () => {};
 
 import React, { useEffect, useState, useRef } from "react";
 import dynamic from "next/dynamic";
-import DocxViewer from "./DocxViewer";
+// REMOVED: DocxViewer (docx-preview) import — replaced by ONLYOFFICE x2t WASM integration
 import {
   Dialog,
   DialogClose,
@@ -1148,7 +1148,50 @@ export function FilePreviewDialog({
           type.includes("officedocument.wordprocessingml") ||
           type.includes("msword")
         ) {
-          innerContent = <DocxViewer url={url} name={name} />;
+          // REMOVED: docx-preview (DocxViewer) — replaced by ONLYOFFICE x2t WASM integration.
+          // Owners open Word docs in the E2EE editor. Public shares have no vault
+          // private key (the editor cannot unwrap the DEK), so they keep a read-only viewer.
+          innerContent = sharedToken ? (
+            <div className="h-full w-full doc-viewer-wrapper">
+              <DocViewer
+                documents={[{ uri: url ?? "", fileType: type, fileName: name }]}
+                pluginRenderers={DocViewerRenderers}
+                style={{ height: "100%" }}
+                config={{
+                  header: {
+                    disableHeader: true,
+                    disableFileName: true,
+                    retainURLParams: false,
+                  },
+                }}
+              />
+            </div>
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+                <Pencil className="h-6 w-6 text-primary" />
+              </div>
+              <div>
+                <p className="text-sm font-medium">{name}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Word documents open in the end-to-end encrypted editor.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                onClick={() => {
+                  onClose();
+                  window.open(
+                    `/editor/${file.id}`,
+                    "_blank",
+                    "noopener,noreferrer",
+                  );
+                }}
+              >
+                Open in editor
+              </Button>
+            </div>
+          );
         } else if (
           type.includes("excel") ||
           type.includes("spreadsheet") ||

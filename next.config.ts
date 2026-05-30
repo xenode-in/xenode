@@ -78,6 +78,54 @@ const nextConfig: NextConfig = {
         headers: strictHeaders,
       },
       {
+        // ── ONLYOFFICE engine assets (served same-origin from public/onlyoffice) ──
+        // Locked-down CSP so the vendored editor + x2t WASM can run but can make
+        // NO cross-origin network requests — plaintext can never leave the device.
+        // `wasm-unsafe-eval` is required to compile the x2t WASM; `connect-src
+        // 'self'` lets the engine fetch only its own same-origin assets.
+        source: "/onlyoffice/:path*",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: [
+              "default-src 'self'",
+              // 'unsafe-eval' is REQUIRED by ONLYOFFICE: its template engine and
+              // sdkjs compile code at runtime via new Function(). This does NOT
+              // weaken the E2EE guarantee — that rests on `connect-src 'self'`
+              // (no cross-origin egress), so the editor can run its own code but
+              // can never exfiltrate decrypted bytes. 'wasm-unsafe-eval' stays for
+              // the x2t WASM compile. Matches CryptPad's offline editor sandbox.
+              "script-src 'self' 'wasm-unsafe-eval' 'unsafe-eval' 'unsafe-inline'",
+              "style-src 'self' 'unsafe-inline'",
+              "img-src 'self' data: blob:",
+              "font-src 'self' data:",
+              // blob: lets the editor fetch the decrypted document we hand it as
+              // an in-memory Blob URL (and its own image blobs). Still E2EE-safe:
+              // blob: URLs are local/on-device, never a cross-origin destination.
+              "connect-src 'self' blob:",
+              "worker-src 'self' blob:",
+              "child-src 'self' blob:",
+              "object-src 'none'",
+              "base-uri 'none'",
+              "frame-ancestors 'self'",
+            ].join("; "),
+          },
+          { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
+        ],
+      },
+      {
+        // Cache the LARGE, content-stable vendored dirs hard: each client
+        // downloads the ~57MB x2t.wasm + sdkjs bundle ONCE, then every later
+        // doc-open is served from disk cache (0 network bytes). The small glue
+        // files (engine.js / editor.html / manifest.json) are deliberately NOT
+        // listed here, so edits + engine upgrades take effect on reload; the
+        // loader also fetches manifest.json with `cache: "no-cache"`.
+        source: "/onlyoffice/:dir(sdkjs|web-apps|fonts|x2t)/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" },
+        ],
+      },
+      {
         // Fallback catch-all (excluding the public ones above)
         source: "/((?!plans|pricing|checkout).*)",
         headers: strictHeaders,

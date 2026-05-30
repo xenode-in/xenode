@@ -1,0 +1,19 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 3000,
+      "autoPort": true
+    },
+    {
+      "name": "oo-selftest",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [".oo-ref/oo-selftest-server.mjs"],
+      "port": 4599,
+      "autoPort": true
+    }
+  ]
+}

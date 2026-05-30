@@ -71,6 +71,15 @@ export async function POST(
       object.size = buffer.byteLength;
       object.b2FileId = uploadResult.b2FileId;
       object.updatedAt = new Date();
+      // This path writes a single AES-GCM blob with one IV. Clear any stale
+      // chunked-encryption metadata so the next read doesn't take the chunked
+      // decrypt path against a non-chunked blob (the docs editor saves here).
+      object.set({
+        chunkSize: undefined,
+        chunkCount: undefined,
+        chunkIvs: undefined,
+        chunks: undefined,
+      });
       await object.save();
 
       if (sizeDiff !== 0) {

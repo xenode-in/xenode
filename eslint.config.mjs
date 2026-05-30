@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Static assets are not app source — never lint them. The vendored ONLYOFFICE
+    // engine alone is ~16k files (incl. multi-MB minified bundles) and OOMs ESLint.
+    "public/**",
   ]),
 ]);
 

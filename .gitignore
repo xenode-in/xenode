@@ -41,3 +41,15 @@ yarn-error.log*
 next-env.d.ts
 
 /agency-agents-main
+
+# Vendored ONLYOFFICE engine assets (AGPL-3.0, fetched via `npm run vendor:onlyoffice`).
+# Large + license-encumbered, so kept out of git. Xenode's own glue files
+# (engine.js, editor.html, manifest.json) are committed — reserve them below.
+/public/onlyoffice/*
+!/public/onlyoffice/engine.js
+!/public/onlyoffice/editor.html
+!/public/onlyoffice/manifest.json
+!/public/onlyoffice/document_editor_service_worker.js
+
+# Local-only reference copies of CryptPad's AGPL offline glue (for porting; never committed).
+/.oo-ref/
