@@ -321,3 +321,70 @@
     transform: translateX(100%);
   }
 }
+
+/* ──────────────────────────────────────────────────────────────────────────
+   BlockNote document editor theming.
+   Map BlockNote's own CSS variables onto the app's design tokens so the editor
+   (and its portaled menus/tooltips) automatically follow the active theme —
+   light, dark, imperial, deep-navy, xenode-green, etc.
+
+   Scoped to BlockNote's own attributes (`data-color-scheme` on the editor,
+   `data-mantine-color-scheme` on portals) and flagged !important so these win
+   over BlockNote's higher-specificity built-in theme rules regardless of CSS
+   load order. These attributes only ever appear on BlockNote elements, so the
+   rest of the app is untouched.
+   ────────────────────────────────────────────────────────────────────────── */
+[data-color-scheme],
+[data-mantine-color-scheme] {
+  --bn-colors-editor-text: var(--foreground) !important;
+  --bn-colors-editor-background: transparent !important;
+  --bn-colors-menu-text: var(--popover-foreground) !important;
+  --bn-colors-menu-background: var(--popover) !important;
+  --bn-colors-tooltip-text: var(--popover-foreground) !important;
+  --bn-colors-tooltip-background: var(--popover) !important;
+  --bn-colors-hovered-text: var(--accent-foreground) !important;
+  --bn-colors-hovered-background: var(--accent) !important;
+  --bn-colors-selected-text: var(--primary-foreground) !important;
+  --bn-colors-selected-background: var(--primary) !important;
+  --bn-colors-disabled-text: var(--muted-foreground) !important;
+  --bn-colors-disabled-background: var(--muted) !important;
+  --bn-colors-border: var(--border) !important;
+  --bn-colors-side-menu: var(--muted-foreground) !important;
+  --bn-colors-shadow: color-mix(in srgb, var(--foreground) 12%, transparent) !important;
+  --bn-font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif !important;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   Document typography for the editor surface.
+   BlockNote's defaults are Notion-scale (H1 = 3em, H2 = 2em, tight spacing),
+   which reads like a block editor rather than a page. These overrides give the
+   editing surface a Word / Google-Docs feel: a document font, page-scale
+   headings, comfortable line height and paragraph rhythm. Scoped to the doc
+   editor only, so the rest of the app is unaffected.
+   ────────────────────────────────────────────────────────────────────────── */
+.xenode-doc-blocknote .bn-editor,
+.xenode-doc-blocknote .bn-default-styles {
+  font-family: var(--font-sans), Arial, "Helvetica Neue", Helvetica, sans-serif;
+  font-size: 16px;
+}
+
+.xenode-doc-blocknote .bn-block-outer {
+  line-height: 1.6;
+}
+
+/* Page-scale headings (vs BlockNote's 3em / 2em / 1.3em). */
+.xenode-doc-blocknote [data-content-type="heading"] {
+  --level: 1.7em;
+  padding-top: 14px;
+}
+.xenode-doc-blocknote [data-content-type="heading"][data-level="2"] {
+  --level: 1.4em;
+}
+.xenode-doc-blocknote [data-content-type="heading"][data-level="3"] {
+  --level: 1.18em;
+}
+
+/* Comfortable paragraph rhythm, like a written document. */
+.xenode-doc-blocknote [data-content-type="paragraph"] {
+  padding-block: 5px;
+}
