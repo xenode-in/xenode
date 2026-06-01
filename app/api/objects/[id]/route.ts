@@ -4,8 +4,7 @@ import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
-import { deleteObject as deleteB2Object, getDownloadUrl } from "@/lib/b2/objects";
-import { decrementStorage, updateBucketStats } from "@/lib/metering/usage";
+import { getDownloadUrl } from "@/lib/b2/objects";
 import ShareLink from "@/models/ShareLink";
 import DirectShare from "@/models/DirectShare";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
@@ -41,6 +40,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       errorMessage = "Object not found";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
+
+    // Mark as recently opened. This GET is the "open file" signal (preview /
+    // download fetch the object here; thumbnails do NOT — they go through the
+    // /api/files proxy), so it's the right place to drive the Recent view.
+    // Fire-and-forget so it never delays the response.
+    void StorageObject.updateOne(
+      { _id: object._id },
+      { $set: { lastAccessedAt: new Date() } },
+    ).catch(() => {});
 
     const bucket = await Bucket.findOne({
       _id: object.bucketId,
@@ -168,53 +176,28 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    const bucket = await Bucket.findOne({
-      _id: object.bucketId,
-      $or: [{ userId }, { userId: "system" }],
-    })
-      .select("_id b2BucketId")
-      .lean();
-
-    if (!bucket) {
-      statusCode = 404;
-      errorMessage = "Bucket not found";
-      return NextResponse.json({ error: errorMessage }, { status: statusCode });
-    }
-
-    try {
-      await deleteB2Object(bucket.b2BucketId, object.key);
-
-      if (object.thumbnail && object.thumbnail.startsWith("users/")) {
-        await deleteB2Object(bucket.b2BucketId, object.thumbnail);
-      }
-      
-      if (object.optimizedKey) {
-        await deleteB2Object(bucket.b2BucketId, object.optimizedKey);
-      }
-    } catch {
-      // ignore B2 errors
-    }
-
+    // Soft-delete → Bin. The encrypted B2 blobs (main + thumbnail + optimized,
+    // plus any sidecars) are intentionally NOT removed here so the item can be
+    // restored within the 30-day window. They're purged later by the user
+    // ("delete forever" / empty bin → /api/objects/purge) or by the
+    // /api/cron/purge-bin job. Storage metering is likewise NOT decremented:
+    // the bytes still occupy B2, so binned items keep counting against quota
+    // until they're actually purged.
+    const now = new Date();
     await StorageObject.findByIdAndUpdate(object._id, {
-      $set: { deletedAt: new Date() },
+      $set: { deletedAt: now },
     });
 
-    // Cascade-delete all sidecar children (subtitles, extra audio tracks)
-    const sidecars = await StorageObject.find({ parentObjectId: object._id, userId }).lean();
-    for (const sidecar of sidecars) {
-      try {
-        await deleteB2Object(bucket.b2BucketId, sidecar.key);
-      } catch { /* ignore B2 errors */ }
-      await StorageObject.findByIdAndUpdate(sidecar._id, { $set: { deletedAt: new Date() } });
-      await decrementStorage(userId, sidecar.size);
-      await updateBucketStats(bucket._id.toString(), -1, -sidecar.size);
-    }
+    // Cascade the soft-delete to sidecar children (subtitles, extra audio).
+    await StorageObject.updateMany(
+      { parentObjectId: object._id, userId },
+      { $set: { deletedAt: now } },
+    );
 
+    // Revoke any active shares — a binned item shouldn't stay publicly
+    // reachable. (Restore does not bring shares back; re-share if needed.)
     await ShareLink.deleteMany({ objectId: object._id });
     await DirectShare.deleteMany({ objectId: object._id });
-
-    await decrementStorage(userId, object.size);
-    await updateBucketStats(bucket._id.toString(), -1, -object.size);
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
@@ -272,7 +255,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    const { tags, position } = body;
+    const { tags, position, starred } = body;
 
     await dbConnect();
 
@@ -285,6 +268,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     if (tags !== undefined) object.tags = tags;
     if (position !== undefined) object.position = position;
+    if (starred !== undefined) object.starred = !!starred;
 
     await object.save();
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { getDb } from "@/lib/db/local";
 import { useSession } from "@/lib/auth/client";
@@ -7,14 +8,49 @@ import { QuickAccessBar } from "@/components/dashboard/QuickAccessBar";
 import { PreviewSection } from "@/components/dashboard/PreviewSection";
 import { RecentFilesTable } from "@/components/dashboard/RecentFilesTable";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type RecentObject = any;
+
 export function DashboardClient() {
   const { data: session } = useSession();
   const userId = session?.user?.id;
 
-  const recentFiles = useLiveQuery(
-    () => userId ? getDb(userId).files.orderBy('createdAt').reverse().limit(8).toArray() : [],
-    [userId]
-  );
+  // "Recent" = recently OPENED, sorted server-side by lastAccessedAt (bumped on
+  // every file open, seeded at upload). Fetched from the server so it reflects
+  // opens immediately, rather than the Dexie createdAt order (recent uploads).
+  const [recentFiles, setRecentFiles] = useState<RecentObject[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const cfgRes = await fetch("/api/drive/config");
+        const cfg = await cfgRes.json();
+        const bid = cfg?.bucket?._id;
+        if (!bid) {
+          if (!cancelled) setRecentFiles([]);
+          return;
+        }
+        const res = await fetch(
+          `/api/objects?bucketId=${bid}&sortBy=accessed&limit=8`,
+        );
+        const data = await res.json();
+        const objs = (data.objects ?? []).map(
+          (o: RecentObject) => ({
+            ...o,
+            id: o._id,
+            encryptedName: o.encryptedName ?? undefined,
+          }),
+        );
+        if (!cancelled) setRecentFiles(objs);
+      } catch {
+        if (!cancelled) setRecentFiles([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const videos = useLiveQuery(
     () => userId ? getDb(userId).files
@@ -67,7 +103,7 @@ export function DashboardClient() {
       )}
 
       {/* Recent Files */}
-      <RecentFilesTable files={mapToObjects(recentFiles || [])} />
+      <RecentFilesTable files={recentFiles || []} />
 
       {/* Empty state */}
       {recentFiles.length === 0 && !hasPreview && (

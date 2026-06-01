@@ -4,7 +4,9 @@
       "Bash(npx tsc *)",
       "Bash(rm -v app/api/payment/razorpay/create-order/route.ts app/api/payment/razorpay/verify/route.ts app/api/payment/razorpay/refund/route.ts app/api/payment/razorpay/plans/route.ts lib/payment/fulfillmentService.ts models/PendingTransaction.ts lib/pricing/PaymentService.ts lib/pricing/SubscriptionService.ts components/checkout/PaymentMethodToggle.tsx components/checkout/PriceBreakdown.tsx components/dashboard/RefundButton.tsx)",
       "Bash(rmdir -v app/api/payment/razorpay/create-order app/api/payment/razorpay/verify app/api/payment/razorpay/refund app/api/payment/razorpay/plans)",
-      "WebFetch(domain:razorpay.com)"
+      "WebFetch(domain:razorpay.com)",
+      "Bash(Get-ChildItem -Path \"A:\\\\my-projects\\\\xenode\\\\xenode-expo\" -Recurse -Directory)",
+      "Bash(Select-Object -First 50 FullName)"
     ]
   }
 }

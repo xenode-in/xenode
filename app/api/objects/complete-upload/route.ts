@@ -5,7 +5,7 @@ import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import { incrementStorage, updateBucketStats } from "@/lib/metering/usage";
 import { getS3Client } from "@/lib/b2/client";
-import { HeadObjectCommand } from "@aws-sdk/client-s3";
+import { HeadObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +63,8 @@ export async function POST(request: NextRequest) {
       aspectRatio,
       isSidecar,
       parentObjectId,
+      syncContentFp,
+      syncMetaFp,
     } = await request.json();
 
     if (!objectKey || !bucketId || !size) {
@@ -175,12 +177,44 @@ export async function POST(request: NextRequest) {
       }
       if (isSidecar !== undefined) existingObject.isSidecar = isSidecar;
       if (parentObjectId) existingObject.parentObjectId = parentObjectId;
+      if (syncContentFp) existingObject.syncContentFp = syncContentFp;
+      if (syncMetaFp) existingObject.syncMetaFp = syncMetaFp;
       await existingObject.save();
       if (sizeDiff !== 0) {
         await incrementStorage(userId, sizeDiff);
         await updateBucketStats(bucketId, 0, sizeDiff);
       }
       return NextResponse.json({ object: existingObject });
+    }
+
+    // Content-fingerprint dedup guard. The mobile client already runs a
+    // pre-upload sync-check, but two devices (or a retry racing the original)
+    // can both upload the same content before either records it. If an object
+    // with this content fingerprint already exists in the bucket, the just-
+    // uploaded B2 blob is a duplicate: delete it (best-effort, so we don't
+    // double-charge storage) and return the existing object instead of
+    // creating a second StorageObject.
+    if (syncContentFp) {
+      const dupe = await StorageObject.findOne({
+        bucketId,
+        syncContentFp,
+        deletedAt: { $exists: false },
+      });
+      if (dupe) {
+        const orphanKeys = [objectKey, optimizedKey, thumbnail].filter(
+          Boolean,
+        ) as string[];
+        await Promise.all(
+          orphanKeys.map((Key) =>
+            getS3Client()
+              .send(new DeleteObjectCommand({ Bucket: bucket.b2BucketId, Key }))
+              .catch((err) =>
+                console.warn(`Failed to delete duplicate B2 object ${Key}:`, err),
+              ),
+          ),
+        );
+        return NextResponse.json({ object: dupe });
+      }
     }
 
     if (optimizedKey) {
@@ -222,6 +256,11 @@ export async function POST(request: NextRequest) {
       aspectRatio: aspectRatio ?? undefined,
       isSidecar: isSidecar ?? false,
       parentObjectId: parentObjectId ?? undefined,
+      syncContentFp: syncContentFp ?? undefined,
+      syncMetaFp: syncMetaFp ?? undefined,
+      // Seed "recent" with the upload time so a never-opened file still has a
+      // sensible position; opening the file later bumps it via GET /[id].
+      lastAccessedAt: new Date(),
     });
 
     await incrementStorage(userId, size, {

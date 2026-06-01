@@ -39,8 +39,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
   try {
     const rangeHeader = request.headers.get("range");
-    const command = new GetObjectCommand({ 
-      Bucket: bucket, 
+    const command = new GetObjectCommand({
+      Bucket: bucket,
       Key: key,
       ...(rangeHeader ? { Range: rangeHeader } : {})
     });
@@ -81,6 +81,19 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     return new NextResponse(stream, { status, headers });
   } catch (error: unknown) {
+    // Missing object → clean, fast 404. This is expected for "zombie" Bin
+    // entries whose blobs were already purged (e.g. items deleted before blob
+    // retention existed, or after the 30-day purge), so don't log it as an
+    // error or 502 — the client just shows a placeholder.
+    const err = error as {
+      name?: string;
+      $metadata?: { httpStatusCode?: number };
+    };
+    const status = err?.$metadata?.httpStatusCode;
+    if (err?.name === "NoSuchKey" || err?.name === "NotFound" || status === 404) {
+      return new NextResponse("File not found", { status: 404 });
+    }
+
     const message =
       error instanceof Error ? error.message : "Internal server error";
     console.error(`[CDN Proxy] Failed to stream ${bucket}/${key}:`, message);
