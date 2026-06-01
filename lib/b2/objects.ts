@@ -1,6 +1,7 @@
 import {
   PutObjectCommand,
   DeleteObjectCommand,
+  DeleteObjectsCommand,
   ListObjectsV2Command,
   GetObjectCommand,
   HeadObjectCommand,
@@ -56,6 +57,44 @@ export async function deleteObject(
   });
 
   await getS3Client().send(command);
+}
+
+/**
+ * Delete many objects from a B2 bucket in one round trip per 1000 keys.
+ *
+ * S3's DeleteObjects API accepts up to 1000 keys per request, so we chunk.
+ * Best-effort: a chunk that fails (or reports per-key errors) is logged but
+ * doesn't throw — the caller (bulk-delete) has already decided the records
+ * are going away, and any B2 key we miss is harmless orphaned ciphertext.
+ * Duplicate/empty keys are de-duped out first.
+ */
+export async function deleteObjects(
+  bucketName: string,
+  keys: string[],
+): Promise<void> {
+  const unique = Array.from(new Set(keys.filter(Boolean)));
+  if (unique.length === 0) return;
+
+  const CHUNK = 1000;
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    const slice = unique.slice(i, i + CHUNK);
+    try {
+      await getS3Client().send(
+        new DeleteObjectsCommand({
+          Bucket: bucketName,
+          Delete: {
+            Objects: slice.map((Key) => ({ Key })),
+            Quiet: true,
+          },
+        }),
+      );
+    } catch (e) {
+      console.error(
+        `[b2] deleteObjects chunk failed (${slice.length} keys):`,
+        e,
+      );
+    }
+  }
 }
 
 /**

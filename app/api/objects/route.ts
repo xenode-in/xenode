@@ -9,7 +9,7 @@ import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 
 const LIST_PROJECTION =
-  "key size contentType encryptedContentType thumbnail tags position createdAt " +
+  "key size contentType encryptedContentType thumbnail tags position starred lastAccessedAt createdAt " +
   "isEncrypted encryptedName encryptedDisplayName mediaCategory " +
   "optimizedKey optimizedEncryptedDEK optimizedIV optimizedSize aspectRatio";
 
@@ -50,14 +50,24 @@ export async function GET(request: NextRequest) {
     // large libraries.
     const fetchAll = searchParams.get("fetchAll") === "true";
 
+    // Bin mode: list soft-deleted objects (the Bin) instead of live ones.
+    const deleted = searchParams.get("deleted") === "true";
+
+    // Starred mode: restrict to the user's favourites.
+    const starredOnly = searchParams.get("starred") === "true";
+
     // Sort options: "date", "size", "type", "name" (name is functionally handled client-side but we map it here just in case)
-    const sortByParam = searchParams.get("sortBy") || "date";
+    const sortByParam = searchParams.get("sortBy") || (deleted ? "deleted" : "date");
     const sortDirParam = searchParams.get("sortDir") || "desc";
     const sortDir = sortDirParam === "asc" ? 1 : -1;
 
     let sortField = "createdAt";
     if (sortByParam === "size") sortField = "size";
     else if (sortByParam === "type") sortField = "contentType";
+    // Bin defaults to most-recently-deleted first.
+    else if (sortByParam === "deleted") sortField = "deletedAt";
+    // "Recent" view: most-recently-opened first.
+    else if (sortByParam === "accessed") sortField = "lastAccessedAt";
     // For anything else (like "name" which is E2EE), default server sort is createdAt
 
     const sortConfig: any = { [sortField]: sortDir, _id: -1 };
@@ -88,9 +98,13 @@ export async function GET(request: NextRequest) {
 
     const query: Record<string, unknown> = {
       bucketId,
-      deletedAt: { $exists: false },
+      deletedAt: { $exists: deleted },
       isSidecar: { $ne: true }, // exclude subtitle/audio sidecar files from listings
     };
+
+    if (starredOnly) {
+      query.starred = true;
+    }
 
     if (bucket.userId === "system") {
       const prefix = `users/${userId}/`;
@@ -111,7 +125,12 @@ export async function GET(request: NextRequest) {
         const { v, id } = cursorData;
 
         let typedV = v;
-        if (sortField === "createdAt" && v) {
+        if (
+          (sortField === "createdAt" ||
+            sortField === "deletedAt" ||
+            sortField === "lastAccessedAt") &&
+          v
+        ) {
           typedV = new Date(v);
         }
 
@@ -136,7 +155,7 @@ export async function GET(request: NextRequest) {
     // When fetchAll is true, return every matching object (no limit).
     // Otherwise fetch limit + 1 to detect if another page exists.
     const dbQuery = StorageObject.find(query)
-      .select(LIST_PROJECTION)
+      .select(deleted ? `${LIST_PROJECTION} deletedAt` : LIST_PROJECTION)
       .sort(sortConfig);
 
     const rawObjects = fetchAll

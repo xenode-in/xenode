@@ -418,8 +418,20 @@ export default function FilesPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
-  const [sortField, setSortField] = useState<SortField>("name");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [sortField, setSortField] = useState<SortField>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("filesSortField");
+      if (saved === "name" || saved === "size" || saved === "type" || saved === "date") return saved;
+    }
+    return "name";
+  });
+  const [sortDir, setSortDir] = useState<SortDir>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("filesSortDir");
+      if (saved === "asc" || saved === "desc") return saved;
+    }
+    return "asc";
+  });
   const [shareFile, setShareFile] = useState<ShareableFile | null>(null);
   const [decryptedFolderNameMap, setDecryptedFolderNameMap] = useState<
     Record<string, string>
@@ -819,10 +831,15 @@ export default function FilesPage() {
   // ── Sort ───────────────────────────────────────────────────────────────────
 
   const handleSort = (field: SortField) => {
-    if (field === sortField) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
+    if (field === sortField) {
+      const newDir = sortDir === "asc" ? "desc" : "asc";
+      setSortDir(newDir);
+      localStorage.setItem("filesSortDir", newDir);
+    } else {
       setSortField(field);
       setSortDir("asc");
+      localStorage.setItem("filesSortField", field);
+      localStorage.setItem("filesSortDir", "asc");
     }
   };
 

@@ -18,6 +18,8 @@ import {
   CloudDownload,
   Image,
   LifeBuoy,
+  Trash2,
+  Star,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -59,6 +61,8 @@ const sidebarItems = [
   },
   { label: "Shared", href: "/dashboard/shared", icon: Share2 },
   { label: "Shared with me", href: "/dashboard/shared-with-me", icon: Users },
+  { label: "Starred", href: "/dashboard/starred", icon: Star },
+  { label: "Bin", href: "/dashboard/bin", icon: Trash2 },
   { label: "Usage", href: "/dashboard/usage", icon: BarChart3 },
   // { label: "API Keys", href: "/dashboard/keys", icon: Key },
   { label: "Billing", href: "/dashboard/billing", icon: CreditCard },

@@ -135,6 +135,28 @@ export async function decrementStorage(userId: string, sizeBytes: number) {
 }
 
 /**
+ * Decrement storage usage for a bulk delete — one Usage write for N objects
+ * instead of N round trips. `objectCount` is the total number of records
+ * removed (objects + their sidecars).
+ */
+export async function decrementStorageBulk(
+  userId: string,
+  sizeBytes: number,
+  objectCount: number,
+) {
+  await dbConnect();
+
+  return Usage.findOneAndUpdate(
+    { userId },
+    {
+      $inc: { totalStorageBytes: -sizeBytes, totalObjects: -objectCount },
+      $set: { lastActiveAt: new Date() },
+    },
+    { new: true }
+  );
+}
+
+/**
  * Increment egress usage when an object is downloaded.
  */
 export async function incrementEgress(

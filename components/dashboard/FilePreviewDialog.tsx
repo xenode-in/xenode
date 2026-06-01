@@ -2,7 +2,7 @@
 
 const NOOP = () => {};
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import dynamic from "next/dynamic";
 import DocxViewer from "./DocxViewer";
 import {
@@ -57,6 +57,230 @@ import { DocViewerRenderers } from "@cyntler/react-doc-viewer";
 const DocViewer = dynamic(() => import("@cyntler/react-doc-viewer"), {
   ssr: false,
 });
+
+// ─── Zoomable Image ───────────────────────────────────────────────────────────
+
+function ZoomableImage({
+  src,
+  alt,
+  resetKey,
+  onZoomIn,
+  onLoad,
+  onError,
+}: {
+  src: string;
+  alt: string;
+  /** Reset zoom only when this changes (the file id), NOT when `src` swaps
+   *  optimized→original — so an HD upgrade keeps the current zoom. */
+  resetKey?: string;
+  /** Fired when the user zooms in, so the parent can lazy-load the original. */
+  onZoomIn?: () => void;
+  onLoad?: () => void;
+  onError?: () => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const scaleRef = useRef(1);
+  const translateRef = useRef({ x: 0, y: 0 });
+  const [, forceRender] = useState(0);
+  const isDragging = useRef(false);
+  const didDrag = useRef(false);
+  const lastMouse = useRef({ x: 0, y: 0 });
+  const onZoomInRef = useRef(onZoomIn);
+  onZoomInRef.current = onZoomIn;
+
+  const MIN_SCALE = 1;
+  const MAX_SCALE = 8;
+  const ZOOM_STEP = 0.15;
+  const CLICK_ZOOM_STEP = 0.5;
+
+  const applyZoom = useCallback(
+    (clientX: number, clientY: number, direction: number, step = ZOOM_STEP) => {
+      const container = containerRef.current;
+      if (!container) return;
+
+      const rect = container.getBoundingClientRect();
+      const mouseX = clientX - rect.left - rect.width / 2;
+      const mouseY = clientY - rect.top - rect.height / 2;
+
+      const oldScale = scaleRef.current;
+      const newScale = Math.min(
+        MAX_SCALE,
+        Math.max(MIN_SCALE, oldScale * (1 + direction * step)),
+      );
+
+      if (newScale === oldScale) return;
+
+      if (newScale <= MIN_SCALE) {
+        scaleRef.current = MIN_SCALE;
+        translateRef.current = { x: 0, y: 0 };
+      } else {
+        const ratio = 1 - newScale / oldScale;
+        const t = translateRef.current;
+        scaleRef.current = newScale;
+        translateRef.current = {
+          x: t.x + (mouseX - t.x) * ratio,
+          y: t.y + (mouseY - t.y) * ratio,
+        };
+      }
+
+      // Zooming in past 1× → ask the parent to upgrade to the original source.
+      if (newScale > MIN_SCALE && newScale > oldScale) {
+        onZoomInRef.current?.();
+      }
+
+      forceRender((n) => n + 1);
+    },
+    [],
+  );
+
+  // Native wheel listener with { passive: false } so preventDefault actually works
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const direction = e.deltaY < 0 ? 1 : -1;
+      applyZoom(e.clientX, e.clientY, direction);
+    };
+
+    container.addEventListener("wheel", onWheel, { passive: false });
+    return () => container.removeEventListener("wheel", onWheel);
+  }, [applyZoom]);
+
+  // Block Ctrl+wheel (browser zoom) when hovering over the image container
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    let isHovered = false;
+
+    const onEnter = () => { isHovered = true; };
+    const onLeave = () => { isHovered = false; };
+
+    const onWindowWheel = (e: WheelEvent) => {
+      if (isHovered && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+      }
+    };
+
+    container.addEventListener("mouseenter", onEnter);
+    container.addEventListener("mouseleave", onLeave);
+    window.addEventListener("wheel", onWindowWheel, { passive: false });
+
+    return () => {
+      container.removeEventListener("mouseenter", onEnter);
+      container.removeEventListener("mouseleave", onLeave);
+      window.removeEventListener("wheel", onWindowWheel);
+    };
+  }, []);
+
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.button !== 0) return;
+      isDragging.current = true;
+      didDrag.current = false;
+      lastMouse.current = { x: e.clientX, y: e.clientY };
+      e.preventDefault();
+    },
+    [],
+  );
+
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!isDragging.current) return;
+      const dx = e.clientX - lastMouse.current.x;
+      const dy = e.clientY - lastMouse.current.y;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) didDrag.current = true;
+      lastMouse.current = { x: e.clientX, y: e.clientY };
+      if (scaleRef.current > MIN_SCALE) {
+        translateRef.current = {
+          x: translateRef.current.x + dx,
+          y: translateRef.current.y + dy,
+        };
+        forceRender((n) => n + 1);
+      }
+    },
+    [],
+  );
+
+  const handleMouseUp = useCallback(
+    (e: React.MouseEvent) => {
+      const wasDragging = isDragging.current;
+      const wasDrag = didDrag.current;
+      isDragging.current = false;
+      didDrag.current = false;
+
+      // Click-to-zoom: only if not dragged
+      if (wasDragging && !wasDrag && e.button === 0) {
+        applyZoom(e.clientX, e.clientY, 1, CLICK_ZOOM_STEP);
+      }
+    },
+    [applyZoom],
+  );
+
+  const handleMouseLeave = useCallback(() => {
+    isDragging.current = false;
+    didDrag.current = false;
+  }, []);
+
+  const handleDoubleClick = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    scaleRef.current = MIN_SCALE;
+    translateRef.current = { x: 0, y: 0 };
+    forceRender((n) => n + 1);
+  }, []);
+
+  // Reset zoom only when the underlying file changes (resetKey) — NOT when
+  // `src` swaps from the optimized to the original image, so an HD upgrade
+  // keeps the current zoom/pan. Falls back to `src` if no resetKey is given.
+  useEffect(() => {
+    scaleRef.current = MIN_SCALE;
+    translateRef.current = { x: 0, y: 0 };
+    forceRender((n) => n + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resetKey ?? src]);
+
+  const scale = scaleRef.current;
+  const translate = translateRef.current;
+  const isZoomed = scale > MIN_SCALE;
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative grid h-full place-items-center bg-black/40 overflow-hidden select-none"
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseLeave}
+      onDoubleClick={handleDoubleClick}
+      style={{ cursor: isZoomed ? (isDragging.current ? "grabbing" : "grab") : "zoom-in" }}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        ref={imgRef}
+        src={src}
+        alt={alt}
+        className="max-h-[calc(100dvh-8.5rem)] w-auto max-w-full object-contain pointer-events-none"
+        style={{
+          transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,
+          transition: isDragging.current ? "none" : "transform 0.15s ease-out",
+          transformOrigin: "center center",
+        }}
+        onLoad={onLoad}
+        onError={onError}
+        draggable={false}
+      />
+      {isZoomed && (
+        <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 rounded-full bg-black/60 px-3 py-1 text-xs text-white/70 backdrop-blur-sm pointer-events-none">
+          {Math.round(scale * 100)}% · double-click to reset
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface ObjectData {
   id: string;
@@ -507,6 +731,15 @@ export function FilePreviewDialog({
   >(null);
   const [fetchedData, setFetchedData] = useState<ObjectData | null>(null);
 
+  // HD / original-quality preview. The main preview loads the optimized
+  // version; `wantHd` lazily loads + decrypts the ORIGINAL into `hdUrl` and
+  // swaps it in once ready (without disrupting the visible image).
+  const [wantHd, setWantHd] = useState(false);
+  const [hdUrl, setHdUrl] = useState<string | null>(null);
+  const [hdLoading, setHdLoading] = useState(false);
+  const hdObjectUrlRef = useRef<string | null>(null);
+  const hdRequestedRef = useRef(false);
+
   const objectUrlRef = useRef<string | null>(null);
 
   const isLockedOut =
@@ -546,6 +779,28 @@ export function FilePreviewDialog({
     };
   }, [isOpen, file?.id]);
 
+  // Keyboard arrow navigation
+  useEffect(() => {
+    if (!isOpen || isMinimized) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept if user is typing in an input/textarea
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable) return;
+
+      if (e.key === "ArrowLeft" && hasPrevious && onPrevious) {
+        e.preventDefault();
+        onPrevious();
+      } else if (e.key === "ArrowRight" && hasNext && onNext) {
+        e.preventDefault();
+        onNext();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, isMinimized, hasPrevious, hasNext, onPrevious, onNext]);
+
   useEffect(() => {
     if (!isOpen) {
       if (objectUrlRef.current) {
@@ -565,6 +820,19 @@ export function FilePreviewDialog({
       setFetchedData(null);
     }
   }, [isOpen]);
+
+  // Reset HD state whenever the file changes or the dialog closes, and revoke
+  // the original-quality blob URL so it doesn't leak across navigations.
+  useEffect(() => {
+    setWantHd(false);
+    setHdLoading(false);
+    setHdUrl(null);
+    hdRequestedRef.current = false;
+    if (hdObjectUrlRef.current) {
+      URL.revokeObjectURL(hdObjectUrlRef.current);
+      hdObjectUrlRef.current = null;
+    }
+  }, [file?.id, isOpen]);
 
   useEffect(() => {
     setDecryptedName(null);
@@ -1056,10 +1324,98 @@ export function FilePreviewDialog({
     decryptedName,
   ]);
 
+  // ── HD / original-quality loader (owned image files) ─────────────────────
+  // Fetches + decrypts the ORIGINAL in the background when the user taps "HD"
+  // or zooms in. The optimized image stays on screen until this resolves, then
+  // it swaps in seamlessly (zoom preserved). Owned files only — shared links
+  // serve their own optimized stream.
+  useEffect(() => {
+    // Ref guard (not hdLoading/hdUrl state) so flipping loading state inside
+    // the effect doesn't re-trigger it and cancel the in-flight request.
+    if (!wantHd || hdRequestedRef.current) return;
+    if (sharedToken || directShareId || !file) return;
+    const t = decryptedContentType || file.contentType || "";
+    if (!t.startsWith("image/")) return;
+
+    hdRequestedRef.current = true;
+    let cancelled = false;
+    (async () => {
+      setHdLoading(true);
+      try {
+        // No `preview` param → backend serves the original (full-res) key.
+        const res = await fetch(`/api/objects/${file.id}`);
+        if (!res.ok) throw new Error("Failed to load original");
+        const data = await res.json();
+        const type = decryptedContentType || data.contentType || file.contentType;
+
+        if (!data.isEncrypted) {
+          if (!cancelled && data.url) setHdUrl(data.url);
+          return;
+        }
+        if (!privateKey) throw new Error("Vault locked");
+
+        const rawDEK = await crypto.subtle.decrypt(
+          { name: "RSA-OAEP" },
+          privateKey,
+          fromB64(data.encryptedDEK),
+        );
+        const dek = await crypto.subtle.importKey(
+          "raw",
+          rawDEK,
+          { name: "AES-GCM", length: 256 },
+          false,
+          ["decrypt"],
+        );
+        const buf = await fetchWithProgress(
+          data.url,
+          undefined,
+          `${file.id}-original-${data.iv || ""}`,
+          file.size,
+        );
+        let blob: Blob;
+        if (data.chunkIvs && data.chunkSize && data.chunkCount) {
+          blob = await decryptFileChunkedCombined(
+            buf,
+            null,
+            data.chunkIvs,
+            data.chunkSize,
+            data.chunkCount,
+            dek,
+            type,
+          );
+        } else {
+          blob = await decryptFileWithDEK(buf, dek, data.iv, type);
+        }
+        const objUrl = URL.createObjectURL(blob);
+        hdObjectUrlRef.current = objUrl;
+        if (!cancelled) setHdUrl(objUrl);
+      } catch (e) {
+        console.error("[Preview] HD/original load failed", e);
+        if (!cancelled) setWantHd(false);
+        hdRequestedRef.current = false; // allow a retry
+      } finally {
+        if (!cancelled) setHdLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    wantHd,
+    sharedToken,
+    directShareId,
+    file,
+    privateKey,
+    decryptedContentType,
+  ]);
+
   if (!file) return null;
 
   const name = decryptedName || file.name || fileNameFromKey(file.key);
-  const type = decryptedContentType || file.contentType;
+  const type = decryptedContentType || file.contentType || "";
+
+  // HD applies to owned image files (shared links serve their own stream).
+  const canHd = !sharedToken && !directShareId && type.startsWith("image/");
 
   const handleDownload = async () => {
     if (directShareId) {
@@ -1108,16 +1464,14 @@ export function FilePreviewDialog({
       } else if (url) {
         if (type.startsWith("image/")) {
           innerContent = (
-            <div className="grid h-full place-items-center bg-black/40 p-2 sm:p-4">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={url}
-                alt={name}
-                className="max-h-[calc(100dvh-8.5rem)] w-auto max-w-full object-contain"
-                onLoad={() => setIsVideoPreparing(false)}
-                onError={() => setIsVideoPreparing(false)}
-              />
-            </div>
+            <ZoomableImage
+              src={wantHd && hdUrl ? hdUrl : url}
+              resetKey={file.id}
+              alt={name}
+              onZoomIn={canHd ? () => setWantHd(true) : undefined}
+              onLoad={() => setIsVideoPreparing(false)}
+              onError={() => setIsVideoPreparing(false)}
+            />
           );
         } else if (type.startsWith("video/") || type.startsWith("audio/")) {
           innerContent = (
@@ -1297,28 +1651,26 @@ export function FilePreviewDialog({
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
-              {hasPrevious && !isMinimized && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                  onClick={onPrevious}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-              )}
-              {hasNext && !isMinimized && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 text-muted-foreground hover:text-foreground"
-                  onClick={onNext}
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              )}
               {url && !isMinimized && (
                 <div className="flex items-center gap-1.5 mr-1">
+                  {canHd && (
+                    <Button
+                      variant={wantHd ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setWantHd((v) => !v)}
+                      className="h-8 gap-1.5"
+                      title={
+                        wantHd
+                          ? "Showing original quality"
+                          : "View original (full-resolution) image"
+                      }
+                    >
+                      {hdLoading ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : null}
+                      HD
+                    </Button>
+                  )}
                   {type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" && (
                     <Button
                       variant="ghost"
@@ -1381,6 +1733,28 @@ export function FilePreviewDialog({
             )}
           >
             <div className="h-full w-full">{renderContent()}</div>
+
+            {/* Side navigation buttons */}
+            {hasPrevious && !isMinimized && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute left-2 top-1/2 -translate-y-1/2 z-30 h-10 w-10 rounded-full bg-black/40 text-white hover:bg-black/60 hover:text-white backdrop-blur-sm shadow-lg transition-all"
+                onClick={onPrevious}
+              >
+                <ChevronLeft className="h-5 w-5" />
+              </Button>
+            )}
+            {hasNext && !isMinimized && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="absolute right-2 top-1/2 -translate-y-1/2 z-30 h-10 w-10 rounded-full bg-black/40 text-white hover:bg-black/60 hover:text-white backdrop-blur-sm shadow-lg transition-all"
+                onClick={onNext}
+              >
+                <ChevronRight className="h-5 w-5" />
+              </Button>
+            )}
           </div>
         </DialogPrimitive.Content>
       </DialogPortal>
