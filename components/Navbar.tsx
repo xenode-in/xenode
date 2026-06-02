@@ -18,6 +18,8 @@ export function Navbar() {
   const isBlogPost = pathname?.startsWith("/blog/") && pathname !== "/blog";
   const isPricing = pathname === "/pricing";
   const isChangelog = pathname === "/changelog";
+  const isTerms = pathname === "/terms";
+  const isPrivacy = pathname === "/privacy";
   const isShared = pathname?.startsWith("/shared/");
 
   const toggleMenu = () => setIsMenuOpen(!isMenuOpen);
@@ -91,7 +93,7 @@ export function Navbar() {
         </AnimatedLink>
       )}
 
-      {(isPricing || isChangelog || isBlog || isShared) && (
+      {(isPricing || isChangelog || isBlog || isShared || isTerms || isPrivacy) && (
         <>
           {!isPricing && (
             <AnimatedLink

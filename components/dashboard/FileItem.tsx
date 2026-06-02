@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { formatBytes, formatDate, cn } from "@/lib/utils";
 import { getFileIcon } from "@/lib/file-icons";
-import { forwardRef, useRef, useCallback, useState, useEffect } from "react";
+import { forwardRef, useRef, useCallback, useState, useEffect, memo } from "react";
 import { useCrypto } from "@/contexts/CryptoContext";
 import {
   decryptFileName,
@@ -872,7 +872,7 @@ FileCard.displayName = "FileCard";
 
 // ─── DnD + Long Press wrapper ─────────────────────────────────────────────────
 
-export function FileItem(props: ItemProps) {
+export const FileItem = memo(function FileItem(props: ItemProps) {
   const { registerItemRef } = props;
 
   const {
@@ -986,4 +986,5 @@ export function FileItem(props: ItemProps) {
       {...props}
     />
   );
-}
+});
+FileItem.displayName = "FileItem";
