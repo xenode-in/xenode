@@ -317,6 +317,8 @@ export function PhotosGrid() {
   const lastActiveScrollLabelRef = useRef<string | null>(null);
   const scrollRafRef = useRef<number | null>(null);
 
+  const galleryContainerRef = useRef<HTMLDivElement | null>(null);
+
   const sectionOffsetsRef = useRef<
     Array<{ label: string; top: number; firstIndex: number }>
   >([]);
@@ -333,9 +335,13 @@ export function PhotosGrid() {
         runningIndex += photos.length;
         continue;
       }
+      // Calculate absolute offset top relative to the document
+      const rect = el.getBoundingClientRect();
+      const absoluteTop = rect.top + window.scrollY;
+
       result.push({
         label,
-        top: el.offsetTop,
+        top: absoluteTop,
         firstIndex: runningIndex,
       });
       runningIndex += photos.length;
@@ -344,14 +350,18 @@ export function PhotosGrid() {
   }, []);
 
   useEffect(() => {
-    const id = requestAnimationFrame(measureOffsets);
-    return () => cancelAnimationFrame(id);
-  }, [measureOffsets, groupEntries]);
+    const el = galleryContainerRef.current;
+    if (!el) return;
 
-  useEffect(() => {
-    window.addEventListener("resize", measureOffsets, { passive: true });
-    return () => window.removeEventListener("resize", measureOffsets);
-  }, [measureOffsets]);
+    const ro = new ResizeObserver(() => {
+      measureOffsets();
+    });
+    ro.observe(el);
+
+    measureOffsets();
+
+    return () => ro.disconnect();
+  }, [measureOffsets, groupEntries]);
 
   // RAF-gated binary-search scroll handler.
   const handleScroll = useCallback(() => {
@@ -452,7 +462,7 @@ export function PhotosGrid() {
     <div className="flex gap-2 items-start">
       {/* Gallery content */}
       <div className="grow min-w-0">
-        <div className="space-y-6 pb-8">
+        <div ref={galleryContainerRef} className="space-y-6 pb-8">
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>

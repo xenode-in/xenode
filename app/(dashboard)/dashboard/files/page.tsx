@@ -388,12 +388,9 @@ export default function FilesPage() {
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
   const selectionStartRef = useRef<{ x: number; y: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const selectionBoxRef = useRef<HTMLDivElement>(null);
 
   const [isSelecting, setIsSelecting] = useState(false);
-  const [selectionBox, setSelectionBox] = useState<{
-    currentX: number;
-    currentY: number;
-  } | null>(null);
 
   const [bucketId, setBucketId] = useState<string | null>(null);
   const [bucket, setBucket] = useState<BucketData | null>(null);
@@ -450,14 +447,11 @@ export default function FilesPage() {
   const typeFilter = searchParams.get("type");
 
   const {
-    fetchNextPage: fetchNextBatch,
-    hasNextPage: hasMorePages,
-    isFetchingNextPage,
     refetch,
   } = useFileSync({
     bucketId,
     userId,
-    limit: 50,
+    fetchAll: true,
     sortBy: sortField,
     sortDir: sortDir,
     mediaCategory: typeFilter,
@@ -507,46 +501,7 @@ export default function FilesPage() {
     }
   }, [bucketId]);
 
-  const fetchNextPage = useCallback(async () => {
-    if (hasMorePages && !isFetchingNextPage) {
-      await fetchNextBatch();
-    }
-  }, [hasMorePages, isFetchingNextPage, fetchNextBatch]);
 
-  // Keep a stable ref so the observer callback always calls the latest version.
-  const fetchNextPageRef = useRef(fetchNextPage);
-  useEffect(() => {
-    fetchNextPageRef.current = fetchNextPage;
-  });
-
-  // Stable ref to hold the current observer so we can clean it up.
-  const observerRef = useRef<IntersectionObserver | null>(null);
-
-  // Callback ref — fires whenever the sentinel DOM node mounts / unmounts.
-  // This guarantees the observer attaches even if the sentinel isn't in the
-  // initial render (e.g. loading spinner shows first), and survives
-  // sort/filter re-renders without scroll-position side-effects.
-  const sentinelCallbackRef = useCallback((node: HTMLDivElement | null) => {
-    // Tear down previous observer
-    if (observerRef.current) {
-      observerRef.current.disconnect();
-      observerRef.current = null;
-    }
-
-    if (!node) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
-          fetchNextPageRef.current();
-        }
-      },
-      { rootMargin: "200px" },
-    );
-
-    observer.observe(node);
-    observerRef.current = observer;
-  }, []);
 
   useEffect(() => {
     fetch("/api/drive/config")
@@ -783,6 +738,23 @@ export default function FilesPage() {
     [selectedIds, lastSelectedId, viewObjects],
   );
 
+  const handleDeleteItem = useCallback((item: ObjectData) => {
+    if (selectedIds.has(item.id) && selectedIds.size > 1) {
+      setDeleteIds(Array.from(selectedIds));
+    } else {
+      setDeleteIds([item.id]);
+    }
+  }, [selectedIds]);
+
+  const handlePreview = useCallback((file: ObjectData) => {
+    openPreview(file, viewObjects.files);
+  }, [openPreview, viewObjects.files]);
+
+  const registerItemRef = useCallback((id: string, el: HTMLElement | null) => {
+    if (!el) itemRefs.current.delete(id);
+    else itemRefs.current.set(id, el);
+  }, []);
+
   // ── Navigation ─────────────────────────────────────────────────────────────
 
   const handleNavigation = useCallback(
@@ -797,8 +769,10 @@ export default function FilesPage() {
     [router, rootPrefix],
   );
 
-  const navigateToFolder = (folderName: string) =>
-    handleNavigation(`${currentPrefix}${folderName}/`);
+  const navigateToFolder = useCallback(
+    (folderName: string) => handleNavigation(`${currentPrefix}${folderName}/`),
+    [handleNavigation, currentPrefix],
+  );
 
   const navigateUp = () => {
     if (currentPrefix === rootPrefix) return;
@@ -935,7 +909,7 @@ export default function FilesPage() {
     }
   };
 
-  const handleDownload = async (obj: ObjectData) => {
+  const handleDownload = useCallback(async (obj: ObjectData) => {
     try {
       await startDownload(obj, !!obj.isEncrypted, privateKey);
     } catch (err: unknown) {
@@ -943,9 +917,9 @@ export default function FilesPage() {
       if (message.includes("Vault locked")) setModalOpen(true);
       setError(message);
     }
-  };
+  }, [startDownload, privateKey]);
 
-  const handleCut = () => {
+  const handleCut = useCallback(() => {
     if (selectedIds.size === 0) return;
 
     const items = [...viewObjects.folders, ...viewObjects.files].filter((i) =>
@@ -953,7 +927,7 @@ export default function FilesPage() {
     );
 
     setClipboard({ action: "move", items });
-  };
+  }, [selectedIds, viewObjects]);
 
   const handlePaste = useCallback(async () => {
     if (!clipboard || !bucketId) return;
@@ -1066,10 +1040,13 @@ export default function FilesPage() {
     selectionStartRef.current = { x: e.clientX, y: e.clientY };
 
     setIsSelecting(true);
-    setSelectionBox({
-      currentX: e.clientX,
-      currentY: e.clientY,
-    });
+    if (selectionBoxRef.current) {
+      selectionBoxRef.current.style.left = `${e.clientX}px`;
+      selectionBoxRef.current.style.top = `${e.clientY}px`;
+      selectionBoxRef.current.style.width = "0px";
+      selectionBoxRef.current.style.height = "0px";
+      selectionBoxRef.current.classList.remove("hidden");
+    }
 
     if (!e.ctrlKey && !e.metaKey) {
       setSelectedIds(new Set());
@@ -1112,10 +1089,17 @@ export default function FilesPage() {
       if (rafId.current) cancelAnimationFrame(rafId.current);
 
       rafId.current = requestAnimationFrame(() => {
-        setSelectionBox({
-          currentX: clientX,
-          currentY: clientY,
-        });
+        if (selectionBoxRef.current) {
+          const left = Math.min(startX, clientX);
+          const top = Math.min(startY, clientY);
+          const width = Math.abs(clientX - startX);
+          const height = Math.abs(clientY - startY);
+
+          selectionBoxRef.current.style.left = `${left}px`;
+          selectionBoxRef.current.style.top = `${top}px`;
+          selectionBoxRef.current.style.width = `${width}px`;
+          selectionBoxRef.current.style.height = `${height}px`;
+        }
 
         const boxRect = {
           left: Math.min(startX, clientX),
@@ -1132,12 +1116,23 @@ export default function FilesPage() {
           }
         }
 
-        // ✅ ctrl / cmd additive selection (FIXED)
+        // ✅ ctrl / cmd additive selection (FIXED) + equality check to prevent needless rendering
         setSelectedIds((prev) => {
-          if (e.ctrlKey || e.metaKey) {
-            return new Set([...prev, ...nextSelected]);
+          const finalSelected = (e.ctrlKey || e.metaKey)
+            ? new Set([...prev, ...nextSelected])
+            : nextSelected;
+
+          if (prev.size === finalSelected.size) {
+            let equal = true;
+            for (const item of finalSelected) {
+              if (!prev.has(item)) {
+                equal = false;
+                break;
+              }
+            }
+            if (equal) return prev;
           }
-          return nextSelected;
+          return finalSelected;
         });
       });
     },
@@ -1147,7 +1142,9 @@ export default function FilesPage() {
   const handleMouseUp = () => {
     if (isSelecting) {
       setIsSelecting(false);
-      setSelectionBox(null);
+      if (selectionBoxRef.current) {
+        selectionBoxRef.current.classList.add("hidden");
+      }
 
       if (rafId.current) {
         cancelAnimationFrame(rafId.current);
@@ -1338,21 +1335,10 @@ export default function FilesPage() {
     >
       <input {...getInputProps()} />
       {/* Drag-select rubber-band box */}
-      {isSelecting && selectionBox && selectionStartRef.current && (
-        <div
-          className="fixed z-[60] pointer-events-none border border-primary/60 bg-primary/10"
-          style={{
-            left: Math.min(selectionStartRef.current.x, selectionBox.currentX),
-            top: Math.min(selectionStartRef.current.y, selectionBox.currentY),
-            width: Math.abs(
-              selectionBox.currentX - selectionStartRef.current.x,
-            ),
-            height: Math.abs(
-              selectionBox.currentY - selectionStartRef.current.y,
-            ),
-          }}
-        />
-      )}
+      <div
+        ref={selectionBoxRef}
+        className="fixed z-[60] pointer-events-none border border-primary/60 bg-primary/10 hidden"
+      />
       <input
         ref={fileInputRef}
         type="file"
@@ -1519,20 +1505,13 @@ export default function FilesPage() {
                   viewMode="list"
                   currentPrefix={currentPrefix}
                   onNavigate={navigateToFolder}
-                  onTag={() => setTaggingObj(folder)}
+                  onTag={setTaggingObj}
                   onCut={handleCut}
                   onShare={setShareFile}
-                  onDelete={(item) =>
-                    selectedIds.has(item.id) && selectedIds.size > 1
-                      ? setDeleteIds(Array.from(selectedIds))
-                      : setDeleteIds([item.id])
-                  }
+                  onDelete={handleDeleteItem}
                   isSelected={selectedIds.has(folder.id)}
                   onSelect={handleSelect}
-                  registerItemRef={(id, el) => {
-                    if (!el) itemRefs.current.delete(id);
-                    else itemRefs.current.set(id, el);
-                  }}
+                  registerItemRef={registerItemRef}
                 />
               ))}
 
@@ -1543,22 +1522,15 @@ export default function FilesPage() {
                   item={file}
                   viewMode="list"
                   currentPrefix={currentPrefix}
-                  onPreview={(file) => openPreview(file, viewObjects.files)}
+                  onPreview={handlePreview}
                   onDownload={handleDownload}
                   onCut={handleCut}
                   onShare={setShareFile}
-                  onDelete={(item) =>
-                    selectedIds.has(item.id) && selectedIds.size > 1
-                      ? setDeleteIds(Array.from(selectedIds))
-                      : setDeleteIds([item.id])
-                  }
+                  onDelete={handleDeleteItem}
                   isDownloading={downloadingId === file.id}
                   isSelected={selectedIds.has(file.id)}
                   onSelect={handleSelect}
-                  registerItemRef={(id, el) => {
-                    if (!el) itemRefs.current.delete(id);
-                    else itemRefs.current.set(id, el);
-                  }}
+                  registerItemRef={registerItemRef}
                 />
               ))}
             </TableBody>
@@ -1585,20 +1557,13 @@ export default function FilesPage() {
                 viewMode="grid"
                 currentPrefix={currentPrefix}
                 onNavigate={navigateToFolder}
-                onTag={() => setTaggingObj(folder)}
+                onTag={setTaggingObj}
                 onCut={handleCut}
                 onShare={setShareFile}
-                onDelete={(item) =>
-                  selectedIds.has(item.id) && selectedIds.size > 1
-                    ? setDeleteIds(Array.from(selectedIds))
-                    : setDeleteIds([item.id])
-                }
+                onDelete={handleDeleteItem}
                 isSelected={selectedIds.has(folder.id)}
                 onSelect={handleSelect}
-                registerItemRef={(id, el) => {
-                  if (!el) itemRefs.current.delete(id);
-                  else itemRefs.current.set(id, el);
-                }}
+                registerItemRef={registerItemRef}
               />
             ))}
 
@@ -1608,39 +1573,21 @@ export default function FilesPage() {
                 item={file}
                 viewMode="grid"
                 currentPrefix={currentPrefix}
-                onPreview={(file) => openPreview(file, viewObjects.files)}
+                onPreview={handlePreview}
                 onDownload={handleDownload}
                 onCut={handleCut}
                 onShare={setShareFile}
-                onDelete={(item) =>
-                  selectedIds.has(item.id) && selectedIds.size > 1
-                    ? setDeleteIds(Array.from(selectedIds))
-                    : setDeleteIds([item.id])
-                }
+                onDelete={handleDeleteItem}
                 isDownloading={downloadingId === file.id}
                 isSelected={selectedIds.has(file.id)}
                 onSelect={handleSelect}
-                registerItemRef={(id, el) => {
-                  if (!el) itemRefs.current.delete(id);
-                  else itemRefs.current.set(id, el);
-                }}
+                registerItemRef={registerItemRef}
               />
             ))}
           </div>
         )}
 
-        {/* Infinite-scroll sentinel + loading indicator */}
-        <div ref={sentinelCallbackRef} className="w-full py-1" />
-        {isFetchingNextPage && (
-          <div className="flex items-center justify-center py-6">
-            <Loader2 className="w-5 h-5 animate-spin text-primary" />
-          </div>
-        )}
-        {!hasMorePages && !isEmpty && viewObjects.files.length > 0 && (
-          <p className="text-center text-xs text-muted-foreground/30 py-4">
-            All files loaded
-          </p>
-        )}
+
       </div>
 
       {/* ── Dialogs ── */}

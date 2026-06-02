@@ -24,6 +24,8 @@ import {
   Copy,
   Download,
   Loader2,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { WelcomeBalloons } from "@/components/onboarding/WelcomeBalloons";
@@ -31,6 +33,7 @@ import { PersonalSettings } from "@/components/onboarding/PersonalSettings";
 import { WellDone } from "@/components/onboarding/WellDone";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Form,
   FormControl,
@@ -71,6 +74,9 @@ export function OnboardingForm() {
   // Vault password (read from session storage invisibly)
   const [kit] = useState(() => generateRecoveryKit());
   const [vaultPassword, setVaultPassword] = useState("");
+  const [inputPassword, setInputPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showOnboardingPassword, setShowOnboardingPassword] = useState(false);
 
   // Step 2: recovery kit
   const [kitSaved, setKitSaved] = useState(false);
@@ -84,12 +90,29 @@ export function OnboardingForm() {
     const pw = sessionStorage.getItem("xenode-vault-pw");
     if (pw) {
       setVaultPassword(pw);
-    } else {
-      // Session storage cleared (page refresh / new tab) — restart from login
-      toast.error("Session expired. Please sign in again to set up your vault.");
-      router.replace("/login");
     }
-  }, [router]);
+  }, []);
+
+  const handleContinueStep1 = () => {
+    if (!vaultPassword) {
+      const trimmedPw = inputPassword.trim();
+      if (!trimmedPw) {
+        toast.error("Please enter a Master Password to secure your vault.");
+        return;
+      }
+      if (trimmedPw.length < 8) {
+        toast.error("Master Password must be at least 8 characters long.");
+        return;
+      }
+      if (trimmedPw !== confirmPassword.trim()) {
+        toast.error("Passwords do not match.");
+        return;
+      }
+      setVaultPassword(trimmedPw);
+      sessionStorage.setItem("xenode-vault-pw", trimmedPw);
+    }
+    nextStep();
+  };
 
   // Fetch live plans from DB when component mounts
   useEffect(() => {
@@ -265,6 +288,44 @@ export function OnboardingForm() {
                         a few clicks.
                       </p>
                     </div>
+                    {!vaultPassword && (
+                      <div className="w-full max-w-sm space-y-4 text-left mt-4 border border-border bg-card p-4 rounded-xl shadow-sm">
+                        <p className="text-xs text-muted-foreground text-center mb-2">
+                          Please set a Master Password to encrypt and secure your end-to-end encrypted E2EE vault.
+                        </p>
+                        <div className="space-y-1.5">
+                          <label className="text-sm font-semibold" htmlFor="onboarding-password">Master Password</label>
+                          <div className="relative">
+                            <Input
+                              id="onboarding-password"
+                              type={showOnboardingPassword ? "text" : "password"}
+                              placeholder="Enter a secure password"
+                              value={inputPassword}
+                              onChange={(e) => setInputPassword(e.target.value)}
+                              className="h-10 bg-background pr-10"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShowOnboardingPassword(!showOnboardingPassword)}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                            >
+                              {showOnboardingPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </button>
+                          </div>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className="text-sm font-semibold" htmlFor="onboarding-confirm-password">Confirm Password</label>
+                          <Input
+                            id="onboarding-confirm-password"
+                            type="password"
+                            placeholder="Confirm your password"
+                            value={confirmPassword}
+                            onChange={(e) => setConfirmPassword(e.target.value)}
+                            className="h-10 bg-background"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </motion.div>
                 )}
 
@@ -497,7 +558,7 @@ export function OnboardingForm() {
                 <Button
                   type="button"
                   size="lg"
-                  onClick={nextStep}
+                  onClick={step === 1 ? handleContinueStep1 : nextStep}
                   className="w-full sm:w-auto min-w-[120px]"
                 >
                   Continue <ArrowRight className="ml-2 h-4 w-4" />

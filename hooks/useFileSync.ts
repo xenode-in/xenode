@@ -12,6 +12,7 @@ interface FetchObjectsParams {
   sortBy?: "date" | "size" | "type" | "name";
   sortDir?: "asc" | "desc";
   mediaCategory?: string | null;
+  fetchAll?: boolean;
 }
 
 export function useFileSync({
@@ -21,9 +22,10 @@ export function useFileSync({
   sortBy = "date",
   sortDir = "desc",
   mediaCategory,
+  fetchAll = false,
 }: FetchObjectsParams) {
   return useInfiniteQuery({
-    queryKey: ["files", bucketId, sortBy, sortDir, mediaCategory],
+    queryKey: ["files", bucketId, sortBy, sortDir, mediaCategory, fetchAll],
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }) => {
       if (!bucketId || !userId)
@@ -33,7 +35,7 @@ export function useFileSync({
 
       // E2EE: server can't sort by encrypted file names, so fetch all
       // metadata in a single call and let the client sort after decryption.
-      if (sortBy === "name") {
+      if (sortBy === "name" || fetchAll) {
         url += "&fetchAll=true";
       }
 
