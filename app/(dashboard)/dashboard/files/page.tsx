@@ -172,27 +172,27 @@ function Toolbar({
       />
 
       {hasSelection ? (
-        <div className="flex items-center gap-1 animate-in fade-in slide-in-from-left-2 duration-150">
-          <span className="text-sm font-medium text-foreground/60 mr-1">
+        <div className="flex items-center gap-1 animate-in fade-in slide-in-from-left-2 duration-150 shrink-0">
+          <span className="text-sm font-medium text-foreground/60 mr-1 whitespace-nowrap">
             {selectedIds.size} selected
           </span>
           <Button
             variant="ghost"
             size="sm"
             onClick={onCut}
-            className="h-8 gap-1.5 text-foreground/60 hover:text-foreground hover:bg-secondary/60"
+            className="h-8 gap-1.5 text-foreground/60 hover:text-foreground hover:bg-secondary/60 px-2 sm:px-3"
           >
             <Scissors className="w-3.5 h-3.5" />
-            Cut
+            <span className="hidden sm:inline">Cut</span>
           </Button>
           <Button
             variant="ghost"
             size="sm"
             onClick={onDelete}
-            className="h-8 gap-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10"
+            className="h-8 gap-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 px-2 sm:px-3"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            Delete
+            <span className="hidden sm:inline">Delete</span>
           </Button>
           <div className="w-px h-5 bg-border mx-1" />
           <Button
@@ -205,7 +205,7 @@ function Toolbar({
           </Button>
         </div>
       ) : (
-        <div className="flex items-center gap-1.5 animate-in fade-in duration-150">
+        <div className="flex items-center gap-1.5 animate-in fade-in duration-150 shrink-0">
           {clipboard && (
             <Button
               variant="ghost"
@@ -228,95 +228,98 @@ function Toolbar({
 
       <div className="flex-1" />
 
-      {/* Sort dropdown */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
+      {/* Standard buttons: Sort, View, New folder, Upload. Hide on mobile/tablet when there is active selection */}
+      <div className={cn("items-center gap-2", hasSelection ? "hidden sm:flex" : "flex")}>
+        {/* Sort dropdown */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1.5 text-muted-foreground/60 hover:text-foreground hover:bg-secondary/60"
+            >
+              {sortDir === "asc" ? (
+                <SortAsc className="w-3.5 h-3.5" />
+              ) : (
+                <SortDesc className="w-3.5 h-3.5" />
+              )}
+              <span className="hidden sm:inline">Sort</span>
+              <ChevronDown className="w-3 h-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-40">
+            {(["name", "size", "type", "date"] as SortField[]).map((f) => (
+              <DropdownMenuItem
+                key={f}
+                onClick={() => onSort(f)}
+                className={cn(
+                  "capitalize gap-2",
+                  sortField === f && "text-primary font-medium",
+                )}
+              >
+                {sortField === f &&
+                  (sortDir === "asc" ? (
+                    <SortAsc className="w-3.5 h-3.5" />
+                  ) : (
+                    <SortDesc className="w-3.5 h-3.5" />
+                  ))}
+                {f === "date" ? "Modified" : f}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* View toggle */}
+        <div className="flex items-center bg-secondary/40 rounded-md border border-border p-0.5">
           <Button
             variant="ghost"
-            size="sm"
-            className="h-8 gap-1.5 text-muted-foreground/60 hover:text-foreground hover:bg-secondary/60"
-          >
-            {sortDir === "asc" ? (
-              <SortAsc className="w-3.5 h-3.5" />
-            ) : (
-              <SortDesc className="w-3.5 h-3.5" />
+            size="icon"
+            onClick={() => onViewMode("list")}
+            className={cn(
+              "h-7 w-7 rounded-sm",
+              viewMode === "list"
+                ? "bg-background shadow-sm text-foreground"
+                : "text-muted-foreground/40 hover:text-foreground",
             )}
-            <span className="hidden sm:inline">Sort</span>
-            <ChevronDown className="w-3 h-3" />
+          >
+            <ListIcon className="w-3.5 h-3.5" />
           </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-40">
-          {(["name", "size", "type", "date"] as SortField[]).map((f) => (
-            <DropdownMenuItem
-              key={f}
-              onClick={() => onSort(f)}
-              className={cn(
-                "capitalize gap-2",
-                sortField === f && "text-primary font-medium",
-              )}
-            >
-              {sortField === f &&
-                (sortDir === "asc" ? (
-                  <SortAsc className="w-3.5 h-3.5" />
-                ) : (
-                  <SortDesc className="w-3.5 h-3.5" />
-                ))}
-              {f === "date" ? "Modified" : f}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => onViewMode("grid")}
+            className={cn(
+              "h-7 w-7 rounded-sm",
+              viewMode === "grid"
+                ? "bg-background shadow-sm text-foreground"
+                : "text-muted-foreground/40 hover:text-foreground",
+            )}
+          >
+            <LayoutGrid className="w-3.5 h-3.5" />
+          </Button>
+        </div>
 
-      {/* View toggle */}
-      <div className="flex items-center bg-secondary/40 rounded-md border border-border p-0.5">
+        <div className="w-px h-5 bg-border" />
+
         <Button
           variant="ghost"
-          size="icon"
-          onClick={() => onViewMode("list")}
-          className={cn(
-            "h-7 w-7 rounded-sm",
-            viewMode === "list"
-              ? "bg-background shadow-sm text-foreground"
-              : "text-muted-foreground/40 hover:text-foreground",
-          )}
+          size="sm"
+          onClick={onNewFolder}
+          className="h-8 gap-1.5 text-foreground/60 hover:text-foreground hover:bg-secondary/60"
         >
-          <ListIcon className="w-3.5 h-3.5" />
+          <FolderPlus className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">New folder</span>
         </Button>
+
         <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => onViewMode("grid")}
-          className={cn(
-            "h-7 w-7 rounded-sm",
-            viewMode === "grid"
-              ? "bg-background shadow-sm text-foreground"
-              : "text-muted-foreground/40 hover:text-foreground",
-          )}
+          size="sm"
+          onClick={onUpload}
+          className="h-8 gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground font-medium"
         >
-          <LayoutGrid className="w-3.5 h-3.5" />
+          <Upload className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Upload</span>
         </Button>
       </div>
-
-      <div className="w-px h-5 bg-border" />
-
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onNewFolder}
-        className="h-8 gap-1.5 text-foreground/60 hover:text-foreground hover:bg-secondary/60"
-      >
-        <FolderPlus className="w-3.5 h-3.5" />
-        <span className="hidden sm:inline">New folder</span>
-      </Button>
-
-      <Button
-        size="sm"
-        onClick={onUpload}
-        className="h-8 gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground font-medium"
-      >
-        <Upload className="w-3.5 h-3.5" />
-        <span className="hidden sm:inline">Upload</span>
-      </Button>
     </div>
   );
 }
@@ -1174,6 +1177,7 @@ export default function FilesPage() {
     );
 
     setClipboard({ action: "move", items });
+    setSelectedIds(new Set());
   }, [selectedIds, viewObjects]);
 
   const handlePaste = useCallback(async () => {
