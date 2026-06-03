@@ -75,6 +75,14 @@ import {
   decryptMetadataString,
 } from "@/lib/crypto/fileEncryption";
 import { cn } from "@/lib/utils";
+import {
+  useReactTable,
+  getCoreRowModel,
+  flexRender,
+  ColumnDef,
+  SortingState,
+} from "@tanstack/react-table";
+import { useWindowVirtualizer } from "@tanstack/react-virtual";
 
 interface ObjectData {
   id: string;
@@ -699,13 +707,205 @@ export default function FilesPage() {
     typeFilter,
   ]);
 
-  const allIds = useMemo(
-    () => [
-      ...viewObjects.folders.map((f) => f.id),
-      ...viewObjects.files.map((f) => f.id),
-    ],
-    [viewObjects],
-  );
+  const combinedData = useMemo(() => {
+    return [...viewObjects.folders, ...viewObjects.files];
+  }, [viewObjects]);
+
+  const allIds = useMemo(() => combinedData.map((d) => d.id), [combinedData]);
+
+  const getHeaderClassName = (id: string) => {
+    switch (id) {
+      case "select": return "w-10 pl-4 pr-0";
+      case "name": return "w-[45%] min-w-0";
+      case "size": return "w-[15%]";
+      case "type": return "w-[15%]";
+      case "date": return "w-[20%] hidden md:table-cell";
+      case "actions": return "text-right w-[100px]";
+      default: return "";
+    }
+  };
+
+  const columns = useMemo<ColumnDef<ObjectData>[]>(() => [
+    {
+      id: "select",
+      header: "",
+    },
+    {
+      accessorKey: "name",
+      header: "Name",
+    },
+    {
+      accessorKey: "size",
+      header: "Size",
+    },
+    {
+      accessorKey: "type",
+      header: "Type",
+    },
+    {
+      accessorKey: "date",
+      header: "Last Modified",
+    },
+    {
+      id: "actions",
+      header: "Actions",
+    },
+  ], []);
+
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: sortField, desc: sortDir === "desc" }
+  ]);
+
+  useEffect(() => {
+    setSorting([{ id: sortField, desc: sortDir === "desc" }]);
+  }, [sortField, sortDir]);
+
+  const onSortingChange = useCallback((updater: any) => {
+    const nextState = typeof updater === "function" ? updater(sorting) : updater;
+    setSorting(nextState);
+    if (nextState.length > 0) {
+      const field = nextState[0].id as SortField;
+      const desc = nextState[0].desc;
+      setSortField(field);
+      setSortDir(desc ? "desc" : "asc");
+      localStorage.setItem("filesSortField", field);
+      localStorage.setItem("filesSortDir", desc ? "desc" : "asc");
+    }
+  }, [sorting]);
+
+  const rowSelection = useMemo(() => {
+    const selection: Record<string, boolean> = {};
+    selectedIds.forEach((id) => {
+      selection[id] = true;
+    });
+    return selection;
+  }, [selectedIds]);
+
+  const handleRowSelectionChange = useCallback((updater: any) => {
+    const nextSelection = typeof updater === "function" ? updater(rowSelection) : updater;
+    const nextSelectedIds = new Set<string>();
+    Object.keys(nextSelection).forEach((id) => {
+      if (nextSelection[id]) nextSelectedIds.add(id);
+    });
+    setSelectedIds(nextSelectedIds);
+  }, [rowSelection]);
+
+  const table = useReactTable({
+    data: combinedData,
+    columns,
+    state: {
+      sorting,
+      rowSelection,
+    },
+    onSortingChange,
+    onRowSelectionChange: handleRowSelectionChange,
+    getCoreRowModel: getCoreRowModel(),
+    manualSorting: true,
+    enableRowSelection: true,
+    getRowId: (row) => row.id,
+  });
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const hasBackRow = currentPrefix && currentPrefix !== rootPrefix;
+
+  const [scrollMargin, setScrollMargin] = useState(0);
+
+  useEffect(() => {
+    const updateMargin = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        // table body elements start after table header (40px) and optional BackRow (53px)
+        const headerHeight = 40;
+        const backRowHeight = hasBackRow ? 53 : 0;
+        setScrollMargin(rect.top + window.scrollY + headerHeight + backRowHeight);
+      }
+    };
+    updateMargin();
+    const timer = setTimeout(updateMargin, 150);
+    window.addEventListener("resize", updateMargin);
+    window.addEventListener("scroll", updateMargin);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("resize", updateMargin);
+      window.removeEventListener("scroll", updateMargin);
+    };
+  }, [hasBackRow, currentPrefix]);
+
+  const rowVirtualizer = useWindowVirtualizer({
+    count: table.getRowModel().rows.length,
+    estimateSize: () => 53,
+    scrollMargin,
+    overscan: 10,
+  });
+
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const totalSize = rowVirtualizer.getTotalSize();
+
+  const paddingTop = virtualRows.length > 0 ? virtualRows[0].start - scrollMargin : 0;
+  const paddingBottom =
+    virtualRows.length > 0
+      ? totalSize - virtualRows[virtualRows.length - 1].end
+      : 0;
+
+  const [cols, setCols] = useState(5);
+
+  useEffect(() => {
+    const updateCols = () => {
+      const w = window.innerWidth;
+      if (w >= 1024) setCols(5);
+      else if (w >= 768) setCols(4);
+      else if (w >= 640) setCols(3);
+      else setCols(2);
+    };
+    updateCols();
+    window.addEventListener("resize", updateCols);
+    return () => window.removeEventListener("resize", updateCols);
+  }, []);
+
+  const [gridScrollMargin, setGridScrollMargin] = useState(0);
+
+  useEffect(() => {
+    const updateMargin = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        // grid elements start at the top of the container + padding (16px / p-4)
+        const gridPadding = 16;
+        setGridScrollMargin(rect.top + window.scrollY + gridPadding);
+      }
+    };
+    updateMargin();
+    const timer = setTimeout(updateMargin, 150);
+    window.addEventListener("resize", updateMargin);
+    window.addEventListener("scroll", updateMargin);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("resize", updateMargin);
+      window.removeEventListener("scroll", updateMargin);
+    };
+  }, [currentPrefix]);
+
+  const gridItems = useMemo(() => {
+    const rows = table.getRowModel().rows;
+    if (hasBackRow) {
+      return [{ id: "back-row-card", isBackCard: true }, ...rows];
+    }
+    return rows;
+  }, [table.getRowModel().rows, hasBackRow]);
+
+  const gridRows = useMemo(() => {
+    const chunked = [];
+    for (let i = 0; i < gridItems.length; i += cols) {
+      chunked.push(gridItems.slice(i, i + cols));
+    }
+    return chunked;
+  }, [gridItems, cols]);
+
+  const gridVirtualizer = useWindowVirtualizer({
+    count: gridRows.length,
+    estimateSize: () => 220,
+    scrollMargin: gridScrollMargin,
+    overscan: 5,
+  });
 
   // ── Selection ──────────────────────────────────────────────────────────────
 
@@ -1411,81 +1611,54 @@ export default function FilesPage() {
       )}
 
       {/* Main content */}
-      <div className="bg-card/50 border border-border rounded-xl overflow-hidden min-h-[500px] mt-4">
+      <div
+        ref={containerRef}
+        className="bg-card/50 border border-border rounded-xl min-h-[500px] mt-4 relative overflow-visible"
+      >
         {isEmpty ? (
           <EmptyState onUpload={() => fileInputRef.current?.click()} />
         ) : viewMode === "list" ? (
-          <Table>
+          <table className="w-full caption-bottom text-sm">
             <TableHeader>
-              <TableRow className="border-border hover:bg-transparent">
-                {/* Checkbox column — matches the w-10 pl-4 pr-0 cell in FileRow */}
-                <TableHead className="w-10 pl-4 pr-0" />
-                <TableHead
-                  className="text-muted-foreground/50 w-[45%] cursor-pointer hover:text-foreground"
-                  onClick={() => handleSort("name")}
-                >
-                  <span className="flex items-center gap-1">
-                    Name
-                    {sortField === "name" &&
-                      (sortDir === "asc" ? (
-                        <SortAsc className="w-3 h-3" />
-                      ) : (
-                        <SortDesc className="w-3 h-3" />
-                      ))}
-                  </span>
-                </TableHead>
-                <TableHead
-                  className="text-muted-foreground/50 cursor-pointer hover:text-foreground"
-                  onClick={() => handleSort("size")}
-                >
-                  <span className="flex items-center gap-1">
-                    Size
-                    {sortField === "size" &&
-                      (sortDir === "asc" ? (
-                        <SortAsc className="w-3 h-3" />
-                      ) : (
-                        <SortDesc className="w-3 h-3" />
-                      ))}
-                  </span>
-                </TableHead>
-                <TableHead
-                  className="text-muted-foreground/50 cursor-pointer hover:text-foreground"
-                  onClick={() => handleSort("type")}
-                >
-                  <span className="flex items-center gap-1">
-                    Type
-                    {sortField === "type" &&
-                      (sortDir === "asc" ? (
-                        <SortAsc className="w-3 h-3" />
-                      ) : (
-                        <SortDesc className="w-3 h-3" />
-                      ))}
-                  </span>
-                </TableHead>
-                <TableHead
-                  className="text-muted-foreground/50 cursor-pointer hover:text-foreground hidden md:table-cell"
-                  onClick={() => handleSort("date")}
-                >
-                  <span className="flex items-center gap-1">
-                    Last Modified
-                    {sortField === "date" &&
-                      (sortDir === "asc" ? (
-                        <SortAsc className="w-3 h-3" />
-                      ) : (
-                        <SortDesc className="w-3 h-3" />
-                      ))}
-                  </span>
-                </TableHead>
-                <TableHead className="text-muted-foreground/50 text-right">
-                  Actions
-                </TableHead>
-              </TableRow>
+              {table.getHeaderGroups().map((headerGroup) => (
+                <TableRow key={headerGroup.id} className="border-border hover:bg-transparent">
+                  {headerGroup.headers.map((header) => {
+                    const headerId = header.id;
+                    const headerStyle = getHeaderClassName(headerId);
+                    const canSort = header.column.getCanSort();
+                    return (
+                      <TableHead
+                        key={header.id}
+                        onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
+                        className={cn(
+                          "text-muted-foreground/50 select-none sticky top-[68px] bg-background/95 backdrop-blur-md z-30 border-b border-border shadow-[0_1px_0_0_rgba(255,255,255,0.05)]",
+                          canSort && "cursor-pointer hover:text-foreground",
+                          headerStyle
+                        )}
+                      >
+                        <span className="flex items-center gap-1">
+                          {flexRender(
+                            header.column.columnDef.header,
+                            header.getContext()
+                          )}
+                          {canSort && (
+                            <span className="inline-block ml-0.5">
+                              {header.column.getIsSorted() === "asc" && <SortAsc className="w-3 h-3 text-primary" />}
+                              {header.column.getIsSorted() === "desc" && <SortDesc className="w-3 h-3 text-primary" />}
+                            </span>
+                          )}
+                        </span>
+                      </TableHead>
+                    );
+                  })}
+                </TableRow>
+              ))}
             </TableHeader>
             <TableBody>
               {/* Back row — colSpan=6 accounts for the checkbox column */}
               {currentPrefix && currentPrefix !== rootPrefix && (
                 <TableRow
-                  className="border-border hover:bg-secondary/50 cursor-pointer"
+                  className="border-border hover:bg-secondary/50 cursor-pointer h-[53px]"
                   onClick={navigateUp}
                 >
                   <TableCell colSpan={6} className="py-2 pl-4">
@@ -1497,97 +1670,119 @@ export default function FilesPage() {
                 </TableRow>
               )}
 
-              {/* Folders */}
-              {viewObjects.folders.map((folder) => (
-                <FileItem
-                  key={folder.id}
-                  item={folder}
-                  viewMode="list"
-                  currentPrefix={currentPrefix}
-                  onNavigate={navigateToFolder}
-                  onTag={setTaggingObj}
-                  onCut={handleCut}
-                  onShare={setShareFile}
-                  onDelete={handleDeleteItem}
-                  isSelected={selectedIds.has(folder.id)}
-                  onSelect={handleSelect}
-                  registerItemRef={registerItemRef}
-                />
-              ))}
+              {paddingTop > 0 && (
+                <TableRow style={{ height: `${paddingTop}px` }} className="hover:bg-transparent border-0 pointer-events-none">
+                  <TableCell colSpan={6} style={{ height: `${paddingTop}px`, padding: 0 }} />
+                </TableRow>
+              )}
 
-              {/* Files */}
-              {viewObjects.files.map((file) => (
-                <FileItem
-                  key={file.id}
-                  item={file}
-                  viewMode="list"
-                  currentPrefix={currentPrefix}
-                  onPreview={handlePreview}
-                  onDownload={handleDownload}
-                  onCut={handleCut}
-                  onShare={setShareFile}
-                  onDelete={handleDeleteItem}
-                  isDownloading={downloadingId === file.id}
-                  isSelected={selectedIds.has(file.id)}
-                  onSelect={handleSelect}
-                  registerItemRef={registerItemRef}
-                />
-              ))}
+              {virtualRows.map((virtualRow) => {
+                const row = table.getRowModel().rows[virtualRow.index];
+                const item = row.original;
+                const isFolder =
+                  item.contentType === "application/x-directory" ||
+                  item.key.endsWith("/");
+
+                return (
+                  <FileItem
+                    key={item.id}
+                    item={item}
+                    viewMode="list"
+                    currentPrefix={currentPrefix}
+                    onNavigate={isFolder ? navigateToFolder : undefined}
+                    onPreview={!isFolder ? handlePreview : undefined}
+                    onDownload={!isFolder ? handleDownload : undefined}
+                    onTag={setTaggingObj}
+                    onCut={handleCut}
+                    onShare={setShareFile}
+                    onDelete={handleDeleteItem}
+                    isDownloading={!isFolder && downloadingId === item.id ? true : undefined}
+                    isSelected={selectedIds.has(item.id)}
+                    onSelect={handleSelect}
+                    registerItemRef={registerItemRef}
+                  />
+                );
+              })}
+
+              {paddingBottom > 0 && (
+                <TableRow style={{ height: `${paddingBottom}px` }} className="hover:bg-transparent border-0 pointer-events-none">
+                  <TableCell colSpan={6} style={{ height: `${paddingBottom}px`, padding: 0 }} />
+                </TableRow>
+              )}
             </TableBody>
-          </Table>
+          </table>
         ) : (
           /* Grid view */
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 p-4">
-            {currentPrefix && currentPrefix !== rootPrefix && (
-              <div
-                onClick={navigateUp}
-                className="aspect-square bg-white/5 rounded-xl border border-white/5 flex flex-col items-center justify-center cursor-pointer hover:bg-white/10 transition-all hover:scale-[1.02]"
-              >
-                <ArrowLeft className="w-8 h-8 text-[#e8e4d9]/50 mb-2" />
-                <span className="text-[#e8e4d9]/70 font-medium text-sm">
-                  Back
-                </span>
-              </div>
-            )}
+          <div
+            style={{
+              height: `${gridVirtualizer.getTotalSize()}px`,
+              position: "relative",
+              width: "100%",
+            }}
+          >
+            {gridVirtualizer.getVirtualItems().map((virtualRow) => {
+              const rowItems = gridRows[virtualRow.index];
+              return (
+                <div
+                  key={virtualRow.key}
+                  data-index={virtualRow.index}
+                  ref={gridVirtualizer.measureElement}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${virtualRow.start - gridScrollMargin}px)`,
+                  }}
+                  className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 px-4 py-2"
+                >
+                  {rowItems.map((rowOrBack) => {
+                    if ("isBackCard" in rowOrBack && rowOrBack.isBackCard) {
+                      return (
+                        <div
+                          key="back-card"
+                          onClick={navigateUp}
+                          className="aspect-square bg-white/5 rounded-xl border border-white/5 flex flex-col items-center justify-center cursor-pointer hover:bg-white/10 transition-all hover:scale-[1.02]"
+                        >
+                          <ArrowLeft className="w-8 h-8 text-[#e8e4d9]/50 mb-2" />
+                          <span className="text-[#e8e4d9]/70 font-medium text-sm">
+                            Back
+                          </span>
+                        </div>
+                      );
+                    }
 
-            {viewObjects.folders.map((folder) => (
-              <FileItem
-                key={folder.id}
-                item={folder}
-                viewMode="grid"
-                currentPrefix={currentPrefix}
-                onNavigate={navigateToFolder}
-                onTag={setTaggingObj}
-                onCut={handleCut}
-                onShare={setShareFile}
-                onDelete={handleDeleteItem}
-                isSelected={selectedIds.has(folder.id)}
-                onSelect={handleSelect}
-                registerItemRef={registerItemRef}
-              />
-            ))}
+                    const row = rowOrBack as any;
+                    const item = row.original;
+                    const isFolder =
+                      item.contentType === "application/x-directory" ||
+                      item.key.endsWith("/");
 
-            {viewObjects.files.map((file) => (
-              <FileItem
-                key={file.id}
-                item={file}
-                viewMode="grid"
-                currentPrefix={currentPrefix}
-                onPreview={handlePreview}
-                onDownload={handleDownload}
-                onCut={handleCut}
-                onShare={setShareFile}
-                onDelete={handleDeleteItem}
-                isDownloading={downloadingId === file.id}
-                isSelected={selectedIds.has(file.id)}
-                onSelect={handleSelect}
-                registerItemRef={registerItemRef}
-              />
-            ))}
+                    return (
+                      <FileItem
+                        key={item.id}
+                        item={item}
+                        viewMode="grid"
+                        currentPrefix={currentPrefix}
+                        onNavigate={isFolder ? navigateToFolder : undefined}
+                        onPreview={!isFolder ? handlePreview : undefined}
+                        onDownload={!isFolder ? handleDownload : undefined}
+                        onTag={setTaggingObj}
+                        onCut={handleCut}
+                        onShare={setShareFile}
+                        onDelete={handleDeleteItem}
+                        isDownloading={!isFolder && downloadingId === item.id ? true : undefined}
+                        isSelected={selectedIds.has(item.id)}
+                        onSelect={handleSelect}
+                        registerItemRef={registerItemRef}
+                      />
+                    );
+                  })}
+                </div>
+              );
+            })}
           </div>
         )}
-
-
       </div>
 
       {/* ── Dialogs ── */}
