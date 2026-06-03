@@ -92,8 +92,8 @@ export async function POST(request: NextRequest) {
       userId,
       deletedAt: { $exists: true },
     })
-      .select("_id")
-      .lean<{ _id: Types.ObjectId }[]>();
+      .select("_id key contentType")
+      .lean<{ _id: Types.ObjectId; key?: string; contentType?: string }[]>();
 
     if (objects.length === 0) {
       return NextResponse.json({ success: true, restoredCount: 0 });
@@ -101,16 +101,41 @@ export async function POST(request: NextRequest) {
 
     const objectIds = objects.map((o) => o._id);
 
+    // Recursively restore child objects inside folders
+    const folderPrefixes: string[] = [];
+    objects.forEach((obj) => {
+      if (obj.key && (obj.contentType === "application/x-directory" || obj.key.endsWith("/"))) {
+        folderPrefixes.push(obj.key);
+      }
+    });
+
+    let allDocIds = [...objectIds];
+
+    if (folderPrefixes.length > 0) {
+      const folderChildren = await StorageObject.find({
+        bucketId,
+        userId,
+        deletedAt: { $exists: true },
+        $or: folderPrefixes.map((prefix) => ({
+          key: { $regex: `^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}` }
+        }))
+      }).select("_id");
+      
+      folderChildren.forEach((child) => {
+        allDocIds.push(child._id);
+      });
+    }
+
     // Restore sidecars alongside their parents.
     const sidecars = await StorageObject.find({
-      parentObjectId: { $in: objectIds },
+      parentObjectId: { $in: allDocIds },
       userId,
       deletedAt: { $exists: true },
     })
       .select("_id")
       .lean<{ _id: Types.ObjectId }[]>();
 
-    const allDocIds = [...objectIds, ...sidecars.map((s) => s._id)];
+    allDocIds = Array.from(new Set([...allDocIds, ...sidecars.map((s) => s._id)]));
 
     await StorageObject.updateMany(
       { _id: { $in: allDocIds } },
