@@ -69,6 +69,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
           setPrivateKey(cached.privateKey);
           setPublicKey(cached.publicKey);
           setMetadataKey(cached.metadataKey || null);
+          setPrivateKeyBuf(cached.privateKeyBuf || null);
           setIsUnlocked(true);
           return;
         }
@@ -136,7 +137,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
             setMetadataKey(keys.metadataKey || null);
             setPrivateKeyBuf(keys.privateKeyBuf);
             setIsUnlocked(true);
-            await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
+            await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey, keys.privateKeyBuf);
             return;
           } catch (e: any) {
             if (e.message === "NO_VAULT") {
@@ -163,7 +164,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
     setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
     setMetadataKey(keys.metadataKey || null); setPrivateKeyBuf(keys.privateKeyBuf);
     setIsUnlocked(true); setNeedsSetup(false);
-    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
+    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey, keys.privateKeyBuf);
   }, []);
 
   const unlock = useCallback(async (masterPassword: string) => {
@@ -171,7 +172,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
     setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
     setMetadataKey(keys.metadataKey || null); setPrivateKeyBuf(keys.privateKeyBuf);
     setIsUnlocked(true);
-    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
+    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey, keys.privateKeyBuf);
   }, []);
 
   const regenerate = useCallback(async (newMasterPassword: string, newRecoveryWords: string) => {
@@ -179,7 +180,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
     setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
     setMetadataKey(keys.metadataKey || null); setPrivateKeyBuf(keys.privateKeyBuf);
     setIsUnlocked(true); setNeedsSetup(false);
-    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
+    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey, keys.privateKeyBuf);
   }, []);
 
   const updatePassword = useCallback(async (currentPassword: string, newMasterPassword: string) => {
@@ -187,7 +188,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
     setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
     setMetadataKey(keys.metadataKey || null); setPrivateKeyBuf(keys.privateKeyBuf);
     setIsUnlocked(true); setNeedsSetup(false);
-    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
+    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey, keys.privateKeyBuf);
   }, []);
 
   const recover = useCallback(async (recoveryWords: string, newMasterPassword: string) => {
@@ -195,7 +196,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
     setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
     setMetadataKey(keys.metadataKey || null); setPrivateKeyBuf(keys.privateKeyBuf);
     setIsUnlocked(true); setNeedsSetup(false);
-    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
+    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey, keys.privateKeyBuf);
   }, []);
 
   // Lock: wipe keys from memory only, DB stays (re-login re-decrypts into RAM)
