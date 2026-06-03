@@ -12,6 +12,10 @@ export interface IStorageObject extends Document {
   b2FileId: string;
   tags: string[];
   position: number;
+  /** User-flagged favourite. Powers the Starred view. */
+  starred?: boolean;
+  /** Last time the file was opened (preview/download). Powers "Recent". */
+  lastAccessedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
   deletedAt?: Date;
@@ -45,6 +49,19 @@ export interface IStorageObject extends Document {
   aspectRatio?: number; // width / height
   isSidecar?: boolean; // True if this file is a sidecar (like subtitle.vtt) to another asset
   parentObjectId?: mongoose.Types.ObjectId; // ID of the primary object this sidecar belongs to
+  /**
+   * Mobile sync fingerprints — opaque, per-user HMACs the device uploads so
+   * it can tell whether a local photo is already backed up WITHOUT comparing
+   * decrypted filenames (which collide on IMG_0001.jpg etc.). Both are
+   * HMAC-SHA256 keyed with a value derived from the user's private key, so
+   * the server can match them within a user's own bucket but learns nothing
+   * about the underlying content (no plaintext oracle — preserves E2EE).
+   *   - syncContentFp: HMAC(SHA-256(plaintext bytes)) — authoritative identity.
+   *   - syncMetaFp:    HMAC(creationTime:size:width:height) — cheap pre-filter
+   *                    computed without reading file bytes.
+   */
+  syncContentFp?: string;
+  syncMetaFp?: string;
 }
 
 const StorageObjectSchema = new Schema<IStorageObject>(
@@ -99,6 +116,13 @@ const StorageObjectSchema = new Schema<IStorageObject>(
     position: {
       type: Number,
       default: 0,
+    },
+    starred: {
+      type: Boolean,
+      default: false,
+    },
+    lastAccessedAt: {
+      type: Date,
     },
     thumbnail: {
       type: String,
@@ -199,6 +223,14 @@ const StorageObjectSchema = new Schema<IStorageObject>(
       required: false,
       index: true,
     },
+    syncContentFp: {
+      type: String,
+      required: false,
+    },
+    syncMetaFp: {
+      type: String,
+      required: false,
+    },
   },
   {
     timestamps: true,
@@ -239,7 +271,41 @@ StorageObjectSchema.index({
   contentType: 1,
   _id: -1,
 });
-StorageObjectSchema.index({ deletedAt: 1 }, { expireAfterSeconds: 2592000 }); // 30 days TTL
+// Bin purge support. This is a PLAIN index, deliberately NOT a TTL: the 30-day
+// purge runs through /api/cron/purge-bin so it can delete the encrypted B2
+// blobs *before* removing the document — a TTL would drop the doc and orphan
+// the blobs forever. Supports the cron's cross-bucket "deletedAt <= cutoff"
+// age scan; per-bucket Bin listing is already covered by the
+// {bucketId, deletedAt, createdAt, _id} index below.
+//
+// ⚠️ DEPLOY NOTE: the previous TTL index (name `deletedAt_1`, expireAfterSeconds
+// 2592000) must be dropped in production once — otherwise Mongo keeps
+// auto-removing binned docs at 30 days and orphans their B2 blobs:
+//     db.storageobjects.dropIndex("deletedAt_1")
+// then this plain index is (re)created on next deploy.
+StorageObjectSchema.index({ deletedAt: 1 });
+
+// Starred view: list a bucket's favourites newest-first. Partial index keeps it
+// tiny — only starred docs are indexed — and the query always carries
+// `starred: true`, so Mongo can use it.
+StorageObjectSchema.index(
+  { bucketId: 1, createdAt: -1 },
+  { partialFilterExpression: { starred: true }, name: "starred_objects" },
+);
+
+// Recent view: list a bucket's files by most-recently-opened.
+StorageObjectSchema.index({ bucketId: 1, lastAccessedAt: -1 });
+
+// Mobile sync dedup lookups — sparse so only fingerprinted (mobile-uploaded)
+// objects occupy the index. Covers the /api/objects/sync-check $in queries.
+StorageObjectSchema.index(
+  { bucketId: 1, syncContentFp: 1 },
+  { sparse: true },
+);
+StorageObjectSchema.index(
+  { bucketId: 1, syncMetaFp: 1 },
+  { sparse: true },
+);
 
 if (mongoose.models.StorageObject) {
   delete mongoose.models.StorageObject;

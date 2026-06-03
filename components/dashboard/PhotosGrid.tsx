@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo, useRef, memo } from "react";
+import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { usePreview } from "@/contexts/PreviewContext";
 import { Loader2, ImageOff, LayoutGrid, Grid3x3, Rows3 } from "lucide-react";
-import { formatBytes } from "@/lib/utils";
+import { formatBytes, cn } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
 import { useThumbnail } from "@/hooks/useThumbnail";
@@ -16,11 +17,29 @@ import { Scrubber } from "@/components/dashboard/Scrubber";
 
 type GridDensity = "large" | "medium" | "small";
 
-const DENSITY_COLS: Record<GridDensity, string> = {
-  large: "grid-cols-2 sm:grid-cols-3",
-  medium: "grid-cols-3 sm:grid-cols-4 md:grid-cols-5",
-  small: "grid-cols-4 sm:grid-cols-6 md:grid-cols-8",
-};
+function getColumnCount(mode: "masonry" | GridDensity, width: number): number {
+  if (mode === "masonry") {
+    if (width >= 1280) return 5;
+    if (width >= 1024) return 4;
+    if (width >= 768) return 3;
+    return 2;
+  }
+  if (mode === "large") {
+    if (width >= 640) return 3;
+    return 2;
+  }
+  if (mode === "medium") {
+    if (width >= 768) return 5;
+    if (width >= 640) return 4;
+    return 3;
+  }
+  if (mode === "small") {
+    if (width >= 768) return 8;
+    if (width >= 640) return 6;
+    return 4;
+  }
+  return 4;
+}
 
 function getFileName(key: string) {
   return key.split("/").pop() || key;
@@ -138,88 +157,7 @@ const PhotoThumbnail = memo(function PhotoThumbnail({
 // Grid layout variants
 // ─────────────────────────────────────────────────────────────────────────────
 
-const MasonryGrid = memo(function MasonryGrid({
-  photos,
-  onPhotoClick,
-  decryptedNames,
-  metadataKey,
-}: {
-  photos: GridObject[];
-  onPhotoClick: (p: GridObject) => void;
-  decryptedNames: Record<string, string>;
-  metadataKey: CryptoKey | null;
-}) {
-  const [columnCount, setColumnCount] = useState(2);
-
-  useEffect(() => {
-    const updateColumns = () => {
-      if (window.innerWidth >= 1280) setColumnCount(5);
-      else if (window.innerWidth >= 1024) setColumnCount(4);
-      else if (window.innerWidth >= 768) setColumnCount(3);
-      else setColumnCount(2);
-    };
-
-    updateColumns();
-    window.addEventListener("resize", updateColumns);
-    return () => window.removeEventListener("resize", updateColumns);
-  }, []);
-
-  const columns = useMemo(() => {
-    const cols: GridObject[][] = Array.from({ length: columnCount }, () => []);
-    photos.forEach((photo, i) => {
-      cols[i % columnCount].push(photo);
-    });
-    return cols;
-  }, [photos, columnCount]);
-
-  return (
-    <div className="flex gap-4">
-      {columns.map((column, i) => (
-        <div key={i} className="flex-1 flex flex-col gap-4">
-          {column.map((photo) => (
-            <PhotoThumbnail
-              key={photo._id}
-              photo={photo}
-              onPhotoClick={onPhotoClick}
-              decryptedName={decryptedNames[photo._id]}
-              metadataKey={metadataKey}
-            />
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-});
-
-const UniformGrid = memo(function UniformGrid({
-  photos,
-  density,
-  onPhotoClick,
-  decryptedNames,
-  metadataKey,
-}: {
-  photos: GridObject[];
-  density: GridDensity;
-  onPhotoClick: (p: GridObject) => void;
-  decryptedNames: Record<string, string>;
-  metadataKey: CryptoKey | null;
-}) {
-  return (
-    <div
-      className={`grid ${DENSITY_COLS[density]} gap-3 sm:gap-4 auto-rows-[180px] sm:auto-rows-[220px]`}
-    >
-      {photos.map((photo) => (
-        <PhotoThumbnail
-          key={photo._id}
-          photo={photo}
-          onPhotoClick={onPhotoClick}
-          decryptedName={decryptedNames[photo._id]}
-          metadataKey={metadataKey}
-        />
-      ))}
-    </div>
-  );
-});
+// Grids inline virtualized
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main component
@@ -308,117 +246,133 @@ export function PhotosGrid() {
 
   // ── Scrubber state ────────────────────────────────────────────────────────────
 
+  // ── Scrubber & Virtualization State ─────────────────────────────────────────
+
   const [scrollProgress, setScrollProgress] = useState(0);
-  const groupRefs = useRef<Record<string, HTMLDivElement | null>>({});
-  const groupEntriesRef = useRef<[string, GridObject[]][]>([]);
-  groupEntriesRef.current = groupEntries;
+  const galleryContainerRef = useRef<HTMLDivElement | null>(null);
+  const [windowWidth, setWindowWidth] = useState<number>(0);
 
-  const lastScrubTargetLabelRef = useRef<string | null>(null);
-  const lastActiveScrollLabelRef = useRef<string | null>(null);
-  const scrollRafRef = useRef<number | null>(null);
-
-  const sectionOffsetsRef = useRef<
-    Array<{ label: string; top: number; firstIndex: number }>
-  >([]);
-
-  // Pre-compute index → date label from the full unfiltered list (drives scrubber).
-  // Map date label → first index in allPhotos (for scroll progress calculation).
-  // Rebuild offsetTop cache after DOM layout.
-  const measureOffsets = useCallback(() => {
-    const result: typeof sectionOffsetsRef.current = [];
-    let runningIndex = 0;
-    for (const [label, photos] of groupEntriesRef.current) {
-      const el = groupRefs.current[label];
-      if (!el) {
-        runningIndex += photos.length;
-        continue;
-      }
-      result.push({
-        label,
-        top: el.offsetTop,
-        firstIndex: runningIndex,
-      });
-      runningIndex += photos.length;
-    }
-    sectionOffsetsRef.current = result;
+  useEffect(() => {
+    setWindowWidth(window.innerWidth);
+    const handleResize = () => {
+      setWindowWidth(window.innerWidth);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  useEffect(() => {
-    const id = requestAnimationFrame(measureOffsets);
-    return () => cancelAnimationFrame(id);
-  }, [measureOffsets, groupEntries]);
+  const columnCount = useMemo(() => {
+    if (windowWidth === 0) return 4;
+    return getColumnCount(gridMode, windowWidth);
+  }, [gridMode, windowWidth]);
 
-  useEffect(() => {
-    window.addEventListener("resize", measureOffsets, { passive: true });
-    return () => window.removeEventListener("resize", measureOffsets);
-  }, [measureOffsets]);
+  const { virtualItemsData, labelToVirtualIndex, photoIndexToVirtualIndex } = useMemo(() => {
+    const data: Array<
+      | { type: "header"; dateLabel: string; count: number; photoIndex: number }
+      | { type: "grid"; photos: GridObject[]; dateLabel: string; photoIndex: number }
+    > = [];
+    const labelToIndex: Record<string, number> = {};
+    const photoToVirtual: number[] = [];
 
-  // RAF-gated binary-search scroll handler.
-  const handleScroll = useCallback(() => {
-    if (scrollRafRef.current !== null) return;
-    scrollRafRef.current = requestAnimationFrame(() => {
-      scrollRafRef.current = null;
-      const offsets = sectionOffsetsRef.current;
-      if (offsets.length === 0 || scrubberItems.length === 0) return;
+    let runningPhotoIndex = 0;
+    groupEntries.forEach(([dateLabel, groupPhotos]) => {
+      // 1. Add header
+      const headerIndex = data.length;
+      data.push({
+        type: "header",
+        dateLabel,
+        count: groupPhotos.length,
+        photoIndex: runningPhotoIndex,
+      });
+      labelToIndex[dateLabel] = headerIndex;
 
-      const THRESHOLD = 76;
-      const scrollY = window.scrollY;
-      let lo = 0,
-        hi = offsets.length - 1,
-        activeIdx = -1;
-      while (lo <= hi) {
-        const mid = (lo + hi) >> 1;
-        if (offsets[mid].top <= scrollY + THRESHOLD) {
-          activeIdx = mid;
-          lo = mid + 1;
-        } else hi = mid - 1;
-      }
+      // 2. Add grid
+      const gridIndex = data.length;
+      data.push({
+        type: "grid",
+        photos: groupPhotos,
+        dateLabel,
+        photoIndex: runningPhotoIndex,
+      });
 
-      if (activeIdx === -1) {
-        setScrollProgress(0);
-        lastActiveScrollLabelRef.current = null;
-        lastScrubTargetLabelRef.current = null;
-        return;
-      }
+      groupPhotos.forEach(() => {
+        photoToVirtual.push(headerIndex);
+      });
 
-      const { label, firstIndex } = offsets[activeIdx];
-      if (label === lastActiveScrollLabelRef.current) return;
-      lastActiveScrollLabelRef.current = label;
-      if (label === lastScrubTargetLabelRef.current) {
-        lastScrubTargetLabelRef.current = null;
-      }
-      setScrollProgress(firstIndex / Math.max(1, scrubberItems.length - 1));
+      runningPhotoIndex += groupPhotos.length;
     });
-  }, [scrubberItems.length]);
+
+    return {
+      virtualItemsData: data,
+      labelToVirtualIndex: labelToIndex,
+      photoIndexToVirtualIndex: photoToVirtual,
+    };
+  }, [groupEntries]);
+
+  const photoContainerRef = useRef<HTMLDivElement | null>(null);
+  const [scrollMargin, setScrollMargin] = useState(0);
 
   useEffect(() => {
-    window.addEventListener("scroll", handleScroll, { passive: true });
-    handleScroll();
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, [handleScroll]);
+    const updateMargin = () => {
+      if (photoContainerRef.current) {
+        const rect = photoContainerRef.current.getBoundingClientRect();
+        setScrollMargin(rect.top + window.scrollY);
+      }
+    };
+    updateMargin();
+    const timer = setTimeout(updateMargin, 150);
+    window.addEventListener("resize", updateMargin);
+    window.addEventListener("scroll", updateMargin);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("resize", updateMargin);
+      window.removeEventListener("scroll", updateMargin);
+    };
+  }, [filteredPhotos.length, gridLoading, gridError]);
 
-  // Scrub: instant jump to section.
+  const virtualizer = useWindowVirtualizer({
+    count: virtualItemsData.length,
+    estimateSize: (index) => {
+      const item = virtualItemsData[index];
+      if (!item) return 200;
+      if (item.type === "header") return 50;
+      const rowsCount = Math.ceil(item.photos.length / columnCount);
+      return rowsCount * 220;
+    },
+    scrollMargin,
+    overscan: 3,
+  });
+
+  const firstVisibleIndex = useMemo(() => {
+    const items = virtualizer.getVirtualItems();
+    if (items.length === 0) return 0;
+    const scrollOffset = virtualizer.scrollOffset ?? 0;
+    // Finding the first item that is visible below the 68px top-bar
+    const activeItem = items.find((item) => item.end > scrollOffset + 68);
+    return activeItem?.index ?? items[0].index;
+  }, [virtualizer, virtualizer.scrollOffset]);
+
+  useEffect(() => {
+    const item = virtualItemsData[firstVisibleIndex];
+    if (!item) return;
+    const progress = item.photoIndex / Math.max(1, filteredPhotos.length - 1);
+    setScrollProgress(progress);
+  }, [firstVisibleIndex, virtualItemsData, filteredPhotos.length]);
+
+  const currentDateLabel = useMemo(() => {
+    const item = virtualItemsData[firstVisibleIndex];
+    return item?.dateLabel ?? "";
+  }, [firstVisibleIndex, virtualItemsData]);
+
   const handleScrub = useCallback(
     (index: number) => {
-      const offsets = sectionOffsetsRef.current;
-      if (offsets.length === 0) return;
-
-      let target = offsets[0];
-      for (let i = 1; i < offsets.length; i++) {
-        if (offsets[i].firstIndex > index) break;
-        target = offsets[i];
+      const vIdx = photoIndexToVirtualIndex[index];
+      if (vIdx !== undefined) {
+        setScrollProgress(index / Math.max(1, scrubberItems.length - 1));
+        virtualizer.scrollToIndex(vIdx, { align: "start" });
       }
-
-      if (target.label === lastScrubTargetLabelRef.current) return;
-
-      setScrollProgress(target.firstIndex / Math.max(1, scrubberItems.length - 1));
-      lastScrubTargetLabelRef.current = target.label;
-      groupRefs.current[target.label]?.scrollIntoView({
-        behavior: "instant",
-        block: "start",
-      });
     },
-    [scrubberItems.length],
+    [photoIndexToVirtualIndex, virtualizer, scrubberItems.length],
   );
 
   // ── Photo click ──────────────────────────────────────────────────────────────
@@ -452,7 +406,7 @@ export function PhotosGrid() {
     <div className="flex gap-2 items-start">
       {/* Gallery content */}
       <div className="grow min-w-0">
-        <div className="space-y-6 pb-8">
+        <div ref={galleryContainerRef} className="space-y-6 pb-8">
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
@@ -568,43 +522,128 @@ export function PhotosGrid() {
             </div>
           )}
 
-          {/* Photo groups — all rendered at once; IO on each tile gates thumbnail fetch */}
-          {groupEntries.map(([dateLabel, groupPhotos]) => (
-            <div
-              key={dateLabel}
-              ref={(el) => {
-                groupRefs.current[dateLabel] = el;
-              }}
-              className="space-y-4 scroll-mt-[76px]"
-            >
-              <div className="sticky top-[68px] z-30 py-2 -mx-4 px-4 bg-background/80 backdrop-blur-md border-b border-border/0 data-stuck:border-border/50 transition-colors">
-                <p className="text-sm font-semibold text-foreground/70 flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-primary/40" />
-                  {dateLabel}
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-bold ml-auto">
-                    {groupPhotos.length} item
-                    {groupPhotos.length !== 1 ? "s" : ""}
-                  </span>
-                </p>
-              </div>
-              {gridMode === "masonry" ? (
-                <MasonryGrid
-                  photos={groupPhotos}
-                  onPhotoClick={handlePhotoClick}
-                  decryptedNames={decryptedNames}
-                  metadataKey={metadataKey}
-                />
-              ) : (
-                <UniformGrid
-                  photos={groupPhotos}
-                  density={gridMode as GridDensity}
-                  onPhotoClick={handlePhotoClick}
-                  decryptedNames={decryptedNames}
-                  metadataKey={metadataKey}
-                />
-              )}
+          {/* Floating Glassmorphism Sticky Date Header */}
+          {currentDateLabel && (
+            <div className="sticky top-[68px] z-30 py-2 -mx-4 px-4 bg-background/80 backdrop-blur-md border-b border-border/10 transition-colors">
+              <p className="text-sm font-semibold text-foreground/70 flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary/40 animate-pulse" />
+                {currentDateLabel}
+              </p>
             </div>
-          ))}
+          )}
+
+          {/* Virtualized photo container */}
+          {!gridLoading && !gridError && filteredPhotos.length > 0 && (
+            <div
+              ref={photoContainerRef}
+              style={{
+                height: `${virtualizer.getTotalSize()}px`,
+                position: "relative",
+                width: "100%",
+              }}
+            >
+              {virtualizer.getVirtualItems().map((virtualRow) => {
+                const item = virtualItemsData[virtualRow.index];
+                if (!item) return null;
+
+                if (item.type === "header") {
+                  return (
+                    <div
+                      key={virtualRow.key}
+                      data-index={virtualRow.index}
+                      ref={virtualizer.measureElement}
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        transform: `translateY(${virtualRow.start - scrollMargin}px)`,
+                      }}
+                      className="py-2 px-4 border-b border-border/5"
+                    >
+                      <p className="text-sm font-semibold text-foreground/50 flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30" />
+                        {item.dateLabel}
+                        <span className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-bold ml-auto">
+                          {item.count} item{item.count !== 1 ? "s" : ""}
+                        </span>
+                      </p>
+                    </div>
+                  );
+                }
+
+                // Masonry columns distribution
+                if (gridMode === "masonry") {
+                  const columns: GridObject[][] = Array.from({ length: columnCount }, () => []);
+                  item.photos.forEach((photo, i) => {
+                    columns[i % columnCount].push(photo);
+                  });
+
+                  return (
+                    <div
+                      key={virtualRow.key}
+                      data-index={virtualRow.index}
+                      ref={virtualizer.measureElement}
+                      style={{
+                        position: "absolute",
+                        top: 0,
+                        left: 0,
+                        width: "100%",
+                        transform: `translateY(${virtualRow.start - scrollMargin}px)`,
+                      }}
+                      className="flex gap-4 px-4 py-2"
+                    >
+                      {columns.map((column, i) => (
+                        <div key={i} className="flex-1 flex flex-col gap-4">
+                          {column.map((photo) => (
+                            <PhotoThumbnail
+                              key={photo._id}
+                              photo={photo}
+                              onPhotoClick={handlePhotoClick}
+                              decryptedName={decryptedNames[photo._id]}
+                              metadataKey={metadataKey}
+                            />
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                }
+
+                // Uniform Grid rows layout
+                return (
+                  <div
+                    key={virtualRow.key}
+                    data-index={virtualRow.index}
+                    ref={virtualizer.measureElement}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      transform: `translateY(${virtualRow.start - scrollMargin}px)`,
+                    }}
+                    className={cn(
+                      "grid gap-3 sm:gap-4 px-4 py-2",
+                      gridMode === "large" && "grid-cols-2 sm:grid-cols-3 auto-rows-[180px] sm:auto-rows-[220px]",
+                      gridMode === "medium" && "grid-cols-3 sm:grid-cols-4 md:grid-cols-5 auto-rows-[180px] sm:auto-rows-[220px]",
+                      gridMode === "small" && "grid-cols-4 sm:grid-cols-6 md:grid-cols-8 auto-rows-[180px] sm:auto-rows-[220px]"
+                    )}
+                  >
+                    {item.photos.map((photo) => (
+                      <PhotoThumbnail
+                        key={photo._id}
+                        photo={photo}
+                        onPhotoClick={handlePhotoClick}
+                        decryptedName={decryptedNames[photo._id]}
+                        metadataKey={metadataKey}
+                      />
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
 

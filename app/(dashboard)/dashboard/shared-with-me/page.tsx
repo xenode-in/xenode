@@ -168,7 +168,7 @@ export default function SharedWithMePage() {
         </div>
       ) : (
         <div className="rounded-md border bg-card text-card-foreground shadow-sm overflow-hidden">
-          <Table>
+          <Table className="min-w-[700px] md:min-w-full">
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>File</TableHead>

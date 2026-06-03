@@ -162,6 +162,29 @@ export function Scrubber({ items, scrollProgress, onScrub }: ScrubberProps) {
   // Timeline markers: rebuilt only when the items reference changes.
   const timelineMarkers = useMemo(() => buildTimelineMarkers(items), [items]);
 
+  // Determine which labels to render to avoid overlap
+  const visibleLabels = useMemo(() => {
+    const visible: boolean[] = [];
+    let lastY = -9999;
+    const minSpacing = 20; // minimum pixels between label centers
+
+    for (let i = 0; i < timelineMarkers.length; i++) {
+      const m = timelineMarkers[i];
+      const midY =
+        THUMB_HALF +
+        (m.firstIndex / Math.max(1, items.length - 1)) *
+          (trackHeight - THUMB_SIZE);
+
+      if (midY - lastY >= minSpacing) {
+        visible.push(true);
+        lastY = midY;
+      } else {
+        visible.push(false);
+      }
+    }
+    return visible;
+  }, [timelineMarkers, items.length, trackHeight]);
+
   // Current effective progress: drag wins, scroll otherwise.
   const effectiveProgress = dragProgress ?? scrollProgress;
   const thumbY =
@@ -270,7 +293,7 @@ export function Scrubber({ items, scrollProgress, onScrub }: ScrubberProps) {
         onPointerMove={onPointerMove}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
-        className="absolute inset-y-0 inset-x-0 cursor-grab touch-none active:cursor-grabbing"
+        className="absolute inset-y-6 inset-x-0 cursor-grab touch-none active:cursor-grabbing"
       >
         {/* Track rail — 1px vertical line */}
         <div
@@ -280,7 +303,7 @@ export function Scrubber({ items, scrollProgress, onScrub }: ScrubberProps) {
 
         {/* Timeline markers — plain text + dot on rail */}
         {trackHeight > 0 &&
-          timelineMarkers.map((m) => {
+          timelineMarkers.map((m, idx) => {
             const midY =
               THUMB_HALF +
               (m.firstIndex / Math.max(1, items.length - 1)) *
@@ -288,21 +311,23 @@ export function Scrubber({ items, scrollProgress, onScrub }: ScrubberProps) {
             return (
               <React.Fragment key={m.label}>
                 {/* Label — right-aligned, ending with a small gap before the dot */}
-                <div
-                  style={{
-                    top: midY,
-                    right: TRACK_RIGHT + DOT_SIZE / 2 + 6,
-                    transform: "translateY(-50%)",
-                  }}
-                  className="absolute flex items-baseline gap-1 pointer-events-none"
-                >
-                  <span className="text-[10px] font-medium leading-none text-zinc-400 whitespace-nowrap">
-                    {m.label}
-                  </span>
-                  <span className="text-[9px] leading-none text-zinc-600 font-medium">
-                    {m.count}
-                  </span>
-                </div>
+                {visibleLabels[idx] && (
+                  <div
+                    style={{
+                      top: midY,
+                      right: TRACK_RIGHT + DOT_SIZE / 2 + 6,
+                      transform: "translateY(-50%)",
+                    }}
+                    className="absolute flex items-baseline gap-1 pointer-events-none"
+                  >
+                    <span className="text-[10px] font-medium leading-none text-zinc-400 whitespace-nowrap">
+                      {m.label}
+                    </span>
+                    <span className="text-[9px] leading-none text-zinc-600 font-medium">
+                      {m.count}
+                    </span>
+                  </div>
+                )}
 
                 {/* Dot — centred on the rail at marker y */}
                 <div

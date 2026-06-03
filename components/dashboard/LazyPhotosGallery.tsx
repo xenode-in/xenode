@@ -133,9 +133,17 @@ export function LazyPhotosGallery({
   }, [sections]);
 
   useEffect(() => {
-    // Defer one frame so the DOM has painted.
-    const id = requestAnimationFrame(measureOffsets);
-    return () => cancelAnimationFrame(id);
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const ro = new ResizeObserver(() => {
+      measureOffsets();
+    });
+    ro.observe(el);
+
+    measureOffsets();
+
+    return () => ro.disconnect();
   }, [measureOffsets]);
 
   // ── Scroll handler (RAF-gated, binary search) ──────────────────────────────

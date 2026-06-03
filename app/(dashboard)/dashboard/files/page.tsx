@@ -75,6 +75,14 @@ import {
   decryptMetadataString,
 } from "@/lib/crypto/fileEncryption";
 import { cn } from "@/lib/utils";
+import {
+  useReactTable,
+  getCoreRowModel,
+  flexRender,
+  ColumnDef,
+  SortingState,
+} from "@tanstack/react-table";
+import { useWindowVirtualizer } from "@tanstack/react-virtual";
 
 interface ObjectData {
   id: string;
@@ -164,27 +172,27 @@ function Toolbar({
       />
 
       {hasSelection ? (
-        <div className="flex items-center gap-1 animate-in fade-in slide-in-from-left-2 duration-150">
-          <span className="text-sm font-medium text-foreground/60 mr-1">
+        <div className="flex items-center gap-1 animate-in fade-in slide-in-from-left-2 duration-150 shrink-0">
+          <span className="text-sm font-medium text-foreground/60 mr-1 whitespace-nowrap">
             {selectedIds.size} selected
           </span>
           <Button
             variant="ghost"
             size="sm"
             onClick={onCut}
-            className="h-8 gap-1.5 text-foreground/60 hover:text-foreground hover:bg-secondary/60"
+            className="h-8 gap-1.5 text-foreground/60 hover:text-foreground hover:bg-secondary/60 px-2 sm:px-3"
           >
             <Scissors className="w-3.5 h-3.5" />
-            Cut
+            <span className="hidden sm:inline">Cut</span>
           </Button>
           <Button
             variant="ghost"
             size="sm"
             onClick={onDelete}
-            className="h-8 gap-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10"
+            className="h-8 gap-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 px-2 sm:px-3"
           >
             <Trash2 className="w-3.5 h-3.5" />
-            Delete
+            <span className="hidden sm:inline">Delete</span>
           </Button>
           <div className="w-px h-5 bg-border mx-1" />
           <Button
@@ -197,7 +205,7 @@ function Toolbar({
           </Button>
         </div>
       ) : (
-        <div className="flex items-center gap-1.5 animate-in fade-in duration-150">
+        <div className="flex items-center gap-1.5 animate-in fade-in duration-150 shrink-0">
           {clipboard && (
             <Button
               variant="ghost"
@@ -220,95 +228,98 @@ function Toolbar({
 
       <div className="flex-1" />
 
-      {/* Sort dropdown */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
+      {/* Standard buttons: Sort, View, New folder, Upload. Hide on mobile/tablet when there is active selection */}
+      <div className={cn("items-center gap-2", hasSelection ? "hidden sm:flex" : "flex")}>
+        {/* Sort dropdown */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 gap-1.5 text-muted-foreground/60 hover:text-foreground hover:bg-secondary/60"
+            >
+              {sortDir === "asc" ? (
+                <SortAsc className="w-3.5 h-3.5" />
+              ) : (
+                <SortDesc className="w-3.5 h-3.5" />
+              )}
+              <span className="hidden sm:inline">Sort</span>
+              <ChevronDown className="w-3 h-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-40">
+            {(["name", "size", "type", "date"] as SortField[]).map((f) => (
+              <DropdownMenuItem
+                key={f}
+                onClick={() => onSort(f)}
+                className={cn(
+                  "capitalize gap-2",
+                  sortField === f && "text-primary font-medium",
+                )}
+              >
+                {sortField === f &&
+                  (sortDir === "asc" ? (
+                    <SortAsc className="w-3.5 h-3.5" />
+                  ) : (
+                    <SortDesc className="w-3.5 h-3.5" />
+                  ))}
+                {f === "date" ? "Modified" : f}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        {/* View toggle */}
+        <div className="flex items-center bg-secondary/40 rounded-md border border-border p-0.5">
           <Button
             variant="ghost"
-            size="sm"
-            className="h-8 gap-1.5 text-muted-foreground/60 hover:text-foreground hover:bg-secondary/60"
-          >
-            {sortDir === "asc" ? (
-              <SortAsc className="w-3.5 h-3.5" />
-            ) : (
-              <SortDesc className="w-3.5 h-3.5" />
+            size="icon"
+            onClick={() => onViewMode("list")}
+            className={cn(
+              "h-7 w-7 rounded-sm",
+              viewMode === "list"
+                ? "bg-background shadow-sm text-foreground"
+                : "text-muted-foreground/40 hover:text-foreground",
             )}
-            <span className="hidden sm:inline">Sort</span>
-            <ChevronDown className="w-3 h-3" />
+          >
+            <ListIcon className="w-3.5 h-3.5" />
           </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-40">
-          {(["name", "size", "type", "date"] as SortField[]).map((f) => (
-            <DropdownMenuItem
-              key={f}
-              onClick={() => onSort(f)}
-              className={cn(
-                "capitalize gap-2",
-                sortField === f && "text-primary font-medium",
-              )}
-            >
-              {sortField === f &&
-                (sortDir === "asc" ? (
-                  <SortAsc className="w-3.5 h-3.5" />
-                ) : (
-                  <SortDesc className="w-3.5 h-3.5" />
-                ))}
-              {f === "date" ? "Modified" : f}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => onViewMode("grid")}
+            className={cn(
+              "h-7 w-7 rounded-sm",
+              viewMode === "grid"
+                ? "bg-background shadow-sm text-foreground"
+                : "text-muted-foreground/40 hover:text-foreground",
+            )}
+          >
+            <LayoutGrid className="w-3.5 h-3.5" />
+          </Button>
+        </div>
 
-      {/* View toggle */}
-      <div className="flex items-center bg-secondary/40 rounded-md border border-border p-0.5">
+        <div className="w-px h-5 bg-border" />
+
         <Button
           variant="ghost"
-          size="icon"
-          onClick={() => onViewMode("list")}
-          className={cn(
-            "h-7 w-7 rounded-sm",
-            viewMode === "list"
-              ? "bg-background shadow-sm text-foreground"
-              : "text-muted-foreground/40 hover:text-foreground",
-          )}
+          size="sm"
+          onClick={onNewFolder}
+          className="h-8 gap-1.5 text-foreground/60 hover:text-foreground hover:bg-secondary/60"
         >
-          <ListIcon className="w-3.5 h-3.5" />
+          <FolderPlus className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">New folder</span>
         </Button>
+
         <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => onViewMode("grid")}
-          className={cn(
-            "h-7 w-7 rounded-sm",
-            viewMode === "grid"
-              ? "bg-background shadow-sm text-foreground"
-              : "text-muted-foreground/40 hover:text-foreground",
-          )}
+          size="sm"
+          onClick={onUpload}
+          className="h-8 gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground font-medium"
         >
-          <LayoutGrid className="w-3.5 h-3.5" />
+          <Upload className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Upload</span>
         </Button>
       </div>
-
-      <div className="w-px h-5 bg-border" />
-
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onNewFolder}
-        className="h-8 gap-1.5 text-foreground/60 hover:text-foreground hover:bg-secondary/60"
-      >
-        <FolderPlus className="w-3.5 h-3.5" />
-        <span className="hidden sm:inline">New folder</span>
-      </Button>
-
-      <Button
-        size="sm"
-        onClick={onUpload}
-        className="h-8 gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground font-medium"
-      >
-        <Upload className="w-3.5 h-3.5" />
-        <span className="hidden sm:inline">Upload</span>
-      </Button>
     </div>
   );
 }
@@ -388,12 +399,9 @@ export default function FilesPage() {
   const itemRefs = useRef<Map<string, HTMLElement>>(new Map());
   const selectionStartRef = useRef<{ x: number; y: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const selectionBoxRef = useRef<HTMLDivElement>(null);
 
   const [isSelecting, setIsSelecting] = useState(false);
-  const [selectionBox, setSelectionBox] = useState<{
-    currentX: number;
-    currentY: number;
-  } | null>(null);
 
   const [bucketId, setBucketId] = useState<string | null>(null);
   const [bucket, setBucket] = useState<BucketData | null>(null);
@@ -418,8 +426,26 @@ export default function FilesPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [lastSelectedId, setLastSelectedId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
-  const [sortField, setSortField] = useState<SortField>("name");
-  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [sortField, setSortField] = useState<SortField>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("filesSortField");
+      if (
+        saved === "name" ||
+        saved === "size" ||
+        saved === "type" ||
+        saved === "date"
+      )
+        return saved;
+    }
+    return "name";
+  });
+  const [sortDir, setSortDir] = useState<SortDir>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("filesSortDir");
+      if (saved === "asc" || saved === "desc") return saved;
+    }
+    return "asc";
+  });
   const [shareFile, setShareFile] = useState<ShareableFile | null>(null);
   const [decryptedFolderNameMap, setDecryptedFolderNameMap] = useState<
     Record<string, string>
@@ -437,15 +463,10 @@ export default function FilesPage() {
 
   const typeFilter = searchParams.get("type");
 
-  const {
-    fetchNextPage: fetchNextBatch,
-    hasNextPage: hasMorePages,
-    isFetchingNextPage,
-    refetch,
-  } = useFileSync({
+  const { refetch } = useFileSync({
     bucketId,
     userId,
-    limit: 50,
+    fetchAll: true,
     sortBy: sortField,
     sortDir: sortDir,
     mediaCategory: typeFilter,
@@ -494,47 +515,6 @@ export default function FilesPage() {
       setInitialLoading(false);
     }
   }, [bucketId]);
-
-  const fetchNextPage = useCallback(async () => {
-    if (hasMorePages && !isFetchingNextPage) {
-      await fetchNextBatch();
-    }
-  }, [hasMorePages, isFetchingNextPage, fetchNextBatch]);
-
-  // Keep a stable ref so the observer callback always calls the latest version.
-  const fetchNextPageRef = useRef(fetchNextPage);
-  useEffect(() => {
-    fetchNextPageRef.current = fetchNextPage;
-  });
-
-  // Stable ref to hold the current observer so we can clean it up.
-  const observerRef = useRef<IntersectionObserver | null>(null);
-
-  // Callback ref — fires whenever the sentinel DOM node mounts / unmounts.
-  // This guarantees the observer attaches even if the sentinel isn't in the
-  // initial render (e.g. loading spinner shows first), and survives
-  // sort/filter re-renders without scroll-position side-effects.
-  const sentinelCallbackRef = useCallback((node: HTMLDivElement | null) => {
-    // Tear down previous observer
-    if (observerRef.current) {
-      observerRef.current.disconnect();
-      observerRef.current = null;
-    }
-
-    if (!node) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
-          fetchNextPageRef.current();
-        }
-      },
-      { rootMargin: "200px" },
-    );
-
-    observer.observe(node);
-    observerRef.current = observer;
-  }, []);
 
   useEffect(() => {
     fetch("/api/drive/config")
@@ -690,12 +670,22 @@ export default function FilesPage() {
       [...arr].sort((a, b) => {
         let cmp = 0;
         if (sortField === "name") {
-          const nameA = a.contentType === "application/x-directory"
-            ? (decryptedFolderNameMap[a.key] || a.key.split("/").filter(Boolean).pop() || a.key)
-            : (decryptedFileNameMap[a.id] || a.key.split("/").filter(Boolean).pop() || a.key);
-          const nameB = b.contentType === "application/x-directory"
-            ? (decryptedFolderNameMap[b.key] || b.key.split("/").filter(Boolean).pop() || b.key)
-            : (decryptedFileNameMap[b.id] || b.key.split("/").filter(Boolean).pop() || b.key);
+          const nameA =
+            a.contentType === "application/x-directory"
+              ? decryptedFolderNameMap[a.key] ||
+                a.key.split("/").filter(Boolean).pop() ||
+                a.key
+              : decryptedFileNameMap[a.id] ||
+                a.key.split("/").filter(Boolean).pop() ||
+                a.key;
+          const nameB =
+            b.contentType === "application/x-directory"
+              ? decryptedFolderNameMap[b.key] ||
+                b.key.split("/").filter(Boolean).pop() ||
+                b.key
+              : decryptedFileNameMap[b.id] ||
+                b.key.split("/").filter(Boolean).pop() ||
+                b.key;
           cmp = nameA.localeCompare(nameB, undefined, { sensitivity: "base" });
         } else if (sortField === "size") cmp = a.size - b.size;
         else if (sortField === "type")
@@ -710,9 +700,14 @@ export default function FilesPage() {
       if (!searchTerm) return arr;
       const q = searchTerm.toLowerCase();
       return arr.filter((o) => {
-        const name = o.contentType === "application/x-directory"
-          ? (decryptedFolderNameMap[o.key] || o.key.split("/").filter(Boolean).pop() || o.key)
-          : (decryptedFileNameMap[o.id] || o.key.split("/").filter(Boolean).pop() || o.key);
+        const name =
+          o.contentType === "application/x-directory"
+            ? decryptedFolderNameMap[o.key] ||
+              o.key.split("/").filter(Boolean).pop() ||
+              o.key
+            : decryptedFileNameMap[o.id] ||
+              o.key.split("/").filter(Boolean).pop() ||
+              o.key;
         return name.toLowerCase().includes(q);
       });
     };
@@ -732,13 +727,226 @@ export default function FilesPage() {
     typeFilter,
   ]);
 
-  const allIds = useMemo(
+  const combinedData = useMemo(() => {
+    return [...viewObjects.folders, ...viewObjects.files];
+  }, [viewObjects]);
+
+  const allIds = useMemo(() => combinedData.map((d) => d.id), [combinedData]);
+
+  const getHeaderClassName = (id: string) => {
+    switch (id) {
+      case "select":
+        return "w-10 pl-4 pr-0";
+      case "name":
+        return "w-[45%] min-w-0";
+      case "size":
+        return "w-[15%]";
+      case "type":
+        return "w-[15%]";
+      case "date":
+        return "w-[20%] hidden md:table-cell";
+      case "actions":
+        return "text-right w-[100px]";
+      default:
+        return "";
+    }
+  };
+
+  const columns = useMemo<ColumnDef<ObjectData>[]>(
     () => [
-      ...viewObjects.folders.map((f) => f.id),
-      ...viewObjects.files.map((f) => f.id),
+      {
+        id: "select",
+        header: "",
+      },
+      {
+        accessorKey: "name",
+        header: "Name",
+      },
+      {
+        accessorKey: "size",
+        header: "Size",
+      },
+      {
+        accessorKey: "type",
+        header: "Type",
+      },
+      {
+        accessorKey: "date",
+        header: "Last Modified",
+      },
+      {
+        id: "actions",
+        header: "Actions",
+      },
     ],
-    [viewObjects],
+    [],
   );
+
+  const [sorting, setSorting] = useState<SortingState>([
+    { id: sortField, desc: sortDir === "desc" },
+  ]);
+
+  useEffect(() => {
+    setSorting([{ id: sortField, desc: sortDir === "desc" }]);
+  }, [sortField, sortDir]);
+
+  const onSortingChange = useCallback(
+    (updater: any) => {
+      const nextState =
+        typeof updater === "function" ? updater(sorting) : updater;
+      setSorting(nextState);
+      if (nextState.length > 0) {
+        const field = nextState[0].id as SortField;
+        const desc = nextState[0].desc;
+        setSortField(field);
+        setSortDir(desc ? "desc" : "asc");
+        localStorage.setItem("filesSortField", field);
+        localStorage.setItem("filesSortDir", desc ? "desc" : "asc");
+      }
+    },
+    [sorting],
+  );
+
+  const rowSelection = useMemo(() => {
+    const selection: Record<string, boolean> = {};
+    selectedIds.forEach((id) => {
+      selection[id] = true;
+    });
+    return selection;
+  }, [selectedIds]);
+
+  const handleRowSelectionChange = useCallback(
+    (updater: any) => {
+      const nextSelection =
+        typeof updater === "function" ? updater(rowSelection) : updater;
+      const nextSelectedIds = new Set<string>();
+      Object.keys(nextSelection).forEach((id) => {
+        if (nextSelection[id]) nextSelectedIds.add(id);
+      });
+      setSelectedIds(nextSelectedIds);
+    },
+    [rowSelection],
+  );
+
+  const table = useReactTable({
+    data: combinedData,
+    columns,
+    state: {
+      sorting,
+      rowSelection,
+    },
+    onSortingChange,
+    onRowSelectionChange: handleRowSelectionChange,
+    getCoreRowModel: getCoreRowModel(),
+    manualSorting: true,
+    enableRowSelection: true,
+    getRowId: (row) => row.id,
+  });
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const hasBackRow = currentPrefix && currentPrefix !== rootPrefix;
+
+  const [scrollMargin, setScrollMargin] = useState(0);
+
+  useEffect(() => {
+    const updateMargin = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        // table body elements start after table header (40px) and optional BackRow (53px)
+        const headerHeight = 40;
+        const backRowHeight = hasBackRow ? 53 : 0;
+        setScrollMargin(
+          rect.top + window.scrollY + headerHeight + backRowHeight,
+        );
+      }
+    };
+    updateMargin();
+    const timer = setTimeout(updateMargin, 150);
+    window.addEventListener("resize", updateMargin);
+    window.addEventListener("scroll", updateMargin);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("resize", updateMargin);
+      window.removeEventListener("scroll", updateMargin);
+    };
+  }, [hasBackRow, currentPrefix]);
+
+  const rowVirtualizer = useWindowVirtualizer({
+    count: table.getRowModel().rows.length,
+    estimateSize: () => 53,
+    scrollMargin,
+    overscan: 10,
+  });
+
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const totalSize = rowVirtualizer.getTotalSize();
+
+  const paddingTop =
+    virtualRows.length > 0 ? virtualRows[0].start - scrollMargin : 0;
+  const paddingBottom =
+    virtualRows.length > 0
+      ? totalSize - virtualRows[virtualRows.length - 1].end
+      : 0;
+
+  const [cols, setCols] = useState(5);
+
+  useEffect(() => {
+    const updateCols = () => {
+      const w = window.innerWidth;
+      if (w >= 1024) setCols(5);
+      else if (w >= 768) setCols(4);
+      else if (w >= 640) setCols(3);
+      else setCols(2);
+    };
+    updateCols();
+    window.addEventListener("resize", updateCols);
+    return () => window.removeEventListener("resize", updateCols);
+  }, []);
+
+  const [gridScrollMargin, setGridScrollMargin] = useState(0);
+
+  useEffect(() => {
+    const updateMargin = () => {
+      if (containerRef.current) {
+        const rect = containerRef.current.getBoundingClientRect();
+        // grid elements start at the top of the container + padding (16px / p-4)
+        const gridPadding = 16;
+        setGridScrollMargin(rect.top + window.scrollY + gridPadding);
+      }
+    };
+    updateMargin();
+    const timer = setTimeout(updateMargin, 150);
+    window.addEventListener("resize", updateMargin);
+    window.addEventListener("scroll", updateMargin);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener("resize", updateMargin);
+      window.removeEventListener("scroll", updateMargin);
+    };
+  }, [currentPrefix]);
+
+  const gridItems = useMemo(() => {
+    const rows = table.getRowModel().rows;
+    if (hasBackRow) {
+      return [{ id: "back-row-card", isBackCard: true }, ...rows];
+    }
+    return rows;
+  }, [table.getRowModel().rows, hasBackRow]);
+
+  const gridRows = useMemo(() => {
+    const chunked = [];
+    for (let i = 0; i < gridItems.length; i += cols) {
+      chunked.push(gridItems.slice(i, i + cols));
+    }
+    return chunked;
+  }, [gridItems, cols]);
+
+  const gridVirtualizer = useWindowVirtualizer({
+    count: gridRows.length,
+    estimateSize: () => 220,
+    scrollMargin: gridScrollMargin,
+    overscan: 5,
+  });
 
   // ── Selection ──────────────────────────────────────────────────────────────
 
@@ -771,6 +979,29 @@ export default function FilesPage() {
     [selectedIds, lastSelectedId, viewObjects],
   );
 
+  const handleDeleteItem = useCallback(
+    (item: ObjectData) => {
+      if (selectedIds.has(item.id) && selectedIds.size > 1) {
+        setDeleteIds(Array.from(selectedIds));
+      } else {
+        setDeleteIds([item.id]);
+      }
+    },
+    [selectedIds],
+  );
+
+  const handlePreview = useCallback(
+    (file: ObjectData) => {
+      openPreview(file, viewObjects.files);
+    },
+    [openPreview, viewObjects.files],
+  );
+
+  const registerItemRef = useCallback((id: string, el: HTMLElement | null) => {
+    if (!el) itemRefs.current.delete(id);
+    else itemRefs.current.set(id, el);
+  }, []);
+
   // ── Navigation ─────────────────────────────────────────────────────────────
 
   const handleNavigation = useCallback(
@@ -785,8 +1016,10 @@ export default function FilesPage() {
     [router, rootPrefix],
   );
 
-  const navigateToFolder = (folderName: string) =>
-    handleNavigation(`${currentPrefix}${folderName}/`);
+  const navigateToFolder = useCallback(
+    (folderName: string) => handleNavigation(`${currentPrefix}${folderName}/`),
+    [handleNavigation, currentPrefix],
+  );
 
   const navigateUp = () => {
     if (currentPrefix === rootPrefix) return;
@@ -819,10 +1052,15 @@ export default function FilesPage() {
   // ── Sort ───────────────────────────────────────────────────────────────────
 
   const handleSort = (field: SortField) => {
-    if (field === sortField) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
+    if (field === sortField) {
+      const newDir = sortDir === "asc" ? "desc" : "asc";
+      setSortDir(newDir);
+      localStorage.setItem("filesSortDir", newDir);
+    } else {
       setSortField(field);
       setSortDir("asc");
+      localStorage.setItem("filesSortField", field);
+      localStorage.setItem("filesSortDir", "asc");
     }
   };
 
@@ -918,17 +1156,20 @@ export default function FilesPage() {
     }
   };
 
-  const handleDownload = async (obj: ObjectData) => {
-    try {
-      await startDownload(obj, !!obj.isEncrypted, privateKey);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Download failed";
-      if (message.includes("Vault locked")) setModalOpen(true);
-      setError(message);
-    }
-  };
+  const handleDownload = useCallback(
+    async (obj: ObjectData) => {
+      try {
+        await startDownload(obj, !!obj.isEncrypted, privateKey);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Download failed";
+        if (message.includes("Vault locked")) setModalOpen(true);
+        setError(message);
+      }
+    },
+    [startDownload, privateKey],
+  );
 
-  const handleCut = () => {
+  const handleCut = useCallback(() => {
     if (selectedIds.size === 0) return;
 
     const items = [...viewObjects.folders, ...viewObjects.files].filter((i) =>
@@ -936,7 +1177,8 @@ export default function FilesPage() {
     );
 
     setClipboard({ action: "move", items });
-  };
+    setSelectedIds(new Set());
+  }, [selectedIds, viewObjects]);
 
   const handlePaste = useCallback(async () => {
     if (!clipboard || !bucketId) return;
@@ -1049,10 +1291,13 @@ export default function FilesPage() {
     selectionStartRef.current = { x: e.clientX, y: e.clientY };
 
     setIsSelecting(true);
-    setSelectionBox({
-      currentX: e.clientX,
-      currentY: e.clientY,
-    });
+    if (selectionBoxRef.current) {
+      selectionBoxRef.current.style.left = `${e.clientX}px`;
+      selectionBoxRef.current.style.top = `${e.clientY}px`;
+      selectionBoxRef.current.style.width = "0px";
+      selectionBoxRef.current.style.height = "0px";
+      selectionBoxRef.current.classList.remove("hidden");
+    }
 
     if (!e.ctrlKey && !e.metaKey) {
       setSelectedIds(new Set());
@@ -1095,10 +1340,17 @@ export default function FilesPage() {
       if (rafId.current) cancelAnimationFrame(rafId.current);
 
       rafId.current = requestAnimationFrame(() => {
-        setSelectionBox({
-          currentX: clientX,
-          currentY: clientY,
-        });
+        if (selectionBoxRef.current) {
+          const left = Math.min(startX, clientX);
+          const top = Math.min(startY, clientY);
+          const width = Math.abs(clientX - startX);
+          const height = Math.abs(clientY - startY);
+
+          selectionBoxRef.current.style.left = `${left}px`;
+          selectionBoxRef.current.style.top = `${top}px`;
+          selectionBoxRef.current.style.width = `${width}px`;
+          selectionBoxRef.current.style.height = `${height}px`;
+        }
 
         const boxRect = {
           left: Math.min(startX, clientX),
@@ -1115,12 +1367,24 @@ export default function FilesPage() {
           }
         }
 
-        // ✅ ctrl / cmd additive selection (FIXED)
+        // ✅ ctrl / cmd additive selection (FIXED) + equality check to prevent needless rendering
         setSelectedIds((prev) => {
-          if (e.ctrlKey || e.metaKey) {
-            return new Set([...prev, ...nextSelected]);
+          const finalSelected =
+            e.ctrlKey || e.metaKey
+              ? new Set([...prev, ...nextSelected])
+              : nextSelected;
+
+          if (prev.size === finalSelected.size) {
+            let equal = true;
+            for (const item of finalSelected) {
+              if (!prev.has(item)) {
+                equal = false;
+                break;
+              }
+            }
+            if (equal) return prev;
           }
-          return nextSelected;
+          return finalSelected;
         });
       });
     },
@@ -1130,7 +1394,9 @@ export default function FilesPage() {
   const handleMouseUp = () => {
     if (isSelecting) {
       setIsSelecting(false);
-      setSelectionBox(null);
+      if (selectionBoxRef.current) {
+        selectionBoxRef.current.classList.add("hidden");
+      }
 
       if (rafId.current) {
         cancelAnimationFrame(rafId.current);
@@ -1321,21 +1587,10 @@ export default function FilesPage() {
     >
       <input {...getInputProps()} />
       {/* Drag-select rubber-band box */}
-      {isSelecting && selectionBox && selectionStartRef.current && (
-        <div
-          className="fixed z-[60] pointer-events-none border border-primary/60 bg-primary/10"
-          style={{
-            left: Math.min(selectionStartRef.current.x, selectionBox.currentX),
-            top: Math.min(selectionStartRef.current.y, selectionBox.currentY),
-            width: Math.abs(
-              selectionBox.currentX - selectionStartRef.current.x,
-            ),
-            height: Math.abs(
-              selectionBox.currentY - selectionStartRef.current.y,
-            ),
-          }}
-        />
-      )}
+      <div
+        ref={selectionBoxRef}
+        className="fixed z-[60] pointer-events-none border border-primary/60 bg-primary/10 hidden"
+      />
       <input
         ref={fileInputRef}
         type="file"
@@ -1408,221 +1663,210 @@ export default function FilesPage() {
       )}
 
       {/* Main content */}
-      <div className="bg-card/50 border border-border rounded-xl overflow-hidden min-h-[500px] mt-4">
+      <div
+        ref={containerRef}
+        className="bg-card/50 border border-border rounded-xl min-h-[500px] mt-4 relative overflow-visible"
+      >
         {isEmpty ? (
           <EmptyState onUpload={() => fileInputRef.current?.click()} />
         ) : viewMode === "list" ? (
-          <Table>
-            <TableHeader>
-              <TableRow className="border-border hover:bg-transparent">
-                {/* Checkbox column — matches the w-10 pl-4 pr-0 cell in FileRow */}
-                <TableHead className="w-10 pl-4 pr-0" />
-                <TableHead
-                  className="text-muted-foreground/50 w-[45%] cursor-pointer hover:text-foreground"
-                  onClick={() => handleSort("name")}
-                >
-                  <span className="flex items-center gap-1">
-                    Name
-                    {sortField === "name" &&
-                      (sortDir === "asc" ? (
-                        <SortAsc className="w-3 h-3" />
-                      ) : (
-                        <SortDesc className="w-3 h-3" />
-                      ))}
-                  </span>
-                </TableHead>
-                <TableHead
-                  className="text-muted-foreground/50 cursor-pointer hover:text-foreground"
-                  onClick={() => handleSort("size")}
-                >
-                  <span className="flex items-center gap-1">
-                    Size
-                    {sortField === "size" &&
-                      (sortDir === "asc" ? (
-                        <SortAsc className="w-3 h-3" />
-                      ) : (
-                        <SortDesc className="w-3 h-3" />
-                      ))}
-                  </span>
-                </TableHead>
-                <TableHead
-                  className="text-muted-foreground/50 cursor-pointer hover:text-foreground"
-                  onClick={() => handleSort("type")}
-                >
-                  <span className="flex items-center gap-1">
-                    Type
-                    {sortField === "type" &&
-                      (sortDir === "asc" ? (
-                        <SortAsc className="w-3 h-3" />
-                      ) : (
-                        <SortDesc className="w-3 h-3" />
-                      ))}
-                  </span>
-                </TableHead>
-                <TableHead
-                  className="text-muted-foreground/50 cursor-pointer hover:text-foreground hidden md:table-cell"
-                  onClick={() => handleSort("date")}
-                >
-                  <span className="flex items-center gap-1">
-                    Last Modified
-                    {sortField === "date" &&
-                      (sortDir === "asc" ? (
-                        <SortAsc className="w-3 h-3" />
-                      ) : (
-                        <SortDesc className="w-3 h-3" />
-                      ))}
-                  </span>
-                </TableHead>
-                <TableHead className="text-muted-foreground/50 text-right">
-                  Actions
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {/* Back row — colSpan=6 accounts for the checkbox column */}
-              {currentPrefix && currentPrefix !== rootPrefix && (
-                <TableRow
-                  className="border-border hover:bg-secondary/50 cursor-pointer"
-                  onClick={navigateUp}
-                >
-                  <TableCell colSpan={6} className="py-2 pl-4">
-                    <div className="flex items-center gap-2 text-muted-foreground/70">
-                      <ArrowLeft className="w-4 h-4" />
-                      <span>..</span>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              )}
+          <div className="w-full overflow-x-auto md:contents">
+            <table className="w-full min-w-[750px] md:min-w-full caption-bottom text-sm">
+              <TableHeader>
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <TableRow
+                    key={headerGroup.id}
+                    className="border-border hover:bg-transparent"
+                  >
+                    {headerGroup.headers.map((header) => {
+                      const headerId = header.id;
+                      const headerStyle = getHeaderClassName(headerId);
+                      const canSort = header.column.getCanSort();
+                      return (
+                        <TableHead
+                          key={header.id}
+                          onClick={
+                            canSort
+                              ? header.column.getToggleSortingHandler()
+                              : undefined
+                          }
+                          className={cn(
+                            "text-muted-foreground/50 select-none md:sticky md:top-[68px] bg-background/95 backdrop-blur-md z-30 border-b border-border shadow-[0_1px_0_0_rgba(255,255,255,0.05)]",
+                            canSort && "cursor-pointer hover:text-foreground",
+                            headerStyle,
+                          )}
+                        >
+                          <span className="flex items-center gap-1">
+                            {flexRender(
+                              header.column.columnDef.header,
+                              header.getContext(),
+                            )}
+                            {canSort && (
+                              <span className="inline-block ml-0.5">
+                                {header.column.getIsSorted() === "asc" && (
+                                  <SortAsc className="w-3 h-3 text-primary" />
+                                )}
+                                {header.column.getIsSorted() === "desc" && (
+                                  <SortDesc className="w-3 h-3 text-primary" />
+                                )}
+                              </span>
+                            )}
+                          </span>
+                        </TableHead>
+                      );
+                    })}
+                  </TableRow>
+                ))}
+              </TableHeader>
+              <TableBody>
+                {/* Back row — colSpan=6 accounts for the checkbox column */}
+                {currentPrefix && currentPrefix !== rootPrefix && (
+                  <TableRow
+                    className="border-border hover:bg-secondary/50 cursor-pointer h-[53px]"
+                    onClick={navigateUp}
+                  >
+                    <TableCell colSpan={6} className="py-2 pl-4">
+                      <div className="flex items-center gap-2 text-muted-foreground/70">
+                        <ArrowLeft className="w-4 h-4" />
+                        <span>..</span>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
 
-              {/* Folders */}
-              {viewObjects.folders.map((folder) => (
-                <FileItem
-                  key={folder.id}
-                  item={folder}
-                  viewMode="list"
-                  currentPrefix={currentPrefix}
-                  onNavigate={navigateToFolder}
-                  onTag={() => setTaggingObj(folder)}
-                  onCut={handleCut}
-                  onShare={setShareFile}
-                  onDelete={(item) =>
-                    selectedIds.has(item.id) && selectedIds.size > 1
-                      ? setDeleteIds(Array.from(selectedIds))
-                      : setDeleteIds([item.id])
-                  }
-                  isSelected={selectedIds.has(folder.id)}
-                  onSelect={handleSelect}
-                  registerItemRef={(id, el) => {
-                    if (!el) itemRefs.current.delete(id);
-                    else itemRefs.current.set(id, el);
-                  }}
-                />
-              ))}
+                {paddingTop > 0 && (
+                  <TableRow
+                    style={{ height: `${paddingTop}px` }}
+                    className="hover:bg-transparent border-0 pointer-events-none"
+                  >
+                    <TableCell
+                      colSpan={6}
+                      style={{ height: `${paddingTop}px`, padding: 0 }}
+                    />
+                  </TableRow>
+                )}
 
-              {/* Files */}
-              {viewObjects.files.map((file) => (
-                <FileItem
-                  key={file.id}
-                  item={file}
-                  viewMode="list"
-                  currentPrefix={currentPrefix}
-                  onPreview={(file) => openPreview(file, viewObjects.files)}
-                  onDownload={handleDownload}
-                  onCut={handleCut}
-                  onShare={setShareFile}
-                  onDelete={(item) =>
-                    selectedIds.has(item.id) && selectedIds.size > 1
-                      ? setDeleteIds(Array.from(selectedIds))
-                      : setDeleteIds([item.id])
-                  }
-                  isDownloading={downloadingId === file.id}
-                  isSelected={selectedIds.has(file.id)}
-                  onSelect={handleSelect}
-                  registerItemRef={(id, el) => {
-                    if (!el) itemRefs.current.delete(id);
-                    else itemRefs.current.set(id, el);
-                  }}
-                />
-              ))}
-            </TableBody>
-          </Table>
+                {virtualRows.map((virtualRow) => {
+                  const row = table.getRowModel().rows[virtualRow.index];
+                  const item = row.original;
+                  const isFolder =
+                    item.contentType === "application/x-directory" ||
+                    item.key.endsWith("/");
+
+                  return (
+                    <FileItem
+                      key={item.id}
+                      item={item}
+                      viewMode="list"
+                      currentPrefix={currentPrefix}
+                      onNavigate={isFolder ? navigateToFolder : undefined}
+                      onPreview={!isFolder ? handlePreview : undefined}
+                      onDownload={!isFolder ? handleDownload : undefined}
+                      onTag={setTaggingObj}
+                      onCut={handleCut}
+                      onShare={setShareFile}
+                      onDelete={handleDeleteItem}
+                      isDownloading={
+                        !isFolder && downloadingId === item.id
+                          ? true
+                          : undefined
+                      }
+                      isSelected={selectedIds.has(item.id)}
+                      onSelect={handleSelect}
+                      registerItemRef={registerItemRef}
+                    />
+                  );
+                })}
+
+                {paddingBottom > 0 && (
+                  <TableRow
+                    style={{ height: `${paddingBottom}px` }}
+                    className="hover:bg-transparent border-0 pointer-events-none"
+                  >
+                    <TableCell
+                      colSpan={6}
+                      style={{ height: `${paddingBottom}px`, padding: 0 }}
+                    />
+                  </TableRow>
+                )}
+              </TableBody>
+            </table>
+          </div>
         ) : (
           /* Grid view */
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 p-4">
-            {currentPrefix && currentPrefix !== rootPrefix && (
-              <div
-                onClick={navigateUp}
-                className="aspect-square bg-white/5 rounded-xl border border-white/5 flex flex-col items-center justify-center cursor-pointer hover:bg-white/10 transition-all hover:scale-[1.02]"
-              >
-                <ArrowLeft className="w-8 h-8 text-[#e8e4d9]/50 mb-2" />
-                <span className="text-[#e8e4d9]/70 font-medium text-sm">
-                  Back
-                </span>
-              </div>
-            )}
+          <div
+            style={{
+              height: `${gridVirtualizer.getTotalSize()}px`,
+              position: "relative",
+              width: "100%",
+            }}
+          >
+            {gridVirtualizer.getVirtualItems().map((virtualRow) => {
+              const rowItems = gridRows[virtualRow.index];
+              return (
+                <div
+                  key={virtualRow.key}
+                  data-index={virtualRow.index}
+                  ref={gridVirtualizer.measureElement}
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    transform: `translateY(${virtualRow.start - gridScrollMargin}px)`,
+                  }}
+                  className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 px-4 py-2"
+                >
+                  {rowItems.map((rowOrBack) => {
+                    if ("isBackCard" in rowOrBack && rowOrBack.isBackCard) {
+                      return (
+                        <div
+                          key="back-card"
+                          onClick={navigateUp}
+                          className="aspect-square bg-white/5 rounded-xl border border-white/5 flex flex-col items-center justify-center cursor-pointer hover:bg-white/10 transition-all hover:scale-[1.02]"
+                        >
+                          <ArrowLeft className="w-8 h-8 text-[#e8e4d9]/50 mb-2" />
+                          <span className="text-[#e8e4d9]/70 font-medium text-sm">
+                            Back
+                          </span>
+                        </div>
+                      );
+                    }
 
-            {viewObjects.folders.map((folder) => (
-              <FileItem
-                key={folder.id}
-                item={folder}
-                viewMode="grid"
-                currentPrefix={currentPrefix}
-                onNavigate={navigateToFolder}
-                onTag={() => setTaggingObj(folder)}
-                onCut={handleCut}
-                onShare={setShareFile}
-                onDelete={(item) =>
-                  selectedIds.has(item.id) && selectedIds.size > 1
-                    ? setDeleteIds(Array.from(selectedIds))
-                    : setDeleteIds([item.id])
-                }
-                isSelected={selectedIds.has(folder.id)}
-                onSelect={handleSelect}
-                registerItemRef={(id, el) => {
-                  if (!el) itemRefs.current.delete(id);
-                  else itemRefs.current.set(id, el);
-                }}
-              />
-            ))}
+                    const row = rowOrBack as any;
+                    const item = row.original;
+                    const isFolder =
+                      item.contentType === "application/x-directory" ||
+                      item.key.endsWith("/");
 
-            {viewObjects.files.map((file) => (
-              <FileItem
-                key={file.id}
-                item={file}
-                viewMode="grid"
-                currentPrefix={currentPrefix}
-                onPreview={(file) => openPreview(file, viewObjects.files)}
-                onDownload={handleDownload}
-                onCut={handleCut}
-                onShare={setShareFile}
-                onDelete={(item) =>
-                  selectedIds.has(item.id) && selectedIds.size > 1
-                    ? setDeleteIds(Array.from(selectedIds))
-                    : setDeleteIds([item.id])
-                }
-                isDownloading={downloadingId === file.id}
-                isSelected={selectedIds.has(file.id)}
-                onSelect={handleSelect}
-                registerItemRef={(id, el) => {
-                  if (!el) itemRefs.current.delete(id);
-                  else itemRefs.current.set(id, el);
-                }}
-              />
-            ))}
+                    return (
+                      <FileItem
+                        key={item.id}
+                        item={item}
+                        viewMode="grid"
+                        currentPrefix={currentPrefix}
+                        onNavigate={isFolder ? navigateToFolder : undefined}
+                        onPreview={!isFolder ? handlePreview : undefined}
+                        onDownload={!isFolder ? handleDownload : undefined}
+                        onTag={setTaggingObj}
+                        onCut={handleCut}
+                        onShare={setShareFile}
+                        onDelete={handleDeleteItem}
+                        isDownloading={
+                          !isFolder && downloadingId === item.id
+                            ? true
+                            : undefined
+                        }
+                        isSelected={selectedIds.has(item.id)}
+                        onSelect={handleSelect}
+                        registerItemRef={registerItemRef}
+                      />
+                    );
+                  })}
+                </div>
+              );
+            })}
           </div>
-        )}
-
-        {/* Infinite-scroll sentinel + loading indicator */}
-        <div ref={sentinelCallbackRef} className="w-full py-1" />
-        {isFetchingNextPage && (
-          <div className="flex items-center justify-center py-6">
-            <Loader2 className="w-5 h-5 animate-spin text-primary" />
-          </div>
-        )}
-        {!hasMorePages && !isEmpty && viewObjects.files.length > 0 && (
-          <p className="text-center text-xs text-muted-foreground/30 py-4">
-            All files loaded
-          </p>
         )}
       </div>
 

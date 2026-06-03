@@ -78,8 +78,11 @@ export default async function BillingPage() {
     }
   }
 
-  const invoiceByPaymentId = new Map<string, { number: string | null }>(
-    invoices.map((inv) => [inv.payment_id, { number: inv.number ?? null }]),
+  const invoiceByPaymentId = new Map<string, { number: string | null; id: string }>(
+    invoices.map((inv) => [
+      inv.payment_id,
+      { number: inv.number ?? null, id: inv._id.toString() },
+    ]),
   );
 
   const isPaidPlan = usage?.plan && usage.plan !== "free";
@@ -412,10 +415,15 @@ export default async function BillingPage() {
                         {payment.planName}
                       </td>
                       <td className="px-5 py-4 text-right">
-                        {payment.status === "success" ? (
-                          <button className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
+                        {payment.status === "success" && invoiceByPaymentId.has(payment.payment_id) ? (
+                          <a
+                            href={`/api/billing/invoices/${invoiceByPaymentId.get(payment.payment_id)?.id}?format=pdf`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                          >
                             <FileText className="h-3.5 w-3.5" /> PDF
-                          </button>
+                          </a>
                         ) : (
                           <span className="text-muted-foreground">-</span>
                         )}

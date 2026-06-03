@@ -21,10 +21,11 @@ import {
   Link2,
   DownloadCloud,
   Info,
+  Star,
 } from "lucide-react";
 import { formatBytes, formatDate, cn } from "@/lib/utils";
 import { getFileIcon } from "@/lib/file-icons";
-import { forwardRef, useRef, useCallback, useState, useEffect } from "react";
+import { forwardRef, useRef, useCallback, useState, useEffect, memo } from "react";
 import { useCrypto } from "@/contexts/CryptoContext";
 import {
   decryptFileName,
@@ -48,6 +49,32 @@ interface ObjectData {
   encryptedName?: string;
   encryptedDisplayName?: string;
   encryptedMetadata?: string;
+  starred?: boolean;
+}
+
+/**
+ * Self-contained star toggle. PATCHes /api/objects/[id] and keeps an optimistic
+ * local flag so the row updates instantly; Dexie catches up on the next sync.
+ */
+function useStarToggle(item: ObjectData) {
+  const [starred, setStarred] = useState(!!item.starred);
+
+  const toggle = useCallback(async () => {
+    const next = !starred;
+    setStarred(next);
+    try {
+      const res = await fetch(`/api/objects/${item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ starred: next }),
+      });
+      if (!res.ok) throw new Error("star failed");
+    } catch {
+      setStarred(!next); // revert on failure
+    }
+  }, [starred, item.id]);
+
+  return { starred, toggle };
 }
 
 interface ItemProps {
@@ -104,6 +131,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
       metadataKey,
     );
     const [isMetaOpen, setIsMetaOpen] = useState(false);
+    const { starred, toggle: toggleStar } = useStarToggle(item);
 
     useEffect(() => {
       if (isUnlocked && metadataKey) {
@@ -277,6 +305,10 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
 
             <span className="truncate block max-w-[300px]">{name}</span>
 
+            {starred && (
+              <Star className="fill-primary text-primary h-3.5 w-3.5 shrink-0" />
+            )}
+
             {/* {item.isEncrypted && (
               <Lock className="h-3 w-3 shrink-0 text-primary/60" />
             )} */}
@@ -428,6 +460,17 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
               >
                 <Link2 className="w-4 h-4 mr-2" /> Share
               </ContextMenuItem>
+              <ContextMenuItem
+                className="hover:bg-accent cursor-pointer"
+                onSelect={() => {
+                  setTimeout(toggleStar, 50);
+                }}
+              >
+                <Star
+                  className={`w-4 h-4 mr-2 ${starred ? "fill-primary text-primary" : ""}`}
+                />{" "}
+                {starred ? "Unstar" : "Star"}
+              </ContextMenuItem>
             </>
           )}
           {defaultActions}
@@ -472,6 +515,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
       metadataKey,
     );
     const [isMetaOpen, setIsMetaOpen] = useState(false);
+    const { starred, toggle: toggleStar } = useStarToggle(item);
 
     useEffect(() => {
       if (isUnlocked && metadataKey) {
@@ -805,6 +849,17 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
               >
                 <Link2 className="w-4 h-4 mr-2" /> Share
               </ContextMenuItem>
+              <ContextMenuItem
+                className="hover:bg-accent cursor-pointer"
+                onSelect={() => {
+                  setTimeout(toggleStar, 50);
+                }}
+              >
+                <Star
+                  className={`w-4 h-4 mr-2 ${starred ? "fill-primary text-primary" : ""}`}
+                />{" "}
+                {starred ? "Unstar" : "Star"}
+              </ContextMenuItem>
             </>
           )}
           {defaultActions}
@@ -817,7 +872,7 @@ FileCard.displayName = "FileCard";
 
 // ─── DnD + Long Press wrapper ─────────────────────────────────────────────────
 
-export function FileItem(props: ItemProps) {
+export const FileItem = memo(function FileItem(props: ItemProps) {
   const { registerItemRef } = props;
 
   const {
@@ -931,4 +986,5 @@ export function FileItem(props: ItemProps) {
       {...props}
     />
   );
-}
+});
+FileItem.displayName = "FileItem";

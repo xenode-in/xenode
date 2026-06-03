@@ -6,6 +6,7 @@ import { MDXRemote } from "next-mdx-remote/rsc";
 import { getPostBySlug, getAllSlugs, getAllPosts, BLOG_FOLDERS } from "@/lib/blog";
 import { useMDXComponents } from "@/mdx-components";
 import { Navbar } from "@/components/Navbar";
+import { ThemeGradientBackground } from "@/components/ThemeGradientBackground";
 import {
   Calendar,
   Clock,
@@ -126,13 +127,8 @@ export default async function BlogSlugPage({ params }: PageProps) {
       const folderLabel = hardcodedFolder?.title || folderName.charAt(0).toUpperCase() + folderName.slice(1);
 
       return (
-        <div
-          className="relative min-h-screen flex flex-col text-[#e8e4d9] font-sans force-dark"
-          style={{
-            background:
-              "linear-gradient(268deg, #295d32 4.2%, #273f2c 98.63%)",
-          }}
-        >
+        <div className="relative min-h-screen flex flex-col font-sans bg-background text-foreground transition-colors duration-300">
+          <ThemeGradientBackground />
           <div
             className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat"
             style={{ backgroundImage: "url('/grain.png')" }}
@@ -144,42 +140,33 @@ export default async function BlogSlugPage({ params }: PageProps) {
               {/* Back */}
               <Link
                 href="/blog"
-                className="inline-flex items-center gap-1.5 text-sm opacity-60 hover:opacity-100 transition-opacity mb-8"
+                className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-8"
               >
                 <ArrowLeft className="w-4 h-4" />
                 All posts
               </Link>
 
               {/* Header */}
-              <div className="flex items-center gap-3 mb-10">
-                <div
-                  className={`w-10 h-10 rounded-xl bg-gradient-to-br ${folderGradient(folderName)} flex items-center justify-center border border-white/10`}
-                >
-                  <FolderOpen
-                    className={`w-5 h-5 ${folderIconColor(folderName)}`}
-                  />
-                </div>
-                <div>
-                  <h1 className="text-3xl md:text-4xl font-semibold capitalize">
-                    {folderLabel}
-                  </h1>
-                  <p className="text-sm opacity-50 mt-0.5">
-                    {folderPosts.length}{" "}
-                    {folderPosts.length === 1 ? "post" : "posts"}
-                  </p>
-                </div>
+              <div className="mb-10">
+                <h1 className="text-3xl md:text-4xl font-semibold capitalize text-foreground">
+                  {folderLabel}
+                </h1>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  {folderPosts.length}{" "}
+                  {folderPosts.length === 1 ? "post" : "posts"}
+                </p>
               </div>
 
               {folderPosts.length === 0 ? (
-                <div className="text-center py-24 rounded-2xl border border-white/5 bg-white/[0.02] backdrop-blur-sm">
-                  <PenSquare className="w-10 h-10 mx-auto mb-4 opacity-20" />
-                  <h2 className="text-xl font-medium opacity-80 mb-2">No posts yet</h2>
-                  <p className="text-sm opacity-50 max-w-[300px] mx-auto">
+                <div className="text-center py-24 rounded-2xl border border-border bg-card">
+                  <PenSquare className="w-10 h-10 mx-auto mb-4 opacity-20 text-foreground" />
+                  <h2 className="text-xl font-medium text-foreground mb-2">No posts yet</h2>
+                  <p className="text-sm text-muted-foreground max-w-[300px] mx-auto">
                     We haven't published any articles in this category yet. Check back soon!
                   </p>
                   <Link
                     href="/blog"
-                    className="mt-8 inline-flex items-center gap-2 px-5 py-2 rounded-full bg-white/10 hover:bg-white/20 text-sm transition-colors border border-white/10"
+                    className="mt-8 inline-flex items-center gap-2 px-5 py-2 rounded-full bg-secondary hover:bg-secondary/80 text-secondary-foreground text-sm transition-colors border border-border"
                   >
                     Return to Blog
                   </Link>
@@ -190,11 +177,11 @@ export default async function BlogSlugPage({ params }: PageProps) {
                     <Link
                       key={post.slug}
                       href={`/blog/${post.slug}`}
-                      className="flex gap-4 items-start p-5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 transition-all group"
+                      className="flex gap-4 items-start p-5 rounded-xl border border-border bg-card hover:bg-accent/50 hover:border-border/60 transition-all group"
                     >
                       {/* Thumbnail */}
                       {post.image ? (
-                        <div className="relative w-20 h-20 flex-shrink-0 rounded-lg overflow-hidden border border-white/10">
+                        <div className="relative w-20 h-20 flex-shrink-0 rounded-lg overflow-hidden border border-border">
                           <Image
                             src={post.image}
                             alt={post.title}
@@ -204,7 +191,7 @@ export default async function BlogSlugPage({ params }: PageProps) {
                         </div>
                       ) : (
                         <div
-                          className={`w-20 h-20 flex-shrink-0 rounded-lg border border-white/10 bg-gradient-to-br ${folderGradient(folderName)} flex items-center justify-center`}
+                          className={`w-20 h-20 flex-shrink-0 rounded-lg border border-border bg-gradient-to-br ${folderGradient(folderName)} flex items-center justify-center`}
                         >
                           <FolderOpen
                             className={`w-5 h-5 ${folderIconColor(folderName)}`}
@@ -217,19 +204,19 @@ export default async function BlogSlugPage({ params }: PageProps) {
                           {post.tags.map((tag) => (
                             <span
                               key={tag}
-                              className="text-xs px-2 py-0.5 bg-white/10 text-white/70 rounded-full"
+                              className="text-xs px-2 py-0.5 bg-primary/10 text-primary rounded-full"
                             >
                               {tag}
                             </span>
                           ))}
                         </div>
-                        <h2 className="text-base font-semibold group-hover:text-[#7cb686] transition-colors leading-snug mb-1">
+                        <h2 className="text-base font-semibold group-hover:text-primary transition-colors leading-snug mb-1 text-foreground">
                           {post.title}
                         </h2>
-                        <p className="text-sm opacity-60 line-clamp-2 mb-2">
+                        <p className="text-sm text-muted-foreground line-clamp-2 mb-2">
                           {post.description}
                         </p>
-                        <div className="flex flex-wrap items-center gap-3 text-xs opacity-50">
+                        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                           <span className="flex items-center gap-1">
                             <User className="w-3 h-3" /> {post.author}
                           </span>
@@ -247,7 +234,7 @@ export default async function BlogSlugPage({ params }: PageProps) {
                         </div>
                       </div>
 
-                      <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-60 transition-opacity mt-1 flex-shrink-0" />
+                      <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-60 transition-opacity mt-1 flex-shrink-0 text-foreground" />
                     </Link>
                   ))}
                 </div>
@@ -255,7 +242,7 @@ export default async function BlogSlugPage({ params }: PageProps) {
             </div>
           </main>
 
-          <footer className="relative z-10 p-8 text-center text-sm opacity-40">
+          <footer className="relative z-10 p-8 text-center text-sm opacity-60">
             <p>
               © 2026 <span className="font-brand italic">Xenode</span>. All
               rights reserved.
@@ -340,12 +327,8 @@ export default async function BlogSlugPage({ params }: PageProps) {
   };
 
   return (
-    <div
-      className="relative min-h-screen flex flex-col text-[#e8e4d9] font-sans force-dark"
-      style={{
-        background: "linear-gradient(268deg, #295d32 4.2%, #273f2c 98.63%)",
-      }}
-    >
+    <div className="relative min-h-screen flex flex-col font-sans bg-background text-foreground transition-colors duration-300">
+      <ThemeGradientBackground />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(articleJsonLd) }}
@@ -369,7 +352,7 @@ export default async function BlogSlugPage({ params }: PageProps) {
             <div className="flex items-center gap-2 mb-4">
               <Link
                 href="/blog"
-                className="text-sm opacity-60 hover:opacity-100 transition-opacity"
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors"
               >
                 Blog
               </Link>
@@ -378,7 +361,7 @@ export default async function BlogSlugPage({ params }: PageProps) {
                   <span className="opacity-40 text-sm">/</span>
                   <Link
                     href={`/blog/${post.folder}`}
-                    className="flex items-center gap-1 text-sm px-2 py-0.5 bg-[#7cb686]/20 text-[#7cb686] rounded-full capitalize hover:bg-[#7cb686]/30 transition-colors"
+                    className="flex items-center gap-1 text-sm px-2 py-0.5 bg-primary/10 text-primary rounded-full capitalize hover:bg-primary/20 transition-colors"
                   >
                     <FolderOpen className="w-3 h-3" />
                     {post.folder}
@@ -391,19 +374,19 @@ export default async function BlogSlugPage({ params }: PageProps) {
               {post.tags.map((tag) => (
                 <span
                   key={tag}
-                  className="text-xs px-2 py-1 bg-[#7cb686]/20 text-[#7cb686] rounded-full"
+                  className="text-xs px-2 py-1 bg-primary/10 text-primary rounded-full"
                 >
                   {tag}
                 </span>
               ))}
             </div>
 
-            <h1 className="text-4xl md:text-5xl font-semibold leading-tight mb-6">
+            <h1 className="text-4xl md:text-5xl font-semibold leading-tight mb-6 text-foreground">
               {post.title}
             </h1>
-            <p className="text-xl opacity-70 mb-6">{post.description}</p>
+            <p className="text-xl text-muted-foreground mb-6">{post.description}</p>
 
-            <div className="flex flex-wrap items-center gap-4 text-sm opacity-60 pb-6 border-b border-white/10">
+            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground pb-6 border-b border-border">
               <span className="flex items-center gap-1">
                 <User className="w-4 h-4" /> {post.author}
               </span>
@@ -422,7 +405,7 @@ export default async function BlogSlugPage({ params }: PageProps) {
           </header>
 
           {post.image && (
-            <div className="w-full h-72 md:h-96 relative mb-10 rounded-xl overflow-hidden border border-white/10">
+            <div className="w-full h-72 md:h-96 relative mb-10 rounded-xl overflow-hidden border border-border">
               <Image
                 src={post.image}
                 alt={post.title}
@@ -433,7 +416,7 @@ export default async function BlogSlugPage({ params }: PageProps) {
             </div>
           )}
 
-          <div className="prose prose-invert max-w-none">
+          <div className="prose dark:prose-invert max-w-none text-foreground prose-headings:text-foreground prose-strong:text-foreground prose-code:text-foreground prose-a:text-primary">
             <MDXRemote
               source={post.content}
               components={components}
