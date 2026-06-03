@@ -1,7 +1,7 @@
 // import { Suspense } from "react";
 // import { ConnectedAccounts } from "@/components/dashboard/settings/ConnectedAccounts";
 import { requireAuth } from "@/lib/auth/session";
-import { Shield, User, Mail, Calendar, Palette, HardDrive } from "lucide-react";
+import { Shield, User, Mail, Calendar, Palette, HardDrive, Monitor } from "lucide-react";
 import { ThemeSelector } from "@/components/settings/theme-selector";
 import { EncryptionSettingsSection } from "@/components/settings/EncryptionSettingsSection";
 import { PreviewCacheSection } from "@/components/settings/PreviewCacheSection";
@@ -9,6 +9,7 @@ import { VaultRecoverySection } from "@/components/settings/VaultRecoverySection
 import { PasswordSettingsSection } from "@/components/settings/PasswordSettingsSection";
 import { TwoFactorSettingsSection } from "@/components/settings/TwoFactorSettingsSection";
 import { PasskeySettingsSection } from "@/components/settings/PasskeySettingsSection";
+import { SessionsSettingsSection } from "@/components/settings/SessionsSettingsSection";
 
 export default async function SettingsPage() {
   const session = await requireAuth();
@@ -87,6 +88,15 @@ export default async function SettingsPage() {
             <ConnectedAccounts />
           </Suspense> */}
         </div>
+      </div>
+
+      {/* Sessions */}
+      <div className="bg-card border border-border rounded-xl p-6">
+        <h3 className="text-sm font-medium text-foreground mb-4 flex items-center gap-2">
+          <Monitor className="w-4 h-4 text-primary" />
+          Sessions
+        </h3>
+        <SessionsSettingsSection />
       </div>
 
       {/* Storage */}
