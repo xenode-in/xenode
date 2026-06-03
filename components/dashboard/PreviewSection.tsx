@@ -4,7 +4,9 @@ import Link from "next/link";
 import { Play, Music2 } from "lucide-react";
 import { formatBytes } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
+import { usePreview } from "@/contexts/PreviewContext";
 import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
+import { useThumbnail } from "@/hooks/useThumbnail";
 import { useState, useEffect, useMemo } from "react";
 
 interface ObjectData {
@@ -28,10 +30,101 @@ function getFileName(key: string) {
   return key.split("/").pop() || key;
 }
 
-function formatDuration(seconds: number) {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
+// ─── Individual card components so each can call useThumbnail ─────────────────
+
+function VideoCard({
+  video,
+  decryptedName,
+  onClick,
+}: {
+  video: ObjectData;
+  decryptedName?: string;
+  onClick: () => void;
+}) {
+  const { metadataKey } = useCrypto();
+  const thumbUrl = useThumbnail(video.thumbnail, metadataKey);
+
+  return (
+    <div
+      onClick={onClick}
+      className="relative rounded-xl overflow-hidden bg-card border border-border aspect-video group cursor-pointer hover:border-primary/40 transition-colors"
+    >
+      {thumbUrl ? (
+        <img
+          src={thumbUrl}
+          alt={getFileName(video.key)}
+          className="w-full h-full object-cover"
+        />
+      ) : (
+        <div className="w-full h-full bg-secondary flex items-center justify-center">
+          <Play className="w-10 h-10 text-muted-foreground/30" />
+        </div>
+      )}
+      {/* Overlay */}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
+      {/* Size badge */}
+      <div className="absolute top-3 right-3 bg-black/60 text-white text-xs px-2 py-0.5 rounded-md font-mono">
+        {formatBytes(video.size)}
+      </div>
+      {/* Play button */}
+      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="w-12 h-12 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center border border-white/30">
+          <Play className="w-5 h-5 text-white ml-0.5" fill="white" />
+        </div>
+      </div>
+      {/* File name */}
+      <div className="absolute bottom-3 left-3 right-3">
+        <p className="text-white text-sm font-medium truncate">
+          {decryptedName ||
+            video.encryptedName ||
+            getFileName(video.key)}
+        </p>
+        <p className="text-white/60 text-xs">
+          {formatBytes(video.size)}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function ImageCard({
+  image,
+  decryptedName,
+  onClick,
+}: {
+  image: ObjectData;
+  decryptedName?: string;
+  onClick: () => void;
+}) {
+  const { metadataKey } = useCrypto();
+  const thumbUrl = useThumbnail(image.thumbnail, metadataKey);
+
+  return (
+    <div
+      onClick={onClick}
+      className="relative rounded-xl overflow-hidden bg-card border border-border aspect-video group cursor-pointer hover:border-primary/40 transition-colors"
+    >
+      {thumbUrl ? (
+        <img
+          src={thumbUrl}
+          alt={getFileName(image.key)}
+          className="w-full h-full object-cover"
+        />
+      ) : (
+        <div className="w-full h-full bg-secondary" />
+      )}
+      <div className="absolute bottom-1 left-2 right-2">
+        <p className="text-white text-xs font-medium truncate drop-shadow">
+          {decryptedName ||
+            image.encryptedName ||
+            getFileName(image.key)}
+        </p>
+        <p className="text-white/60 text-[10px]">
+          {formatBytes(image.size)}
+        </p>
+      </div>
+    </div>
+  );
 }
 
 export function PreviewSection({
@@ -43,6 +136,7 @@ export function PreviewSection({
     {},
   );
   const { isUnlocked, metadataKey } = useCrypto();
+  const { openPreview } = usePreview();
 
   const allItems = useMemo(
     () => [...videos, ...images, ...audios],
@@ -104,42 +198,11 @@ export function PreviewSection({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
         {/* Featured Video Card */}
         {featuredVideo && (
-          <div className="relative rounded-xl overflow-hidden bg-card border border-border aspect-video group cursor-pointer hover:border-primary/40 transition-colors">
-            {featuredVideo.thumbnail ? (
-              <img
-                src={featuredVideo.thumbnail}
-                alt={getFileName(featuredVideo.key)}
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <div className="w-full h-full bg-secondary flex items-center justify-center">
-                <Play className="w-10 h-10 text-muted-foreground/30" />
-              </div>
-            )}
-            {/* Overlay */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
-            {/* Duration badge */}
-            <div className="absolute top-3 right-3 bg-black/60 text-white text-xs px-2 py-0.5 rounded-md font-mono">
-              {formatBytes(featuredVideo.size)}
-            </div>
-            {/* Play button */}
-            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-              <div className="w-12 h-12 bg-white/20 backdrop-blur-sm rounded-full flex items-center justify-center border border-white/30">
-                <Play className="w-5 h-5 text-white ml-0.5" fill="white" />
-              </div>
-            </div>
-            {/* File name */}
-            <div className="absolute bottom-3 left-3 right-3">
-              <p className="text-white text-sm font-medium truncate">
-                {decryptedNames[featuredVideo.id] ||
-                  featuredVideo.encryptedName ||
-                  getFileName(featuredVideo.key)}
-              </p>
-              <p className="text-white/60 text-xs">
-                {formatBytes(featuredVideo.size)}
-              </p>
-            </div>
-          </div>
+          <VideoCard
+            video={featuredVideo}
+            decryptedName={decryptedNames[featuredVideo.id]}
+            onClick={() => openPreview(featuredVideo)}
+          />
         )}
 
         {/* Right column: image thumbnails + audio */}
@@ -148,38 +211,22 @@ export function PreviewSection({
           {previewImages.length > 0 && (
             <div className="grid grid-cols-2 gap-3 flex-1">
               {previewImages.map((img) => (
-                <Link
+                <ImageCard
                   key={img.id}
-                  href="/dashboard/photos"
-                  className="relative rounded-xl overflow-hidden bg-card border border-border aspect-video group cursor-pointer hover:border-primary/40 transition-colors"
-                >
-                  {img.thumbnail ? (
-                    <img
-                      src={img.thumbnail}
-                      alt={getFileName(img.key)}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-secondary" />
-                  )}
-                  <div className="absolute bottom-1 left-2 right-2">
-                    <p className="text-white text-xs font-medium truncate drop-shadow">
-                      {decryptedNames[img.id] ||
-                        img.encryptedName ||
-                        getFileName(img.key)}
-                    </p>
-                    <p className="text-white/60 text-[10px]">
-                      {formatBytes(img.size)}
-                    </p>
-                  </div>
-                </Link>
+                  image={img}
+                  decryptedName={decryptedNames[img.id]}
+                  onClick={() => openPreview(img)}
+                />
               ))}
             </div>
           )}
 
           {/* Audio waveform row */}
           {featuredAudio && (
-            <div className="bg-card border border-border rounded-xl px-4 py-3 flex items-center gap-3">
+            <div
+              onClick={() => openPreview(featuredAudio)}
+              className="bg-card border border-border rounded-xl px-4 py-3 flex items-center gap-3 cursor-pointer hover:border-primary/40 transition-colors"
+            >
               <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                 <Play className="w-3.5 h-3.5 text-primary ml-0.5" />
               </div>
