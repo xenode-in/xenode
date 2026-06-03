@@ -8,6 +8,7 @@ import {
   Loader2,
   ImageOff,
   AlertTriangle,
+  Folder,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -58,18 +59,18 @@ function daysLeft(deletedAt?: string): number {
 
 function Thumb({ item }: { item: BinObject }) {
   const { metadataKey } = useCrypto();
-  // Only fetch the thumbnail when the row is in/near the viewport — same
-  // visibility-gating the Files grid uses. Without this the Bin fires every
-  // thumbnail at once, which floods the proxy (and stalls hard when the
-  // underlying blobs are already gone).
   const [ref, isVisible] = useIsVisible();
   const url = useThumbnail(isVisible ? item.thumbnail : undefined, metadataKey);
+  const isFolder = item.contentType === "application/x-directory" || item.key.endsWith("/");
+
   return (
     <div
       ref={ref}
       className="bg-muted flex h-10 w-10 items-center justify-center overflow-hidden rounded"
     >
-      {url ? (
+      {isFolder ? (
+        <Folder className="text-primary fill-primary/20 h-5 w-5" />
+      ) : url ? (
         <Image
           src={url}
           alt=""
@@ -163,10 +164,30 @@ export default function BinPage() {
     };
   }, [bucketId, load]);
 
-  const allSelected = items.length > 0 && selected.size === items.length;
+  const filteredItems = useMemo(() => {
+    const deletedFolderKeys = new Set(
+      items
+        .filter((o) => o.contentType === "application/x-directory" || o.key.endsWith("/"))
+        .map((o) => o.key)
+    );
+
+    return items.filter((item) => {
+      const parts = item.key.split("/");
+      let runningPrefix = "";
+      for (let i = 0; i < parts.length - 1; i++) {
+        runningPrefix += parts[i] + "/";
+        if (deletedFolderKeys.has(runningPrefix) && runningPrefix !== item.key) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [items]);
+
+  const allSelected = filteredItems.length > 0 && selected.size === filteredItems.length;
   const toggleAll = () =>
     setSelected(
-      allSelected ? new Set() : new Set(items.map((i) => i._id)),
+      allSelected ? new Set() : new Set(filteredItems.map((i) => i._id)),
     );
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -245,10 +266,10 @@ export default function BinPage() {
 
   const hasSelection = selected.size > 0;
   const headerCheckboxState: boolean | "indeterminate" = useMemo(() => {
-    if (items.length === 0) return false;
+    if (filteredItems.length === 0) return false;
     if (allSelected) return true;
     return selected.size > 0 ? "indeterminate" : false;
-  }, [items.length, allSelected, selected.size]);
+  }, [filteredItems.length, allSelected, selected.size]);
 
   return (
     <div className="space-y-6">
@@ -287,7 +308,7 @@ export default function BinPage() {
               </Button>
             </>
           )}
-          {items.length > 0 && !hasSelection && (
+          {filteredItems.length > 0 && !hasSelection && (
             <Button
               variant="destructive"
               onClick={() => setConfirmEmpty(true)}
@@ -310,14 +331,14 @@ export default function BinPage() {
         <div className="flex items-center justify-center py-24">
           <Loader2 className="text-muted-foreground h-6 w-6 animate-spin" />
         </div>
-      ) : items.length === 0 ? (
+      ) : filteredItems.length === 0 ? (
         <div className="text-muted-foreground flex flex-col items-center justify-center gap-3 py-24">
           <Trash2 className="h-10 w-10" />
           <p>The Bin is empty.</p>
         </div>
       ) : (
         <div className="rounded-lg border">
-          <Table>
+          <Table className="min-w-[700px] md:min-w-full">
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead className="w-10 pl-4">
@@ -333,8 +354,9 @@ export default function BinPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {items.map((item) => {
+              {filteredItems.map((item) => {
                 const left = daysLeft(item.deletedAt);
+                const isFolder = item.contentType === "application/x-directory" || item.key.endsWith("/");
                 return (
                   <TableRow
                     key={item._id}
@@ -358,7 +380,7 @@ export default function BinPage() {
                       </div>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
-                      {formatBytes(item.size)}
+                      {isFolder ? "-" : formatBytes(item.size)}
                     </TableCell>
                     <TableCell className="text-muted-foreground text-right">
                       {left === 0 ? "Soon" : `${left} day${left > 1 ? "s" : ""}`}

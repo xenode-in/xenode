@@ -3,9 +3,9 @@ import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
-import { uploadObject, deleteObject } from "@/lib/b2/objects";
-import { decrementStorage, updateBucketStats } from "@/lib/metering/usage";
+import { uploadObject } from "@/lib/b2/objects";
 import ShareLink from "@/models/ShareLink";
+import DirectShare from "@/models/DirectShare";
 
 export const dynamic = "force-dynamic";
 
@@ -101,36 +101,22 @@ export async function DELETE(request: NextRequest) {
     const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const objects = await StorageObject.find({ bucketId, key: { $regex: `^${escapedPrefix}` } });
 
-    const b2BucketName = bucket.b2BucketId;
-    let deletedCount = 0;
     const deletedObjectIds: string[] = [];
+    const now = new Date();
 
     for (const obj of objects) {
-      try {
-        await deleteObject(b2BucketName, obj.key);
-        // Delete thumbnail if it's stored in B2
-        if (obj.thumbnail && obj.thumbnail.startsWith("users/")) {
-          await deleteObject(b2BucketName, obj.thumbnail);
-        }
-      } catch (e) {
-        console.error(`Failed to delete B2 object ${obj.key}:`, e);
-      }
-      await StorageObject.findByIdAndDelete(obj._id);
+      await StorageObject.findByIdAndUpdate(obj._id, {
+        $set: { deletedAt: now }
+      });
       deletedObjectIds.push(obj._id.toString());
-      if (obj.size > 0) {
-        await decrementStorage(userId, obj.size);
-        await updateBucketStats(bucket._id.toString(), -1, -obj.size);
-      } else {
-        await updateBucketStats(bucket._id.toString(), -1, 0);
-      }
-      deletedCount++;
     }
 
     if (deletedObjectIds.length > 0) {
       await ShareLink.deleteMany({ objectId: { $in: deletedObjectIds } });
+      await DirectShare.deleteMany({ objectId: { $in: deletedObjectIds } });
     }
 
-    return NextResponse.json({ success: true, deletedCount });
+    return NextResponse.json({ success: true, deletedCount: deletedObjectIds.length });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

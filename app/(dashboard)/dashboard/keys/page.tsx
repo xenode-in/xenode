@@ -271,7 +271,7 @@ export default function ApiKeysPage() {
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
           </div>
         ) : keys.length > 0 ? (
-          <Table>
+          <Table className="min-w-[700px] md:min-w-full">
             <TableHeader>
               <TableRow className="border-border hover:bg-transparent">
                 <TableHead className="text-muted-foreground">Name</TableHead>

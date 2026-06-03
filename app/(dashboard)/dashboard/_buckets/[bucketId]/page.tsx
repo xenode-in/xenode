@@ -509,7 +509,7 @@ export default function BucketDetailPage() {
             </Button>
           </div>
         ) : viewMode === "list" ? (
-          <Table>
+          <Table className="min-w-[750px] md:min-w-full">
             <TableHeader>
               <TableRow className="border-border hover:bg-transparent">
                 <TableHead className="text-muted-foreground w-[50%]">
@@ -808,10 +808,9 @@ export default function BucketDetailPage() {
       >
         <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle>Delete Object</DialogTitle>
+            <DialogTitle>Move Object to Bin</DialogTitle>
             <DialogDescription className="text-muted-foreground">
-              This will permanently delete this object. This action cannot be
-              undone.
+              This will move this object to the Bin. You can restore it within 30 days.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -832,7 +831,7 @@ export default function BucketDetailPage() {
               ) : (
                 <Trash2 className="w-4 h-4 mr-2" />
               )}
-              Delete Object
+              Move to Bin
             </Button>
           </DialogFooter>
         </DialogContent>

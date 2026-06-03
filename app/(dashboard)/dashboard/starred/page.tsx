@@ -190,7 +190,7 @@ export default function StarredPage() {
         </div>
       ) : (
         <div className="rounded-lg border">
-          <Table>
+          <Table className="min-w-[700px] md:min-w-full">
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead>Name</TableHead>

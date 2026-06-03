@@ -426,7 +426,13 @@ export default function FilesPage() {
   const [sortField, setSortField] = useState<SortField>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("filesSortField");
-      if (saved === "name" || saved === "size" || saved === "type" || saved === "date") return saved;
+      if (
+        saved === "name" ||
+        saved === "size" ||
+        saved === "type" ||
+        saved === "date"
+      )
+        return saved;
     }
     return "name";
   });
@@ -454,9 +460,7 @@ export default function FilesPage() {
 
   const typeFilter = searchParams.get("type");
 
-  const {
-    refetch,
-  } = useFileSync({
+  const { refetch } = useFileSync({
     bucketId,
     userId,
     fetchAll: true,
@@ -508,8 +512,6 @@ export default function FilesPage() {
       setInitialLoading(false);
     }
   }, [bucketId]);
-
-
 
   useEffect(() => {
     fetch("/api/drive/config")
@@ -665,12 +667,22 @@ export default function FilesPage() {
       [...arr].sort((a, b) => {
         let cmp = 0;
         if (sortField === "name") {
-          const nameA = a.contentType === "application/x-directory"
-            ? (decryptedFolderNameMap[a.key] || a.key.split("/").filter(Boolean).pop() || a.key)
-            : (decryptedFileNameMap[a.id] || a.key.split("/").filter(Boolean).pop() || a.key);
-          const nameB = b.contentType === "application/x-directory"
-            ? (decryptedFolderNameMap[b.key] || b.key.split("/").filter(Boolean).pop() || b.key)
-            : (decryptedFileNameMap[b.id] || b.key.split("/").filter(Boolean).pop() || b.key);
+          const nameA =
+            a.contentType === "application/x-directory"
+              ? decryptedFolderNameMap[a.key] ||
+                a.key.split("/").filter(Boolean).pop() ||
+                a.key
+              : decryptedFileNameMap[a.id] ||
+                a.key.split("/").filter(Boolean).pop() ||
+                a.key;
+          const nameB =
+            b.contentType === "application/x-directory"
+              ? decryptedFolderNameMap[b.key] ||
+                b.key.split("/").filter(Boolean).pop() ||
+                b.key
+              : decryptedFileNameMap[b.id] ||
+                b.key.split("/").filter(Boolean).pop() ||
+                b.key;
           cmp = nameA.localeCompare(nameB, undefined, { sensitivity: "base" });
         } else if (sortField === "size") cmp = a.size - b.size;
         else if (sortField === "type")
@@ -685,9 +697,14 @@ export default function FilesPage() {
       if (!searchTerm) return arr;
       const q = searchTerm.toLowerCase();
       return arr.filter((o) => {
-        const name = o.contentType === "application/x-directory"
-          ? (decryptedFolderNameMap[o.key] || o.key.split("/").filter(Boolean).pop() || o.key)
-          : (decryptedFileNameMap[o.id] || o.key.split("/").filter(Boolean).pop() || o.key);
+        const name =
+          o.contentType === "application/x-directory"
+            ? decryptedFolderNameMap[o.key] ||
+              o.key.split("/").filter(Boolean).pop() ||
+              o.key
+            : decryptedFileNameMap[o.id] ||
+              o.key.split("/").filter(Boolean).pop() ||
+              o.key;
         return name.toLowerCase().includes(q);
       });
     };
@@ -715,63 +732,77 @@ export default function FilesPage() {
 
   const getHeaderClassName = (id: string) => {
     switch (id) {
-      case "select": return "w-10 pl-4 pr-0";
-      case "name": return "w-[45%] min-w-0";
-      case "size": return "w-[15%]";
-      case "type": return "w-[15%]";
-      case "date": return "w-[20%] hidden md:table-cell";
-      case "actions": return "text-right w-[100px]";
-      default: return "";
+      case "select":
+        return "w-10 pl-4 pr-0";
+      case "name":
+        return "w-[45%] min-w-0";
+      case "size":
+        return "w-[15%]";
+      case "type":
+        return "w-[15%]";
+      case "date":
+        return "w-[20%] hidden md:table-cell";
+      case "actions":
+        return "text-right w-[100px]";
+      default:
+        return "";
     }
   };
 
-  const columns = useMemo<ColumnDef<ObjectData>[]>(() => [
-    {
-      id: "select",
-      header: "",
-    },
-    {
-      accessorKey: "name",
-      header: "Name",
-    },
-    {
-      accessorKey: "size",
-      header: "Size",
-    },
-    {
-      accessorKey: "type",
-      header: "Type",
-    },
-    {
-      accessorKey: "date",
-      header: "Last Modified",
-    },
-    {
-      id: "actions",
-      header: "Actions",
-    },
-  ], []);
+  const columns = useMemo<ColumnDef<ObjectData>[]>(
+    () => [
+      {
+        id: "select",
+        header: "",
+      },
+      {
+        accessorKey: "name",
+        header: "Name",
+      },
+      {
+        accessorKey: "size",
+        header: "Size",
+      },
+      {
+        accessorKey: "type",
+        header: "Type",
+      },
+      {
+        accessorKey: "date",
+        header: "Last Modified",
+      },
+      {
+        id: "actions",
+        header: "Actions",
+      },
+    ],
+    [],
+  );
 
   const [sorting, setSorting] = useState<SortingState>([
-    { id: sortField, desc: sortDir === "desc" }
+    { id: sortField, desc: sortDir === "desc" },
   ]);
 
   useEffect(() => {
     setSorting([{ id: sortField, desc: sortDir === "desc" }]);
   }, [sortField, sortDir]);
 
-  const onSortingChange = useCallback((updater: any) => {
-    const nextState = typeof updater === "function" ? updater(sorting) : updater;
-    setSorting(nextState);
-    if (nextState.length > 0) {
-      const field = nextState[0].id as SortField;
-      const desc = nextState[0].desc;
-      setSortField(field);
-      setSortDir(desc ? "desc" : "asc");
-      localStorage.setItem("filesSortField", field);
-      localStorage.setItem("filesSortDir", desc ? "desc" : "asc");
-    }
-  }, [sorting]);
+  const onSortingChange = useCallback(
+    (updater: any) => {
+      const nextState =
+        typeof updater === "function" ? updater(sorting) : updater;
+      setSorting(nextState);
+      if (nextState.length > 0) {
+        const field = nextState[0].id as SortField;
+        const desc = nextState[0].desc;
+        setSortField(field);
+        setSortDir(desc ? "desc" : "asc");
+        localStorage.setItem("filesSortField", field);
+        localStorage.setItem("filesSortDir", desc ? "desc" : "asc");
+      }
+    },
+    [sorting],
+  );
 
   const rowSelection = useMemo(() => {
     const selection: Record<string, boolean> = {};
@@ -781,14 +812,18 @@ export default function FilesPage() {
     return selection;
   }, [selectedIds]);
 
-  const handleRowSelectionChange = useCallback((updater: any) => {
-    const nextSelection = typeof updater === "function" ? updater(rowSelection) : updater;
-    const nextSelectedIds = new Set<string>();
-    Object.keys(nextSelection).forEach((id) => {
-      if (nextSelection[id]) nextSelectedIds.add(id);
-    });
-    setSelectedIds(nextSelectedIds);
-  }, [rowSelection]);
+  const handleRowSelectionChange = useCallback(
+    (updater: any) => {
+      const nextSelection =
+        typeof updater === "function" ? updater(rowSelection) : updater;
+      const nextSelectedIds = new Set<string>();
+      Object.keys(nextSelection).forEach((id) => {
+        if (nextSelection[id]) nextSelectedIds.add(id);
+      });
+      setSelectedIds(nextSelectedIds);
+    },
+    [rowSelection],
+  );
 
   const table = useReactTable({
     data: combinedData,
@@ -817,7 +852,9 @@ export default function FilesPage() {
         // table body elements start after table header (40px) and optional BackRow (53px)
         const headerHeight = 40;
         const backRowHeight = hasBackRow ? 53 : 0;
-        setScrollMargin(rect.top + window.scrollY + headerHeight + backRowHeight);
+        setScrollMargin(
+          rect.top + window.scrollY + headerHeight + backRowHeight,
+        );
       }
     };
     updateMargin();
@@ -841,7 +878,8 @@ export default function FilesPage() {
   const virtualRows = rowVirtualizer.getVirtualItems();
   const totalSize = rowVirtualizer.getTotalSize();
 
-  const paddingTop = virtualRows.length > 0 ? virtualRows[0].start - scrollMargin : 0;
+  const paddingTop =
+    virtualRows.length > 0 ? virtualRows[0].start - scrollMargin : 0;
   const paddingBottom =
     virtualRows.length > 0
       ? totalSize - virtualRows[virtualRows.length - 1].end
@@ -938,17 +976,23 @@ export default function FilesPage() {
     [selectedIds, lastSelectedId, viewObjects],
   );
 
-  const handleDeleteItem = useCallback((item: ObjectData) => {
-    if (selectedIds.has(item.id) && selectedIds.size > 1) {
-      setDeleteIds(Array.from(selectedIds));
-    } else {
-      setDeleteIds([item.id]);
-    }
-  }, [selectedIds]);
+  const handleDeleteItem = useCallback(
+    (item: ObjectData) => {
+      if (selectedIds.has(item.id) && selectedIds.size > 1) {
+        setDeleteIds(Array.from(selectedIds));
+      } else {
+        setDeleteIds([item.id]);
+      }
+    },
+    [selectedIds],
+  );
 
-  const handlePreview = useCallback((file: ObjectData) => {
-    openPreview(file, viewObjects.files);
-  }, [openPreview, viewObjects.files]);
+  const handlePreview = useCallback(
+    (file: ObjectData) => {
+      openPreview(file, viewObjects.files);
+    },
+    [openPreview, viewObjects.files],
+  );
 
   const registerItemRef = useCallback((id: string, el: HTMLElement | null) => {
     if (!el) itemRefs.current.delete(id);
@@ -1109,15 +1153,18 @@ export default function FilesPage() {
     }
   };
 
-  const handleDownload = useCallback(async (obj: ObjectData) => {
-    try {
-      await startDownload(obj, !!obj.isEncrypted, privateKey);
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Download failed";
-      if (message.includes("Vault locked")) setModalOpen(true);
-      setError(message);
-    }
-  }, [startDownload, privateKey]);
+  const handleDownload = useCallback(
+    async (obj: ObjectData) => {
+      try {
+        await startDownload(obj, !!obj.isEncrypted, privateKey);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : "Download failed";
+        if (message.includes("Vault locked")) setModalOpen(true);
+        setError(message);
+      }
+    },
+    [startDownload, privateKey],
+  );
 
   const handleCut = useCallback(() => {
     if (selectedIds.size === 0) return;
@@ -1318,9 +1365,10 @@ export default function FilesPage() {
 
         // ✅ ctrl / cmd additive selection (FIXED) + equality check to prevent needless rendering
         setSelectedIds((prev) => {
-          const finalSelected = (e.ctrlKey || e.metaKey)
-            ? new Set([...prev, ...nextSelected])
-            : nextSelected;
+          const finalSelected =
+            e.ctrlKey || e.metaKey
+              ? new Set([...prev, ...nextSelected])
+              : nextSelected;
 
           if (prev.size === finalSelected.size) {
             let equal = true;
@@ -1618,99 +1666,128 @@ export default function FilesPage() {
         {isEmpty ? (
           <EmptyState onUpload={() => fileInputRef.current?.click()} />
         ) : viewMode === "list" ? (
-          <table className="w-full caption-bottom text-sm">
-            <TableHeader>
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id} className="border-border hover:bg-transparent">
-                  {headerGroup.headers.map((header) => {
-                    const headerId = header.id;
-                    const headerStyle = getHeaderClassName(headerId);
-                    const canSort = header.column.getCanSort();
-                    return (
-                      <TableHead
-                        key={header.id}
-                        onClick={canSort ? header.column.getToggleSortingHandler() : undefined}
-                        className={cn(
-                          "text-muted-foreground/50 select-none sticky top-[68px] bg-background/95 backdrop-blur-md z-30 border-b border-border shadow-[0_1px_0_0_rgba(255,255,255,0.05)]",
-                          canSort && "cursor-pointer hover:text-foreground",
-                          headerStyle
-                        )}
-                      >
-                        <span className="flex items-center gap-1">
-                          {flexRender(
-                            header.column.columnDef.header,
-                            header.getContext()
+          <div className="w-full overflow-x-auto md:contents">
+            <table className="w-full min-w-[750px] md:min-w-full caption-bottom text-sm">
+              <TableHeader>
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <TableRow
+                    key={headerGroup.id}
+                    className="border-border hover:bg-transparent"
+                  >
+                    {headerGroup.headers.map((header) => {
+                      const headerId = header.id;
+                      const headerStyle = getHeaderClassName(headerId);
+                      const canSort = header.column.getCanSort();
+                      return (
+                        <TableHead
+                          key={header.id}
+                          onClick={
+                            canSort
+                              ? header.column.getToggleSortingHandler()
+                              : undefined
+                          }
+                          className={cn(
+                            "text-muted-foreground/50 select-none md:sticky md:top-[68px] bg-background/95 backdrop-blur-md z-30 border-b border-border shadow-[0_1px_0_0_rgba(255,255,255,0.05)]",
+                            canSort && "cursor-pointer hover:text-foreground",
+                            headerStyle,
                           )}
-                          {canSort && (
-                            <span className="inline-block ml-0.5">
-                              {header.column.getIsSorted() === "asc" && <SortAsc className="w-3 h-3 text-primary" />}
-                              {header.column.getIsSorted() === "desc" && <SortDesc className="w-3 h-3 text-primary" />}
-                            </span>
-                          )}
-                        </span>
-                      </TableHead>
-                    );
-                  })}
-                </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {/* Back row — colSpan=6 accounts for the checkbox column */}
-              {currentPrefix && currentPrefix !== rootPrefix && (
-                <TableRow
-                  className="border-border hover:bg-secondary/50 cursor-pointer h-[53px]"
-                  onClick={navigateUp}
-                >
-                  <TableCell colSpan={6} className="py-2 pl-4">
-                    <div className="flex items-center gap-2 text-muted-foreground/70">
-                      <ArrowLeft className="w-4 h-4" />
-                      <span>..</span>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              )}
+                        >
+                          <span className="flex items-center gap-1">
+                            {flexRender(
+                              header.column.columnDef.header,
+                              header.getContext(),
+                            )}
+                            {canSort && (
+                              <span className="inline-block ml-0.5">
+                                {header.column.getIsSorted() === "asc" && (
+                                  <SortAsc className="w-3 h-3 text-primary" />
+                                )}
+                                {header.column.getIsSorted() === "desc" && (
+                                  <SortDesc className="w-3 h-3 text-primary" />
+                                )}
+                              </span>
+                            )}
+                          </span>
+                        </TableHead>
+                      );
+                    })}
+                  </TableRow>
+                ))}
+              </TableHeader>
+              <TableBody>
+                {/* Back row — colSpan=6 accounts for the checkbox column */}
+                {currentPrefix && currentPrefix !== rootPrefix && (
+                  <TableRow
+                    className="border-border hover:bg-secondary/50 cursor-pointer h-[53px]"
+                    onClick={navigateUp}
+                  >
+                    <TableCell colSpan={6} className="py-2 pl-4">
+                      <div className="flex items-center gap-2 text-muted-foreground/70">
+                        <ArrowLeft className="w-4 h-4" />
+                        <span>..</span>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
 
-              {paddingTop > 0 && (
-                <TableRow style={{ height: `${paddingTop}px` }} className="hover:bg-transparent border-0 pointer-events-none">
-                  <TableCell colSpan={6} style={{ height: `${paddingTop}px`, padding: 0 }} />
-                </TableRow>
-              )}
+                {paddingTop > 0 && (
+                  <TableRow
+                    style={{ height: `${paddingTop}px` }}
+                    className="hover:bg-transparent border-0 pointer-events-none"
+                  >
+                    <TableCell
+                      colSpan={6}
+                      style={{ height: `${paddingTop}px`, padding: 0 }}
+                    />
+                  </TableRow>
+                )}
 
-              {virtualRows.map((virtualRow) => {
-                const row = table.getRowModel().rows[virtualRow.index];
-                const item = row.original;
-                const isFolder =
-                  item.contentType === "application/x-directory" ||
-                  item.key.endsWith("/");
+                {virtualRows.map((virtualRow) => {
+                  const row = table.getRowModel().rows[virtualRow.index];
+                  const item = row.original;
+                  const isFolder =
+                    item.contentType === "application/x-directory" ||
+                    item.key.endsWith("/");
 
-                return (
-                  <FileItem
-                    key={item.id}
-                    item={item}
-                    viewMode="list"
-                    currentPrefix={currentPrefix}
-                    onNavigate={isFolder ? navigateToFolder : undefined}
-                    onPreview={!isFolder ? handlePreview : undefined}
-                    onDownload={!isFolder ? handleDownload : undefined}
-                    onTag={setTaggingObj}
-                    onCut={handleCut}
-                    onShare={setShareFile}
-                    onDelete={handleDeleteItem}
-                    isDownloading={!isFolder && downloadingId === item.id ? true : undefined}
-                    isSelected={selectedIds.has(item.id)}
-                    onSelect={handleSelect}
-                    registerItemRef={registerItemRef}
-                  />
-                );
-              })}
+                  return (
+                    <FileItem
+                      key={item.id}
+                      item={item}
+                      viewMode="list"
+                      currentPrefix={currentPrefix}
+                      onNavigate={isFolder ? navigateToFolder : undefined}
+                      onPreview={!isFolder ? handlePreview : undefined}
+                      onDownload={!isFolder ? handleDownload : undefined}
+                      onTag={setTaggingObj}
+                      onCut={handleCut}
+                      onShare={setShareFile}
+                      onDelete={handleDeleteItem}
+                      isDownloading={
+                        !isFolder && downloadingId === item.id
+                          ? true
+                          : undefined
+                      }
+                      isSelected={selectedIds.has(item.id)}
+                      onSelect={handleSelect}
+                      registerItemRef={registerItemRef}
+                    />
+                  );
+                })}
 
-              {paddingBottom > 0 && (
-                <TableRow style={{ height: `${paddingBottom}px` }} className="hover:bg-transparent border-0 pointer-events-none">
-                  <TableCell colSpan={6} style={{ height: `${paddingBottom}px`, padding: 0 }} />
-                </TableRow>
-              )}
-            </TableBody>
-          </table>
+                {paddingBottom > 0 && (
+                  <TableRow
+                    style={{ height: `${paddingBottom}px` }}
+                    className="hover:bg-transparent border-0 pointer-events-none"
+                  >
+                    <TableCell
+                      colSpan={6}
+                      style={{ height: `${paddingBottom}px`, padding: 0 }}
+                    />
+                  </TableRow>
+                )}
+              </TableBody>
+            </table>
+          </div>
         ) : (
           /* Grid view */
           <div
@@ -1771,7 +1848,11 @@ export default function FilesPage() {
                         onCut={handleCut}
                         onShare={setShareFile}
                         onDelete={handleDeleteItem}
-                        isDownloading={!isFolder && downloadingId === item.id ? true : undefined}
+                        isDownloading={
+                          !isFolder && downloadingId === item.id
+                            ? true
+                            : undefined
+                        }
                         isSelected={selectedIds.has(item.id)}
                         onSelect={handleSelect}
                         registerItemRef={registerItemRef}

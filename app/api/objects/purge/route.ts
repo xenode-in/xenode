@@ -149,15 +149,40 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true, purgedCount: 0 });
       }
 
+      // Recursively gather children of folders to purge
+      const folderPrefixes: string[] = [];
+      primaries.forEach((p) => {
+        if (p.key && p.key.endsWith("/")) {
+          folderPrefixes.push(p.key);
+        }
+      });
+
+      let allDocs = [...primaries];
+
+      if (folderPrefixes.length > 0) {
+        const folderChildren = await StorageObject.find({
+          bucketId,
+          userId,
+          deletedAt: { $exists: true },
+          $or: folderPrefixes.map((prefix) => ({
+            key: { $regex: `^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}` }
+          }))
+        })
+          .select(PURGE_PROJECTION)
+          .lean<PurgeDoc[]>();
+
+        allDocs = [...allDocs, ...folderChildren];
+      }
+
       const sidecars = await StorageObject.find({
-        parentObjectId: { $in: primaries.map((p) => p._id) },
+        parentObjectId: { $in: allDocs.map((p) => p._id) },
         userId,
         deletedAt: { $exists: true },
       })
         .select(PURGE_PROJECTION)
         .lean<PurgeDoc[]>();
 
-      docs = [...primaries, ...sidecars];
+      docs = [...allDocs, ...sidecars];
     }
 
     if (docs.length === 0) {
