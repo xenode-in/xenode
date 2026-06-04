@@ -31,7 +31,11 @@ const MAX_PATCHED_MOOV_BYTES = 128 * 1024 * 1024;
  */
 const READ_TIMEOUT_MS = 10_000;
 
-function readSlice(file: File, start: number, end: number): Promise<ArrayBuffer> {
+function readSlice(
+  file: File,
+  start: number,
+  end: number,
+): Promise<ArrayBuffer> {
   const blob = file.slice(start, end);
 
   return new Promise<ArrayBuffer>((resolve, reject) => {
@@ -78,12 +82,7 @@ async function parseTopLevelBoxes(file: File): Promise<Mp4Box[]> {
     const bytes = new Uint8Array(headerBuffer);
     let size = view.getUint32(0);
     let headerSize = 8;
-    const type = String.fromCharCode(
-      bytes[4],
-      bytes[5],
-      bytes[6],
-      bytes[7],
-    );
+    const type = String.fromCharCode(bytes[4], bytes[5], bytes[6], bytes[7]);
 
     if (size === 1) {
       if (headerBuffer.byteLength < 16) break;
@@ -206,9 +205,14 @@ function walkBoxes(
 export async function optimizeVideoForStreaming(file: File): Promise<File> {
   // iOS Safari's File/Blob APIs are unreliable (reads hang, memory issues).
   // Apple's camera already writes moov-before-mdat, so skip entirely on iOS.
-  if (typeof navigator !== "undefined" && /iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-    return file;
-  }
+
+  // Detects any browser on iOS (Safari, Chrome, Firefox, Edge — all use WebKit)
+  const isIOS =
+    typeof navigator !== "undefined" &&
+    (/iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)); // iPadOS 13+
+
+  if (isIOS) return file;
 
   const name = file.name.toLowerCase();
   const isMp4 =
