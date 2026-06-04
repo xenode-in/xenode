@@ -138,6 +138,13 @@ export function UploadProgress() {
                       )}
                     </div>
 
+                    {/* Status text for current step */}
+                    {task.statusText && (task.status === "uploading" || task.status === "pending") && (
+                      <p className="text-xs text-primary/80 mt-1 animate-pulse">
+                        {task.statusText}
+                      </p>
+                    )}
+
                     {/* Progress Bar */}
                     {(task.status === "uploading" ||
                       task.status === "pending") && (

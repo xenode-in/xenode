@@ -33,6 +33,7 @@ export interface UploadTask {
   status: "pending" | "uploading" | "completed" | "failed";
   progress: number;
   error?: string;
+  statusText?: string;
 }
 
 interface UploadContextType {
@@ -340,7 +341,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                     ...t,
                     status: "uploading",
                     progress: 0,
-                    error: "Optimizing video...",
+                    statusText: "Optimizing video for streaming…",
                   }
                 : t,
             ),
@@ -349,6 +350,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           console.log(`[Upload] ✅ Faststart step done (${task.file.name}, same file: ${uploadFile === task.file})`);
         }
 
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.id === task.id ? { ...t, statusText: "Generating preview…" } : t,
+          ),
+        );
         const thumbResult = await generateThumbnail(uploadFile).catch(
           () => undefined,
         );
@@ -386,6 +392,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
         if (shouldEncryptNow()) {
           try {
+            setTasks((prev) =>
+              prev.map((t) =>
+                t.id === task.id ? { ...t, statusText: "Reading file info…" } : t,
+              ),
+            );
             // Extract all metadata sources
             metadata = await extractMetadata(uploadFile, {
               thumbnail: rawThumbnail,
@@ -593,6 +604,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               cryptoMetadataKeyRef.current!,
             );
 
+            setTasks((prev) =>
+              prev.map((t) =>
+                t.id === task.id ? { ...t, statusText: "Encrypting file…" } : t,
+              ),
+            );
+
             const enc = await encryptFileChunked(
               uploadFile,
               cryptoPublicKeyRef.current!,
@@ -617,6 +634,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             chunkCount = Math.ceil(uploadFile.size / chunkSize);
           }
         }
+
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.id === task.id ? { ...t, statusText: "Uploading…" } : t,
+          ),
+        );
 
         const presignResponse = await fetch(
           "/api/objects/presign-upload-multipart",
@@ -802,7 +825,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
         setTasks((prev) =>
           prev.map((t) =>
-            t.id === task.id ? { ...t, status: "completed", progress: 100 } : t,
+            t.id === task.id ? { ...t, status: "completed", progress: 100, statusText: undefined } : t,
           ),
         );
       } catch (error) {
@@ -813,6 +836,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               ? {
                   ...t,
                   status: "failed",
+                  statusText: undefined,
                   error:
                     error instanceof Error ? error.message : "Upload failed",
                 }
