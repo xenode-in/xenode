@@ -18,8 +18,50 @@ const MAX_PATCHED_MOOV_BYTES = 128 * 1024 * 1024;
 
 // ─── Box Parser ───────────────────────────────────────────────────────────────
 
-async function readSlice(file: File, start: number, end: number) {
-  return file.slice(start, end).arrayBuffer();
+/**
+ * Read a byte range from a File into an ArrayBuffer.
+ *
+ * iOS Safari has a long-standing bug where `Blob.prototype.arrayBuffer()`
+ * hangs (the returned Promise never settles) for sliced blobs coming from
+ * the native file-picker.  We use the older, event-driven FileReader API
+ * which is reliable across every browser including iOS Safari 14+.
+ *
+ * A per-read timeout (10 s) is included so the optimisation falls back to
+ * the original file rather than hanging forever on an exotic UA.
+ */
+const READ_TIMEOUT_MS = 10_000;
+
+function readSlice(file: File, start: number, end: number): Promise<ArrayBuffer> {
+  const blob = file.slice(start, end);
+
+  return new Promise<ArrayBuffer>((resolve, reject) => {
+    const reader = new FileReader();
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        reader.abort();
+        reject(new Error("[MP4 Faststart] File read timed out"));
+      }
+    }, READ_TIMEOUT_MS);
+
+    reader.onload = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(reader.result as ArrayBuffer);
+    };
+
+    reader.onerror = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(reader.error ?? new Error("[MP4 Faststart] FileReader error"));
+    };
+
+    reader.readAsArrayBuffer(blob);
+  });
 }
 
 async function parseTopLevelBoxes(file: File): Promise<Mp4Box[]> {
@@ -157,16 +199,18 @@ function walkBoxes(
  * - Zero dependencies, zero WASM, zero re-encoding
  * - Works on all browsers (iOS Safari, Android Chrome, desktop)
  * - Returns the original File unchanged if:
- *     • the file is not an MP4
+ *     • the file is not an MP4 / MOV
  *     • moov is already before mdat (already optimized)
  *     • any parse error occurs
  */
 export async function optimizeVideoForStreaming(file: File): Promise<File> {
+  const name = file.name.toLowerCase();
   const isMp4 =
     file.type === "video/mp4" ||
     file.type === "video/quicktime" ||
-    file.name.toLowerCase().endsWith(".mp4") ||
-    file.name.toLowerCase().endsWith(".m4v");
+    name.endsWith(".mp4") ||
+    name.endsWith(".m4v") ||
+    name.endsWith(".mov");
 
   if (!isMp4) return file;
 
