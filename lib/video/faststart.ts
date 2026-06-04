@@ -5,32 +5,18 @@
  * Works on all browsers including iOS Safari and Android Chrome.
  */
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 interface Mp4Box {
   type: string;
-  offset: number; // byte offset in the original buffer
-  size: number; // total box size including header
+  offset: number;
+  size: number;
 }
 
 const BOX_HEADER_BYTES = 16;
-const MAX_PATCHED_MOOV_BYTES = 128 * 1024 * 1024;
+const MAX_PATCHED_MOOV_BYTES = 128 * 1024 * 1024; // 128 MB — moov should never be this big
 const FASTSTART_TIMEOUT_MS = 30_000;
-
-// ─── Box Parser ───────────────────────────────────────────────────────────────
-
-/**
- * Read a byte range from a File into an ArrayBuffer.
- *
- * iOS Safari has a long-standing bug where `Blob.prototype.arrayBuffer()`
- * hangs (the returned Promise never settles) for sliced blobs coming from
- * the native file-picker.  We use the older, event-driven FileReader API
- * which is reliable across every browser including iOS Safari 14+.
- *
- * A per-read timeout (10 s) is included so the optimisation falls back to
- * the original file rather than hanging forever on an exotic UA.
- */
 const READ_TIMEOUT_MS = 10_000;
+
+// ─── FileReader wrapper ───────────────────────────────────────────────────────
 
 function readSlice(
   file: File,
@@ -69,6 +55,8 @@ function readSlice(
   });
 }
 
+// ─── Box Parser ───────────────────────────────────────────────────────────────
+
 async function parseTopLevelBoxes(file: File): Promise<Mp4Box[]> {
   const boxes: Mp4Box[] = [];
   let offset = 0;
@@ -87,24 +75,17 @@ async function parseTopLevelBoxes(file: File): Promise<Mp4Box[]> {
 
     if (size === 1) {
       if (headerBuffer.byteLength < 16) break;
-      // 64-bit extended size sits right after the type field
       const hi = view.getUint32(8);
       const lo = view.getUint32(12);
       size = hi * 0x1_0000_0000 + lo;
       headerSize = 16;
     } else if (size === 0) {
-      // size=0 means "box extends to EOF"
       size = file.size - offset;
     }
 
     if (size < headerSize || offset + size > file.size) break;
 
-    boxes.push({
-      type,
-      offset,
-      size,
-    });
-
+    boxes.push({ type, offset, size });
     offset += size;
   }
 
@@ -113,13 +94,6 @@ async function parseTopLevelBoxes(file: File): Promise<Mp4Box[]> {
 
 // ─── Offset Patcher ───────────────────────────────────────────────────────────
 
-/**
- * Recursively walks a moov box copy and adds `delta` to every
- * stco (32-bit) and co64 (64-bit) chunk-offset entry.
- *
- * These entries are absolute file offsets pointing into mdat.
- * When we slide mdat forward by `delta` bytes we must update them.
- */
 function patchChunkOffsets(moovCopy: Uint8Array, delta: number): void {
   const view = new DataView(
     moovCopy.buffer,
@@ -162,27 +136,22 @@ function walkBoxes(
     if (size < 8) break;
 
     if (type === "stco") {
-      // Full box: version(1) + flags(3) + entry_count(4) + entries(4 each)
       const count = view.getUint32(i + 12);
       for (let e = 0; e < count; e++) {
         const pos = i + 16 + e * 4;
         view.setUint32(pos, view.getUint32(pos) + delta);
       }
     } else if (type === "co64") {
-      // Full box: version(1) + flags(3) + entry_count(4) + entries(8 each)
       const count = view.getUint32(i + 12);
       for (let e = 0; e < count; e++) {
         const pos = i + 16 + e * 8;
         const hi = view.getUint32(pos);
         const lo = view.getUint32(pos + 4);
-        // JS numbers lose precision above 2^53, but video files are
-        // unlikely to have chunk offsets >2^52 (~4 petabytes).
         const updated = hi * 0x1_0000_0000 + lo + delta;
         view.setUint32(pos, Math.floor(updated / 0x1_0000_0000));
         view.setUint32(pos + 4, updated >>> 0);
       }
     } else if (CONTAINER_BOXES.has(type)) {
-      // Recurse into container boxes (skip their 8-byte header)
       walkBoxes(data, view, i + 8, i + size, delta);
     }
 
@@ -192,18 +161,6 @@ function walkBoxes(
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
-/**
- * Optimizes an MP4 file for progressive streaming by moving the moov atom
- * to the front of the file (equivalent to `ffmpeg -movflags +faststart`).
- *
- * - Zero dependencies, zero WASM, zero re-encoding
- * - Works on all browsers (iOS Safari, Android Chrome, desktop)
- * - Returns the original File unchanged if:
- *     • the file is not an MP4 / MOV
- *     • moov is already before mdat (already optimized)
- *     • any parse error occurs
- *     • the operation times out (30 s safety net for iOS WKWebView)
- */
 export async function optimizeVideoForStreaming(file: File): Promise<File> {
   const name = file.name.toLowerCase();
   const isMp4 =
@@ -224,30 +181,24 @@ export async function optimizeVideoForStreaming(file: File): Promise<File> {
       const mdat = boxes.find((b) => b.type === "mdat");
 
       if (!moov || !mdat) {
-        console.warn("[MP4 Faststart] Missing moov or mdat box — skipping.");
+        console.warn("[MP4 Faststart] Missing moov or mdat — skipping.");
         return file;
       }
 
-      // Already optimized — moov is before mdat
+      // Already optimized
       if (moov.offset < mdat.offset) {
-        console.log(`[MP4 Faststart] ✅ moov already before mdat — no rewrite needed (${file.name})`);
+        console.log("[MP4 Faststart] ✅ Already optimized — skipping rewrite.");
         return file;
       }
 
       if (moov.size > MAX_PATCHED_MOOV_BYTES) {
-        console.warn("[MP4 Faststart] moov box is too large to patch safely.");
+        console.warn(
+          "[MP4 Faststart] moov too large to patch safely — skipping.",
+        );
         return file;
       }
 
-      // ── Calculate the offset delta ──────────────────────────────────────────
-      //
-      // New layout:  [ftyp?] [moov] [everything-else (mdat + any free boxes)]
-      //
-      // mdat's new start = size-of-ftyp + size-of-moov
-      // delta = new_mdat_start − old_mdat_start
-      //
-      // (delta is typically positive; moov moves forward, mdat shifts forward)
-
+      // ── Delta calculation ──────────────────────────────────────────────────
       const ftypSize = ftyp?.size ?? 0;
       let actualNewMdatOffset = ftypSize + moov.size;
       for (const box of boxes) {
@@ -257,19 +208,31 @@ export async function optimizeVideoForStreaming(file: File): Promise<File> {
       }
       const delta = actualNewMdatOffset - mdat.offset;
 
-      // ── Build the patched moov ───────────────────────────────────────────────
+      // ── Patch moov (must be in memory to rewrite chunk offsets) ───────────
+      // moov is always small — metadata only, never contains frame data.
+      // The 128 MB guard above ensures this is safe for any real-world file.
       const patchedMoov = new Uint8Array(
         await readSlice(file, moov.offset, moov.offset + moov.size),
       );
       patchChunkOffsets(patchedMoov, delta);
 
-      // ── Assemble output: ftyp → moov → everything else ──────────────────────
-      // Eagerly read all parts into ArrayBuffer instead of lazy file.slice()
-      // blobs — lazy blobs hang silently on iOS WKWebView when consumed
-      // inside the File constructor.
+      // ── Assemble output ────────────────────────────────────────────────────
+      //
+      // Strategy:
+      //   • moov  → already in memory as Uint8Array, use directly
+      //   • ftyp  → tiny (usually ~20 bytes), eager read is fine
+      //   • mdat  → can be gigabytes, NEVER load into RAM — lazy slice only
+      //   • other → free/skip/uuid etc, tiny, eager read is fine
+      //
+      // Lazy file.slice() for mdat means the browser streams it through
+      // during XHR upload without it ever sitting in memory.
+      // new File([...parts]) does not consume the slices eagerly —
+      // it holds blob references until something reads from the File.
+
       const parts: BlobPart[] = [];
 
       if (ftyp) {
+        // Tiny box — eager read so it's a concrete buffer, not a lazy slice
         parts.push(await readSlice(file, ftyp.offset, ftyp.offset + ftyp.size));
       }
 
@@ -277,14 +240,27 @@ export async function optimizeVideoForStreaming(file: File): Promise<File> {
 
       for (const box of boxes) {
         if (box.type === "ftyp" || box.type === "moov") continue;
-        parts.push(await readSlice(file, box.offset, box.offset + box.size));
+
+        if (box.type === "mdat") {
+          // Gigabyte-scale — lazy reference only, zero RAM cost
+          parts.push(file.slice(box.offset, box.offset + box.size));
+        } else {
+          // free / skip / wide / uuid — all tiny structural boxes
+          // Eager read keeps them as concrete buffers (safer on iOS)
+          parts.push(await readSlice(file, box.offset, box.offset + box.size));
+        }
       }
 
       const optimized = new File(parts, file.name, {
         type: file.type,
         lastModified: file.lastModified,
       });
-      console.log(`[MP4 Faststart] ✅ Faststart complete — moov moved to front (${file.name}, ${(file.size / 1024 / 1024).toFixed(1)} MB)`);
+
+      console.log(
+        `[MP4 Faststart] ✅ Done — moov moved to front` +
+          ` (${file.name}, ${(file.size / 1024 / 1024).toFixed(1)} MB)`,
+      );
+
       return optimized;
     } catch (err) {
       console.error("[MP4 Faststart] Failed, returning original file:", err);
@@ -295,11 +271,14 @@ export async function optimizeVideoForStreaming(file: File): Promise<File> {
   let settled = false;
 
   return Promise.race([
-    work().then((result) => { settled = true; return result; }),
+    work().then((result) => {
+      settled = true;
+      return result;
+    }),
     new Promise<File>((resolve) =>
       setTimeout(() => {
         if (settled) return;
-        console.warn("[MP4 Faststart] Timed out, returning original file");
+        console.warn("[MP4 Faststart] Timed out — returning original file");
         resolve(file);
       }, FASTSTART_TIMEOUT_MS),
     ),
