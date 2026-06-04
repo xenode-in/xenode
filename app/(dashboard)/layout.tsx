@@ -38,7 +38,7 @@ export default async function DashboardLayout({
   }
 
   return (
-    <CryptoProvider>
+    <CryptoProvider initialUserId={session.user.id}>
       <DownloadProvider>
         <PreviewProvider>
           <UploadProvider>
