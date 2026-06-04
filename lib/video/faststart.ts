@@ -11,43 +11,56 @@ interface Mp4Box {
   type: string;
   offset: number; // byte offset in the original buffer
   size: number; // total box size including header
-  data: Uint8Array; // view into the original buffer (not a copy)
 }
+
+const BOX_HEADER_BYTES = 16;
+const MAX_PATCHED_MOOV_BYTES = 128 * 1024 * 1024;
 
 // ─── Box Parser ───────────────────────────────────────────────────────────────
 
-function parseTopLevelBoxes(buffer: ArrayBuffer): Mp4Box[] {
-  const view = new DataView(buffer);
-  const bytes = new Uint8Array(buffer);
+async function readSlice(file: File, start: number, end: number) {
+  return file.slice(start, end).arrayBuffer();
+}
+
+async function parseTopLevelBoxes(file: File): Promise<Mp4Box[]> {
   const boxes: Mp4Box[] = [];
   let offset = 0;
 
-  while (offset + 8 <= buffer.byteLength) {
-    let size = view.getUint32(offset);
+  while (offset + 8 <= file.size) {
+    const headerBuffer = await readSlice(
+      file,
+      offset,
+      Math.min(offset + BOX_HEADER_BYTES, file.size),
+    );
+    const view = new DataView(headerBuffer);
+    const bytes = new Uint8Array(headerBuffer);
+    let size = view.getUint32(0);
+    let headerSize = 8;
     const type = String.fromCharCode(
-      bytes[offset + 4],
-      bytes[offset + 5],
-      bytes[offset + 6],
-      bytes[offset + 7],
+      bytes[4],
+      bytes[5],
+      bytes[6],
+      bytes[7],
     );
 
     if (size === 1) {
+      if (headerBuffer.byteLength < 16) break;
       // 64-bit extended size sits right after the type field
-      const hi = view.getUint32(offset + 8);
-      const lo = view.getUint32(offset + 12);
+      const hi = view.getUint32(8);
+      const lo = view.getUint32(12);
       size = hi * 0x1_0000_0000 + lo;
+      headerSize = 16;
     } else if (size === 0) {
       // size=0 means "box extends to EOF"
-      size = buffer.byteLength - offset;
+      size = file.size - offset;
     }
 
-    if (size < 8 || offset + size > buffer.byteLength) break;
+    if (size < headerSize || offset + size > file.size) break;
 
     boxes.push({
       type,
       offset,
       size,
-      data: new Uint8Array(buffer, offset, size),
     });
 
     offset += size;
@@ -158,8 +171,7 @@ export async function optimizeVideoForStreaming(file: File): Promise<File> {
   if (!isMp4) return file;
 
   try {
-    const buffer = await file.arrayBuffer();
-    const boxes = parseTopLevelBoxes(buffer);
+    const boxes = await parseTopLevelBoxes(file);
 
     const ftyp = boxes.find((b) => b.type === "ftyp");
     const moov = boxes.find((b) => b.type === "moov");
@@ -172,6 +184,11 @@ export async function optimizeVideoForStreaming(file: File): Promise<File> {
 
     // Already optimized — moov is before mdat
     if (moov.offset < mdat.offset) return file;
+
+    if (moov.size > MAX_PATCHED_MOOV_BYTES) {
+      console.warn("[MP4 Faststart] moov box is too large to patch safely.");
+      return file;
+    }
 
     // ── Calculate the offset delta ──────────────────────────────────────────
     //
@@ -192,29 +209,26 @@ export async function optimizeVideoForStreaming(file: File): Promise<File> {
     const delta = actualNewMdatOffset - mdat.offset;
 
     // ── Build the patched moov ───────────────────────────────────────────────
-    const patchedMoov = moov.data.slice(0); // copies into a fresh ArrayBuffer
+    const patchedMoov = new Uint8Array(
+      await readSlice(file, moov.offset, moov.offset + moov.size),
+    );
     patchChunkOffsets(patchedMoov, delta);
 
     // ── Assemble output: ftyp → moov → everything else ──────────────────────
-    const totalSize = boxes.reduce((sum, b) => sum + b.size, 0);
-    const output = new Uint8Array(totalSize);
-    let cursor = 0;
+    const parts: BlobPart[] = [];
 
     if (ftyp) {
-      output.set(ftyp.data, cursor);
-      cursor += ftyp.size;
+      parts.push(file.slice(ftyp.offset, ftyp.offset + ftyp.size));
     }
 
-    output.set(patchedMoov, cursor);
-    cursor += moov.size;
+    parts.push(patchedMoov);
 
     for (const box of boxes) {
       if (box.type === "ftyp" || box.type === "moov") continue;
-      output.set(box.data, cursor);
-      cursor += box.size;
+      parts.push(file.slice(box.offset, box.offset + box.size));
     }
 
-    return new File([output.buffer], file.name, {
+    return new File(parts, file.name, {
       type: file.type,
       lastModified: file.lastModified,
     });
