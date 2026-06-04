@@ -48,10 +48,14 @@ const UploadContext = createContext<UploadContextType | undefined>(undefined);
 const MAX_CONCURRENT_UPLOADS = 5;
 
 // Helper to resize image and get base64
+const THUMB_TIMEOUT_MS = 8_000;
+
 const generateThumbnail = (
   file: File,
 ): Promise<{ thumbnail: string; aspectRatio: number } | undefined> => {
-  return new Promise((resolve) => {
+  const work = new Promise<
+    { thumbnail: string; aspectRatio: number } | undefined
+  >((resolve) => {
     // Handle images (existing logic)
     if (file.type.startsWith("image/")) {
       const reader = new FileReader();
@@ -156,6 +160,19 @@ const generateThumbnail = (
 
     resolve(undefined);
   });
+
+  let settled = false;
+
+  return Promise.race([
+    work.then((result) => { settled = true; return result; }),
+    new Promise<undefined>((resolve) =>
+      setTimeout(() => {
+        if (settled) return;
+        console.warn("[Thumbnail] Timed out, skipping thumbnail");
+        resolve(undefined);
+      }, THUMB_TIMEOUT_MS),
+    ),
+  ]);
 };
 
 /**
@@ -329,6 +346,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             ),
           );
           uploadFile = await optimizeVideoForStreaming(task.file);
+          console.log(`[Upload] ✅ Faststart step done (${task.file.name}, same file: ${uploadFile === task.file})`);
         }
 
         const thumbResult = await generateThumbnail(uploadFile).catch(
@@ -336,6 +354,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         );
         const rawThumbnail = thumbResult?.thumbnail;
         const aspectRatio = thumbResult?.aspectRatio;
+        console.log(`[Upload] ✅ Thumbnail step done (${task.file.name}, generated: ${!!rawThumbnail}, aspectRatio: ${aspectRatio ?? "n/a"})`);
         let thumbnail: string | undefined;
         if (
           rawThumbnail &&
@@ -376,7 +395,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               chunkIvs: JSON.parse(chunkIvs || "[]"),
             });
 
-            console.log("METADATA", metadata);
+            console.log(`[Upload] ✅ Metadata extracted (${task.file.name}):`, metadata);
 
             /*
             // Handle Subtitle Extraction & Sidecar Upload

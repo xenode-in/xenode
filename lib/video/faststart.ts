@@ -15,6 +15,7 @@ interface Mp4Box {
 
 const BOX_HEADER_BYTES = 16;
 const MAX_PATCHED_MOOV_BYTES = 128 * 1024 * 1024;
+const FASTSTART_TIMEOUT_MS = 30_000;
 
 // ─── Box Parser ───────────────────────────────────────────────────────────────
 
@@ -201,19 +202,9 @@ function walkBoxes(
  *     • the file is not an MP4 / MOV
  *     • moov is already before mdat (already optimized)
  *     • any parse error occurs
+ *     • the operation times out (30 s safety net for iOS WKWebView)
  */
 export async function optimizeVideoForStreaming(file: File): Promise<File> {
-  // iOS Safari's File/Blob APIs are unreliable (reads hang, memory issues).
-  // Apple's camera already writes moov-before-mdat, so skip entirely on iOS.
-
-  // Detects any browser on iOS (Safari, Chrome, Firefox, Edge — all use WebKit)
-  const isIOS =
-    typeof navigator !== "undefined" &&
-    (/iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)); // iPadOS 13+
-
-  if (isIOS) return file;
-
   const name = file.name.toLowerCase();
   const isMp4 =
     file.type === "video/mp4" ||
@@ -224,70 +215,93 @@ export async function optimizeVideoForStreaming(file: File): Promise<File> {
 
   if (!isMp4) return file;
 
-  try {
-    const boxes = await parseTopLevelBoxes(file);
+  const work = async (): Promise<File> => {
+    try {
+      const boxes = await parseTopLevelBoxes(file);
 
-    const ftyp = boxes.find((b) => b.type === "ftyp");
-    const moov = boxes.find((b) => b.type === "moov");
-    const mdat = boxes.find((b) => b.type === "mdat");
+      const ftyp = boxes.find((b) => b.type === "ftyp");
+      const moov = boxes.find((b) => b.type === "moov");
+      const mdat = boxes.find((b) => b.type === "mdat");
 
-    if (!moov || !mdat) {
-      console.warn("[MP4 Faststart] Missing moov or mdat box — skipping.");
+      if (!moov || !mdat) {
+        console.warn("[MP4 Faststart] Missing moov or mdat box — skipping.");
+        return file;
+      }
+
+      // Already optimized — moov is before mdat
+      if (moov.offset < mdat.offset) {
+        console.log(`[MP4 Faststart] ✅ moov already before mdat — no rewrite needed (${file.name})`);
+        return file;
+      }
+
+      if (moov.size > MAX_PATCHED_MOOV_BYTES) {
+        console.warn("[MP4 Faststart] moov box is too large to patch safely.");
+        return file;
+      }
+
+      // ── Calculate the offset delta ──────────────────────────────────────────
+      //
+      // New layout:  [ftyp?] [moov] [everything-else (mdat + any free boxes)]
+      //
+      // mdat's new start = size-of-ftyp + size-of-moov
+      // delta = new_mdat_start − old_mdat_start
+      //
+      // (delta is typically positive; moov moves forward, mdat shifts forward)
+
+      const ftypSize = ftyp?.size ?? 0;
+      let actualNewMdatOffset = ftypSize + moov.size;
+      for (const box of boxes) {
+        if (box.type === "ftyp" || box.type === "moov") continue;
+        if (box.type === "mdat") break;
+        actualNewMdatOffset += box.size;
+      }
+      const delta = actualNewMdatOffset - mdat.offset;
+
+      // ── Build the patched moov ───────────────────────────────────────────────
+      const patchedMoov = new Uint8Array(
+        await readSlice(file, moov.offset, moov.offset + moov.size),
+      );
+      patchChunkOffsets(patchedMoov, delta);
+
+      // ── Assemble output: ftyp → moov → everything else ──────────────────────
+      // Eagerly read all parts into ArrayBuffer instead of lazy file.slice()
+      // blobs — lazy blobs hang silently on iOS WKWebView when consumed
+      // inside the File constructor.
+      const parts: BlobPart[] = [];
+
+      if (ftyp) {
+        parts.push(await readSlice(file, ftyp.offset, ftyp.offset + ftyp.size));
+      }
+
+      parts.push(patchedMoov);
+
+      for (const box of boxes) {
+        if (box.type === "ftyp" || box.type === "moov") continue;
+        parts.push(await readSlice(file, box.offset, box.offset + box.size));
+      }
+
+      const optimized = new File(parts, file.name, {
+        type: file.type,
+        lastModified: file.lastModified,
+      });
+      console.log(`[MP4 Faststart] ✅ Faststart complete — moov moved to front (${file.name}, ${(file.size / 1024 / 1024).toFixed(1)} MB)`);
+      return optimized;
+    } catch (err) {
+      console.error("[MP4 Faststart] Failed, returning original file:", err);
       return file;
     }
+  };
 
-    // Already optimized — moov is before mdat
-    if (moov.offset < mdat.offset) return file;
+  let settled = false;
 
-    if (moov.size > MAX_PATCHED_MOOV_BYTES) {
-      console.warn("[MP4 Faststart] moov box is too large to patch safely.");
-      return file;
-    }
-
-    // ── Calculate the offset delta ──────────────────────────────────────────
-    //
-    // New layout:  [ftyp?] [moov] [everything-else (mdat + any free boxes)]
-    //
-    // mdat's new start = size-of-ftyp + size-of-moov
-    // delta = new_mdat_start − old_mdat_start
-    //
-    // (delta is typically positive; moov moves forward, mdat shifts forward)
-
-    const ftypSize = ftyp?.size ?? 0;
-    let actualNewMdatOffset = ftypSize + moov.size;
-    for (const box of boxes) {
-      if (box.type === "ftyp" || box.type === "moov") continue;
-      if (box.type === "mdat") break;
-      actualNewMdatOffset += box.size;
-    }
-    const delta = actualNewMdatOffset - mdat.offset;
-
-    // ── Build the patched moov ───────────────────────────────────────────────
-    const patchedMoov = new Uint8Array(
-      await readSlice(file, moov.offset, moov.offset + moov.size),
-    );
-    patchChunkOffsets(patchedMoov, delta);
-
-    // ── Assemble output: ftyp → moov → everything else ──────────────────────
-    const parts: BlobPart[] = [];
-
-    if (ftyp) {
-      parts.push(file.slice(ftyp.offset, ftyp.offset + ftyp.size));
-    }
-
-    parts.push(patchedMoov);
-
-    for (const box of boxes) {
-      if (box.type === "ftyp" || box.type === "moov") continue;
-      parts.push(file.slice(box.offset, box.offset + box.size));
-    }
-
-    return new File(parts, file.name, {
-      type: file.type,
-      lastModified: file.lastModified,
-    });
-  } catch (err) {
-    console.error("[MP4 Faststart] Failed, returning original file:", err);
-    return file;
-  }
+  return Promise.race([
+    work().then((result) => { settled = true; return result; }),
+    new Promise<File>((resolve) =>
+      setTimeout(() => {
+        if (settled) return;
+        console.warn("[MP4 Faststart] Timed out, returning original file");
+        resolve(file);
+      }, FASTSTART_TIMEOUT_MS),
+    ),
+  ]);
 }

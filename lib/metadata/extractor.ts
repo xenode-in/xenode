@@ -64,10 +64,12 @@ export async function extractMetadata(
         exifData.width = dimensions.width;
         exifData.height = dimensions.height;
         exifData.aspectRatio = dimensions.width / dimensions.height;
+        console.log(`[Metadata Extractor] ✅ Image dimensions: ${dimensions.width}×${dimensions.height}`);
       }
     }
   } else if (mediaCategory === "video" || mediaCategory === "audio") {
     ffmpegData = await extractFfmpegMetadata(file).catch(() => ({}));
+    console.log(`[Metadata Extractor] ✅ Mediainfo done (${file.name}):`, Object.keys(ffmpegData).filter(k => (ffmpegData as any)[k] != null).join(", ") || "no fields");
   }
 
   // Final normalization with null fallbacks
@@ -202,12 +204,14 @@ interface MediaInfoResult {
   };
 }
 
+const MEDIAINFO_TIMEOUT_MS = 12_000;
+
 async function extractFfmpegMetadata(
   file: File,
 ): Promise<Partial<FileMetadata>> {
   const result: Partial<FileMetadata> = {};
 
-  return new Promise((resolve) => {
+  const work = new Promise<Partial<FileMetadata>>((resolve) => {
     MediaInfoFactory({ format: "object" })
       .then((mediainfo) => {
         const getSize = () => file.size;
@@ -293,15 +297,30 @@ async function extractFfmpegMetadata(
         resolve(result);
       });
   });
+
+  let settled = false;
+
+  return Promise.race([
+    work.then((result) => { settled = true; return result; }),
+    new Promise<Partial<FileMetadata>>((resolve) =>
+      setTimeout(() => {
+        if (settled) return;
+        console.warn("[Metadata Extractor] mediainfo timed out, skipping");
+        resolve({});
+      }, MEDIAINFO_TIMEOUT_MS),
+    ),
+  ]);
 }
 
 /**
  * Fallback to get image dimensions if EXIF fails or is missing.
  */
+const IMAGE_LOAD_TIMEOUT_MS = 8_000;
+
 function getImageDimensions(
   file: File,
 ): Promise<{ width: number; height: number }> {
-  return new Promise((resolve, reject) => {
+  const work = new Promise<{ width: number; height: number }>((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
     img.onload = () => {
@@ -315,4 +334,16 @@ function getImageDimensions(
     };
     img.src = url;
   });
+
+  let settled = false;
+
+  return Promise.race([
+    work.then((result) => { settled = true; return result; }),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => {
+        if (settled) return;
+        reject(new Error("Image load timed out"));
+      }, IMAGE_LOAD_TIMEOUT_MS),
+    ),
+  ]);
 }
