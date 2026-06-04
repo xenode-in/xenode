@@ -204,6 +204,12 @@ function walkBoxes(
  *     • any parse error occurs
  */
 export async function optimizeVideoForStreaming(file: File): Promise<File> {
+  // iOS Safari's File/Blob APIs are unreliable (reads hang, memory issues).
+  // Apple's camera already writes moov-before-mdat, so skip entirely on iOS.
+  if (typeof navigator !== "undefined" && /iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+    return file;
+  }
+
   const name = file.name.toLowerCase();
   const isMp4 =
     file.type === "video/mp4" ||
