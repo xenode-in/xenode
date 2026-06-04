@@ -50,7 +50,10 @@ export function PasskeySettingsSection() {
       if (result.ok) {
         toast.success("Passkey registered successfully!");
         fetchPasskeys();
-      } else if (result.prfUnsupported) {
+      } else if ("alreadyRegistered" in result && result.alreadyRegistered) {
+        toast.info("A passkey from this device is already added.");
+        fetchPasskeys();
+      } else if ("prfUnsupported" in result && result.prfUnsupported) {
         setShow(false);
         toast.error("This device doesn't support passwordless vault unlock");
       } else {

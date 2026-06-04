@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { authClient, useSession } from "@/lib/auth/client";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
@@ -59,36 +58,39 @@ function parseUserAgent(ua?: string | null): {
 }
 
 export function SessionsSettingsSection() {
-  const { data: session } = useSession();
-  const currentToken = session?.session?.token;
-
   const [sessions, setSessions] = useState<SessionData[]>([]);
+  const [currentToken, setCurrentToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [revokingId, setRevokingId] = useState<string | null>(null);
   const [revokingAll, setRevokingAll] = useState(false);
 
   const fetchSessions = useCallback(async () => {
     try {
-      const { data, error } = await authClient.listSessions();
-      if (error) {
-        console.error("Failed to list sessions:", error);
+      const res = await fetch("/api/sessions");
+      if (!res.ok) {
+        toast.error("Failed to load active sessions");
         return;
       }
-      if (data) {
-        // Sort: current session first, then by most recent
-        const sorted = [...data].sort((a, b) => {
-          if (a.token === currentToken) return -1;
-          if (b.token === currentToken) return 1;
-          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
-        });
-        setSessions(sorted as SessionData[]);
-      }
+      const { sessions: data, currentToken: token } = (await res.json()) as {
+        sessions: SessionData[];
+        currentToken: string;
+      };
+      setCurrentToken(token);
+
+      // Sort: current session first, then by most recent
+      const sorted = [...data].sort((a, b) => {
+        if (a.token === token) return -1;
+        if (b.token === token) return 1;
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      });
+      setSessions(sorted);
     } catch (err) {
       console.error("Failed to fetch sessions:", err);
+      toast.error("Failed to load active sessions");
     } finally {
       setLoading(false);
     }
-  }, [currentToken]);
+  }, []);
 
   useEffect(() => {
     fetchSessions();
@@ -97,8 +99,12 @@ export function SessionsSettingsSection() {
   async function handleRevoke(token: string) {
     setRevokingId(token);
     try {
-      const { error } = await authClient.revokeSession({ token });
-      if (error) {
+      const res = await fetch("/api/sessions", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      if (!res.ok) {
         toast.error("Failed to revoke session");
         return;
       }
@@ -115,8 +121,12 @@ export function SessionsSettingsSection() {
   async function handleRevokeAll() {
     setRevokingAll(true);
     try {
-      const { error } = await authClient.revokeSessions();
-      if (error) {
+      const res = await fetch("/api/sessions", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allOthers: true }),
+      });
+      if (!res.ok) {
         toast.error("Failed to revoke sessions");
         return;
       }

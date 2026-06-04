@@ -72,6 +72,16 @@ function isNotAllowedError(err: unknown): err is { name: string } {
   return isObject(err) && typeof err.name === "string"
 }
 
+function isAlreadyRegisteredError(err: unknown): boolean {
+  if (!isObject(err)) return false
+  const name = typeof err.name === "string" ? err.name : ""
+  const message = typeof err.message === "string" ? err.message : ""
+  return (
+    name === "InvalidStateError" ||
+    message.toLowerCase().includes("already registered")
+  )
+}
+
 function withPrfEval<T extends { extensions?: Record<string, unknown> }>(
   options: T,
 ) {
@@ -138,7 +148,12 @@ async function decryptToKeys(
   vaultKeyIV: string,
   wrapKey: CryptoKey,
   publicKeyB64: string,
-): Promise<{ privateKey: CryptoKey; publicKey: CryptoKey; metadataKey: CryptoKey }> {
+): Promise<{
+  privateKey: CryptoKey;
+  publicKey: CryptoKey;
+  metadataKey: CryptoKey;
+  privateKeyBuf: ArrayBuffer;
+}> {
   const privateKeyBuf = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: fromB64url(vaultKeyIV).buffer as ArrayBuffer },
     wrapKey,
@@ -169,11 +184,12 @@ async function decryptToKeys(
     ["encrypt", "decrypt"],
   )
 
-  return { privateKey, publicKey, metadataKey }
+  return { privateKey, publicKey, metadataKey, privateKeyBuf }
 }
 
 export type RegisterResult =
   | { ok: true }
+  | { ok: false; alreadyRegistered: true }
   | { ok: false; prfUnsupported: true }
   | { ok: false; prfUnsupported: false }
 
@@ -191,6 +207,9 @@ export async function registerPasskeyWithPRF(
   try {
     credential = await startRegistration({ optionsJSON: withPrfEval(options) })
   } catch (err) {
+    if (isAlreadyRegisteredError(err)) {
+      return { ok: false, alreadyRegistered: true }
+    }
     console.error("Registration failed:", err)
     return { ok: false, prfUnsupported: false }
   }
@@ -231,7 +250,13 @@ export async function registerPasskeyWithPRF(
 }
 
 export async function signInWithPasskeyPRF(): Promise<
-  | { ok: true; privateKey: CryptoKey; publicKey: CryptoKey; metadataKey: CryptoKey }
+  | {
+      ok: true;
+      privateKey: CryptoKey;
+      publicKey: CryptoKey;
+      metadataKey: CryptoKey;
+      privateKeyBuf: ArrayBuffer;
+    }
   | { ok: false; reason: "cancelled" | "prf_failed" | "server_error" | "no_vault" }
 > {
   const optRes = await fetch("/api/passkey/login/start", { method: "POST" })
@@ -277,7 +302,12 @@ export async function signInWithPasskeyPRF(): Promise<
     publicKeyB64,
   )
 
-  await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey)
+  await cacheKeys(
+    keys.privateKey,
+    keys.publicKey,
+    keys.metadataKey,
+    keys.privateKeyBuf,
+  )
 
   return { ok: true, ...keys }
 }

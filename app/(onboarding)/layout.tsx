@@ -19,7 +19,7 @@ export default async function OnboardingLayout({
   }
 
   return (
-    <CryptoProvider>
+    <CryptoProvider initialUserId={session.user.id}>
       <div className="min-h-screen bg-background">{children}</div>
     </CryptoProvider>
   );

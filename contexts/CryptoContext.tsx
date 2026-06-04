@@ -33,9 +33,15 @@ interface CryptoContextType {
 
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
 
-export function CryptoProvider({ children }: { children: React.ReactNode }) {
+export function CryptoProvider({
+  children,
+  initialUserId = null,
+}: {
+  children: React.ReactNode;
+  initialUserId?: string | null;
+}) {
   const { data: session, isPending } = useSession();
-  const userId = session?.user?.id ?? null;
+  const userId = session?.user?.id ?? initialUserId;
 
   const [isInitializing, setIsInitializing] = useState(true);
   const [isUnlocked, setIsUnlocked] = useState(false);
@@ -47,7 +53,7 @@ export function CryptoProvider({ children }: { children: React.ReactNode }) {
   const [isModalOpen, setModalOpen] = useState(false);
 
   useEffect(() => {
-    if (isPending) return;
+    if (isPending && !initialUserId) return;
 
     setPrivateKey(null);
     setPublicKey(null);

@@ -21,7 +21,7 @@ export default async function DocsLayout({
   }
 
   return (
-    <CryptoProvider>
+    <CryptoProvider initialUserId={session.user.id}>
       <DownloadProvider>
         <PreviewProvider>
           <UploadProvider>
