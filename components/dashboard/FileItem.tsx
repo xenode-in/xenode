@@ -34,6 +34,8 @@ import {
 import { useThumbnail } from "@/hooks/useThumbnail";
 import { useIsVisible } from "@/hooks/useIsVisible";
 import { MetadataDialog } from "./MetadataDialog";
+import { SkeletonRow } from "./SkeletonRow";
+import { SkeletonCard } from "./SkeletonCard";
 
 interface ObjectData {
   id: string; // use id, not _id
@@ -872,7 +874,7 @@ FileCard.displayName = "FileCard";
 
 // ─── DnD + Long Press wrapper ─────────────────────────────────────────────────
 
-export const FileItem = memo(function FileItem(props: ItemProps) {
+export const FileItemInner = memo(function FileItemInner(props: ItemProps) {
   const { registerItemRef } = props;
 
   const {
@@ -987,4 +989,32 @@ export const FileItem = memo(function FileItem(props: ItemProps) {
     />
   );
 });
+FileItemInner.displayName = "FileItemInner";
+
+export function FileItem(props: ItemProps & { isScrolling?: boolean }) {
+  // If a row mounts while actively scrolling, it starts as NOT ready.
+  // If it's already mounted (or scrolling is false), it starts as ready.
+  // This ensures we never replace an already-loaded row with a skeleton.
+  const [isReady, setIsReady] = useState(!props.isScrolling);
+
+  useEffect(() => {
+    // Once scrolling stops, mark as ready so it loads the full component.
+    // It stays ready forever after this.
+    if (!props.isScrolling && !isReady) {
+      setIsReady(true);
+    }
+  }, [props.isScrolling, isReady]);
+
+  if (!isReady) {
+    if (props.viewMode === "list") {
+      return <SkeletonRow />;
+    }
+    return <SkeletonCard />;
+  }
+
+  // Omit isScrolling so the memoized inner component doesn't re-render 
+  // on every scroll frame when already ready.
+  const { isScrolling, ...innerProps } = props;
+  return <FileItemInner {...innerProps} />;
+}
 FileItem.displayName = "FileItem";

@@ -58,6 +58,8 @@ import { useDownload } from "@/contexts/DownloadContext";
 import { usePreview } from "@/contexts/PreviewContext";
 import { useDropzone } from "react-dropzone";
 import { FileItem } from "@/components/dashboard/FileItem";
+import { SkeletonRow } from "@/components/dashboard/SkeletonRow";
+import { SkeletonCard } from "@/components/dashboard/SkeletonCard";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { useSession } from "@/lib/auth/client";
 import { useFileSync } from "@/hooks/useFileSync";
@@ -875,7 +877,7 @@ export default function FilesPage() {
     count: table.getRowModel().rows.length,
     estimateSize: () => 53,
     scrollMargin,
-    overscan: 10,
+    overscan: 40,
   });
 
   const virtualRows = rowVirtualizer.getVirtualItems();
@@ -945,8 +947,14 @@ export default function FilesPage() {
     count: gridRows.length,
     estimateSize: () => 220,
     scrollMargin: gridScrollMargin,
-    overscan: 5,
+    overscan: 10,
   });
+
+  // ── Scrolling state ────────────────────────────────────────────────────────────
+  // Passed to FileItem so it can skip expensive thumbnail loading during scroll
+  // while keeping the row structure mounted (prevents abort of in-flight requests).
+  const listIsScrolling = rowVirtualizer.isScrolling;
+  const gridIsScrolling = gridVirtualizer.isScrolling;
 
   // ── Selection ──────────────────────────────────────────────────────────────
 
@@ -1759,6 +1767,7 @@ export default function FilesPage() {
                       item={item}
                       viewMode="list"
                       currentPrefix={currentPrefix}
+                      isScrolling={listIsScrolling}
                       onNavigate={isFolder ? navigateToFolder : undefined}
                       onPreview={!isFolder ? handlePreview : undefined}
                       onDownload={!isFolder ? handleDownload : undefined}
@@ -1845,6 +1854,7 @@ export default function FilesPage() {
                         item={item}
                         viewMode="grid"
                         currentPrefix={currentPrefix}
+                        isScrolling={gridIsScrolling}
                         onNavigate={isFolder ? navigateToFolder : undefined}
                         onPreview={!isFolder ? handlePreview : undefined}
                         onDownload={!isFolder ? handleDownload : undefined}
