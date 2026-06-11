@@ -7,7 +7,12 @@ PORT=3000
 HOST="http://localhost:$PORT"
 
 # The secret must match CRON_SECRET in your .env.local file
-SECRET="development_secret_123"
+SECRET="${CRON_SECRET:-$(grep '^CRON_SECRET=' .env.local 2>/dev/null | cut -d'=' -f2-)}"
+
+if [ -z "$SECRET" ]; then
+    echo "❌  CRON_SECRET is not set. Add it to .env.local or export it."
+    exit 1
+fi
 
 if [ -z "$1" ]; then
     echo "Usage: ./run-cron.sh <job>"

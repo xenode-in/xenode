@@ -18,7 +18,7 @@ npm run test:watch   # vitest watch
 npm run test:coverage
 npm run dev:worker   # tsx watch worker/index.ts  (BullMQ background worker)
 
-# Cron helpers — assume CRON_SECRET=development_secret_123 locally
+# Cron helpers — reads CRON_SECRET from .env.local automatically
 npm run cron:expire  # hits /api/cron/expire-plans
 npm run cron:charge  # hits the legacy PayU recurring-charge endpoint
 

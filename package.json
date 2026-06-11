@@ -10,9 +10,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "cron:expire": "node -e \"fetch('http://localhost:3000/api/cron/expire-plans', { headers: { Authorization: 'Bearer development_secret_123' } }).then(r=>r.text()).then(console.log)\"",
-    "cron:purge-bin": "node -e \"fetch('http://localhost:3000/api/cron/purge-bin', { headers: { Authorization: 'Bearer development_secret_123' } }).then(r=>r.text()).then(console.log)\"",
-    "cron:charge": "node -e \"fetch('http://localhost:3000/api/payment/payu/charge-recurring', { method: 'POST', headers: { Authorization: 'Bearer development_secret_123' } }).then(r=>r.text()).then(console.log)\"",
+    "cron:expire": "node scripts/cron-trigger.mjs expire-plans",
+    "cron:purge-bin": "node scripts/cron-trigger.mjs purge-bin",
+    "cron:charge": "node scripts/cron-trigger.mjs charge-recurring",
     "dev:worker": "tsx watch worker/index.ts",
     "postinstall": "mkdir -p public/ffmpeg && cp node_modules/@ffmpeg/core/dist/umd/ffmpeg-core.* public/ffmpeg/"
   },

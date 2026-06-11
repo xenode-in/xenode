@@ -1,64 +1,163 @@
 version: "3.8"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Xenode — Production Docker Compose
+#
+# MongoDB, Redis, and B2 storage are external managed services.
+# All connection strings and secrets come from environment variables
+# (set in Coolify or a .env file alongside this compose file).
+#
+# Required env vars — set all of these in Coolify:
+#
+#   NEXT_PUBLIC_APP_URL       Public URL of the app (e.g. https://xenode.app)
+#
+#   MONGODB_URI               MongoDB Atlas / self-hosted connection string
+#   MONGODB_LOGS_URI          Separate DB for logs (can be same cluster)
+#   REDIS_URL                 Redis connection URL (e.g. redis://host:6379)
+#
+#   BETTER_AUTH_SECRET        32+ char secret for session token signing
+#
+#   ADMIN_USERNAME            Initial super-admin username
+#   ADMIN_PASSWORD            Initial super-admin password
+#   ADMIN_JWT_SECRET          32+ char secret for admin JWT sessions
+#
+#   B2_APPLICATION_KEY_ID     Backblaze B2 private key ID
+#   B2_APPLICATION_KEY        Backblaze B2 private application key
+#   B2_BUCKET_ID              Backblaze B2 private bucket ID
+#   B2_BUCKET_NAME            Backblaze B2 private bucket name
+#
+#   S3_KEY_ID                 Public storage key ID (Zata.ai / B2 public bucket)
+#   S3_APPLICATION_KEY        Public storage application key
+#   PUBLIC_S3_BUCKET          Public bucket name (default: xenopublic)
+#   PUBLIC_S3_ENDPOINT        Public storage endpoint (default: https://idr01.zata.ai)
+#
+#   RESEND_API_KEY            Resend transactional email API key
+#
+#   CRON_SECRET               Random secret for cron job auth (Bearer token)
+#
+#   RAZORPAY_KEY_ID           Razorpay key ID
+#   RAZORPAY_KEY_SECRET       Razorpay key secret
+#   RAZORPAY_WEBHOOK_SECRET   Webhook signature secret
+#   RAZORPAY_SUBSCRIPTION_WEBHOOK_SECRET  Subscription webhook secret
+#   NEXT_PUBLIC_RAZORPAY_KEY_ID           Razorpay key ID (browser-visible)
+#
+# Optional env vars:
+#   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET   Google OAuth
+#   GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET   GitHub OAuth
+#   NEXT_PUBLIC_POSTHOG_KEY                   PostHog analytics
+#   NEXT_PUBLIC_POSTHOG_HOST
+#   POSTHOG_KEY
+# ─────────────────────────────────────────────────────────────────────────────
+
 services:
+  # ── Next.js app ─────────────────────────────────────────────────────────────
   app:
     build:
       context: .
       dockerfile: Dockerfile
     restart: always
     ports:
-      - 3000:3000
+      - "3000:3000"
     environment:
-      - MONGODB_URI=mongodb://mongo:27017/Xenode
-      - MONGODB_LOGS_URI=mongodb://mongo-logs:27017/Xenode-logs
-      - REDIS_URL=redis://redis:6379
-      - NEXT_TELEMETRY_DISABLED=1
-      # Optional: PostHog
-      - NEXT_PUBLIC_POSTHOG_KEY=${NEXT_PUBLIC_POSTHOG_KEY}
-      - POSTHOG_KEY=${POSTHOG_KEY}
-      - NEXT_PUBLIC_POSTHOG_HOST=${NEXT_PUBLIC_POSTHOG_HOST}
-    depends_on:
-      - mongo
-      - mongo-logs
-      - redis
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
 
+      # ── App ───────────────────────────────────────────────────────────────
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+
+      # ── Database & Cache (external managed services) ───────────────────────
+      MONGODB_URI: ${MONGODB_URI}
+      MONGODB_LOGS_URI: ${MONGODB_LOGS_URI}
+      REDIS_URL: ${REDIS_URL}
+
+      # ── Auth ──────────────────────────────────────────────────────────────
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+
+      # ── Admin panel ────────────────────────────────────────────────────────
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET}
+
+      # ── Backblaze B2 private storage ───────────────────────────────────────
+      B2_APPLICATION_KEY_ID: ${B2_APPLICATION_KEY_ID}
+      B2_APPLICATION_KEY: ${B2_APPLICATION_KEY}
+      B2_BUCKET_ID: ${B2_BUCKET_ID}
+      B2_BUCKET_NAME: ${B2_BUCKET_NAME}
+
+      # ── Public storage (Zata.ai / B2 public bucket) ────────────────────────
+      S3_KEY_ID: ${S3_KEY_ID}
+      S3_APPLICATION_KEY: ${S3_APPLICATION_KEY}
+      PUBLIC_S3_BUCKET: ${PUBLIC_S3_BUCKET:-xenopublic}
+      PUBLIC_S3_ENDPOINT: ${PUBLIC_S3_ENDPOINT:-https://idr01.zata.ai}
+
+      # ── Email ──────────────────────────────────────────────────────────────
+      RESEND_API_KEY: ${RESEND_API_KEY}
+
+      # ── Cron ───────────────────────────────────────────────────────────────
+      CRON_SECRET: ${CRON_SECRET}
+
+      # ── Payments (Razorpay) ────────────────────────────────────────────────
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET}
+      RAZORPAY_SUBSCRIPTION_WEBHOOK_SECRET: ${RAZORPAY_SUBSCRIPTION_WEBHOOK_SECRET}
+      NEXT_PUBLIC_RAZORPAY_KEY_ID: ${NEXT_PUBLIC_RAZORPAY_KEY_ID}
+
+      # ── OAuth (optional) ───────────────────────────────────────────────────
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+
+      # ── Analytics (optional) ───────────────────────────────────────────────
+      NEXT_PUBLIC_POSTHOG_KEY: ${NEXT_PUBLIC_POSTHOG_KEY:-}
+      NEXT_PUBLIC_POSTHOG_HOST: ${NEXT_PUBLIC_POSTHOG_HOST:-https://us.i.posthog.com}
+      POSTHOG_KEY: ${POSTHOG_KEY:-}
+
+  # ── BullMQ background worker ─────────────────────────────────────────────
   worker:
     build:
       context: .
       dockerfile: Dockerfile.worker
     restart: always
     environment:
-      - MONGODB_URI=mongodb://mongo:27017/Xenode
-      - REDIS_URL=redis://redis:6379
+      NODE_ENV: production
+      MONGODB_URI: ${MONGODB_URI}
+      REDIS_URL: ${REDIS_URL}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+      B2_APPLICATION_KEY_ID: ${B2_APPLICATION_KEY_ID}
+      B2_APPLICATION_KEY: ${B2_APPLICATION_KEY}
+      B2_BUCKET_ID: ${B2_BUCKET_ID}
+      B2_BUCKET_NAME: ${B2_BUCKET_NAME}
+
+  # ── Cron sidecar ────────────────────────────────────────────────────────────
+  # Tiny alpine container (no build) that fires HTTP cron jobs on a schedule.
+  # Docker Compose expands ${CRON_SECRET} into the command at startup, so the
+  # actual secret value is written directly into the crontab (crond never
+  # sees the variable name — just the value).
+  cron:
+    image: alpine:3.19
+    restart: unless-stopped
     depends_on:
-      - mongo
-      - redis
+      - app
+    environment:
+      CRON_SECRET: ${CRON_SECRET}
+    entrypoint:
+      - sh
+      - -c
+      - |
+        apk add --no-cache curl --quiet
+        printf '%s\n' \
+          '# ── Test ping (every minute) — remove once cron is confirmed working ──' \
+          '*  *  * * *  curl -sf -X GET  http://app:3000/api/cron/ping                      -H "Authorization: Bearer '"${CRON_SECRET}"'" | head -c 200' \
+          '# ── Production jobs ───────────────────────────────────────────────────' \
+          '0  0  * * *  curl -sf -X GET  http://app:3000/api/cron/expire-plans             -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
+          '0  3  * * *  curl -sf -X GET  http://app:3000/api/cron/purge-bin                -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
+          '30 9  * * *  curl -sf -X POST http://app:3000/api/payment/payu/charge-recurring -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
+          > /etc/crontabs/root
+        echo "=== Cron sidecar ready. Jobs ==="
+        cat /etc/crontabs/root
+        crond -f -l 6
 
-  redis:
-    image: redis:7-alpine
-    restart: always
-    ports:
-      - 6379:6379
-    volumes:
-      - redis-data:/data
-
-  mongo:
-    image: mongo
-    restart: always
-    ports:
-      - 27017:27017
-    volumes:
-      - mongo-data:/data/db
-
-  mongo-logs:
-    image: mongo
-    restart: always
-    ports:
-      - 27018:27017
-    volumes:
-      - mongo-logs-data:/data/db
-
-volumes:
-  mongo-data:
-  mongo-logs-data:
-  redis-data:
