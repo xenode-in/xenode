@@ -1,7 +1,7 @@
 import React from "react";
-import { motion } from "framer-motion";
+import { motion, SVGMotionProps } from "framer-motion";
 
-export const AnimatedGivingHeart: React.FC<React.SVGProps<SVGSVGElement>> = (
+export const AnimatedGivingHeart: React.FC<SVGMotionProps<SVGSVGElement>> = (
   props,
 ) => {
   return (

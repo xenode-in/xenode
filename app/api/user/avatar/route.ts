@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/lib/auth/server";
+import { getAuth } from "@/lib/auth";
 import { uploadObject } from "@/lib/b2/objects";
 import { getPublicB2Url, getSignedFileUrl } from "@/lib/b2/cdn";
 import { getPublicS3Client } from "@/lib/b2/client";
@@ -8,6 +8,7 @@ const PUBLIC_BUCKET_NAME = process.env.PUBLIC_S3_BUCKET || "xenopublic";
 
 export async function POST(req: NextRequest) {
   // Check if user is authenticated (using Better Auth)
+  const auth = getAuth();
   const session = await auth.api.getSession({
     headers: req.headers,
   });

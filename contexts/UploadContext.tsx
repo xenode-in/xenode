@@ -346,7 +346,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 : t,
             ),
           );
-          uploadFile = await optimizeVideoForStreaming(task.file);
+          const optResult = await optimizeVideoForStreaming(task.file);
+          uploadFile = optResult.file;
           console.log(`[Upload] ✅ Faststart step done (${task.file.name}, same file: ${uploadFile === task.file})`);
         }
 

@@ -1,5 +1,5 @@
 import React from "react";
-import { motion } from "framer-motion";
+import { motion, Variants } from "framer-motion";
 
 interface ForgotPasswordGraphicProps {
   className?: string;
@@ -9,7 +9,7 @@ const ForgotPasswordGraphic: React.FC<ForgotPasswordGraphicProps> = ({ className
   // --- Animation Variants ---
 
   // Opacity-based typing effect to prevent transform-origin scaling issues
-  const dotVariants = {
+  const dotVariants: Variants = {
     hidden: { opacity: 0 },
     visible: (i: number) => ({
       opacity: [0, 1, 1, 0],
@@ -24,7 +24,7 @@ const ForgotPasswordGraphic: React.FC<ForgotPasswordGraphicProps> = ({ className
   };
 
   // Simple floating (y-axis only) to preserve exact path positioning
-  const floatVariants = {
+  const floatVariants: Variants = {
     animate: {
       y: [0, -8, 0],
       transition: {
@@ -36,7 +36,7 @@ const ForgotPasswordGraphic: React.FC<ForgotPasswordGraphicProps> = ({ className
   };
 
   // Subtle breathing effect on the wrapper
-  const breathingVariants = {
+  const breathingVariants: Variants = {
     animate: {
       y: [0, 3, 0],
       transition: {
