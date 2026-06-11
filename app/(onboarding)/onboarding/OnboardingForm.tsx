@@ -26,6 +26,8 @@ import {
   Loader2,
   Eye,
   EyeOff,
+  RefreshCw,
+  Upload,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { WelcomeBalloons } from "@/components/onboarding/WelcomeBalloons";
@@ -46,6 +48,8 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
+import AnimatedGivingHeart from "@/components/onboarding/AnimatedWelcome";
+import ForgotPasswordGraphic from "@/components/onboarding/ForgotPasswordGraphic";
 
 // ─── Schema ─────────────────────────────────────────────────────────────────────────────────
 
@@ -53,6 +57,7 @@ const onboardingSchema = z.object({
   theme: z.enum(["light", "dark", "system"]),
   encryptByDefault: z.boolean(),
   selectedPlan: z.string(),
+  avatarUrl: z.string().optional(),
 });
 
 type OnboardingValues = z.infer<typeof onboardingSchema>;
@@ -67,8 +72,8 @@ export function OnboardingForm() {
   const [isPending, startTransition] = useTransition();
   const [mounted, setMounted] = useState(false);
 
-  // Steps: 1=Welcome 2=Recovery Kit 3=Preferences 4=Well Done
-  const totalSteps = 4;
+  // Steps: 1=Welcome 2=Recovery Kit 3=Preferences 4=Choose Avatar 5=Well Done
+  const totalSteps = 5;
   const [step, setStep] = useState(1);
 
   // Vault password (read from session storage invisibly)
@@ -84,6 +89,14 @@ export function OnboardingForm() {
   // Plans fetched from DB
   const [plans, setPlans] = useState<IPlan[]>([]);
   const [plansLoading, setPlansLoading] = useState(true);
+
+  // Avatar states
+  const [randomAvatars, setRandomAvatars] = useState<string[]>([]);
+  const [customAvatarPreview, setCustomAvatarPreview] = useState<string | null>(
+    null,
+  );
+  const [customAvatarFile, setCustomAvatarFile] = useState<File | null>(null);
+  const [isFetchingAvatars, setIsFetchingAvatars] = useState(false);
 
   useEffect(() => {
     setMounted(true);
@@ -133,8 +146,43 @@ export function OnboardingForm() {
       theme: (theme as "light" | "dark" | "system") || "system",
       encryptByDefault: true,
       selectedPlan: "free",
+      avatarUrl: "",
     },
   });
+
+  const fetchRandomAvatars = useCallback(async () => {
+    setIsFetchingAvatars(true);
+    try {
+      const res = await fetch("/api/avatars");
+      const data = await res.json();
+      if (data.avatars) {
+        setRandomAvatars(data.avatars);
+        if (!form.getValues("avatarUrl") && !customAvatarPreview) {
+          form.setValue("avatarUrl", data.avatars[0]);
+        }
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsFetchingAvatars(false);
+    }
+  }, [form, customAvatarPreview]);
+
+  useEffect(() => {
+    if (step === 4 && randomAvatars.length === 0) {
+      fetchRandomAvatars();
+    }
+  }, [step, randomAvatars.length, fetchRandomAvatars]);
+
+  const handleCustomAvatarSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setCustomAvatarFile(file);
+      const url = URL.createObjectURL(file);
+      setCustomAvatarPreview(url);
+      form.setValue("avatarUrl", "custom");
+    }
+  };
 
   const selectedPlan = form.watch("selectedPlan");
   const isPaidPlan = selectedPlan !== "free";
@@ -189,10 +237,28 @@ export function OnboardingForm() {
         sessionStorage.removeItem("xenode-vault-pw");
 
         // 3. Mark onboarded + save preferences
+        let finalAvatarUrl = data.avatarUrl;
+
+        if (customAvatarFile && data.avatarUrl === "custom") {
+          const formData = new FormData();
+          formData.append("file", customAvatarFile);
+          const uploadRes = await fetch("/api/user/avatar", {
+            method: "POST",
+            body: formData,
+          });
+          if (uploadRes.ok) {
+            const uploadData = await uploadRes.json();
+            finalAvatarUrl = uploadData.url;
+          }
+        }
+
         const result = await authClient.updateUser({
           // @ts-expect-error additionalFields
           onboarded: true,
           encryptByDefault: data.encryptByDefault,
+          ...(finalAvatarUrl && finalAvatarUrl !== "custom"
+            ? { image: finalAvatarUrl }
+            : {}),
         });
         if (result.error)
           throw new Error(result.error.message || "Failed to save preferences");
@@ -283,22 +349,30 @@ export function OnboardingForm() {
                         Welcome into Xenode!
                       </h2>
                       <p className="text-muted-foreground px-4 text-balance">
-                        We&apos;re thrilled to have you. Let&apos;s get your account
-                        personalized and set up perfectly for your needs in just
-                        a few clicks.
+                        We&apos;re thrilled to have you. Let&apos;s get your
+                        account personalized and set up perfectly for your needs
+                        in just a few clicks.
                       </p>
                     </div>
                     {!vaultPassword && (
                       <div className="w-full max-w-sm space-y-4 text-left mt-4 border border-border bg-card p-4 rounded-xl shadow-sm">
                         <p className="text-xs text-muted-foreground text-center mb-2">
-                          Please set a Master Password to encrypt and secure your end-to-end encrypted E2EE vault.
+                          Please set a Master Password to encrypt and secure
+                          your end-to-end encrypted E2EE vault.
                         </p>
                         <div className="space-y-1.5">
-                          <label className="text-sm font-semibold" htmlFor="onboarding-password">Master Password</label>
+                          <label
+                            className="text-sm font-semibold"
+                            htmlFor="onboarding-password"
+                          >
+                            Master Password
+                          </label>
                           <div className="relative">
                             <Input
                               id="onboarding-password"
-                              type={showOnboardingPassword ? "text" : "password"}
+                              type={
+                                showOnboardingPassword ? "text" : "password"
+                              }
                               placeholder="Enter a secure password"
                               value={inputPassword}
                               onChange={(e) => setInputPassword(e.target.value)}
@@ -306,15 +380,28 @@ export function OnboardingForm() {
                             />
                             <button
                               type="button"
-                              onClick={() => setShowOnboardingPassword(!showOnboardingPassword)}
+                              onClick={() =>
+                                setShowOnboardingPassword(
+                                  !showOnboardingPassword,
+                                )
+                              }
                               className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                             >
-                              {showOnboardingPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                              {showOnboardingPassword ? (
+                                <EyeOff className="w-4 h-4" />
+                              ) : (
+                                <Eye className="w-4 h-4" />
+                              )}
                             </button>
                           </div>
                         </div>
                         <div className="space-y-1.5">
-                          <label className="text-sm font-semibold" htmlFor="onboarding-confirm-password">Confirm Password</label>
+                          <label
+                            className="text-sm font-semibold"
+                            htmlFor="onboarding-confirm-password"
+                          >
+                            Confirm Password
+                          </label>
                           <Input
                             id="onboarding-confirm-password"
                             type="password"
@@ -340,9 +427,7 @@ export function OnboardingForm() {
                     className="space-y-4"
                   >
                     <div className="flex flex-col items-center text-center space-y-2">
-                      <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10">
-                        <ShieldCheck className="h-7 w-7 text-primary" />
-                      </div>
+                      <ForgotPasswordGraphic className="h-64 w-auto drop-shadow-sm my-4" />
                       <h2 className="text-2xl font-bold">
                         Save your Recovery Kit
                       </h2>
@@ -516,7 +601,7 @@ export function OnboardingForm() {
                   </motion.div>
                 )}
 
-                {/* ───── STEP 4: Well Done ───── */}
+                {/* ───── STEP 4: Choose Avatar ───── */}
                 {step === 4 && (
                   <motion.div
                     key="step4"
@@ -524,16 +609,194 @@ export function OnboardingForm() {
                     initial="hidden"
                     animate="visible"
                     exit="exit"
+                    className="space-y-6"
+                  >
+                    <div className="text-center space-y-2">
+                      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 mx-auto">
+                        {/* Show selected avatar preview or a generic icon */}
+                        {form.watch("avatarUrl") &&
+                        form.watch("avatarUrl") !== "custom" ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={form.watch("avatarUrl")}
+                            alt="Selected avatar"
+                            className="w-full h-full rounded-full object-cover"
+                          />
+                        ) : customAvatarPreview ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={customAvatarPreview}
+                            alt="Custom avatar"
+                            className="w-full h-full rounded-full object-cover"
+                          />
+                        ) : (
+                          <Upload className="h-7 w-7 text-primary" />
+                        )}
+                      </div>
+                      <h2 className="text-2xl font-bold">Choose your Avatar</h2>
+                      <p className="text-muted-foreground text-sm">
+                        Pick one that feels like you, or upload your own photo.
+                      </p>
+                    </div>
+
+                    <FormField
+                      control={form.control}
+                      name="avatarUrl"
+                      render={({ field }) => (
+                        <FormItem className="space-y-4">
+                          <div className="flex items-center justify-between">
+                            <FormLabel className="font-semibold text-sm text-muted-foreground uppercase tracking-wide">
+                              Random picks
+                            </FormLabel>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={fetchRandomAvatars}
+                              disabled={isFetchingAvatars}
+                              className="h-8 px-3 text-muted-foreground hover:text-foreground"
+                            >
+                              <RefreshCw
+                                className={`h-3.5 w-3.5 mr-1.5 ${isFetchingAvatars ? "animate-spin" : ""}`}
+                              />
+                              Randomize
+                            </Button>
+                          </div>
+
+                          <FormControl>
+                            <div className="space-y-4">
+                              {isFetchingAvatars &&
+                              randomAvatars.length === 0 ? (
+                                <div className="flex flex-wrap gap-3">
+                                  {Array.from({ length: 10 }).map((_, i) => (
+                                    <div
+                                      key={i}
+                                      className="w-14 h-14 rounded-full bg-muted animate-pulse"
+                                    />
+                                  ))}
+                                </div>
+                              ) : (
+                                <RadioGroup
+                                  onValueChange={(val) => {
+                                    field.onChange(val);
+                                    if (val !== "custom") {
+                                      setCustomAvatarPreview(null);
+                                      setCustomAvatarFile(null);
+                                    }
+                                  }}
+                                  value={field.value}
+                                  className="flex flex-wrap gap-3"
+                                >
+                                  {randomAvatars.map((url) => (
+                                    <FormItem key={url} className="relative">
+                                      <FormControl>
+                                        <RadioGroupItem
+                                          value={url}
+                                          className="sr-only"
+                                        />
+                                      </FormControl>
+                                      <FormLabel className="cursor-pointer block">
+                                        <div
+                                          className={`w-14 h-14 rounded-full overflow-hidden border-2 transition-all duration-150 ${
+                                            field.value === url
+                                              ? "border-primary ring-2 ring-primary/30 scale-110 shadow-lg"
+                                              : "border-transparent opacity-60 hover:opacity-100 hover:scale-105"
+                                          }`}
+                                        >
+                                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                                          <img
+                                            src={url}
+                                            alt="Avatar option"
+                                            className="w-full h-full object-cover bg-muted"
+                                          />
+                                        </div>
+                                      </FormLabel>
+                                    </FormItem>
+                                  ))}
+
+                                  {/* Custom upload tile */}
+                                  <FormItem className="relative">
+                                    <FormControl>
+                                      <RadioGroupItem
+                                        value="custom"
+                                        className="sr-only"
+                                      />
+                                    </FormControl>
+                                    <FormLabel className="cursor-pointer block">
+                                      <label
+                                        htmlFor="custom-avatar-input"
+                                        className="cursor-pointer"
+                                      >
+                                        <div
+                                          className={`w-14 h-14 rounded-full overflow-hidden border-2 flex items-center justify-center transition-all duration-150 ${
+                                            field.value === "custom"
+                                              ? "border-primary ring-2 ring-primary/30 scale-110 shadow-lg bg-primary/5"
+                                              : "border-dashed border-muted-foreground/40 opacity-60 hover:opacity-100 hover:scale-105 bg-muted/30"
+                                          }`}
+                                        >
+                                          {customAvatarPreview ? (
+                                            // eslint-disable-next-line @next/next/no-img-element
+                                            <img
+                                              src={customAvatarPreview}
+                                              alt="Custom avatar"
+                                              className="w-full h-full object-cover"
+                                            />
+                                          ) : (
+                                            <Upload className="h-5 w-5 text-muted-foreground" />
+                                          )}
+                                        </div>
+                                      </label>
+                                    </FormLabel>
+                                    <Input
+                                      id="custom-avatar-input"
+                                      type="file"
+                                      accept="image/*"
+                                      className="hidden"
+                                      onChange={handleCustomAvatarSelect}
+                                      onClick={(e) => {
+                                        (e.target as HTMLInputElement).value =
+                                          "";
+                                      }}
+                                    />
+                                  </FormItem>
+                                </RadioGroup>
+                              )}
+
+                              {field.value === "custom" &&
+                                !customAvatarPreview && (
+                                  <p className="text-sm text-muted-foreground">
+                                    Click the upload tile above to choose a
+                                    photo from your device.
+                                  </p>
+                                )}
+                            </div>
+                          </FormControl>
+                        </FormItem>
+                      )}
+                    />
+                  </motion.div>
+                )}
+
+                {/* ───── STEP 5: Well Done ───── */}
+                {step === 5 && (
+                  <motion.div
+                    key="step5"
+                    variants={slideVariants}
+                    initial="hidden"
+                    animate="visible"
+                    exit="exit"
                     className="flex flex-col items-center text-center space-y-6 py-6"
                   >
-                    <WellDone className="h-64 w-auto drop-shadow-sm" />
+                    <AnimatedGivingHeart className="h-64 w-auto drop-shadow-sm" />
                     <div className="space-y-2">
-                      <h2 className="text-3xl font-bold">You&apos;re All Set!</h2>
+                      <h2 className="text-3xl font-bold">
+                        You&apos;re All Set!
+                      </h2>
                       <p className="text-muted-foreground">
                         Your vault is protected and your workspace is ready.
                         {isPaidPlan
                           ? " One last step — complete your payment to activate your plan."
-                          : " Let&apos;s start uploading and sharing files securely."}
+                          : " Let's start uploading and sharing files securely."}
                       </p>
                     </div>
                   </motion.div>

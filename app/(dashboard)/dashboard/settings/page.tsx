@@ -10,6 +10,7 @@ import { PasswordSettingsSection } from "@/components/settings/PasswordSettingsS
 import { TwoFactorSettingsSection } from "@/components/settings/TwoFactorSettingsSection";
 import { PasskeySettingsSection } from "@/components/settings/PasskeySettingsSection";
 import { SessionsSettingsSection } from "@/components/settings/SessionsSettingsSection";
+import { AvatarSettingsSection } from "@/components/settings/AvatarSettingsSection";
 
 export default async function SettingsPage() {
   const session = await requireAuth();
@@ -40,6 +41,7 @@ export default async function SettingsPage() {
           Profile
         </h3>
         <div className="space-y-4">
+          <AvatarSettingsSection />
           <div className="flex items-center justify-between py-3 border-b border-border">
             <div>
               <p className="text-sm text-muted-foreground">Name</p>
