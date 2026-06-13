@@ -53,6 +53,9 @@ RUN chown nextjs:nodejs .next
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# Include CLI upload script for server-side file uploads
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/cli-upload.js ./scripts/cli-upload.js
+
 USER nextjs
 
 EXPOSE 3000

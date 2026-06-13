@@ -20,10 +20,15 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
-// ── Load .env.local ─────────────────────────────────────────────────────────
-const envPath = path.resolve(__dirname, "..", ".env.local");
-if (fs.existsSync(envPath)) {
-  const envContent = fs.readFileSync(envPath, "utf-8");
+// ── Load .env.local (skipped in Docker where env vars are already injected) ─
+const envCandidates = [
+  path.resolve(__dirname, "..", ".env.local"),
+  path.resolve(__dirname, "..", ".env"),
+  path.resolve(__dirname, "..", ".env.production"),
+];
+const envFile = envCandidates.find((p) => fs.existsSync(p));
+if (envFile) {
+  const envContent = fs.readFileSync(envFile, "utf-8");
   for (const line of envContent.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
@@ -35,9 +40,10 @@ if (fs.existsSync(envPath)) {
       process.env[key] = value;
     }
   }
-  console.log("✓ Loaded .env.local");
+  console.log(`✓ Loaded ${path.basename(envFile)}`);
 } else {
-  console.warn("⚠ .env.local not found — using existing env vars");
+  // In Docker/Coolify, env vars are already set — this is expected
+  console.log("✓ Using environment variables (no .env file needed)");
 }
 
 // ── Parse CLI args ──────────────────────────────────────────────────────────

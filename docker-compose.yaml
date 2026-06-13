@@ -58,6 +58,9 @@ services:
     restart: always
     ports:
       - "3000:3000"
+    volumes:
+      # Mount a host directory so cli-upload.js can access files on the server
+      - ${UPLOAD_DIR:-/tmp/xenode-uploads}:/uploads
     environment:
       NODE_ENV: production
       NEXT_TELEMETRY_DISABLED: "1"
