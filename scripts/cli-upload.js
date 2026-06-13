@@ -422,7 +422,6 @@ async function main() {
   const ext = path.extname(fileName).toLowerCase();
   const mimeType = MIME_MAP[ext] || "application/octet-stream";
   const mediaCategory = getMediaCategory(mimeType);
-  const plainBuffer = fs.readFileSync(FILE_PATH);
 
   console.log(`\n📁 File:     ${fileName}`);
   console.log(`📦 Size:     ${(stats.size / 1024 / 1024).toFixed(2)} MB`);
@@ -548,19 +547,29 @@ async function main() {
     if (isStreamable || stats.size > 5 * 1024 * 1024) {
       // Chunked encryption (videos, audio, and large files)
       chunkSize = getAdaptiveChunkSize(stats.size, mimeType);
-      const enc = encryptFileChunked(plainBuffer, publicKeyDer, chunkSize);
-      encryptedDEK = enc.encryptedDEK;
-      chunkCount = enc.chunkCount;
-      chunkIvs = JSON.stringify(enc.chunkIvs);
+      chunkCount = Math.ceil(stats.size / chunkSize);
+      
+      const dekRaw = crypto.randomBytes(32);
+      encryptedDEK = toB64(rsaOaepEncrypt(publicKeyDer, dekRaw));
       uploadContentType = "application/octet-stream";
 
-      // Upload each chunk individually to S3
       console.log(`→ Uploading ${chunkCount} encrypted chunks...`);
       totalUploadSize = 0;
+      
+      const fd = fs.openSync(FILE_PATH, "r");
+      const ivs = [];
 
-      for (let i = 0; i < enc.encryptedChunks.length; i++) {
+      for (let i = 0; i < chunkCount; i++) {
+        const start = i * chunkSize;
+        const currentChunkSize = Math.min(chunkSize, stats.size - start);
+        const buffer = Buffer.alloc(currentChunkSize);
+        fs.readSync(fd, buffer, 0, currentChunkSize, start);
+        
+        const iv = crypto.randomBytes(12);
+        const chunkBuf = aesGcmEncrypt(dekRaw, iv, buffer);
+        ivs.push(toB64(iv));
+        
         const chunkKey = `${prefix}${storageFileName}_chunk_${i}`;
-        const chunkBuf = enc.encryptedChunks[i];
         totalUploadSize += chunkBuf.length;
 
         await s3.send(new PutObjectCommand({
@@ -575,9 +584,12 @@ async function main() {
         const pct = Math.round(((i + 1) / chunkCount) * 100);
         process.stdout.write(`\r  Chunks uploaded: ${i + 1}/${chunkCount} (${pct}%)`);
       }
+      fs.closeSync(fd);
+      chunkIvs = JSON.stringify(ivs);
       console.log("\n✓ All chunks uploaded");
     } else {
       // Single-blob encryption (small files)
+      const plainBuffer = fs.readFileSync(FILE_PATH);
       const dekRaw = crypto.randomBytes(32);
       const iv = crypto.randomBytes(12);
       const encrypted = aesGcmEncrypt(dekRaw, iv, plainBuffer);
@@ -601,12 +613,13 @@ async function main() {
     // Plaintext upload
     const objectKey = `${prefix}${storageFileName}`;
     console.log(`\n→ Uploading plaintext to S3: ${objectKey}`);
+    const fileStream = fs.createReadStream(FILE_PATH);
     await s3.send(new PutObjectCommand({
       Bucket: bucket.b2BucketId,
       Key: objectKey,
       ContentType: mimeType,
-      Body: plainBuffer,
-      ContentLength: plainBuffer.length,
+      Body: fileStream,
+      ContentLength: stats.size,
     }));
     console.log("✓ Upload complete");
   }
