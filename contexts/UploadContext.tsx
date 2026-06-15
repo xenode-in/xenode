@@ -17,6 +17,7 @@ import {
   encryptMetadataObject,
   encryptThumbnail,
 } from "@/lib/crypto/fileEncryption";
+import { failClosedOnEncryptionError } from "@/lib/crypto/encryptionPolicy";
 import { extractMetadata } from "@/lib/metadata/extractor";
 import { toB64 } from "@/lib/crypto/utils";
 import { optimizeVideoForStreaming } from "@/lib/video/faststart";
@@ -623,16 +624,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             chunkIvs = JSON.stringify(enc.chunkIvs);
             cipherChunkSize = chunkSize + 16;
           } catch (err) {
-            console.warn(
-              "[E2EE] Encryption failed, falling back to plaintext",
-              err,
-            );
-            uploadBody = uploadFile;
-            uploadContentType = uploadFile.type || "application/octet-stream";
-            encryptedDEK = undefined;
-            encryptedName = undefined;
-            chunkIvs = undefined;
-            chunkCount = Math.ceil(uploadFile.size / chunkSize);
+            failClosedOnEncryptionError(err);
           }
         }
 
@@ -1047,18 +1039,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             cryptoMetadataKeyRef.current!,
           );
         } catch (err) {
-          console.warn(
-            "[E2EE] Encryption failed, falling back to plaintext",
-            err,
-          );
-          uploadBody = task.file;
-          uploadContentType = task.file.type || "application/octet-stream";
-          encryptedDEK = undefined;
-          encryptedIV = undefined;
-          encryptedName = undefined;
-          chunkSize = undefined;
-          chunkCount = undefined;
-          chunkIvs = undefined;
+          failClosedOnEncryptionError(err);
         }
       }
 

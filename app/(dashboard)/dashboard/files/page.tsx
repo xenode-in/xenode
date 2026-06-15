@@ -50,6 +50,7 @@ import {
   RefreshCw,
   AlertTriangle,
   FolderOpen,
+  Filter,
 } from "lucide-react";
 import { ShareDialog, ShareableFile } from "@/components/share-dialog";
 import { useUpload } from "@/contexts/UploadContext";
@@ -112,6 +113,96 @@ interface BucketData {
 
 type SortField = "name" | "size" | "type" | "date";
 type SortDir = "asc" | "desc";
+type FilterType =
+  | "all"
+  | "folders"
+  | "images"
+  | "videos"
+  | "documents"
+  | "archives"
+  | "audio";
+
+const FILTER_OPTIONS: { value: FilterType; label: string }[] = [
+  { value: "all", label: "All files" },
+  { value: "folders", label: "Folders" },
+  { value: "images", label: "Images" },
+  { value: "videos", label: "Videos" },
+  { value: "documents", label: "Documents" },
+  { value: "archives", label: "Archives" },
+  { value: "audio", label: "Audio" },
+];
+
+function normalizeFilter(value: string | null): FilterType {
+  if (!value) return "all";
+  if (value === "folder" || value === "folders") return "folders";
+  if (value === "image" || value === "images") return "images";
+  if (value === "video" || value === "videos") return "videos";
+  if (value === "audio") return "audio";
+  if (value === "archive" || value === "archives") return "archives";
+  if (
+    [
+      "document",
+      "documents",
+      "pdf",
+      "word",
+      "excel",
+      "powerpoint",
+      "code",
+    ].includes(value)
+  ) {
+    return "documents";
+  }
+  return "all";
+}
+
+function matchesFilter(obj: ObjectData, filter: string): boolean {
+  if (filter === "all") return true;
+  const normalizedFilter = normalizeFilter(filter);
+  if (normalizedFilter === "folders") {
+    return obj.contentType === "application/x-directory";
+  }
+  if (obj.contentType === "application/x-directory") return false;
+
+  const contentType = obj.contentType.toLowerCase();
+  if (filter === "pdf") return contentType.includes("pdf");
+  if (filter === "word") return contentType.includes("word");
+  if (filter === "excel") {
+    return contentType.includes("excel") || contentType.includes("spreadsheet");
+  }
+  if (filter === "powerpoint") {
+    return (
+      contentType.includes("powerpoint") ||
+      contentType.includes("presentation")
+    );
+  }
+  if (filter === "code") {
+    return ["json", "javascript", "xml", "html", "css", "typescript"].some(
+      (value) => contentType.includes(value),
+    );
+  }
+  if (normalizedFilter === "images") return contentType.startsWith("image/");
+  if (normalizedFilter === "videos") return contentType.startsWith("video/");
+  if (normalizedFilter === "audio") return contentType.startsWith("audio/");
+  if (normalizedFilter === "archives") {
+    return ["zip", "tar", "rar", "7z", "gzip"].some((value) =>
+      contentType.includes(value),
+    );
+  }
+  return [
+    "pdf",
+    "word",
+    "document",
+    "text/",
+    "rtf",
+    "spreadsheet",
+    "excel",
+    "presentation",
+    "powerpoint",
+    "json",
+    "javascript",
+    "xml",
+  ].some((value) => contentType.includes(value));
+}
 
 // ─── Toolbar ──────────────────────────────────────────────────────────────────
 
@@ -134,6 +225,8 @@ function Toolbar({
   sortField,
   sortDir,
   onSort,
+  filterType,
+  onFilter,
 }: {
   selectedIds: Set<string>;
   allIds: string[];
@@ -153,6 +246,8 @@ function Toolbar({
   sortField: SortField;
   sortDir: SortDir;
   onSort: (field: SortField) => void;
+  filterType: FilterType;
+  onFilter: (filter: FilterType) => void;
 }) {
   const hasSelection = selectedIds.size > 0;
   const isAllSelected = allIds.length > 0 && selectedIds.size === allIds.length;
@@ -232,6 +327,41 @@ function Toolbar({
 
       {/* Standard buttons: Sort, View, New folder, Upload. Hide on mobile/tablet when there is active selection */}
       <div className={cn("items-center gap-2", hasSelection ? "hidden sm:flex" : "flex")}>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={cn(
+                "h-8 gap-1.5 hover:bg-secondary/60",
+                filterType === "all"
+                  ? "text-muted-foreground/60 hover:text-foreground"
+                  : "text-primary",
+              )}
+            >
+              <Filter className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">
+                {FILTER_OPTIONS.find((option) => option.value === filterType)
+                  ?.label || "Filter"}
+              </span>
+              <ChevronDown className="w-3 h-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-40">
+            {FILTER_OPTIONS.map((option) => (
+              <DropdownMenuItem
+                key={option.value}
+                onClick={() => onFilter(option.value)}
+                className={cn(
+                  filterType === option.value && "text-primary font-medium",
+                )}
+              >
+                {option.label}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
         {/* Sort dropdown */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -368,24 +498,42 @@ function Breadcrumbs({
 
 // ─── Empty State ──────────────────────────────────────────────────────────────
 
-function EmptyState({ onUpload }: { onUpload: () => void }) {
+function EmptyState({
+  onUpload,
+  isFiltered,
+  onClearFilter,
+}: {
+  onUpload: () => void;
+  isFiltered: boolean;
+  onClearFilter: () => void;
+}) {
   return (
     <div className="flex flex-col items-center justify-center py-24 px-4 text-center">
       <div className="w-16 h-16 rounded-2xl bg-secondary/40 border border-border flex items-center justify-center mb-4">
         <FolderOpen className="w-7 h-7 text-muted-foreground/30" />
       </div>
       <p className="text-sm font-medium text-foreground/60 mb-1">
-        This folder is empty
+        {isFiltered ? "No matching files" : "This folder is empty"}
       </p>
       <p className="text-xs text-muted-foreground/30 mb-5">
-        Upload files or create a new folder to get started
+        {isFiltered
+          ? "Try another file type or clear the current filter"
+          : "Upload files or create a new folder to get started"}
       </p>
       <Button
         size="sm"
-        onClick={onUpload}
+        onClick={isFiltered ? onClearFilter : onUpload}
         className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground h-8"
       >
-        <Upload className="w-3.5 h-3.5" /> Upload files
+        {isFiltered ? (
+          <>
+            <X className="w-3.5 h-3.5" /> Clear filter
+          </>
+        ) : (
+          <>
+            <Upload className="w-3.5 h-3.5" /> Upload files
+          </>
+        )}
       </Button>
     </div>
   );
@@ -463,7 +611,7 @@ export default function FilesPage() {
   const { data: session } = useSession();
   const userId = session?.user?.id || null;
 
-  const typeFilter = searchParams.get("type");
+  const typeFilter = searchParams.get("type") || "all";
 
   const { refetch } = useFileSync({
     bucketId,
@@ -471,22 +619,14 @@ export default function FilesPage() {
     fetchAll: true,
     sortBy: sortField,
     sortDir: sortDir,
-    mediaCategory: typeFilter,
   });
 
   const localFiles =
     useLiveQuery(() => {
       if (!userId || !bucketId) return [];
       const db = getDb(userId);
-      if (typeFilter) {
-        return db.files
-          .where("bucketId")
-          .equals(bucketId)
-          .filter((f) => f.mediaCategory === typeFilter)
-          .toArray();
-      }
       return db.files.where("bucketId").equals(bucketId).toArray();
-    }, [userId, bucketId, typeFilter]) || [];
+    }, [userId, bucketId]) || [];
 
   // Temporarily map Dexie models to the expected ObjectData array to minimize disruptions
   const objects = useMemo(() => {
@@ -638,8 +778,11 @@ export default function FilesPage() {
     const files: ObjectData[] = [];
 
     objects.forEach((obj) => {
-      if (typeFilter) {
-        if (obj.contentType !== "application/x-directory") {
+      if (typeFilter !== "all") {
+        if (!matchesFilter(obj, typeFilter)) return;
+        if (obj.contentType === "application/x-directory") {
+          folderMap.set(obj.key, obj);
+        } else {
           files.push(obj);
         }
         return;
@@ -1070,6 +1213,15 @@ export default function FilesPage() {
       localStorage.setItem("filesSortField", field);
       localStorage.setItem("filesSortDir", "asc");
     }
+  };
+
+  const handleFilter = (filter: FilterType) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (filter === "all") params.delete("type");
+    else params.set("type", filter);
+    setSelectedIds(new Set());
+    const query = params.toString();
+    router.replace(query ? `/dashboard/files?${query}` : "/dashboard/files");
   };
 
   // ── Actions ────────────────────────────────────────────────────────────────
@@ -1654,6 +1806,8 @@ export default function FilesPage() {
         sortField={sortField}
         sortDir={sortDir}
         onSort={handleSort}
+        filterType={normalizeFilter(typeFilter)}
+        onFilter={handleFilter}
       />
 
       {/* Error banner */}
@@ -1676,7 +1830,11 @@ export default function FilesPage() {
         className="bg-card/50 border border-border rounded-xl min-h-[500px] mt-4 relative overflow-visible"
       >
         {isEmpty ? (
-          <EmptyState onUpload={() => fileInputRef.current?.click()} />
+          <EmptyState
+            onUpload={() => fileInputRef.current?.click()}
+            isFiltered={typeFilter !== "all"}
+            onClearFilter={() => handleFilter("all")}
+          />
         ) : viewMode === "list" ? (
           <div className="w-full overflow-x-auto md:contents">
             <table className="w-full min-w-[750px] md:min-w-full caption-bottom text-sm">
