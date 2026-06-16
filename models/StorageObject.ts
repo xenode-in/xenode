@@ -302,6 +302,21 @@ StorageObjectSchema.index(
   { bucketId: 1, syncContentFp: 1 },
   { sparse: true },
 );
+// Atomic cross-device backup deduplication. The route still performs a cheap
+// pre-create lookup, while this unique partial index closes the race where two
+// devices finalize the same fingerprint simultaneously. Deleted objects are
+// excluded so restoring/re-uploading after Bin deletion remains possible.
+StorageObjectSchema.index(
+  { bucketId: 1, syncContentFp: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      syncContentFp: { $type: "string" },
+      deletedAt: null,
+    },
+    name: "active_sync_content_unique",
+  },
+);
 StorageObjectSchema.index(
   { bucketId: 1, syncMetaFp: 1 },
   { sparse: true },

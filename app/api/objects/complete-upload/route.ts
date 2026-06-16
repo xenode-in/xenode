@@ -3,13 +3,61 @@ import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
-import { incrementStorage, updateBucketStats } from "@/lib/metering/usage";
+import {
+  adjustStorageBytes,
+  incrementStorage,
+  updateBucketStats,
+} from "@/lib/metering/usage";
 import { getS3Client } from "@/lib/b2/client";
 import { HeadObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 
 export const dynamic = "force-dynamic";
 
-function getMediaCategory(mimeType: string): string {
+function belongsToUserPrefix(key: unknown, userId: string): key is string {
+  return typeof key === "string" && key.startsWith(`users/${userId}/`);
+}
+
+async function deleteUploadedKeys(
+  b2BucketId: string,
+  keys: unknown[],
+): Promise<void> {
+  const unique = Array.from(
+    new Set(keys.filter((key): key is string => typeof key === "string" && !!key)),
+  );
+  await Promise.all(
+    unique.map((Key) =>
+      getS3Client()
+        .send(new DeleteObjectCommand({ Bucket: b2BucketId, Key }))
+        .catch((err) =>
+          console.warn(`Failed to delete uploaded B2 object ${Key}:`, err),
+        ),
+    ),
+  );
+}
+
+type MediaCategory =
+  | "image"
+  | "video"
+  | "audio"
+  | "document"
+  | "pdf"
+  | "word"
+  | "excel"
+  | "powerpoint"
+  | "archive"
+  | "code"
+  | "other";
+
+function isDuplicateKeyError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === 11000
+  );
+}
+
+function getMediaCategory(mimeType: string): MediaCategory {
   if (!mimeType) return "other";
   mimeType = mimeType.toLowerCase();
   
@@ -77,6 +125,17 @@ export async function POST(request: NextRequest) {
     if (!objectKey.startsWith(`users/${userId}/`)) {
       return NextResponse.json(
         { error: "Invalid object key" },
+        { status: 403 },
+      );
+    }
+    const relatedKeys = [
+      optimizedKey,
+      thumbnail,
+      ...(Array.isArray(chunks) ? chunks.map((chunk) => chunk?.key) : []),
+    ].filter(Boolean);
+    if (relatedKeys.some((key) => !belongsToUserPrefix(key, userId))) {
+      return NextResponse.json(
+        { error: "Invalid related object key" },
         { status: 403 },
       );
     }
@@ -151,9 +210,12 @@ export async function POST(request: NextRequest) {
 
     if (existingObject) {
       const sizeDiff = size - existingObject.size;
+      if (sizeDiff !== 0) {
+        await adjustStorageBytes(userId, sizeDiff);
+      }
       existingObject.size = size;
       existingObject.contentType = contentType;
-      existingObject.mediaCategory = mediaCategory as any;
+      existingObject.mediaCategory = mediaCategory;
       existingObject.b2FileId = b2FileId;
       if (thumbnail) existingObject.thumbnail = thumbnail;
       if (isEncrypted) {
@@ -179,9 +241,17 @@ export async function POST(request: NextRequest) {
       if (parentObjectId) existingObject.parentObjectId = parentObjectId;
       if (syncContentFp) existingObject.syncContentFp = syncContentFp;
       if (syncMetaFp) existingObject.syncMetaFp = syncMetaFp;
-      await existingObject.save();
+      try {
+        await existingObject.save();
+      } catch (error) {
+        if (sizeDiff !== 0) {
+          await adjustStorageBytes(userId, -sizeDiff).catch((rollbackError) =>
+            console.error("Failed to roll back storage byte adjustment:", rollbackError),
+          );
+        }
+        throw error;
+      }
       if (sizeDiff !== 0) {
-        await incrementStorage(userId, sizeDiff);
         await updateBucketStats(bucketId, 0, sizeDiff);
       }
       return NextResponse.json({ object: existingObject });
@@ -201,18 +271,11 @@ export async function POST(request: NextRequest) {
         deletedAt: { $exists: false },
       });
       if (dupe) {
-        const orphanKeys = [objectKey, optimizedKey, thumbnail].filter(
-          Boolean,
-        ) as string[];
-        await Promise.all(
-          orphanKeys.map((Key) =>
-            getS3Client()
-              .send(new DeleteObjectCommand({ Bucket: bucket.b2BucketId, Key }))
-              .catch((err) =>
-                console.warn(`Failed to delete duplicate B2 object ${Key}:`, err),
-              ),
-          ),
-        );
+        await deleteUploadedKeys(bucket.b2BucketId, [
+          objectKey,
+          optimizedKey,
+          thumbnail,
+        ]);
         return NextResponse.json({ object: dupe });
       }
     }
@@ -224,50 +287,90 @@ export async function POST(request: NextRequest) {
           Key: optimizedKey,
         });
         await getS3Client().send(command);
-      } catch (err) {
+      } catch {
         console.warn(`Optimized file ${optimizedKey} not found in storage, continuing anyway.`);
       }
     }
 
-    const storageObject = await StorageObject.create({
-      bucketId,
-      userId,
-      key: objectKey,
-      size,
-      contentType: originalContentType ?? contentType ?? "application/octet-stream",
-      encryptedContentType: encryptedContentType ?? undefined,
-      mediaCategory,
-      b2FileId,
-      thumbnail,
-      isEncrypted: isEncrypted ?? false,
-      encryptedDEK: encryptedDEK ?? undefined,
-      iv: iv ?? undefined,
-      encryptedName: encryptedName ?? undefined,
-      chunkSize: chunkSize ?? undefined,
-      chunkCount: chunkCount ?? undefined,
-      chunkIvs: chunkIvs ?? undefined,
-      chunks: isChunked && chunks ? chunks : undefined,
-      encryptedMetadata: encryptedMetadata ?? undefined,
-      optimizedKey: optimizedKey ?? undefined,
-      optimizedSize: optimizedSize ?? undefined,
-      optimizedContentType: optimizedContentType ?? undefined,
-      optimizedIV: optimizedIV ?? undefined,
-      optimizedEncryptedDEK: optimizedEncryptedDEK ?? undefined,
-      aspectRatio: aspectRatio ?? undefined,
-      isSidecar: isSidecar ?? false,
-      parentObjectId: parentObjectId ?? undefined,
-      syncContentFp: syncContentFp ?? undefined,
-      syncMetaFp: syncMetaFp ?? undefined,
-      // Seed "recent" with the upload time so a never-opened file still has a
-      // sensible position; opening the file later bumps it via GET /[id].
-      lastAccessedAt: new Date(),
-    });
+    let storageObject;
+    try {
+      storageObject = await StorageObject.create({
+        bucketId,
+        userId,
+        key: objectKey,
+        size,
+        contentType:
+          originalContentType ?? contentType ?? "application/octet-stream",
+        encryptedContentType: encryptedContentType ?? undefined,
+        mediaCategory,
+        b2FileId,
+        thumbnail,
+        isEncrypted: isEncrypted ?? false,
+        encryptedDEK: encryptedDEK ?? undefined,
+        iv: iv ?? undefined,
+        encryptedName: encryptedName ?? undefined,
+        chunkSize: chunkSize ?? undefined,
+        chunkCount: chunkCount ?? undefined,
+        chunkIvs: chunkIvs ?? undefined,
+        chunks: isChunked && chunks ? chunks : undefined,
+        encryptedMetadata: encryptedMetadata ?? undefined,
+        optimizedKey: optimizedKey ?? undefined,
+        optimizedSize: optimizedSize ?? undefined,
+        optimizedContentType: optimizedContentType ?? undefined,
+        optimizedIV: optimizedIV ?? undefined,
+        optimizedEncryptedDEK: optimizedEncryptedDEK ?? undefined,
+        aspectRatio: aspectRatio ?? undefined,
+        isSidecar: isSidecar ?? false,
+        parentObjectId: parentObjectId ?? undefined,
+        syncContentFp: syncContentFp ?? undefined,
+        syncMetaFp: syncMetaFp ?? undefined,
+        // Seed "recent" with the upload time so a never-opened file still has a
+        // sensible position; opening the file later bumps it via GET /[id].
+        lastAccessedAt: new Date(),
+      });
+    } catch (error) {
+      if (!syncContentFp || !isDuplicateKeyError(error)) throw error;
 
-    await incrementStorage(userId, size, {
-      contentType: originalContentType ?? contentType,
-      bucketId,
-      isEncrypted,
-    });
+      const winner = await StorageObject.findOne({
+        bucketId,
+        syncContentFp,
+        deletedAt: { $exists: false },
+      });
+      if (!winner) throw error;
+
+      await deleteUploadedKeys(bucket.b2BucketId, [
+        objectKey,
+        optimizedKey,
+        thumbnail,
+      ]);
+      return NextResponse.json({ object: winner });
+    }
+
+    try {
+      await incrementStorage(userId, size, {
+        contentType: originalContentType ?? contentType,
+        bucketId,
+        isEncrypted,
+      });
+    } catch (error) {
+      // The blobs already exist and the metadata row was just created. Roll
+      // both back when quota rejects finalization so the client can surface a
+      // durable quota failure without leaking inaccessible encrypted objects.
+      await StorageObject.deleteOne({ _id: storageObject._id }).catch(
+        (rollbackError) =>
+          console.error(
+            `Failed to roll back StorageObject ${storageObject._id}:`,
+            rollbackError,
+          ),
+      );
+      await deleteUploadedKeys(bucket.b2BucketId, [
+        objectKey,
+        optimizedKey,
+        thumbnail,
+        ...(Array.isArray(chunks) ? chunks.map((chunk) => chunk?.key) : []),
+      ]);
+      throw error;
+    }
     await updateBucketStats(bucketId, 1, size);
 
     return NextResponse.json({ object: storageObject }, { status: 201 });

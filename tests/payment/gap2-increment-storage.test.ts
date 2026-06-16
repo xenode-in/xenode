@@ -88,4 +88,24 @@ describe("GAP-2 — incrementStorage Quota Ceiling", () => {
     expect(usage).not.toBeNull();
     expect(usage?.totalStorageBytes).toBe(500_000);
   });
+
+  it("atomically rejects concurrent uploads that would exceed quota", async () => {
+    const userId = makeUserId();
+    await createUsage({
+      userId,
+      totalStorageBytes: 0,
+      storageLimitBytes: 1_000,
+    });
+
+    const results = await Promise.allSettled([
+      incrementStorage(userId, 600),
+      incrementStorage(userId, 600),
+    ]);
+
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    const usage = await Usage.findOne({ userId });
+    expect(usage?.totalStorageBytes).toBe(600);
+    expect(usage?.totalObjects).toBe(1);
+  });
 });

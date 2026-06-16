@@ -12,13 +12,37 @@ import { captureEvent } from "@/lib/posthog";
  */
 export async function getOrCreateUsage(userId: string) {
   await dbConnect();
-  let usage = await Usage.findOne({ userId });
-  if (!usage) {
-    usage = await Usage.create({
-      userId,
-      plan: "free",
-      storageLimitBytes: FREE_TIER_LIMIT_BYTES,
-    });
+  return Usage.findOneAndUpdate(
+    { userId },
+    {
+      $setOnInsert: {
+        userId,
+        plan: "free",
+        storageLimitBytes: FREE_TIER_LIMIT_BYTES,
+      },
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
+}
+
+async function prepareUsageForStorageMutation(userId: string) {
+  const usage = await getOrCreateUsage(userId);
+  if (
+    usage.plan !== "free" &&
+    usage.planExpiresAt &&
+    usage.planExpiresAt < new Date()
+  ) {
+    await Usage.updateOne(
+      { userId },
+      {
+        $set: {
+          plan: "free",
+          storageLimitBytes: FREE_TIER_LIMIT_BYTES,
+          planPriceINR: 0,
+        },
+      },
+    );
+    usage.storageLimitBytes = FREE_TIER_LIMIT_BYTES;
   }
   return usage;
 }
@@ -68,7 +92,7 @@ export async function incrementStorage(
 ) {
   await dbConnect();
 
-  const usage = await Usage.findOne({ userId });
+  const usage = await prepareUsageForStorageMutation(userId);
 
   if (usage) {
     // Enforce plan expiry — downgrade to free if paid plan has expired
@@ -99,14 +123,23 @@ export async function incrementStorage(
     }
   }
 
+  const quotaFilter =
+    usage.storageLimitBytes === null
+      ? { userId }
+      : {
+          userId,
+          totalStorageBytes: { $lte: usage.storageLimitBytes - sizeBytes },
+        };
+
   const updatedUsage = await Usage.findOneAndUpdate(
-    { userId },
+    quotaFilter,
     {
       $inc: { totalStorageBytes: sizeBytes, totalObjects: 1, uploadCount: 1 },
       $set: { lastActiveAt: new Date() },
     },
-    { upsert: true, new: true }
+    { new: true }
   );
+  if (!updatedUsage) throw new Error("QUOTA_EXCEEDED");
 
   captureEvent(userId, "object_uploaded", {
     fileSizeMB: Number((sizeBytes / (1024 * 1024)).toFixed(2)),
@@ -115,6 +148,34 @@ export async function incrementStorage(
     isEncrypted: meta?.isEncrypted ?? false,
   });
 
+  return updatedUsage;
+}
+
+/**
+ * Adjust storage bytes for an existing object without changing object count or
+ * upload count. Positive deltas enforce the same quota ceiling as new uploads.
+ */
+export async function adjustStorageBytes(userId: string, sizeDelta: number) {
+  await dbConnect();
+  if (sizeDelta === 0) return Usage.findOne({ userId });
+
+  const usage = await prepareUsageForStorageMutation(userId);
+  const quotaFilter =
+    sizeDelta <= 0 || usage.storageLimitBytes === null
+      ? { userId }
+      : {
+          userId,
+          totalStorageBytes: { $lte: usage.storageLimitBytes - sizeDelta },
+        };
+  const updatedUsage = await Usage.findOneAndUpdate(
+    quotaFilter,
+    {
+      $inc: { totalStorageBytes: sizeDelta },
+      $set: { lastActiveAt: new Date() },
+    },
+    { new: true },
+  );
+  if (!updatedUsage) throw new Error("QUOTA_EXCEEDED");
   return updatedUsage;
 }
 
