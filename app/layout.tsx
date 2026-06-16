@@ -7,6 +7,7 @@ import { ThemeProvider } from "@/components/providers/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import CampaignBannerServer from "@/components/banner/CampaignBannerServer";
+import { PostHogProvider } from "@/providers/PostHogProvider";
 
 const suisseIntl = localFont({
   src: "../public/fonts/SuisseIntl-Regular.ttf",
@@ -177,20 +178,22 @@ export default function RootLayout({
       <body
         className={`${suisseIntl.variable} ${libreBaskerville.variable} font-sans antialiased`}
       >
-        <QueryProvider>
-          <ThemeProvider
-            attribute="class"
-            defaultTheme="system"
-            enableSystem
-            disableTransitionOnChange
-          >
-            <Suspense fallback={null}>
-              <CampaignBannerServer />
-            </Suspense>
-            {children}
-          </ThemeProvider>
-          <Toaster />
-        </QueryProvider>
+        <PostHogProvider>
+          <QueryProvider>
+            <ThemeProvider
+              attribute="class"
+              defaultTheme="system"
+              enableSystem
+              disableTransitionOnChange
+            >
+              <Suspense fallback={null}>
+                <CampaignBannerServer />
+              </Suspense>
+              {children}
+            </ThemeProvider>
+            <Toaster />
+          </QueryProvider>
+        </PostHogProvider>
       </body>
     </html>
   );

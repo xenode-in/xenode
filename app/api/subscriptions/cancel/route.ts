@@ -7,6 +7,7 @@ import {
   cachedResponse,
   withIdempotency,
 } from "@/lib/billing/idempotency";
+import { captureEvent } from "@/lib/posthog";
 
 export async function POST(request: NextRequest) {
   try {
@@ -41,6 +42,9 @@ export async function POST(request: NextRequest) {
       cancelAtPeriodEnd: result.cancelAtPeriodEnd,
       alreadyCancelled: result.alreadyCancelled,
     };
+    captureEvent(userId, "subscription_cancelled", {
+      source: "web",
+    });
     await idempotency.complete(200, body);
     return NextResponse.json(body);
   } catch (error) {

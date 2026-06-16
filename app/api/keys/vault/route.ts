@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import UserKeyVault from "@/models/UserKeyVault";
+import { captureEvent } from "@/lib/posthog";
 
 export const dynamic = "force-dynamic";
 
@@ -60,6 +61,10 @@ export async function POST(request: NextRequest) {
       { userId, publicKey, encryptedPrivateKey, pbkdf2Salt, iv, encryptedRecoveryWords, recoveryIv, recoverySalt, encryptedPrivateKeyRecovery, recoveryWordSalt, recoveryWordIv },
       { upsert: true, new: true },
     );
+
+    captureEvent(userId, "vault_configured", {
+      source: "web",
+    });
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {

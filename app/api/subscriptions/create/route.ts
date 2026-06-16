@@ -10,6 +10,7 @@ import { parseJson, jsonError, BillingError } from "@/lib/billing/http";
 import { validateCoupon } from "@/lib/billing/coupons";
 import { cachedResponse, withIdempotency } from "@/lib/billing/idempotency";
 import { emitBillingEvent } from "@/lib/billing/events";
+import { captureEvent } from "@/lib/posthog";
 import {
   cleanNotes,
   isValidRazorpayOfferId,
@@ -194,6 +195,12 @@ export async function POST(request: NextRequest) {
       offerSource,
       amount: (offerApplied ? firstCycleAmountPaise : baseAmountPaise) / 100,
     };
+    captureEvent(userId, "subscription_checkout_started", {
+      planSlug: planContext.plan.slug,
+      billingCycle: input.billingCycle,
+      offerApplied,
+      source: "web",
+    });
     await idempotency.complete(200, responseBody);
     return NextResponse.json(responseBody);
   } catch (error) {

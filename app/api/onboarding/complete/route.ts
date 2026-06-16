@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
+import { captureEvent } from "@/lib/posthog";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,11 @@ export async function POST(request: NextRequest) {
       },
       { upsert: true, new: true },
     );
+
+    captureEvent(userId, "onboarding_completed", {
+      planSlug: "free",
+      source: "web",
+    });
 
     return NextResponse.json({ success: true, plan: "free", storageLimitBytes: FREE_TIER_LIMIT_BYTES });
   } catch (error) {

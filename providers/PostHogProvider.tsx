@@ -4,6 +4,7 @@ import posthog from "posthog-js";
 import { PostHogProvider as PHProvider, usePostHog } from "posthog-js/react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, Suspense } from "react";
+import { sanitizeAnalyticsPath } from "@/lib/analytics";
 
 function PostHogPageView() {
   const pathname = usePathname();
@@ -12,7 +13,11 @@ function PostHogPageView() {
 
   useEffect(() => {
     if (pathname && ph) {
-      ph.capture("$pageview", { $current_url: window.location.href });
+      const safePath = sanitizeAnalyticsPath(pathname);
+      ph.capture("$pageview", {
+        $current_url: window.location.origin + safePath,
+        path: safePath,
+      });
     }
   }, [pathname, searchParams, ph]);
 
@@ -27,9 +32,12 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
       api_host:
         process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://us.i.posthog.com",
       capture_pageview: false, // handled manually via PostHogPageView
-      capture_pageleave: true,
+      capture_pageleave: false,
       persistence: "localStorage",
       autocapture: false, // explicit events only
+      disable_session_recording: true,
+      mask_all_text: true,
+      mask_all_element_attributes: true,
     });
   }, []);
 

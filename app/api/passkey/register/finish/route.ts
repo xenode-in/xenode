@@ -9,6 +9,7 @@ import {
   getPasskeyExpectedOrigin,
   getPasskeyRpId,
 } from "@/lib/passkey-rp"
+import { captureEvent } from "@/lib/posthog"
 
 export async function POST(req: NextRequest) {
   try {
@@ -68,6 +69,11 @@ export async function POST(req: NextRequest) {
 
     // 4. Cleanup challenge
     await PasskeyChallenge.deleteOne({ _id: challengeObj._id })
+
+    captureEvent(userId, "passkey_added", {
+      method: credential.authenticatorAttachment === "platform" ? "platform" : "security_key",
+      source: "web",
+    })
 
     return NextResponse.json({ success: true })
   } catch (err: unknown) {

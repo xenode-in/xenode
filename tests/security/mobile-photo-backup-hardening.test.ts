@@ -139,8 +139,8 @@ describe("Android photo backup production hardening", () => {
       path.join(mobileRoot, "src/sync/SyncEngine.ts"),
       "utf8",
     );
-    expect(engine.indexOf("getSyncBlockReason(error)")).toBeLessThan(
-      engine.indexOf("this.queue.markFailed"),
+    expect(engine.indexOf("getSyncBlockInfo(error)")).toBeLessThan(
+      engine.indexOf("isRetryableSyncError(error)"),
     );
   });
 
@@ -231,8 +231,8 @@ describe("Android photo backup production hardening", () => {
     expect(storage).toContain("isSyncConfigOwner(policy.userId, userId)");
     expect(storage).toContain("BACKUP_POLICY_KEY");
     expect(engine).toContain('this.setStatus("blocked")');
-    expect(engine.indexOf('this.setStatus("blocked")')).toBeLessThan(
-      engine.indexOf("this.queue.markFailed"),
+    expect(engine.indexOf("await getBackupPolicyBlock(this.userId)")).toBeLessThan(
+      engine.indexOf("startOne(next)"),
     );
   });
 
@@ -275,9 +275,10 @@ describe("Android photo backup production hardening", () => {
     );
 
     expect(engine).toContain("FileSystem.getFreeDiskStorageAsync()");
-    expect(engine).toContain("MIN_FREE_STORAGE_RESERVE");
+    expect(engine).toContain("CRITICAL_FREE_FLOOR");
+    expect(engine).toContain("STORAGE_SAFETY_MARGIN");
     expect(engine).toContain("new SyncBlockedError");
-    expect(engine).toContain("tempFiles.push(thumbResult.uri, optResult.uri)");
+    expect(engine).toContain("opts.tempFiles.push(tmp)");
     expect(engine).toContain("FileSystem.deleteAsync(t, { idempotent: true })");
   });
 });

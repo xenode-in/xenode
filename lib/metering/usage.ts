@@ -2,7 +2,11 @@ import dbConnect from "@/lib/mongodb";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
-import { captureEvent } from "@/lib/posthog";
+import {
+  captureEvent,
+  contentTypeCategory,
+  sizeBucket,
+} from "@/lib/posthog";
 
 /**
  * Get or create usage record for a user.
@@ -142,9 +146,10 @@ export async function incrementStorage(
   if (!updatedUsage) throw new Error("QUOTA_EXCEEDED");
 
   captureEvent(userId, "object_uploaded", {
-    fileSizeMB: Number((sizeBytes / (1024 * 1024)).toFixed(2)),
-    contentType: meta?.isEncrypted ? "encrypted" : (meta?.contentType ?? "unknown"),
-    bucketId: meta?.bucketId,
+    sizeBucket: sizeBucket(sizeBytes),
+    contentTypeCategory: meta?.isEncrypted
+      ? "encrypted"
+      : contentTypeCategory(meta?.contentType),
     isEncrypted: meta?.isEncrypted ?? false,
   });
 
@@ -223,7 +228,6 @@ export async function decrementStorageBulk(
 export async function incrementEgress(
   userId: string,
   sizeBytes: number,
-  meta?: { bucketId?: string }
 ) {
   await dbConnect();
 
@@ -237,8 +241,7 @@ export async function incrementEgress(
   );
 
   captureEvent(userId, "object_downloaded", {
-    fileSizeMB: Number((sizeBytes / (1024 * 1024)).toFixed(2)),
-    bucketId: meta?.bucketId,
+    sizeBucket: sizeBucket(sizeBytes),
   });
 
   return usage;

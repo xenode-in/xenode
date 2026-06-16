@@ -32,6 +32,15 @@ vi.mock("@/lib/mongodb", () => ({
 // Mock PostHog to prevent real events during tests
 vi.mock("@/lib/posthog", () => ({
   captureEvent: vi.fn(),
+  contentTypeCategory: vi.fn((contentType?: string) => {
+    if (!contentType) return "unknown";
+    if (contentType.startsWith("image/")) return "image";
+    if (contentType.startsWith("video/")) return "video";
+    if (contentType.startsWith("audio/")) return "audio";
+    return "other";
+  }),
+  countBucket: vi.fn((count: number) => String(count)),
+  sizeBucket: vi.fn(() => "test_bucket"),
 }));
 
 // Mock better-auth session

@@ -87,7 +87,9 @@ export async function POST(request: NextRequest) {
     });
 
     await incrementBucketCount(userId);
-    captureEvent(userId, "bucket_created", { bucketName: name });
+    captureEvent(userId, "bucket_created", {
+      source: "web",
+    });
 
     statusCode = 201;
     return NextResponse.json({ bucket }, { status: statusCode });

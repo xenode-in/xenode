@@ -11,6 +11,15 @@ import {
   syncUserSubscriptionState,
 } from "@/lib/subscriptions/service";
 import { BillingEventType, emitBillingEvent } from "@/lib/billing/events";
+import { captureEvent } from "@/lib/posthog";
+
+type RazorpaySubscriptionResponse = {
+  total_count?: number;
+  short_url?: string | null;
+  current_start?: number;
+  current_end?: number;
+  notes?: Record<string, string>;
+};
 
 /**
  * Razorpay subscription handler signature:
@@ -67,8 +76,10 @@ export async function POST(request: NextRequest) {
     // Fetch from Razorpay first — notes contain all metadata needed to
     // reconstruct the Subscription doc if it doesn't exist yet (i.e. the user
     // paid without the doc having been pre-created).
-    const fetchedSubscription = await razorpay.subscriptions.fetch(razorpay_subscription_id);
-    const rzpNotes = ((fetchedSubscription as any).notes || {}) as Record<string, string>;
+    const fetchedSubscription = (await razorpay.subscriptions.fetch(
+      razorpay_subscription_id,
+    )) as RazorpaySubscriptionResponse;
+    const rzpNotes = fetchedSubscription.notes || {};
 
     let subscriptionDoc = await Subscription.findOne({
       subscription_id: razorpay_subscription_id,
@@ -86,7 +97,7 @@ export async function POST(request: NextRequest) {
         billingCycle: rzpNotes.billingCycle || "monthly",
         startDate: new Date(),
         endDate: new Date(),
-        total_count: (fetchedSubscription as any).total_count ?? 360,
+        total_count: fetchedSubscription.total_count ?? 360,
         autoRenew: true,
         gateway: "razorpay",
         offerApplied: rzpNotes.offerApplied === "true",
@@ -94,7 +105,7 @@ export async function POST(request: NextRequest) {
         paid_count: 0,
         cancelAtPeriodEnd: false,
         metadata: {
-          authorizationUrl: (fetchedSubscription as any).short_url ?? null,
+          authorizationUrl: fetchedSubscription.short_url ?? null,
           offerSource: rzpNotes.offerSource || null,
           offerId: rzpNotes.offerId || null,
           discountPercent: rzpNotes.discountPercent ? Number(rzpNotes.discountPercent) : null,
@@ -214,6 +225,13 @@ export async function POST(request: NextRequest) {
       status: "active",
       expiresAt: subscriptionDoc.current_period_end || subscriptionDoc.endDate,
       autopayActive: true,
+    });
+
+    captureEvent(subscriptionDoc.userId, "subscription_started", {
+      planSlug: subscriptionDoc.planSlug,
+      billingCycle: subscriptionDoc.billingCycle,
+      offerApplied: !!subscriptionDoc.offerApplied,
+      source: "web",
     });
 
     return NextResponse.json({ success: true });

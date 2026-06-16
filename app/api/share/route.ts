@@ -65,8 +65,12 @@ export async function POST(req: NextRequest) {
       shareData.shareEncryptedDEK = shareEncryptedDEK;
       shareData.shareKeyIv = shareKeyIv;
       shareData.shareEncryptedName = shareEncryptedName;
-      shareEncryptedContentType && (shareData.shareEncryptedContentType = shareEncryptedContentType);
-      shareEncryptedThumbnail && (shareData.shareEncryptedThumbnail = shareEncryptedThumbnail);
+      if (shareEncryptedContentType) {
+        shareData.shareEncryptedContentType = shareEncryptedContentType;
+      }
+      if (shareEncryptedThumbnail) {
+        shareData.shareEncryptedThumbnail = shareEncryptedThumbnail;
+      }
     }
 
     const link = await ShareLink.create(shareData);
@@ -74,8 +78,9 @@ export async function POST(req: NextRequest) {
     captureEvent(userId, "share_link_created", {
       accessType,
       isPasswordProtected: !!password,
-      expiresIn: expiresIn ? Number(expiresIn) : null,
+      hasExpiry: !!expiresIn,
       hasMaxDownloads: !!maxDownloads,
+      shareType: "link",
     });
 
     return NextResponse.json({

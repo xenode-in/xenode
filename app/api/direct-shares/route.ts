@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import DirectShare from "@/models/DirectShare";
 import StorageObject from "@/models/StorageObject";
+import { captureEvent, countBucket } from "@/lib/posthog";
 
 export const dynamic = "force-dynamic";
 
@@ -71,6 +72,12 @@ export async function POST(request: NextRequest) {
       shareEncryptedContentType,
       shareEncryptedThumbnail,
       recipients: normalizedRecipients,
+    });
+
+    captureEvent(userId, "direct_share_created", {
+      shareType: "direct",
+      recipientCountBucket: countBucket(normalizedRecipients.length),
+      isEncrypted: !!object.isEncrypted,
     });
 
     return NextResponse.json({
