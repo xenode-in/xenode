@@ -6,6 +6,7 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   CopyObjectCommand,
+  S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { getS3Client, getPublicS3Client } from "./client";
@@ -27,7 +28,7 @@ export async function uploadObject(
   body: Buffer | ReadableStream | Uint8Array,
   contentType: string = "application/octet-stream",
   size?: number,
-  client: any = getS3Client(),
+  client: S3Client = getS3Client(),
 ): Promise<{ etag: string; b2FileId: string }> {
   const command = new PutObjectCommand({
     Bucket: bucketName,
@@ -196,11 +197,50 @@ export async function copyObject(
   destinationBucket: string,
   destinationKey: string,
 ): Promise<void> {
-  const command = new CopyObjectCommand({
-    CopySource: `${sourceBucket}/${encodeURIComponent(sourceKey)}`,
-    Bucket: destinationBucket,
-    Key: destinationKey,
-  });
+  const client = getS3Client();
+  // Encode each segment while preserving path separators. Encoding the whole
+  // key turns "/" into "%2F", which some S3-compatible providers (including
+  // B2 configurations) interpret as a different source key.
+  const encodedSourceKey = sourceKey
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
 
-  await getS3Client().send(command);
+  try {
+    await client.send(
+      new CopyObjectCommand({
+        CopySource: `/${sourceBucket}/${encodedSourceKey}`,
+        Bucket: destinationBucket,
+        Key: destinationKey,
+      }),
+    );
+  } catch (copyError) {
+    // Some restricted B2 application keys can read and write objects but do
+    // not permit server-side CopyObject. Fall back to a streamed GET -> PUT.
+    console.warn("[b2] CopyObject failed; using streamed copy fallback", {
+      sourceBucket,
+      sourceKey,
+      destinationBucket,
+      destinationKey,
+      error:
+        copyError instanceof Error ? copyError.message : String(copyError),
+    });
+    const source = await client.send(
+      new GetObjectCommand({ Bucket: sourceBucket, Key: sourceKey }),
+    );
+    if (!source.Body) throw new Error("Source object body is empty");
+    await client.send(
+      new PutObjectCommand({
+        Bucket: destinationBucket,
+        Key: destinationKey,
+        Body: source.Body,
+        ContentType: source.ContentType,
+        ContentLength: source.ContentLength,
+        CacheControl: source.CacheControl,
+        ContentDisposition: source.ContentDisposition,
+        ContentEncoding: source.ContentEncoding,
+        Metadata: source.Metadata,
+      }),
+    );
+  }
 }

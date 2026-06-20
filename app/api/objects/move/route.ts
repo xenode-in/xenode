@@ -3,9 +3,21 @@ import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
-import { copyObject, deleteObject as deleteB2Object } from "@/lib/b2/objects";
+import {
+  copyObject,
+  deleteObject as deleteB2Object,
+} from "@/lib/b2/objects";
 
 export const dynamic = "force-dynamic";
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,8 +25,16 @@ export async function POST(request: NextRequest) {
     const userId = session.user.id;
     const { bucketId, sourceKeys, destinationPrefix } = await request.json();
 
-    if (!bucketId || !sourceKeys || !Array.isArray(sourceKeys) || destinationPrefix === undefined) {
-      return NextResponse.json({ error: "Invalid request parameters" }, { status: 400 });
+    if (
+      !bucketId ||
+      !Array.isArray(sourceKeys) ||
+      sourceKeys.length === 0 ||
+      typeof destinationPrefix !== "string"
+    ) {
+      return NextResponse.json(
+        { error: "Invalid request parameters" },
+        { status: 400 },
+      );
     }
 
     await dbConnect();
@@ -23,76 +43,140 @@ export async function POST(request: NextRequest) {
       _id: bucketId,
       $or: [{ userId }, { userId: "system" }],
     });
-
     if (!bucket) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
 
-    if (bucket.userId === "system" && !destinationPrefix.startsWith(`users/${userId}/`)) {
-      return NextResponse.json({ error: "Access denied to destination" }, { status: 403 });
+    if (
+      bucket.userId === "system" &&
+      !destinationPrefix.startsWith(`users/${userId}/`)
+    ) {
+      return NextResponse.json(
+        { error: "Access denied to destination" },
+        { status: 403 },
+      );
     }
 
     const b2BucketName = bucket.b2BucketId;
     const movedObjects = [];
-    const errors = [];
+    const errors: { key: string; error: string }[] = [];
 
-    for (const sourceKey of sourceKeys) {
-      if (bucket.userId === "system" && !sourceKey.startsWith(`users/${userId}/`)) {
+    const moveOne = async (
+      object: InstanceType<typeof StorageObject>,
+      newKey: string,
+    ) => {
+      const oldKey = object.key;
+      if (oldKey === newKey) return object;
+
+      const conflict = await StorageObject.exists({
+        bucketId: bucket._id,
+        key: newKey,
+        _id: { $ne: object._id },
+      });
+      if (conflict) {
+        throw new Error("An item with the same name already exists there");
+      }
+
+      // Chunked files have no single blob at object.key; their physical blobs
+      // are referenced by chunks[]. Moving them is a logical path update only.
+      const hasChunkBlobs = Array.isArray(object.chunks) && object.chunks.length > 0;
+      let copiedPrimaryBlob = false;
+
+      if (!hasChunkBlobs) {
+        await copyObject(b2BucketName, oldKey, b2BucketName, newKey);
+        copiedPrimaryBlob = true;
+      }
+
+      try {
+        // Preserve the document ID instead of inserting a duplicate. This is
+        // required for unique sync fingerprints and keeps shares/references.
+        object.key = newKey;
+        object.updatedAt = new Date();
+        await object.save();
+      } catch (databaseError) {
+        if (copiedPrimaryBlob) {
+          await deleteB2Object(b2BucketName, newKey).catch(() => {});
+        }
+        throw databaseError;
+      }
+
+      if (copiedPrimaryBlob) {
+        // The move is already committed in Mongo. A failed cleanup only leaves
+        // an inaccessible orphan, so report it without reverting a valid move.
+        await deleteB2Object(b2BucketName, oldKey).catch((cleanupError) => {
+          console.error("[move] Failed to remove old B2 object", {
+            oldKey,
+            newKey,
+            error: errorMessage(cleanupError),
+          });
+        });
+      }
+
+      return object;
+    };
+
+    for (const sourceKey of Array.from(new Set(sourceKeys.map(String)))) {
+      if (
+        bucket.userId === "system" &&
+        !sourceKey.startsWith(`users/${userId}/`)
+      ) {
         errors.push({ key: sourceKey, error: "Access denied to source" });
         continue;
       }
 
       const isFolder = sourceKey.endsWith("/");
-      const sourceName = isFolder
-        ? sourceKey.split("/").filter(Boolean).pop()
-        : sourceKey.split("/").pop();
+      const sourceName = sourceKey.split("/").filter(Boolean).pop();
+      if (!sourceName) {
+        errors.push({ key: sourceKey, error: "Invalid source key" });
+        continue;
+      }
 
-      if (isFolder) {
-        const objectsToMove = await StorageObject.find({
-          bucketId: bucket._id,
-          userId,
-          key: { $regex: `^${sourceKey}` },
+      try {
+        if (isFolder) {
+          if (destinationPrefix.startsWith(sourceKey)) {
+            throw new Error("A folder cannot be moved inside itself");
+          }
+
+          const objectsToMove = await StorageObject.find({
+            bucketId: bucket._id,
+            userId,
+            key: { $regex: `^${escapeRegex(sourceKey)}` },
+          }).sort({ key: 1 });
+
+          if (objectsToMove.length === 0) {
+            throw new Error("Folder not found");
+          }
+
+          for (const object of objectsToMove) {
+            const relativePath = object.key.slice(sourceKey.length);
+            const newKey = `${destinationPrefix}${sourceName}/${relativePath}`;
+            try {
+              movedObjects.push(await moveOne(object, newKey));
+            } catch (objectError) {
+              errors.push({
+                key: object.key,
+                error: errorMessage(objectError),
+              });
+            }
+          }
+        } else {
+          const object = await StorageObject.findOne({
+            bucketId: bucket._id,
+            userId,
+            key: sourceKey,
+          });
+          if (!object) throw new Error("File not found");
+
+          const newKey = `${destinationPrefix}${sourceName}`;
+          movedObjects.push(await moveOne(object, newKey));
+        }
+      } catch (moveError) {
+        console.error("[move] Failed", {
+          sourceKey,
+          destinationPrefix,
+          error: moveError,
         });
-
-        for (const obj of objectsToMove) {
-          const relativePath = obj.key.slice(sourceKey.length);
-          const newKey = `${destinationPrefix}${sourceName}/${relativePath}`;
-          try {
-            await copyObject(b2BucketName, obj.key, b2BucketName, newKey);
-            const newObj = await StorageObject.create({
-              ...obj.toObject(),
-              _id: undefined,
-              key: newKey,
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            });
-            await deleteB2Object(b2BucketName, obj.key);
-            await StorageObject.findByIdAndDelete(obj._id);
-            movedObjects.push(newObj);
-          } catch (err) {
-            errors.push({ key: obj.key, error: "Failed to move" });
-          }
-        }
-      } else {
-        const newKey = `${destinationPrefix}${sourceName}`;
-        const obj = await StorageObject.findOne({ bucketId: bucket._id, userId, key: sourceKey });
-        if (obj) {
-          try {
-            await copyObject(b2BucketName, sourceKey, b2BucketName, newKey);
-            const newObj = await StorageObject.create({
-              ...obj.toObject(),
-              _id: undefined,
-              key: newKey,
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            });
-            await deleteB2Object(b2BucketName, sourceKey);
-            await StorageObject.findByIdAndDelete(obj._id);
-            movedObjects.push(newObj);
-          } catch (err) {
-            errors.push({ key: sourceKey, error: "Failed to move" });
-          }
-        }
+        errors.push({ key: sourceKey, error: errorMessage(moveError) });
       }
     }
 
@@ -105,8 +189,9 @@ export async function POST(request: NextRequest) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    const message =
-      error instanceof Error ? error.message : "Failed to move objects";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: errorMessage(error) || "Failed to move objects" },
+      { status: 500 },
+    );
   }
 }

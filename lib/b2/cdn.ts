@@ -67,9 +67,11 @@ export function getSignedFileUrl(
   key: string,
   expiresIn: number = 3600,
   version?: string,
+  baseUrl?: string,
 ): string {
   const { exp, sig } = generateFileToken(bucketName, key, expiresIn, version);
   const base =
+    baseUrl ||
     process.env.AZURE_CDN_URL ||
     process.env.NEXT_PUBLIC_APP_URL ||
     "http://localhost:3000";

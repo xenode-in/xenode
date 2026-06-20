@@ -1,10 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuth } from "@/lib/auth";
 import { uploadObject } from "@/lib/b2/objects";
-import { getPublicB2Url, getSignedFileUrl } from "@/lib/b2/cdn";
+import { getSignedFileUrl } from "@/lib/b2/cdn";
 import { getPublicS3Client } from "@/lib/b2/client";
 
 const PUBLIC_BUCKET_NAME = process.env.PUBLIC_S3_BUCKET || "xenopublic";
+
+function getRequestOrigin(req: NextRequest): string {
+  const forwardedHost = req.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const host = forwardedHost || req.headers.get("host");
+  if (!host) return req.nextUrl.origin;
+
+  const forwardedProto = req.headers
+    .get("x-forwarded-proto")
+    ?.split(",")[0]
+    ?.trim();
+  const proto = forwardedProto || req.nextUrl.protocol.replace(":", "") || "http";
+  return `${proto}://${host}`;
+}
 
 export async function POST(req: NextRequest) {
   // Check if user is authenticated (using Better Auth)
@@ -44,11 +57,19 @@ export async function POST(req: NextRequest) {
 
     // Generate a direct proxy URL
     // We use a long expiration (e.g., 10 years) for user profile images since the proxy handles it
-    const url = getSignedFileUrl(PUBLIC_BUCKET_NAME, key, 315360000);
+    const url = getSignedFileUrl(
+      PUBLIC_BUCKET_NAME,
+      key,
+      315360000,
+      undefined,
+      getRequestOrigin(req),
+    );
 
     return NextResponse.json({ url });
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error("[POST /api/user/avatar]", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const message =
+      error instanceof Error ? error.message : "Failed to upload avatar";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
