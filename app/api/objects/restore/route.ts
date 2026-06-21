@@ -22,6 +22,10 @@ import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
+import {
+  parentPrefixForKey,
+  publishSyncEvent,
+} from "@/lib/realtime/publish";
 
 export const dynamic = "force-dynamic";
 
@@ -141,6 +145,25 @@ export async function POST(request: NextRequest) {
       { _id: { $in: allDocIds } },
       { $unset: { deletedAt: "" } },
     );
+
+    const keys = objects
+      .map((object) => object.key)
+      .filter((key): key is string => typeof key === "string");
+    const affectedPrefixes = Array.from(
+      new Set(keys.map(parentPrefixForKey)),
+    );
+    await publishSyncEvent({
+      userId,
+      type: "TRASH_UPDATED",
+      payload: {
+        bucketId,
+        objectIds: objectIds.map(String),
+        keys,
+        affectedPrefixes,
+      },
+      invalidatePrefixes: affectedPrefixes,
+      invalidateRecent: true,
+    });
 
     return NextResponse.json({
       success: true,

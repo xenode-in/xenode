@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
 import { getSignedFileUrl } from "@/lib/b2/cdn";
 import { logRequest } from "@/lib/logRequest";
+import {
+  folderResponseKey,
+  folderVersionKey,
+} from "@/lib/realtime/cache-keys";
+import { withRedis } from "@/lib/redis";
 
 export const dynamic = "force-dynamic";
 import dbConnect from "@/lib/mongodb";
@@ -15,6 +20,10 @@ const LIST_PROJECTION =
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 /** GET /api/objects?bucketId=xxx&limit=50&before=<ISO>&contentType=image */
 export async function GET(request: NextRequest) {
@@ -70,13 +79,17 @@ export async function GET(request: NextRequest) {
     else if (sortByParam === "accessed") sortField = "lastAccessedAt";
     // For anything else (like "name" which is E2EE), default server sort is createdAt
 
-    const sortConfig: any = { [sortField]: sortDir, _id: -1 };
+    const sortConfig: Record<string, 1 | -1> = {
+      [sortField]: sortDir,
+      _id: -1,
+    };
 
     // Cursor: base64 encoded JSON { v: lastValue, id: lastId }
     const before = searchParams.get("before");
 
     const contentTypeFilter = searchParams.get("contentType");
     const mediaCategoryFilter = searchParams.get("mediaCategory");
+    const prefix = searchParams.get("prefix");
 
     await dbConnect();
 
@@ -96,6 +109,51 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
+    if (
+      prefix !== null &&
+      bucket.userId === "system" &&
+      !prefix.startsWith(`users/${userId}/`)
+    ) {
+      statusCode = 403;
+      errorMessage = "Access denied to this folder";
+      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    }
+
+    const canUseFolderCache =
+      prefix !== null &&
+      !before &&
+      !fetchAll &&
+      !deleted &&
+      !starredOnly &&
+      !contentTypeFilter &&
+      !mediaCategoryFilter;
+    let cacheKey: string | null = null;
+
+    if (canUseFolderCache && prefix !== null) {
+      const cachePrefix = prefix;
+      const version =
+        (await withRedis((redis) =>
+          redis.get(
+            folderVersionKey(session.user.id, bucketId, cachePrefix),
+          ),
+        )) ?? "0";
+      cacheKey = folderResponseKey({
+        userId: session.user.id,
+        bucketId,
+        prefix: cachePrefix,
+        version,
+        limit,
+        sortBy: sortByParam,
+        sortDir: sortDirParam,
+      });
+      const cached = await withRedis((redis) => redis.get(cacheKey!));
+      if (cached) {
+        return NextResponse.json(JSON.parse(cached), {
+          headers: { "x-xenode-cache": "HIT" },
+        });
+      }
+    }
+
     const query: Record<string, unknown> = {
       bucketId,
       deletedAt: { $exists: deleted },
@@ -109,6 +167,12 @@ export async function GET(request: NextRequest) {
     if (bucket.userId === "system") {
       const prefix = `users/${userId}/`;
       query.key = { $gte: prefix, $lt: prefix + "\uffff" };
+    }
+
+    if (prefix !== null) {
+      query.key = {
+        $regex: `^${escapeRegex(prefix)}[^/]+/?$`,
+      };
     }
 
     if (mediaCategoryFilter) {
@@ -142,7 +206,7 @@ export async function GET(request: NextRequest) {
           { [sortField]: { [operator]: typedV } },
           { [sortField]: typedV, _id: { $lt: id } },
         ];
-      } catch (err) {
+      } catch {
         statusCode = 400;
         errorMessage = "Invalid cursor format";
         return NextResponse.json(
@@ -186,10 +250,10 @@ export async function GET(request: NextRequest) {
       if (o.thumbnail) {
         out.thumbnailUrl = getSignedFileUrl(bucket.b2BucketId, o.thumbnail);
       }
-      if ((o as any).optimizedKey) {
+      if (o.optimizedKey) {
         out.optimizedUrl = getSignedFileUrl(
           bucket.b2BucketId,
-          (o as any).optimizedKey,
+          o.optimizedKey,
         );
       }
       return out;
@@ -207,13 +271,23 @@ export async function GET(request: NextRequest) {
       nextCursor = Buffer.from(JSON.stringify(cursorObj)).toString("base64");
     }
 
-    return NextResponse.json({
+    const responseBody = {
       objects,
       pagination: {
         limit: fetchAll ? rawObjects.length : limit,
         hasNextPage,
         nextCursor, // pass this as `before=` on the next request
       },
+    };
+
+    if (cacheKey) {
+      await withRedis((redis) =>
+        redis.set(cacheKey!, JSON.stringify(responseBody), "EX", 30),
+      );
+    }
+
+    return NextResponse.json(responseBody, {
+      headers: { "x-xenode-cache": cacheKey ? "MISS" : "BYPASS" },
     });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {

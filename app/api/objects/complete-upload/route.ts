@@ -10,6 +10,11 @@ import {
 } from "@/lib/metering/usage";
 import { getS3Client } from "@/lib/b2/client";
 import { HeadObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import {
+  parentPrefixForKey,
+  publishSyncEvent,
+  toSyncObjectSnapshot,
+} from "@/lib/realtime/publish";
 
 export const dynamic = "force-dynamic";
 
@@ -78,6 +83,28 @@ function getMediaCategory(mimeType: string): MediaCategory {
   if (mimeType.includes("document") || mimeType.includes("text/")) return "document";
   
   return "other";
+}
+
+async function emitObjectChange(
+  userId: string,
+  object: InstanceType<typeof StorageObject>,
+  type: "FILE_CREATED" | "FILE_UPDATED",
+): Promise<void> {
+  const key = object.key;
+  await publishSyncEvent({
+    userId,
+    type,
+    payload: {
+      bucketId: object.bucketId.toString(),
+      objectId: object._id.toString(),
+      key,
+      parentPrefix: parentPrefixForKey(key),
+      object: toSyncObjectSnapshot(object),
+    },
+    invalidatePrefixes: [parentPrefixForKey(key)],
+    invalidateStorage: true,
+    invalidateRecent: true,
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -254,6 +281,7 @@ export async function POST(request: NextRequest) {
       if (sizeDiff !== 0) {
         await updateBucketStats(bucketId, 0, sizeDiff);
       }
+      await emitObjectChange(userId, existingObject, "FILE_UPDATED");
       return NextResponse.json({ object: existingObject });
     }
 
@@ -372,6 +400,7 @@ export async function POST(request: NextRequest) {
       throw error;
     }
     await updateBucketStats(bucketId, 1, size);
+    await emitObjectChange(userId, storageObject, "FILE_CREATED");
 
     return NextResponse.json({ object: storageObject }, { status: 201 });
   } catch (error) {

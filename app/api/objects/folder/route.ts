@@ -6,6 +6,11 @@ import StorageObject from "@/models/StorageObject";
 import { uploadObject } from "@/lib/b2/objects";
 import ShareLink from "@/models/ShareLink";
 import DirectShare from "@/models/DirectShare";
+import {
+  parentPrefixForKey,
+  publishSyncEvent,
+  toSyncObjectSnapshot,
+} from "@/lib/realtime/publish";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +67,18 @@ export async function POST(request: NextRequest) {
 
     await Bucket.updateOne({ _id: bucket._id }, { $inc: { objectCount: 1 } });
 
+    await publishSyncEvent({
+      userId,
+      type: "FOLDER_CREATED",
+      payload: {
+        bucketId: bucket._id.toString(),
+        key: fullKey,
+        parentPrefix: prefix,
+        object: toSyncObjectSnapshot(folder),
+      },
+      invalidatePrefixes: [prefix],
+    });
+
     return NextResponse.json({ folder }, { status: 201 });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
@@ -115,6 +132,20 @@ export async function DELETE(request: NextRequest) {
       await ShareLink.deleteMany({ objectId: { $in: deletedObjectIds } });
       await DirectShare.deleteMany({ objectId: { $in: deletedObjectIds } });
     }
+
+    await publishSyncEvent({
+      userId,
+      type: "FOLDER_DELETED",
+      payload: {
+        bucketId: bucket._id.toString(),
+        objectIds: deletedObjectIds,
+        key: prefix,
+        keys: objects.map((object) => object.key),
+        parentPrefix: parentPrefixForKey(prefix),
+      },
+      invalidatePrefixes: [parentPrefixForKey(prefix), prefix],
+      invalidateRecent: true,
+    });
 
     return NextResponse.json({ success: true, deletedCount: deletedObjectIds.length });
   } catch (error: unknown) {

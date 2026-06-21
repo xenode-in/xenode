@@ -3,6 +3,8 @@ import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import { getOrCreateUsage, recalculateUsage } from "@/lib/metering/usage";
 import StorageObject from "@/models/StorageObject";
+import { storageCacheKey } from "@/lib/realtime/cache-keys";
+import { withRedis } from "@/lib/redis";
 
 function normalizeCategory(category: string | null | undefined): string {
   switch (category) {
@@ -30,6 +32,14 @@ function normalizeCategory(category: string | null | undefined): string {
 export async function GET(request: NextRequest) {
   try {
     const session = await requireAuth(request);
+    const cacheKey = storageCacheKey(session.user.id);
+    const cached = await withRedis((redis) => redis.get(cacheKey));
+    if (cached) {
+      return NextResponse.json(JSON.parse(cached), {
+        headers: { "x-xenode-cache": "HIT" },
+      });
+    }
+
     await dbConnect();
 
     const [usage, rawBreakdown] = await Promise.all([
@@ -70,7 +80,7 @@ export async function GET(request: NextRequest) {
       }))
       .sort((a, b) => b.bytes - a.bytes);
 
-    return NextResponse.json({
+    const responseBody = {
       totalStorageBytes: usage.totalStorageBytes ?? 0,
       totalObjects: usage.totalObjects ?? 0,
       totalBuckets: usage.totalBuckets ?? 0,
@@ -78,6 +88,12 @@ export async function GET(request: NextRequest) {
       plan: usage.plan ?? "free",
       updatedAt: usage.updatedAt?.toISOString?.() ?? null,
       breakdown,
+    };
+    await withRedis((redis) =>
+      redis.set(cacheKey, JSON.stringify(responseBody), "EX", 30),
+    );
+    return NextResponse.json(responseBody, {
+      headers: { "x-xenode-cache": "MISS" },
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : "Failed to load usage";

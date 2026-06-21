@@ -28,7 +28,7 @@ function item(overrides: Partial<SyncItem> = {}): SyncItem {
 }
 
 describe("Android photo backup production hardening", () => {
-  it("keeps exhausted and non-retryable failures durable", () => {
+  it("moves exhausted and non-retryable photos into durable skipped state", () => {
     const exhausted = item();
     const queue = new SyncQueue([exhausted]);
 
@@ -37,7 +37,7 @@ describe("Android photo backup production hardening", () => {
     expect(queue.markFailed(exhausted.id, "network")).toBe(true);
     expect(queue.markFailed(exhausted.id, "network")).toBe(true);
     expect(queue.markFailed(exhausted.id, "network")).toBe(false);
-    expect(exhausted.status).toBe("failed");
+    expect(exhausted.status).toBe("skipped");
     expect(exhausted.error).toBe("network");
     expect(queue.failed).toEqual([exhausted]);
 
@@ -46,13 +46,13 @@ describe("Android photo backup production hardening", () => {
     expect(
       unavailableQueue.markFailed(unavailable.id, "not available", false),
     ).toBe(false);
-    expect(unavailable.status).toBe("failed");
+    expect(unavailable.status).toBe("skipped");
     expect(unavailable.retries).toBe(1);
   });
 
   it("only retries terminal failures after an explicit user action", () => {
     const failed = item({
-      status: "failed",
+      status: "skipped",
       retries: 5,
       error: "quota",
       uploadProgress: 0.8,
@@ -72,10 +72,10 @@ describe("Android photo backup production hardening", () => {
   });
 
   it("supports targeted retry and explicit removal of terminal failures", () => {
-    const first = item({ status: "failed", retries: 5, error: "first" });
+    const first = item({ status: "skipped", retries: 5, error: "first" });
     const second = item({
       id: "asset-2",
-      status: "failed",
+      status: "skipped",
       retries: 5,
       error: "second",
     });
@@ -83,7 +83,7 @@ describe("Android photo backup production hardening", () => {
 
     expect(queue.retryFailed(new Set([first.id]))).toBe(1);
     expect(first.status).toBe("pending");
-    expect(second.status).toBe("failed");
+    expect(second.status).toBe("skipped");
     expect(queue.dismissFailed(second.id)).toBe(true);
     expect(queue.getItem(second.id)).toBeUndefined();
   });
@@ -103,13 +103,11 @@ describe("Android photo backup production hardening", () => {
     );
 
     expect(engine).toContain("throw new NonRetryableSyncError");
-    expect(engine).not.toContain(
-      'this.queue.updateItem(item.id, { status: "skipped" })',
-    );
-    expect(engine).toContain('item.status !== "failed"');
+    expect(engine).toContain('status: "skipped"');
+    expect(engine).toContain("this.skippedCount");
     expect(engine).toContain("async hydrate(): Promise<void>");
-    expect(worker).toContain('i.status !== "failed"');
-    expect(header).toContain('i.status !== "failed"');
+    expect(worker).toContain('i.status !== "skipped"');
+    expect(header).toContain('i.status !== "skipped"');
   });
 
   it("retries transient failures but stops on permanent API rejections", () => {
@@ -209,7 +207,7 @@ describe("Android photo backup production hardening", () => {
     expect(storage).toContain("isSyncConfigOwner(health.userId, userId)");
     expect(storage).toContain("BACKUP_HEALTH_KEY");
     expect(screen).toContain("Last successful backup:");
-    expect(screen).toContain("syncState.failedCount");
+    expect(screen).toContain("skippedItems.length");
   });
 
   it("enforces account-scoped Wi-Fi policy without consuming retries", () => {
@@ -280,5 +278,45 @@ describe("Android photo backup production hardening", () => {
     expect(engine).toContain("new SyncBlockedError");
     expect(engine).toContain("opts.tempFiles.push(tmp)");
     expect(engine).toContain("FileSystem.deleteAsync(t, { idempotent: true })");
+  });
+
+  it("persists the active queue transactionally in SQLite", () => {
+    const db = readFileSync(
+      path.join(mobileRoot, "src/sync/SyncDb.ts"),
+      "utf8",
+    );
+    const storage = readFileSync(
+      path.join(mobileRoot, "src/sync/SyncStorage.ts"),
+      "utf8",
+    );
+
+    expect(db).toContain("CREATE TABLE IF NOT EXISTS backup_queue");
+    expect(db).toContain("db.withTransactionAsync");
+    expect(storage).toContain("SyncDb.saveQueue");
+    expect(storage).toContain("SyncDb.loadQueue");
+  });
+
+  it("discovers new work from an empty background queue when backup is enabled", () => {
+    const worker = readFileSync(
+      path.join(mobileRoot, "src/sync/SyncWorker.ts"),
+      "utf8",
+    );
+
+    expect(worker).toContain("policy.enabled");
+    expect(worker).toContain("syncEngine.shouldRunFullReconciliation()");
+    expect(worker).toContain("await syncEngine.analyze");
+  });
+
+  it("resolves local-to-cloud identity before the first gallery render", () => {
+    const photos = readFileSync(
+      path.join(mobileRoot, "src/app/(drive)/photos.tsx"),
+      "utf8",
+    );
+
+    expect(photos.indexOf('syncCheck(')).toBeLessThan(
+      photos.indexOf("setPhotos(merged)"),
+    );
+    expect(photos).toContain("pre-render backup reconciliation");
+    expect(photos).toContain("const ledger = await SyncDb.getCloudMap()");
   });
 });

@@ -7,6 +7,11 @@ import {
   copyObject,
   deleteObject as deleteB2Object,
 } from "@/lib/b2/objects";
+import {
+  parentPrefixForKey,
+  publishSyncEvent,
+  toSyncObjectSnapshot,
+} from "@/lib/realtime/publish";
 
 export const dynamic = "force-dynamic";
 
@@ -59,6 +64,7 @@ export async function POST(request: NextRequest) {
 
     const b2BucketName = bucket.b2BucketId;
     const movedObjects = [];
+    const movedFromKeys: string[] = [];
     const errors: { key: string; error: string }[] = [];
 
     const moveOne = async (
@@ -112,6 +118,7 @@ export async function POST(request: NextRequest) {
         });
       }
 
+      movedFromKeys.push(oldKey);
       return object;
     };
 
@@ -178,6 +185,28 @@ export async function POST(request: NextRequest) {
         });
         errors.push({ key: sourceKey, error: errorMessage(moveError) });
       }
+    }
+
+    if (movedObjects.length > 0) {
+      const affectedPrefixes = Array.from(
+        new Set([
+          destinationPrefix,
+          ...movedFromKeys.map(parentPrefixForKey),
+        ]),
+      );
+      await publishSyncEvent({
+        userId,
+        type: "FILE_MOVED",
+        payload: {
+          bucketId: bucket._id.toString(),
+          keys: movedFromKeys,
+          destinationPrefix,
+          affectedPrefixes,
+          objects: movedObjects.map(toSyncObjectSnapshot),
+        },
+        invalidatePrefixes: affectedPrefixes,
+        invalidateRecent: true,
+      });
     }
 
     return NextResponse.json({

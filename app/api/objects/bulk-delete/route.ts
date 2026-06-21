@@ -35,6 +35,10 @@ import StorageObject from "@/models/StorageObject";
 import ShareLink from "@/models/ShareLink";
 import DirectShare from "@/models/DirectShare";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
+import {
+  parentPrefixForKey,
+  publishSyncEvent,
+} from "@/lib/realtime/publish";
 
 export const dynamic = "force-dynamic";
 
@@ -116,8 +120,8 @@ export async function POST(request: NextRequest) {
       userId,
       deletedAt: { $exists: false },
     })
-      .select("_id")
-      .lean<{ _id: Types.ObjectId }[]>();
+      .select("_id key")
+      .lean<{ _id: Types.ObjectId; key: string }[]>();
 
     if (objects.length === 0) {
       return NextResponse.json({
@@ -150,6 +154,23 @@ export async function POST(request: NextRequest) {
     // Revoke shares for everything binned.
     await ShareLink.deleteMany({ objectId: { $in: allDocIds } });
     await DirectShare.deleteMany({ objectId: { $in: allDocIds } });
+
+    const keys = objects.map((object) => object.key);
+    const affectedPrefixes = Array.from(
+      new Set(keys.map(parentPrefixForKey)),
+    );
+    await publishSyncEvent({
+      userId,
+      type: "FILE_DELETED",
+      payload: {
+        bucketId,
+        objectIds: objectIds.map(String),
+        keys,
+        affectedPrefixes,
+      },
+      invalidatePrefixes: affectedPrefixes,
+      invalidateRecent: true,
+    });
 
     return NextResponse.json({
       success: true,

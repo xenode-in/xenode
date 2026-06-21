@@ -8,6 +8,11 @@ import { getDownloadUrl } from "@/lib/b2/objects";
 import ShareLink from "@/models/ShareLink";
 import DirectShare from "@/models/DirectShare";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
+import {
+  parentPrefixForKey,
+  publishSyncEvent,
+  toSyncObjectSnapshot,
+} from "@/lib/realtime/publish";
 
 export const dynamic = "force-dynamic";
 
@@ -199,6 +204,19 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     await ShareLink.deleteMany({ objectId: object._id });
     await DirectShare.deleteMany({ objectId: object._id });
 
+    await publishSyncEvent({
+      userId,
+      type: "FILE_DELETED",
+      payload: {
+        bucketId: object.bucketId.toString(),
+        objectId: object._id.toString(),
+        key: object.key,
+        parentPrefix: parentPrefixForKey(object.key),
+      },
+      invalidatePrefixes: [parentPrefixForKey(object.key)],
+      invalidateRecent: true,
+    });
+
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
@@ -271,6 +289,26 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     if (starred !== undefined) object.starred = !!starred;
 
     await object.save();
+
+    const eventType =
+      starred === true
+        ? "FILE_STARRED"
+        : starred === false
+          ? "FILE_UNSTARRED"
+          : "FILE_UPDATED";
+    await publishSyncEvent({
+      userId,
+      type: eventType,
+      payload: {
+        bucketId: object.bucketId.toString(),
+        objectId: object._id.toString(),
+        key: object.key,
+        parentPrefix: parentPrefixForKey(object.key),
+        object: toSyncObjectSnapshot(object),
+      },
+      invalidatePrefixes: [parentPrefixForKey(object.key)],
+      invalidateRecent: true,
+    });
 
     return NextResponse.json({ object });
   } catch (error: unknown) {
