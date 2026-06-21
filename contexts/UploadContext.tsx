@@ -109,53 +109,101 @@ const generateThumbnail = (
     if (file.type.startsWith("video/")) {
       const video = document.createElement("video");
       const url = URL.createObjectURL(file);
-      video.src = url;
-      video.muted = true;
-      video.playsInline = true;
+      let settled = false;
 
-      video.addEventListener("loadedmetadata", () => {
-        // Seek to 10% of duration or 1s, whichever is smaller
-        video.currentTime = Math.min(1, video.duration * 0.1);
-      });
+      const finish = (
+        result: { thumbnail: string; aspectRatio: number } | undefined,
+      ) => {
+        if (settled) return;
+        settled = true;
+        video.removeAttribute("src");
+        video.load();
+        URL.revokeObjectURL(url);
+        resolve(result);
+      };
 
-      video.addEventListener("seeked", () => {
+      const drawFrame = () => {
         const canvas = document.createElement("canvas");
         const MAX_SIZE = 320;
         let width = video.videoWidth;
         let height = video.videoHeight;
+
+        if (!width || !height) {
+          finish(undefined);
+          return;
+        }
 
         if (width > height) {
           if (width > MAX_SIZE) {
             height *= MAX_SIZE / width;
             width = MAX_SIZE;
           }
-        } else {
-          if (height > MAX_SIZE) {
-            width *= MAX_SIZE / height;
-            height = MAX_SIZE;
-          }
+        } else if (height > MAX_SIZE) {
+          width *= MAX_SIZE / height;
+          height = MAX_SIZE;
         }
 
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext("2d");
-        URL.revokeObjectURL(url);
 
-          if (ctx) {
-            ctx.drawImage(video, 0, 0, width, height);
-            resolve({
-              thumbnail: canvas.toDataURL("image/jpeg", 0.8),
-              aspectRatio: video.videoWidth / video.videoHeight,
-            });
-          } else {
-            resolve(undefined);
-          }
+        if (!ctx) {
+          finish(undefined);
+          return;
+        }
+
+        ctx.drawImage(video, 0, 0, width, height);
+        finish({
+          thumbnail: canvas.toDataURL("image/jpeg", 0.8),
+          aspectRatio: video.videoWidth / video.videoHeight,
+        });
+      };
+
+      const scheduleDraw = () => {
+        if (typeof video.requestVideoFrameCallback === "function") {
+          video.requestVideoFrameCallback(() => drawFrame());
+        } else {
+          requestAnimationFrame(() => drawFrame());
+        }
+      };
+
+      video.src = url;
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = "auto";
+      video.load();
+
+      video.addEventListener("loadedmetadata", () => {
+        // Seek to 10% of duration or 1s, whichever is smaller.
+        // iOS can be finicky here, so we fall back to the first decoded frame
+        // if seeking never lands.
+        const duration = Number.isFinite(video.duration) ? video.duration : 0;
+        const seekTo = duration > 0 ? Math.min(1, duration * 0.1) : 0;
+        try {
+          video.currentTime = seekTo;
+        } catch {
+          scheduleDraw();
+        }
+
+        setTimeout(() => {
+          if (!settled) scheduleDraw();
+        }, 1500);
+      });
+
+      video.addEventListener("seeked", () => {
+        scheduleDraw();
       });
 
       video.addEventListener("error", () => {
-        URL.revokeObjectURL(url);
-        resolve(undefined); // Resolve undefined, don't reject — thumbnail is optional
+        finish(undefined); // Resolve undefined, don't reject — thumbnail is optional
       });
+
+      setTimeout(() => {
+        if (!settled) {
+          console.warn("[Thumbnail] Video thumbnail timed out, skipping");
+          finish(undefined);
+        }
+      }, THUMB_TIMEOUT_MS);
 
       return;
     }

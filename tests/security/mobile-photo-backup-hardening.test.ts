@@ -206,8 +206,9 @@ describe("Android photo backup production hardening", () => {
     expect(engine).toContain("SyncStorage.loadBackupHealth");
     expect(storage).toContain("isSyncConfigOwner(health.userId, userId)");
     expect(storage).toContain("BACKUP_HEALTH_KEY");
-    expect(screen).toContain("Last successful backup:");
-    expect(screen).toContain("skippedItems.length");
+    expect(screen).toContain("Backup account");
+    expect(screen).toContain("Tap to view backup items");
+    expect(screen).not.toContain("Start Sync");
   });
 
   it("enforces account-scoped Wi-Fi policy without consuming retries", () => {
@@ -266,6 +267,26 @@ describe("Android photo backup production hardening", () => {
     expect(service).toContain('status === "blocked"');
   });
 
+  it("configures the engine before creating a foreground sync service", () => {
+    const service = readFileSync(
+      path.join(mobileRoot, "src/sync/SyncNotificationService.ts"),
+      "utf8",
+    );
+    const cryptoContext = readFileSync(
+      path.join(mobileRoot, "src/contexts/CryptoContext.tsx"),
+      "utf8",
+    );
+
+    expect(service).toContain("private async _ensureEngineConfigured()");
+    expect(service.indexOf("await this._ensureEngineConfigured()")).toBeLessThan(
+      service.indexOf("notifee.displayNotification({"),
+    );
+    expect(service).toContain("loadCachedKeys(userId)");
+    expect(service).toContain("await syncEngine.configure(");
+    expect(service).toContain("this._startPromise");
+    expect(cryptoContext).toContain("setFingerprintKey(keys.fingerprintKey)");
+  });
+
   it("preflights free storage and cleans generated upload variants", () => {
     const engine = readFileSync(
       path.join(mobileRoot, "src/sync/SyncEngine.ts"),
@@ -291,7 +312,8 @@ describe("Android photo backup production hardening", () => {
     );
 
     expect(db).toContain("CREATE TABLE IF NOT EXISTS backup_queue");
-    expect(db).toContain("db.withTransactionAsync");
+    expect(db).toContain("withExclusiveTransactionAsync");
+    expect(db).toContain("runWrite");
     expect(storage).toContain("SyncDb.saveQueue");
     expect(storage).toContain("SyncDb.loadQueue");
   });
