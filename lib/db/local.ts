@@ -28,6 +28,8 @@ export interface LocalFile {
   encryptedContentType?: string;
   encryptedDisplayName?: string;
   mediaCategory?: string;
+  uploadSource?: "web" | "mobile_manual" | "mobile_backup" | "migration";
+  syncContentFp?: string;
   // Preview/optimized version
   optimizedKey?: string;
   optimizedEncryptedDEK?: string;
@@ -44,7 +46,7 @@ export class XenodeDatabase extends Dexie {
     super(`XenodeDB-${userId}`); // scoped per user
     this.version(1).stores({
       files:
-        "id, key, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName, mediaCategory, optimizedKey",
+        "id, key, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName, mediaCategory, optimizedKey, uploadSource, syncContentFp",
       metadataCache: "id",
       thumbnailCache: "id, lastAccessed",
     });

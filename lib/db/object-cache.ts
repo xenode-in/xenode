@@ -21,6 +21,8 @@ export type ServerObject = {
   optimizedIV?: string;
   optimizedSize?: number;
   aspectRatio?: number;
+  uploadSource?: "web" | "mobile_manual" | "mobile_backup" | "migration";
+  syncContentFp?: string;
 };
 
 function toIso(value: ServerObject["createdAt"], fallback = new Date()): string {
@@ -61,6 +63,8 @@ export function mapServerObjectToLocalFile(
     optimizedIV: object.optimizedIV,
     optimizedSize: object.optimizedSize,
     aspectRatio: object.aspectRatio,
+    uploadSource: object.uploadSource,
+    syncContentFp: object.syncContentFp,
   };
 }
 

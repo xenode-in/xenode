@@ -56,6 +56,9 @@ export function useSyncManager() {
             tags: f.tags || [],
             thumbnail: f.thumbnail,
             bucketId: String(f.bucketId),
+            mediaCategory: f.mediaCategory,
+            uploadSource: f.uploadSource,
+            syncContentFp: f.syncContentFp,
           });
         }
 

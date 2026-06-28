@@ -77,6 +77,7 @@ export async function POST(request: NextRequest) {
       b2FileId: uploadResult.b2FileId,
       isEncrypted,
       encryptedName: encryptedName ?? undefined,
+      uploadSource: "web",
     });
 
     await incrementStorage(userId, size, { contentType, bucketId, isEncrypted });

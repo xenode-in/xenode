@@ -1,42 +1,97 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo, useRef, memo } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
 import { usePreview } from "@/contexts/PreviewContext";
-import { Loader2, ImageOff, LayoutGrid, Grid3x3, Rows3 } from "lucide-react";
+import {
+  Album,
+  ArrowLeft,
+  Check,
+  CheckSquare,
+  FolderPlus,
+  Grid3x3,
+  ImageOff,
+  LayoutGrid,
+  Loader2,
+  Pencil,
+  Plus,
+  Square,
+  Trash2,
+  X,
+} from "lucide-react";
+import { toast } from "sonner";
 import { formatBytes, cn } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
 import { useThumbnail } from "@/hooks/useThumbnail";
 import { GridObject, useGridObjects } from "@/hooks/useLazyGallery";
 import { Scrubber } from "@/components/dashboard/Scrubber";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-type GridDensity = "large" | "medium" | "small";
+type GridMode = "default" | "grid";
 
-function getColumnCount(mode: "masonry" | GridDensity, width: number): number {
-  if (mode === "masonry") {
+type AlbumRecord = {
+  _id: string;
+  name: string;
+  description?: string;
+  objectIds: string[];
+  objectCount: number;
+  coverObject?: (GridObject & { _id: string }) | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type DragSelectionBox = {
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+};
+
+function getColumnCount(mode: GridMode, width: number): number {
+  if (mode === "default") {
     if (width >= 1280) return 5;
     if (width >= 1024) return 4;
     if (width >= 768) return 3;
     return 2;
   }
-  if (mode === "large") {
-    if (width >= 640) return 3;
-    return 2;
-  }
-  if (mode === "medium") {
+  if (mode === "grid") {
+    if (width >= 1280) return 6;
     if (width >= 768) return 5;
     if (width >= 640) return 4;
     return 3;
-  }
-  if (mode === "small") {
-    if (width >= 768) return 8;
-    if (width >= 640) return 6;
-    return 4;
   }
   return 4;
 }
@@ -61,6 +116,33 @@ function groupByDate(photos: GridObject[]) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+function normalizeDragBox(box: DragSelectionBox) {
+  const left = Math.min(box.startX, box.currentX);
+  const top = Math.min(box.startY, box.currentY);
+  const right = Math.max(box.startX, box.currentX);
+  const bottom = Math.max(box.startY, box.currentY);
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
+function rectsIntersect(
+  a: { left: number; top: number; right: number; bottom: number },
+  b: DOMRect,
+) {
+  return (
+    a.left < b.right &&
+    a.right > b.left &&
+    a.top < b.bottom &&
+    a.bottom > b.top
+  );
+}
+
 // Thumbnail tile
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -69,14 +151,45 @@ const PhotoThumbnail = memo(function PhotoThumbnail({
   onPhotoClick,
   decryptedName,
   metadataKey,
+  albums,
+  activeAlbumId,
+  onAddToAlbum,
+  onCreateAlbumForPhoto,
+  onRemoveFromAlbum,
+  gridMode,
+  selectionMode,
+  isSelected,
+  onSelectPhoto,
+  onTileMount,
 }: {
   photo: GridObject;
   onPhotoClick: (p: GridObject) => void;
   decryptedName?: string;
   metadataKey: CryptoKey | null;
+  albums: AlbumRecord[];
+  activeAlbumId?: string | null;
+  onAddToAlbum: (albumId: string, photoId: string) => void;
+  onCreateAlbumForPhoto: (photo: GridObject) => void;
+  onRemoveFromAlbum?: (albumId: string, photoId: string) => void;
+  gridMode: GridMode;
+  selectionMode: boolean;
+  isSelected: boolean;
+  onSelectPhoto: (
+    photo: GridObject,
+    options?: { toggle?: boolean; range?: boolean; additive?: boolean },
+  ) => void;
+  onTileMount: (photoId: string, element: HTMLDivElement | null) => void;
 }) {
   const tileRef = useRef<HTMLDivElement | null>(null);
   const [visible, setVisible] = useState(false);
+
+  const setTileNode = useCallback(
+    (node: HTMLDivElement | null) => {
+      tileRef.current = node;
+      onTileMount(photo._id, node);
+    },
+    [onTileMount, photo._id],
+  );
 
   useEffect(() => {
     const el = tileRef.current;
@@ -110,71 +223,293 @@ const PhotoThumbnail = memo(function PhotoThumbnail({
     metadataKey,
   );
 
-  return (
-    <div
-      ref={tileRef}
-      onClick={() => onPhotoClick(photo)}
-      className="relative w-full rounded-2xl overflow-hidden bg-secondary border border-border/50 cursor-pointer group"
-      style={
-        photo.aspectRatio && photo.aspectRatio > 0
-          ? { aspectRatio: `${photo.aspectRatio}` }
-          : { aspectRatio: "1/1" }
-      }
-    >
-      {thumbUrl ? (
-        <img
-          src={thumbUrl}
-          alt={decryptedName || getFileName(photo.key)}
-          decoding="async"
-          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
-        />
-      ) : (
-        <div className="relative w-full h-full overflow-hidden rounded-2xl bg-zinc-900">
-          <div className="absolute inset-0 -translate-x-full animate-[shimmer_1.5s_infinite] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
-        </div>
-      )}
+  const activeAlbum = activeAlbumId
+    ? albums.find((album) => album._id === activeAlbumId)
+    : null;
 
-      {/* Hover overlay */}
-      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all duration-300 flex flex-col justify-end">
-        <div className="p-4 translate-y-2 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500 bg-gradient-to-t from-black/60 via-black/20 to-transparent">
-          <p className="text-white text-sm font-medium truncate drop-shadow-md">
-            {decryptedName || photo.encryptedName || getFileName(photo.key)}
-          </p>
-          {photo.size > 0 && (
-            <div className="flex items-center gap-2 mt-0.5">
-              <span className="text-white/60 text-[10px] uppercase tracking-wider font-bold">
-                {formatBytes(photo.size)}
-              </span>
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <div
+          ref={setTileNode}
+          onClick={(event) => {
+            if (event.metaKey || event.ctrlKey || event.shiftKey) {
+              event.preventDefault();
+              onSelectPhoto(photo, {
+                toggle: !event.shiftKey,
+                range: event.shiftKey,
+                additive: event.metaKey || event.ctrlKey,
+              });
+              return;
+            }
+            onPhotoClick(photo);
+          }}
+          className={cn(
+            "relative w-full rounded-2xl overflow-hidden bg-secondary border cursor-pointer group transition-all",
+            isSelected
+              ? "border-primary/80 ring-1 ring-primary/70"
+              : "border-border/50",
+          )}
+          style={
+            gridMode === "grid"
+              ? { aspectRatio: "1/1" }
+              : photo.aspectRatio && photo.aspectRatio > 0
+              ? { aspectRatio: `${photo.aspectRatio}` }
+              : { aspectRatio: "1/1" }
+          }
+        >
+          {thumbUrl ? (
+            <img
+              src={thumbUrl}
+              alt={decryptedName || getFileName(photo.key)}
+              decoding="async"
+              draggable={false}
+              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700"
+            />
+          ) : (
+            <div className="relative w-full h-full overflow-hidden rounded-2xl bg-zinc-900">
+              <div className="absolute inset-0 -translate-x-full animate-[shimmer_1.5s_infinite] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
             </div>
           )}
+
+          <button
+            type="button"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onSelectPhoto(photo, { toggle: true });
+            }}
+            className={cn(
+              "absolute left-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border shadow-sm transition-all",
+              selectionMode || isSelected
+                ? "opacity-100"
+                : "opacity-0 group-hover:opacity-100",
+              isSelected
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-white/60 bg-black/25 text-white backdrop-blur-md hover:bg-black/45",
+            )}
+            aria-label={isSelected ? "Deselect photo" : "Select photo"}
+          >
+            {isSelected ? (
+              <Check className="h-3.5 w-3.5" />
+            ) : (
+              <span className="h-3 w-3 rounded-full border-2 border-current" />
+            )}
+          </button>
+
+          {/* Hover overlay */}
+          <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-all duration-300 flex flex-col justify-end">
+            <div className="p-4 translate-y-2 opacity-0 group-hover:translate-y-0 group-hover:opacity-100 transition-all duration-500 bg-gradient-to-t from-black/60 via-black/20 to-transparent">
+              <p className="text-white text-sm font-medium truncate drop-shadow-md">
+                {decryptedName || photo.encryptedName || getFileName(photo.key)}
+              </p>
+              {photo.size > 0 && (
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className="text-white/60 text-[10px] uppercase tracking-wider font-bold">
+                    {formatBytes(photo.size)}
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
-      </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent className="w-56">
+        <ContextMenuLabel>Add to album</ContextMenuLabel>
+        {albums.length > 0 ? (
+          <ContextMenuSub>
+            <ContextMenuSubTrigger>
+              <Album className="mr-2 h-4 w-4" />
+              Choose album
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent className="w-56">
+              {albums.map((album) => {
+                const alreadyInAlbum = album.objectIds.includes(photo._id);
+                return (
+                  <ContextMenuItem
+                    key={album._id}
+                    disabled={alreadyInAlbum}
+                    onSelect={() => onAddToAlbum(album._id, photo._id)}
+                  >
+                    {alreadyInAlbum && <Check className="mr-2 h-4 w-4" />}
+                    <span className={alreadyInAlbum ? "" : "ml-6"}>
+                      {album.name}
+                    </span>
+                  </ContextMenuItem>
+                );
+              })}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+        ) : (
+          <ContextMenuItem disabled>No albums yet</ContextMenuItem>
+        )}
+        <ContextMenuItem onSelect={() => onCreateAlbumForPhoto(photo)}>
+          <FolderPlus className="mr-2 h-4 w-4" />
+          New album with photo
+        </ContextMenuItem>
+        {activeAlbum && onRemoveFromAlbum && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem
+              onSelect={() => onRemoveFromAlbum(activeAlbum._id, photo._id)}
+              className="text-destructive focus:text-destructive"
+            >
+              <X className="mr-2 h-4 w-4" />
+              Remove from {activeAlbum.name}
+            </ContextMenuItem>
+          </>
+        )}
+      </ContextMenuContent>
+    </ContextMenu>
+  );
+});
+
+const AlbumCover = memo(function AlbumCover({
+  album,
+  metadataKey,
+}: {
+  album: AlbumRecord;
+  metadataKey: CryptoKey | null;
+}) {
+  const thumbUrl = useThumbnail(
+    album.coverObject?.thumbnail ?? undefined,
+    metadataKey,
+  );
+
+  return (
+    <div className="aspect-square overflow-hidden rounded-lg bg-secondary border border-border/50">
+      {thumbUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={thumbUrl}
+          alt={album.name}
+          decoding="async"
+          className="h-full w-full object-cover"
+        />
+      ) : (
+        <div className="h-full w-full flex items-center justify-center">
+          <Album className="h-10 w-10 text-muted-foreground/35" />
+        </div>
+      )}
     </div>
   );
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+function TooltipIconButton({
+  label,
+  children,
+  ...props
+}: React.ComponentProps<typeof Button> & { label: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button aria-label={label} {...props}>
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 // Grid layout variants
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Grids inline virtualized
 
 // ─────────────────────────────────────────────────────────────────────────────
+type PhotosGridProps = {
+  initialViewMode?: "photos" | "albums";
+  initialAlbumId?: string | null;
+};
+
 // Main component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function PhotosGrid() {
+export function PhotosGrid({
+  initialViewMode = "photos",
+  initialAlbumId = null,
+}: PhotosGridProps = {}) {
   const [bucketId, setBucketId] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [configError, setConfigError] = useState("");
   const [search, setSearch] = useState("");
-  const [gridMode, setGridMode] = useState<"masonry" | GridDensity>("masonry");
+  const [gridMode, setGridMode] = useState<GridMode>("default");
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>(
     {},
   );
+  const [albums, setAlbums] = useState<AlbumRecord[]>([]);
+  const [albumsLoading, setAlbumsLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<"photos" | "albums">(
+    initialViewMode,
+  );
+  const [activeAlbumId, setActiveAlbumId] = useState<string | null>(
+    initialAlbumId,
+  );
+  const [albumDialogOpen, setAlbumDialogOpen] = useState(false);
+  const [albumDialogMode, setAlbumDialogMode] = useState<"create" | "rename">(
+    "create",
+  );
+  const [albumName, setAlbumName] = useState("");
+  const [pendingAlbumPhotos, setPendingAlbumPhotos] = useState<GridObject[]>([]);
+  const [editingAlbumId, setEditingAlbumId] = useState<string | null>(null);
+  const [savingAlbum, setSavingAlbum] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedPhotoIds, setSelectedPhotoIds] = useState<string[]>([]);
+  const [bulkAlbumDialogOpen, setBulkAlbumDialogOpen] = useState(false);
+  const [bulkTargetAlbumId, setBulkTargetAlbumId] = useState("");
+  const [bulkAlbumSaving, setBulkAlbumSaving] = useState(false);
+  const [dragBox, setDragBox] = useState<DragSelectionBox | null>(null);
 
+  const router = useRouter();
   const { openPreview } = usePreview();
   const { isUnlocked, metadataKey } = useCrypto();
+  const tileElementsRef = useRef<Map<string, HTMLDivElement>>(new Map());
+  const selectedPhotoIdsRef = useRef<string[]>([]);
+  const selectionAnchorIdRef = useRef<string | null>(null);
+  const dragStartRef = useRef<{
+    x: number;
+    y: number;
+    additive: boolean;
+    baseSelectedIds: Set<string>;
+  } | null>(null);
+  const dragSelectedIdsRef = useRef<Set<string>>(new Set());
+  const lastDragPointRef = useRef<{ x: number; y: number } | null>(null);
+  const autoScrollFrameRef = useRef<number | null>(null);
+  const dragMovedRef = useRef(false);
+  const suppressNextClickRef = useRef(false);
+
+  useEffect(() => {
+    selectedPhotoIdsRef.current = selectedPhotoIds;
+  }, [selectedPhotoIds]);
+
+  useEffect(() => {
+    setViewMode(initialViewMode);
+    setActiveAlbumId(initialAlbumId);
+    setSearch("");
+    setSelectedPhotoIds([]);
+    setSelectionMode(false);
+  }, [initialAlbumId, initialViewMode]);
+
+  const loadAlbums = useCallback(async () => {
+    try {
+      setAlbumsLoading(true);
+      const res = await fetch("/api/albums", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load albums");
+      const data = await res.json();
+      setAlbums(data.albums ?? []);
+    } catch {
+      toast.error("Failed to load albums");
+      setAlbums([]);
+    } finally {
+      setAlbumsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadAlbums();
+  }, [loadAlbums]);
 
   // ── Bucket config (one-time fetch) ──────────────────────────────────────────
 
@@ -197,7 +532,26 @@ export function PhotosGrid() {
     isError: gridError,
   } = useGridObjects(bucketId, { mediaCategory: "image" });
 
-  const allPhotos: GridObject[] = gridData?.items ?? [];
+  const gridItems = gridData?.items;
+  const allPhotos: GridObject[] = useMemo(() => gridItems ?? [], [gridItems]);
+  const activeAlbum = useMemo(
+    () => albums.find((album) => album._id === activeAlbumId) ?? null,
+    [albums, activeAlbumId],
+  );
+  const showingAlbumList = viewMode === "albums" && !activeAlbumId;
+  const albumPhotoIds = useMemo(
+    () => new Set(activeAlbum?.objectIds ?? []),
+    [activeAlbum],
+  );
+  const sourcePhotos = useMemo(
+    () =>
+      activeAlbum
+        ? allPhotos.filter((photo) => albumPhotoIds.has(photo._id))
+        : activeAlbumId
+          ? []
+        : allPhotos,
+    [activeAlbum, activeAlbumId, albumPhotoIds, allPhotos],
+  );
 
   // ── Name decryption ──────────────────────────────────────────────────────────
 
@@ -232,13 +586,39 @@ export function PhotosGrid() {
 
   const filteredPhotos = useMemo(() => {
     const query = search.trim().toLowerCase();
-    if (!query) return allPhotos;
-    return allPhotos.filter((p) => {
+    if (!query) return sourcePhotos;
+    return sourcePhotos.filter((p) => {
       const name =
         decryptedNames[p._id] || p.encryptedName || getFileName(p.key);
       return name.toLowerCase().includes(query);
     });
-  }, [allPhotos, search, decryptedNames]);
+  }, [sourcePhotos, search, decryptedNames]);
+  const visiblePhotoIds = useMemo(
+    () => new Set(filteredPhotos.map((photo) => photo._id)),
+    [filteredPhotos],
+  );
+  const selectedPhotoIdSet = useMemo(
+    () => new Set(selectedPhotoIds),
+    [selectedPhotoIds],
+  );
+  const selectedPhotos = useMemo(
+    () => allPhotos.filter((photo) => selectedPhotoIdSet.has(photo._id)),
+    [allPhotos, selectedPhotoIdSet],
+  );
+
+  useEffect(() => {
+    setSelectedPhotoIds((prev) => {
+      const next = prev.filter((photoId) => visiblePhotoIds.has(photoId));
+      selectedPhotoIdsRef.current = next;
+      if (
+        selectionAnchorIdRef.current &&
+        !visiblePhotoIds.has(selectionAnchorIdRef.current)
+      ) {
+        selectionAnchorIdRef.current = next[0] ?? null;
+      }
+      return next;
+    });
+  }, [visiblePhotoIds]);
 
   const grouped = useMemo(() => groupByDate(filteredPhotos), [filteredPhotos]);
   const groupEntries = useMemo(() => Object.entries(grouped), [grouped]);
@@ -268,7 +648,7 @@ export function PhotosGrid() {
 
   const { virtualItemsData, labelToVirtualIndex, photoIndexToVirtualIndex } = useMemo(() => {
     const data: Array<
-      | { type: "header"; dateLabel: string; count: number; photoIndex: number }
+      | { type: "header"; dateLabel: string; count: number; photoIndex: number; photos: GridObject[] }
       | { type: "grid"; photos: GridObject[]; dateLabel: string; photoIndex: number }
     > = [];
     const labelToIndex: Record<string, number> = {};
@@ -283,6 +663,7 @@ export function PhotosGrid() {
         dateLabel,
         count: groupPhotos.length,
         photoIndex: runningPhotoIndex,
+        photos: groupPhotos,
       });
       labelToIndex[dateLabel] = headerIndex;
 
@@ -392,6 +773,601 @@ export function PhotosGrid() {
     [openPreview],
   );
 
+  const clearSelection = useCallback(() => {
+    setSelectedPhotoIds([]);
+    selectedPhotoIdsRef.current = [];
+    selectionAnchorIdRef.current = null;
+    setSelectionMode(false);
+  }, []);
+
+  const selectPhoto = useCallback(
+    (
+      photo: GridObject,
+      options: { toggle?: boolean; range?: boolean; additive?: boolean } = {},
+    ) => {
+      setSelectionMode(true);
+
+      setSelectedPhotoIds((prev) => {
+        const current = new Set(prev);
+
+        if (options.range && selectionAnchorIdRef.current) {
+          const anchorIndex = filteredPhotos.findIndex(
+            (item) => item._id === selectionAnchorIdRef.current,
+          );
+          const targetIndex = filteredPhotos.findIndex(
+            (item) => item._id === photo._id,
+          );
+
+          if (anchorIndex !== -1 && targetIndex !== -1) {
+            const start = Math.min(anchorIndex, targetIndex);
+            const end = Math.max(anchorIndex, targetIndex);
+            const rangeIds = filteredPhotos
+              .slice(start, end + 1)
+              .map((item) => item._id);
+            return options.additive
+              ? Array.from(new Set([...prev, ...rangeIds]))
+              : rangeIds;
+          }
+        }
+
+        if (options.toggle) {
+          if (current.has(photo._id)) current.delete(photo._id);
+          else current.add(photo._id);
+          selectionAnchorIdRef.current = photo._id;
+          return Array.from(current);
+        }
+
+        selectionAnchorIdRef.current = photo._id;
+        return [photo._id];
+      });
+
+      if (!options.range) {
+        selectionAnchorIdRef.current = photo._id;
+      }
+    },
+    [filteredPhotos],
+  );
+
+  const selectAllVisible = useCallback(() => {
+    setSelectionMode(true);
+    const nextIds = filteredPhotos.map((photo) => photo._id);
+    selectedPhotoIdsRef.current = nextIds;
+    selectionAnchorIdRef.current = nextIds[0] ?? null;
+    setSelectedPhotoIds(nextIds);
+  }, [filteredPhotos]);
+
+  const togglePhotoGroupSelection = useCallback((photos: GridObject[]) => {
+    if (photos.length === 0) return;
+
+    setSelectedPhotoIds((prev) => {
+      const groupIds = photos.map((photo) => photo._id);
+      const groupIdSet = new Set(groupIds);
+      const allSelected = groupIds.every((id) => prev.includes(id));
+      const next = allSelected
+        ? prev.filter((id) => !groupIdSet.has(id))
+        : Array.from(new Set([...prev, ...groupIds]));
+
+      selectedPhotoIdsRef.current = next;
+      selectionAnchorIdRef.current = allSelected
+        ? next[0] ?? null
+        : groupIds[0] ?? null;
+      setSelectionMode(next.length > 0);
+      return next;
+    });
+  }, []);
+
+  const registerPhotoTile = useCallback(
+    (photoId: string, element: HTMLDivElement | null) => {
+      if (element) {
+        tileElementsRef.current.set(photoId, element);
+      } else {
+        tileElementsRef.current.delete(photoId);
+      }
+    },
+    [],
+  );
+
+  const updateDragSelection = useCallback((currentX: number, currentY: number) => {
+    const start = dragStartRef.current;
+    if (!start) return;
+
+    lastDragPointRef.current = { x: currentX, y: currentY };
+
+    const nextBox = {
+      startX: start.x,
+      startY: start.y,
+      currentX,
+      currentY,
+    };
+    const normalizedBox = normalizeDragBox(nextBox);
+    const nextSelectedIds = new Set(
+      start.additive ? start.baseSelectedIds : [],
+    );
+
+    tileElementsRef.current.forEach((element, photoId) => {
+      if (rectsIntersect(normalizedBox, element.getBoundingClientRect())) {
+        dragSelectedIdsRef.current.add(photoId);
+      }
+    });
+
+    dragSelectedIdsRef.current.forEach((photoId) => {
+      nextSelectedIds.add(photoId);
+    });
+
+    const nextSelected = Array.from(nextSelectedIds);
+    selectedPhotoIdsRef.current = nextSelected;
+    setSelectedPhotoIds(nextSelected);
+    setDragBox(nextBox);
+  }, []);
+
+  const stopDragAutoScroll = useCallback(() => {
+    if (autoScrollFrameRef.current !== null) {
+      window.cancelAnimationFrame(autoScrollFrameRef.current);
+      autoScrollFrameRef.current = null;
+    }
+  }, []);
+
+  const startDragAutoScroll = useCallback(() => {
+    if (autoScrollFrameRef.current !== null) return;
+
+    const tick = () => {
+      const point = lastDragPointRef.current;
+      if (!dragStartRef.current || !dragMovedRef.current || !point) {
+        autoScrollFrameRef.current = null;
+        return;
+      }
+
+      const edgeSize = 96;
+      const maxSpeed = 24;
+      let scrollY = 0;
+
+      if (point.y < edgeSize) {
+        scrollY = -Math.ceil(((edgeSize - point.y) / edgeSize) * maxSpeed);
+      } else if (point.y > window.innerHeight - edgeSize) {
+        scrollY = Math.ceil(
+          ((point.y - (window.innerHeight - edgeSize)) / edgeSize) * maxSpeed,
+        );
+      }
+
+      if (scrollY !== 0) {
+        window.scrollBy({ top: scrollY, behavior: "auto" });
+        updateDragSelection(point.x, point.y);
+      }
+
+      autoScrollFrameRef.current = window.requestAnimationFrame(tick);
+    };
+
+    autoScrollFrameRef.current = window.requestAnimationFrame(tick);
+  }, [updateDragSelection]);
+
+  const handlePhotoGridPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (
+        event.button !== 0 ||
+        event.pointerType === "touch" ||
+        showingAlbumList ||
+        gridLoading ||
+        gridError ||
+        filteredPhotos.length === 0
+      ) {
+        return;
+      }
+
+      const target = event.target as HTMLElement;
+      if (
+        target.closest(
+          "button,a,input,textarea,select,[role='menuitem'],[data-selection-ignore='true']",
+        )
+      ) {
+        return;
+      }
+
+      dragStartRef.current = {
+        x: event.clientX,
+        y: event.clientY,
+        additive: event.metaKey || event.ctrlKey || event.shiftKey,
+        baseSelectedIds: new Set(selectedPhotoIdsRef.current),
+      };
+      dragSelectedIdsRef.current = new Set();
+      lastDragPointRef.current = { x: event.clientX, y: event.clientY };
+      dragMovedRef.current = false;
+
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture can fail if the browser has already cancelled it.
+      }
+    },
+    [filteredPhotos.length, gridError, gridLoading, showingAlbumList],
+  );
+
+  const handlePhotoGridPointerMove = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const start = dragStartRef.current;
+      if (!start) return;
+
+      const movedX = event.clientX - start.x;
+      const movedY = event.clientY - start.y;
+      const distance = Math.hypot(movedX, movedY);
+
+      if (!dragMovedRef.current) {
+        if (distance < 8) return;
+        dragMovedRef.current = true;
+        suppressNextClickRef.current = true;
+        selectionAnchorIdRef.current = null;
+        setSelectionMode(true);
+        startDragAutoScroll();
+      }
+
+      event.preventDefault();
+      updateDragSelection(event.clientX, event.clientY);
+    },
+    [startDragAutoScroll, updateDragSelection],
+  );
+
+  const finishPhotoGridDrag = useCallback(
+    (event?: React.PointerEvent<HTMLDivElement>) => {
+      const wasDragging = dragMovedRef.current;
+
+      if (event && dragStartRef.current) {
+        try {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        } catch {
+          // It is safe if capture was already released by the browser.
+        }
+      }
+
+      dragStartRef.current = null;
+      dragSelectedIdsRef.current = new Set();
+      lastDragPointRef.current = null;
+      dragMovedRef.current = false;
+      stopDragAutoScroll();
+      setDragBox(null);
+
+      if (wasDragging) {
+        selectionAnchorIdRef.current = selectedPhotoIdsRef.current.at(-1) ?? null;
+        suppressNextClickRef.current = true;
+        if (selectedPhotoIdsRef.current.length === 0) {
+          setSelectionMode(false);
+        }
+        window.setTimeout(() => {
+          suppressNextClickRef.current = false;
+        }, 0);
+      }
+    },
+    [stopDragAutoScroll],
+  );
+
+  const handlePhotoGridClickCapture = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (!suppressNextClickRef.current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      suppressNextClickRef.current = false;
+    },
+    [],
+  );
+
+  useEffect(() => {
+    return () => {
+      stopDragAutoScroll();
+    };
+  }, [stopDragAutoScroll]);
+
+  const openCreateAlbumDialog = useCallback((photoOrPhotos?: GridObject | GridObject[]) => {
+    setAlbumDialogMode("create");
+    setPendingAlbumPhotos(
+      Array.isArray(photoOrPhotos)
+        ? photoOrPhotos
+        : photoOrPhotos
+          ? [photoOrPhotos]
+          : [],
+    );
+    setEditingAlbumId(null);
+    setAlbumName("");
+    setAlbumDialogOpen(true);
+  }, []);
+
+  const openRenameAlbumDialog = useCallback((album: AlbumRecord) => {
+    setAlbumDialogMode("rename");
+    setPendingAlbumPhotos([]);
+    setEditingAlbumId(album._id);
+    setAlbumName(album.name);
+    setAlbumDialogOpen(true);
+  }, []);
+
+  const handleSaveAlbum = useCallback(
+    async (event: React.FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const trimmed = albumName.trim();
+      if (!trimmed) return;
+
+      setSavingAlbum(true);
+      try {
+        if (albumDialogMode === "create") {
+          const res = await fetch("/api/albums", {
+            method: "POST",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: trimmed,
+              objectIds: pendingAlbumPhotos.map((photo) => photo._id),
+            }),
+          });
+          if (!res.ok) throw new Error("Failed to create album");
+          const data = await res.json();
+          setAlbums((prev) => [data.album, ...prev]);
+          toast.success("Album created");
+          if (pendingAlbumPhotos.length > 0) {
+            setActiveAlbumId(data.album._id);
+            setViewMode("photos");
+            router.push(`/dashboard/albums/${data.album._id}`);
+            clearSelection();
+          } else {
+            setViewMode("albums");
+            router.push("/dashboard/albums");
+          }
+        } else if (editingAlbumId) {
+          const res = await fetch(`/api/albums/${editingAlbumId}`, {
+            method: "PATCH",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: trimmed }),
+          });
+          if (!res.ok) throw new Error("Failed to rename album");
+          const data = await res.json();
+          setAlbums((prev) =>
+            prev.map((album) =>
+              album._id === editingAlbumId
+                ? {
+                    ...album,
+                    name: data.album.name,
+                    updatedAt: data.album.updatedAt,
+                  }
+                : album,
+            ),
+          );
+          toast.success("Album renamed");
+        }
+        setAlbumDialogOpen(false);
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Album action failed",
+        );
+      } finally {
+        setSavingAlbum(false);
+      }
+    },
+    [
+      albumDialogMode,
+      albumName,
+      clearSelection,
+      editingAlbumId,
+      pendingAlbumPhotos,
+      router,
+    ],
+  );
+
+  const handleAddToAlbum = useCallback(
+    async (albumId: string, photoId: string) => {
+      const album = albums.find((item) => item._id === albumId);
+      if (album?.objectIds.includes(photoId)) return;
+
+      setAlbums((prev) =>
+        prev.map((item) =>
+          item._id === albumId
+            ? {
+                ...item,
+                objectIds: [...item.objectIds, photoId],
+                objectCount: item.objectCount + 1,
+              }
+            : item,
+        ),
+      );
+
+      try {
+        const res = await fetch(`/api/albums/${albumId}/objects`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ objectIds: [photoId] }),
+        });
+        if (!res.ok) throw new Error("Failed to add photo");
+        const data = await res.json();
+        setAlbums((prev) =>
+          prev.map((item) =>
+            item._id === albumId
+              ? {
+                  ...item,
+                  objectIds: data.album.objectIds,
+                  objectCount: data.album.objectCount,
+                  coverObjectId: data.album.coverObjectId,
+                }
+              : item,
+          ),
+        );
+        toast.success("Added to album");
+        void loadAlbums();
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Failed to add photo");
+        void loadAlbums();
+      }
+    },
+    [albums, loadAlbums],
+  );
+
+  const handleAddSelectionToAlbum = useCallback(async () => {
+    if (!bulkTargetAlbumId || selectedPhotoIds.length === 0) return;
+    const photoIds = selectedPhotoIds;
+    setBulkAlbumSaving(true);
+
+    try {
+      const res = await fetch(`/api/albums/${bulkTargetAlbumId}/objects`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ objectIds: photoIds }),
+      });
+      if (!res.ok) throw new Error("Failed to add selected photos");
+      const data = await res.json();
+      setAlbums((prev) =>
+        prev.map((item) =>
+          item._id === bulkTargetAlbumId
+            ? {
+                ...item,
+                objectIds: data.album.objectIds,
+                objectCount: data.album.objectCount,
+                coverObjectId: data.album.coverObjectId,
+              }
+            : item,
+        ),
+      );
+      toast.success(
+        `${photoIds.length} photo${photoIds.length !== 1 ? "s" : ""} added`,
+      );
+      setBulkAlbumDialogOpen(false);
+      setBulkTargetAlbumId("");
+      clearSelection();
+      void loadAlbums();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to add selected photos",
+      );
+      void loadAlbums();
+    } finally {
+      setBulkAlbumSaving(false);
+    }
+  }, [bulkTargetAlbumId, clearSelection, loadAlbums, selectedPhotoIds]);
+
+  const handleRemoveFromAlbum = useCallback(
+    async (albumId: string, photoId: string) => {
+      setAlbums((prev) =>
+        prev.map((item) =>
+          item._id === albumId
+            ? {
+                ...item,
+                objectIds: item.objectIds.filter((id) => id !== photoId),
+                objectCount: Math.max(0, item.objectCount - 1),
+              }
+            : item,
+        ),
+      );
+
+      try {
+        const res = await fetch(`/api/albums/${albumId}/objects`, {
+          method: "DELETE",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ objectIds: [photoId] }),
+        });
+        if (!res.ok) throw new Error("Failed to remove photo");
+        const data = await res.json();
+        setAlbums((prev) =>
+          prev.map((item) =>
+            item._id === albumId
+              ? {
+                  ...item,
+                  objectIds: data.album.objectIds,
+                  objectCount: data.album.objectCount,
+                  coverObjectId: data.album.coverObjectId,
+                }
+              : item,
+          ),
+        );
+        toast.success("Removed from album");
+        void loadAlbums();
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to remove photo",
+        );
+        void loadAlbums();
+      }
+    },
+    [loadAlbums],
+  );
+
+  const handleRemoveSelectionFromAlbum = useCallback(async () => {
+    if (!activeAlbumId || selectedPhotoIds.length === 0) return;
+    const photoIds = selectedPhotoIds;
+
+    setAlbums((prev) =>
+      prev.map((item) =>
+        item._id === activeAlbumId
+          ? {
+              ...item,
+              objectIds: item.objectIds.filter((id) => !photoIds.includes(id)),
+              objectCount: Math.max(0, item.objectCount - photoIds.length),
+            }
+          : item,
+      ),
+    );
+
+    try {
+      const res = await fetch(`/api/albums/${activeAlbumId}/objects`, {
+        method: "DELETE",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ objectIds: photoIds }),
+      });
+      if (!res.ok) throw new Error("Failed to remove selected photos");
+      const data = await res.json();
+      setAlbums((prev) =>
+        prev.map((item) =>
+          item._id === activeAlbumId
+            ? {
+                ...item,
+                objectIds: data.album.objectIds,
+                objectCount: data.album.objectCount,
+                coverObjectId: data.album.coverObjectId,
+              }
+            : item,
+        ),
+      );
+      toast.success(
+        `${photoIds.length} photo${photoIds.length !== 1 ? "s" : ""} removed`,
+      );
+      clearSelection();
+      void loadAlbums();
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to remove selected photos",
+      );
+      void loadAlbums();
+    }
+  }, [activeAlbumId, clearSelection, loadAlbums, selectedPhotoIds]);
+
+  const handleDeleteAlbum = useCallback(
+    async (albumId: string) => {
+      const album = albums.find((item) => item._id === albumId);
+      if (!album) return;
+      if (!window.confirm(`Delete "${album.name}"? Photos stay in your vault.`)) {
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/albums/${albumId}`, {
+          method: "DELETE",
+          credentials: "include",
+        });
+        if (!res.ok) throw new Error("Failed to delete album");
+        setAlbums((prev) => prev.filter((item) => item._id !== albumId));
+        if (activeAlbumId === albumId) {
+          setActiveAlbumId(null);
+          setViewMode("albums");
+          router.push("/dashboard/albums");
+        }
+        toast.success("Album deleted");
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to delete album",
+        );
+      }
+    },
+    [activeAlbumId, albums, router],
+  );
+
   // ── Render ────────────────────────────────────────────────────────────────────
 
   if (initialLoading) {
@@ -402,23 +1378,168 @@ export function PhotosGrid() {
     );
   }
 
+  const headerTitle = activeAlbum
+    ? activeAlbum.name
+    : activeAlbumId
+      ? "Album"
+    : showingAlbumList
+      ? "Albums"
+      : "Photos";
+  const headerCount = activeAlbum
+    ? `${filteredPhotos.length} image${filteredPhotos.length !== 1 ? "s" : ""}`
+    : activeAlbumId
+      ? albumsLoading
+        ? "Loading album..."
+        : "Album not found"
+    : showingAlbumList
+      ? `${albums.length} album${albums.length !== 1 ? "s" : ""}`
+      : `${filteredPhotos.length} image${filteredPhotos.length !== 1 ? "s" : ""}`;
+  const emptyTitle = activeAlbumId && !activeAlbum && !albumsLoading
+    ? "Album not found"
+    : activeAlbum
+      ? search
+        ? "No matches found"
+        : "This album is empty"
+      : search
+        ? "No matches found"
+        : "Your gallery is empty";
+  const emptyDescription = activeAlbumId && !activeAlbum && !albumsLoading
+    ? "This album may have been deleted or is no longer available."
+    : activeAlbum
+      ? search
+        ? "We couldn't find any photos matching your search in this album."
+        : "Add photos from the Photos page or right-click any photo to place it here."
+      : search
+        ? "We couldn't find any photos matching your search."
+        : "Start building your visual library by uploading images to your vault.";
+  const currentDatePhotos = currentDateLabel
+    ? grouped[currentDateLabel] ?? []
+    : [];
+  const currentDateSelectedCount = currentDatePhotos.filter((photo) =>
+    selectedPhotoIdSet.has(photo._id),
+  ).length;
+  const currentDateAllSelected =
+    currentDatePhotos.length > 0 &&
+    currentDateSelectedCount === currentDatePhotos.length;
+  const currentDateSomeSelected =
+    currentDateSelectedCount > 0 && !currentDateAllSelected;
+
   return (
+    <TooltipProvider delayDuration={150}>
     <div className="flex gap-2 items-start">
       {/* Gallery content */}
       <div className="grow min-w-0">
         <div ref={galleryContainerRef} className="space-y-6 pb-8">
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-semibold text-foreground">Photos</h1>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                {activeAlbumId && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => {
+                      setActiveAlbumId(null);
+                      setViewMode("albums");
+                      setSearch("");
+                      router.push("/dashboard/albums");
+                    }}
+                    aria-label="Back to albums"
+                  >
+                    <ArrowLeft className="h-4 w-4" />
+                  </Button>
+                )}
+                <h1 className="truncate text-2xl font-semibold text-foreground">
+                  {headerTitle}
+                </h1>
+              </div>
               <p className="text-sm text-muted-foreground mt-0.5">
-                {filteredPhotos.length} image
-                {filteredPhotos.length !== 1 ? "s" : ""}
+                {headerCount}
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center bg-secondary/30 backdrop-blur-md rounded-xl p-1 border border-border/50">
+                <Link
+                  href="/dashboard/photos"
+                  className={cn(
+                    "inline-flex h-8 items-center px-3 rounded-md text-sm transition-colors",
+                    !showingAlbumList && !activeAlbum
+                      ? "bg-secondary text-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  Photos
+                </Link>
+                <Link
+                  href="/dashboard/albums"
+                  className={cn(
+                    "inline-flex h-8 items-center px-3 rounded-md text-sm transition-colors",
+                    showingAlbumList || activeAlbumId
+                      ? "bg-secondary text-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  Albums
+                </Link>
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => openCreateAlbumDialog()}
+              >
+                <Plus className="h-4 w-4" />
+                Album
+              </Button>
+
+              {!showingAlbumList && (
+                <TooltipIconButton
+                  label={selectionMode ? "Clear selection" : "Select photos"}
+                  type="button"
+                  variant={selectionMode ? "secondary" : "outline"}
+                  size="icon-sm"
+                  onClick={() => {
+                    if (selectionMode) clearSelection();
+                    else setSelectionMode(true);
+                  }}
+                >
+                  {selectionMode ? (
+                    <CheckSquare className="h-4 w-4" />
+                  ) : (
+                    <Square className="h-4 w-4" />
+                  )}
+                </TooltipIconButton>
+              )}
+
+              {activeAlbum && (
+                <>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => openRenameAlbumDialog(activeAlbum)}
+                    aria-label="Rename album"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => handleDeleteAlbum(activeAlbum._id)}
+                    aria-label="Delete album"
+                    className="text-destructive hover:text-destructive"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </>
+              )}
+
               {/* Search */}
+              {!showingAlbumList && (
               <div className="relative group/search">
                 <input
                   type="text"
@@ -441,35 +1562,97 @@ export function PhotosGrid() {
                   />
                 </svg>
               </div>
+              )}
 
               {/* Grid density toggle */}
+              {!showingAlbumList && (
               <div className="flex items-center bg-secondary/30 backdrop-blur-md rounded-xl p-1 border border-border/50">
-                {(["masonry", "large", "medium", "small"] as const).map(
-                  (mode) => {
-                    const icons: Record<string, React.ReactNode> = {
-                      masonry: <LayoutGrid className="w-3.5 h-3.5" />,
-                      large: <Rows3 className="w-3.5 h-3.5" />,
-                      medium: <Grid3x3 className="w-3.5 h-3.5" />,
-                      small: <LayoutGrid className="w-3 h-3" />,
-                    };
-                    return (
-                      <button
-                        key={mode}
-                        onClick={() => setGridMode(mode)}
-                        className={`w-7 h-7 flex items-center justify-center rounded-md transition-colors ${
-                          gridMode === mode
-                            ? "bg-secondary text-foreground"
-                            : "text-muted-foreground/40 hover:text-foreground"
-                        }`}
-                      >
-                        {icons[mode]}
-                      </button>
-                    );
-                  },
-                )}
+                {([
+                  { mode: "default", label: "Default", icon: LayoutGrid },
+                  { mode: "grid", label: "Grid", icon: Grid3x3 },
+                ] as const).map(({ mode, label, icon: Icon }) => (
+                  <TooltipIconButton
+                    key={mode}
+                    label={label}
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => setGridMode(mode)}
+                    className={cn(
+                      "h-7 w-7 rounded-md",
+                      gridMode === mode
+                        ? "bg-secondary text-foreground"
+                        : "text-muted-foreground/40 hover:text-foreground",
+                    )}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                  </TooltipIconButton>
+                ))}
               </div>
+              )}
             </div>
           </div>
+
+          {selectionMode && !showingAlbumList && (
+            <div className="fixed bottom-5 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-full border border-border bg-background/95 px-2 py-1.5 shadow-lg backdrop-blur-md">
+              <span className="min-w-20 px-3 text-center text-sm font-medium text-foreground">
+                {selectedPhotoIds.length} selected
+              </span>
+              <div className="h-5 w-px bg-border" />
+              <TooltipIconButton
+                label="Select all"
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={selectAllVisible}
+                disabled={filteredPhotos.length === 0}
+              >
+                <CheckSquare className="h-4 w-4" />
+              </TooltipIconButton>
+              <TooltipIconButton
+                label="Add to album"
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => setBulkAlbumDialogOpen(true)}
+                disabled={selectedPhotoIds.length === 0 || albums.length === 0}
+              >
+                <Album className="h-4 w-4" />
+              </TooltipIconButton>
+              <TooltipIconButton
+                label="New album"
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => openCreateAlbumDialog(selectedPhotos)}
+                disabled={selectedPhotoIds.length === 0}
+              >
+                <FolderPlus className="h-4 w-4" />
+              </TooltipIconButton>
+              {activeAlbum && (
+                <TooltipIconButton
+                  label="Remove from album"
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={handleRemoveSelectionFromAlbum}
+                  disabled={selectedPhotoIds.length === 0}
+                  className="text-destructive hover:text-destructive"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </TooltipIconButton>
+              )}
+              <TooltipIconButton
+                label="Clear selection"
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={clearSelection}
+              >
+                <X className="h-4 w-4" />
+              </TooltipIconButton>
+            </div>
+          )}
 
           {/* Config error */}
           {configError && (
@@ -479,7 +1662,7 @@ export function PhotosGrid() {
           )}
 
           {/* Grid loading */}
-          {gridLoading && (
+          {(gridLoading || (activeAlbumId && albumsLoading)) && (
             <div className="flex items-center justify-center py-24">
               <Loader2 className="w-6 h-6 animate-spin text-primary" />
             </div>
@@ -492,8 +1675,83 @@ export function PhotosGrid() {
             </div>
           )}
 
+          {showingAlbumList && (
+            <div className="px-4">
+              {albumsLoading ? (
+                <div className="flex items-center justify-center py-24">
+                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                </div>
+              ) : albums.length > 0 ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                  {albums.map((album) => (
+                    <div key={album._id} className="group">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setActiveAlbumId(album._id);
+                          setViewMode("photos");
+                          setSearch("");
+                          router.push(`/dashboard/albums/${album._id}`);
+                        }}
+                        className="block w-full text-left"
+                      >
+                        <AlbumCover album={album} metadataKey={metadataKey} />
+                        <div className="mt-2 min-w-0">
+                          <p className="truncate text-sm font-medium text-foreground">
+                            {album.name}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {album.objectCount} image
+                            {album.objectCount !== 1 ? "s" : ""}
+                          </p>
+                        </div>
+                      </button>
+                      <div className="mt-2 flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={() => openRenameAlbumDialog(album)}
+                          aria-label="Rename album"
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          onClick={() => handleDeleteAlbum(album._id)}
+                          aria-label="Delete album"
+                          className="text-destructive hover:text-destructive"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-32 text-center">
+                  <div className="mb-5 flex h-20 w-20 items-center justify-center rounded-2xl border border-border bg-secondary/40">
+                    <Album className="h-9 w-9 text-muted-foreground/40" />
+                  </div>
+                  <h3 className="text-lg font-semibold text-foreground mb-1">
+                    No albums yet
+                  </h3>
+                  <p className="text-sm text-muted-foreground max-w-xs mx-auto mb-6">
+                    Create an album from here, or right-click any photo and add it to a new album.
+                  </p>
+                  <Button type="button" onClick={() => openCreateAlbumDialog()}>
+                    <FolderPlus className="h-4 w-4" />
+                    New Album
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Empty */}
-          {!gridLoading && !gridError && filteredPhotos.length === 0 && (
+          {!showingAlbumList && !gridLoading && !(activeAlbumId && albumsLoading) && !gridError && filteredPhotos.length === 0 && (
             <div className="flex flex-col items-center justify-center py-32 text-center animate-in fade-in slide-in-from-bottom-4 duration-1000">
               <div className="relative mb-6">
                 <div className="w-24 h-24 rounded-3xl bg-primary/5 border border-primary/10 flex items-center justify-center rotate-6 scale-110">
@@ -504,14 +1762,12 @@ export function PhotosGrid() {
                 </div>
               </div>
               <h3 className="text-lg font-semibold text-foreground mb-1">
-                {search ? "No matches found" : "Your gallery is empty"}
+                {emptyTitle}
               </h3>
               <p className="text-sm text-muted-foreground max-w-xs mx-auto mb-8">
-                {search
-                  ? "We couldn't find any photos matching your search."
-                  : "Start building your visual library by uploading images to your vault."}
+                {emptyDescription}
               </p>
-              {!search && (
+              {!search && !activeAlbumId && (
                 <a
                   href="/dashboard/files"
                   className="inline-flex items-center justify-center px-6 h-11 rounded-full bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-all shadow-lg shadow-primary/20 hover:-translate-y-0.5 active:translate-y-0"
@@ -523,19 +1779,46 @@ export function PhotosGrid() {
           )}
 
           {/* Floating Glassmorphism Sticky Date Header */}
-          {currentDateLabel && (
+          {!showingAlbumList && currentDateLabel && (
             <div className="sticky top-[68px] z-30 py-2 -mx-4 px-4 bg-background/80 backdrop-blur-md border-b border-border/10 transition-colors">
               <p className="text-sm font-semibold text-foreground/70 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-primary/40 animate-pulse" />
+                <button
+                  type="button"
+                  onClick={() => togglePhotoGroupSelection(currentDatePhotos)}
+                  className={cn(
+                    "flex h-5 w-5 items-center justify-center rounded border transition-colors",
+                    currentDateAllSelected || currentDateSomeSelected
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border bg-background hover:border-primary/60",
+                  )}
+                  aria-label={
+                    currentDateAllSelected
+                      ? `Deselect ${currentDateLabel}`
+                      : `Select ${currentDateLabel}`
+                  }
+                >
+                  {currentDateAllSelected ? (
+                    <Check className="h-3.5 w-3.5" />
+                  ) : currentDateSomeSelected ? (
+                    <span className="h-0.5 w-2.5 rounded-full bg-current" />
+                  ) : null}
+                </button>
                 {currentDateLabel}
               </p>
             </div>
           )}
 
           {/* Virtualized photo container */}
-          {!gridLoading && !gridError && filteredPhotos.length > 0 && (
+          {!showingAlbumList && !gridLoading && !gridError && filteredPhotos.length > 0 && (
             <div
               ref={photoContainerRef}
+              onPointerDown={handlePhotoGridPointerDown}
+              onPointerMove={handlePhotoGridPointerMove}
+              onPointerUp={finishPhotoGridDrag}
+              onPointerCancel={finishPhotoGridDrag}
+              onLostPointerCapture={() => finishPhotoGridDrag()}
+              onClickCapture={handlePhotoGridClickCapture}
+              className={cn(dragBox && "select-none")}
               style={{
                 height: `${virtualizer.getTotalSize()}px`,
                 position: "relative",
@@ -547,6 +1830,14 @@ export function PhotosGrid() {
                 if (!item) return null;
 
                 if (item.type === "header") {
+                  const selectedInGroup = item.photos.filter((photo) =>
+                    selectedPhotoIdSet.has(photo._id),
+                  ).length;
+                  const allInGroupSelected =
+                    item.photos.length > 0 && selectedInGroup === item.photos.length;
+                  const someInGroupSelected =
+                    selectedInGroup > 0 && !allInGroupSelected;
+
                   return (
                     <div
                       key={virtualRow.key}
@@ -561,19 +1852,39 @@ export function PhotosGrid() {
                       }}
                       className="py-2 px-4 border-b border-border/5"
                     >
-                      <p className="text-sm font-semibold text-foreground/50 flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30" />
+                      <div className="text-sm font-semibold text-foreground/60 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => togglePhotoGroupSelection(item.photos)}
+                          className={cn(
+                            "flex h-5 w-5 items-center justify-center rounded border transition-colors",
+                            allInGroupSelected || someInGroupSelected
+                              ? "border-primary bg-primary text-primary-foreground"
+                              : "border-border bg-background hover:border-primary/60",
+                          )}
+                          aria-label={
+                            allInGroupSelected
+                              ? `Deselect ${item.dateLabel}`
+                              : `Select ${item.dateLabel}`
+                          }
+                        >
+                          {allInGroupSelected ? (
+                            <Check className="h-3.5 w-3.5" />
+                          ) : someInGroupSelected ? (
+                            <span className="h-0.5 w-2.5 rounded-full bg-current" />
+                          ) : null}
+                        </button>
                         {item.dateLabel}
                         <span className="text-[10px] uppercase tracking-wider text-muted-foreground/40 font-bold ml-auto">
                           {item.count} item{item.count !== 1 ? "s" : ""}
                         </span>
-                      </p>
+                      </div>
                     </div>
                   );
                 }
 
-                // Masonry columns distribution
-                if (gridMode === "masonry") {
+                // Default columns preserve photo aspect ratios.
+                if (gridMode === "default") {
                   const columns: GridObject[][] = Array.from({ length: columnCount }, () => []);
                   item.photos.forEach((photo, i) => {
                     columns[i % columnCount].push(photo);
@@ -602,6 +1913,16 @@ export function PhotosGrid() {
                               onPhotoClick={handlePhotoClick}
                               decryptedName={decryptedNames[photo._id]}
                               metadataKey={metadataKey}
+                              albums={albums}
+                              activeAlbumId={activeAlbumId}
+                              onAddToAlbum={handleAddToAlbum}
+                              onCreateAlbumForPhoto={openCreateAlbumDialog}
+                              onRemoveFromAlbum={handleRemoveFromAlbum}
+                              gridMode={gridMode}
+                              selectionMode={selectionMode}
+                              isSelected={selectedPhotoIdSet.has(photo._id)}
+                              onSelectPhoto={selectPhoto}
+                              onTileMount={registerPhotoTile}
                             />
                           ))}
                         </div>
@@ -624,10 +1945,7 @@ export function PhotosGrid() {
                       transform: `translateY(${virtualRow.start - scrollMargin}px)`,
                     }}
                     className={cn(
-                      "grid gap-3 sm:gap-4 px-4 py-2",
-                      gridMode === "large" && "grid-cols-2 sm:grid-cols-3 auto-rows-[180px] sm:auto-rows-[220px]",
-                      gridMode === "medium" && "grid-cols-3 sm:grid-cols-4 md:grid-cols-5 auto-rows-[180px] sm:auto-rows-[220px]",
-                      gridMode === "small" && "grid-cols-4 sm:grid-cols-6 md:grid-cols-8 auto-rows-[180px] sm:auto-rows-[220px]"
+                      "grid grid-cols-3 gap-3 px-4 py-2 sm:grid-cols-4 sm:gap-4 md:grid-cols-5 xl:grid-cols-6",
                     )}
                   >
                     {item.photos.map((photo) => (
@@ -637,18 +1955,42 @@ export function PhotosGrid() {
                         onPhotoClick={handlePhotoClick}
                         decryptedName={decryptedNames[photo._id]}
                         metadataKey={metadataKey}
+                        albums={albums}
+                        activeAlbumId={activeAlbumId}
+                        onAddToAlbum={handleAddToAlbum}
+                        onCreateAlbumForPhoto={openCreateAlbumDialog}
+                        onRemoveFromAlbum={handleRemoveFromAlbum}
+                        gridMode={gridMode}
+                        selectionMode={selectionMode}
+                        isSelected={selectedPhotoIdSet.has(photo._id)}
+                        onSelectPhoto={selectPhoto}
+                        onTileMount={registerPhotoTile}
                       />
                     ))}
                   </div>
                 );
               })}
+              {dragBox && (() => {
+                const box = normalizeDragBox(dragBox);
+                return (
+                  <div
+                    className="pointer-events-none fixed z-[60] rounded-sm border border-primary/60 bg-primary/10 shadow-sm"
+                    style={{
+                      left: box.left,
+                      top: box.top,
+                      width: box.width,
+                      height: box.height,
+                    }}
+                  />
+                );
+              })()}
             </div>
           )}
         </div>
       </div>
 
       {/* Timeline scrubber */}
-      {scrubberItems.length > 0 && (
+      {!showingAlbumList && scrubberItems.length > 0 && (
         <div className="sticky top-[68px] h-[calc(100dvh-68px)] shrink-0">
           <Scrubber
             items={scrubberItems}
@@ -657,6 +1999,95 @@ export function PhotosGrid() {
           />
         </div>
       )}
+
+      <Dialog open={albumDialogOpen} onOpenChange={setAlbumDialogOpen}>
+        <DialogContent>
+          <form onSubmit={handleSaveAlbum} className="space-y-4">
+            <DialogHeader>
+              <DialogTitle>
+                {albumDialogMode === "create" ? "New Album" : "Rename Album"}
+              </DialogTitle>
+              <DialogDescription>
+                {pendingAlbumPhotos.length > 0
+                  ? `${pendingAlbumPhotos.length} selected photo${
+                      pendingAlbumPhotos.length !== 1 ? "s" : ""
+                    } will be added when the album is created.`
+                  : "Albums organize photos without moving files in your vault."}
+              </DialogDescription>
+            </DialogHeader>
+            <Input
+              value={albumName}
+              onChange={(event) => setAlbumName(event.target.value)}
+              placeholder="Album name"
+              autoFocus
+              maxLength={80}
+            />
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setAlbumDialogOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={savingAlbum || !albumName.trim()}>
+                {savingAlbum && <Loader2 className="h-4 w-4 animate-spin" />}
+                {albumDialogMode === "create" ? "Create" : "Save"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkAlbumDialogOpen} onOpenChange={setBulkAlbumDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add to Album</DialogTitle>
+            <DialogDescription>
+              Add {selectedPhotoIds.length} selected photo
+              {selectedPhotoIds.length !== 1 ? "s" : ""} to an existing album.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            {albums.map((album) => (
+              <button
+                key={album._id}
+                type="button"
+                onClick={() => setBulkTargetAlbumId(album._id)}
+                className={cn(
+                  "flex w-full items-center justify-between rounded-md border px-3 py-2 text-left text-sm transition-colors",
+                  bulkTargetAlbumId === album._id
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-border bg-background hover:bg-secondary",
+                )}
+              >
+                <span className="truncate font-medium">{album.name}</span>
+                <span className="ml-3 text-xs text-muted-foreground">
+                  {album.objectCount}
+                </span>
+              </button>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setBulkAlbumDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={handleAddSelectionToAlbum}
+              disabled={!bulkTargetAlbumId || bulkAlbumSaving}
+            >
+              {bulkAlbumSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+              Add
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
+    </TooltipProvider>
   );
 }

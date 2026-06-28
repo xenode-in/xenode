@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
 
 const MANIFEST_PROJECTION =
   "key size contentType encryptedContentType thumbnail tags position starred " +
-  "lastAccessedAt createdAt updatedAt isEncrypted encryptedName " +
+  "lastAccessedAt uploadSource createdAt updatedAt isEncrypted encryptedName " +
   "encryptedDisplayName mediaCategory aspectRatio syncContentFp";
 
 function escapeRegex(value: string): string {
@@ -42,6 +42,8 @@ export async function GET(request: NextRequest) {
     const requestedPrefix = searchParams.get("prefix");
     const mediaCategory = searchParams.get("mediaCategory");
     const contentType = searchParams.get("contentType");
+    const excludeMobileBackup =
+      searchParams.get("excludeMobileBackup") === "true";
 
     if (!bucketId) {
       statusCode = 400;
@@ -94,6 +96,16 @@ export async function GET(request: NextRequest) {
         $regex: `^${escapeRegex(contentType)}/`,
         $options: "i",
       };
+    }
+
+    if (excludeMobileBackup) {
+      query.$nor = [
+        { mediaCategory: "image", uploadSource: "mobile_backup" },
+        {
+          mediaCategory: "image",
+          syncContentFp: { $exists: true, $ne: null },
+        },
+      ];
     }
 
     const docs = await StorageObject.find(query)

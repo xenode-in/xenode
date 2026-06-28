@@ -48,7 +48,7 @@ const MAX_BATCH = 200;
 const LIST_PROJECTION =
   "key size contentType encryptedContentType thumbnail tags position createdAt " +
   "isEncrypted encryptedName encryptedDisplayName mediaCategory " +
-  "optimizedKey optimizedEncryptedDEK optimizedIV optimizedSize aspectRatio " +
+  "optimizedKey optimizedEncryptedDEK optimizedIV optimizedSize aspectRatio uploadSource " +
   // syncContentFp lets the gallery tell fingerprinted (modern) uploads from
   // legacy ones, so it only falls back to fuzzy filename dedup for legacy.
   "syncContentFp";

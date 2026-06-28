@@ -7,7 +7,6 @@ import {
   LayoutDashboard,
   FolderOpen,
   BarChart3,
-  Key,
   CreditCard,
   Settings,
   LogOut,
@@ -20,6 +19,7 @@ import {
   LifeBuoy,
   Trash2,
   Star,
+  Album,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -54,6 +54,7 @@ const sidebarItems = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { label: "My Files", href: "/dashboard/files", icon: FolderOpen },
   { label: "Photos", href: "/dashboard/photos", icon: Image },
+  { label: "Albums", href: "/dashboard/albums", icon: Album },
   {
     label: "Migrations (Beta)",
     href: "/dashboard/migrations",

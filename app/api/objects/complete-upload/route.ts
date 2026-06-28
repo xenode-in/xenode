@@ -140,6 +140,7 @@ export async function POST(request: NextRequest) {
       parentObjectId,
       syncContentFp,
       syncMetaFp,
+      uploadSource,
     } = await request.json();
 
     if (!objectKey || !bucketId || !size) {
@@ -179,6 +180,15 @@ export async function POST(request: NextRequest) {
     }
 
     const mediaCategory = getMediaCategory(originalContentType ?? contentType);
+    const normalizedUploadSource =
+      uploadSource === "mobile_backup" ||
+      uploadSource === "mobile_manual" ||
+      uploadSource === "migration" ||
+      uploadSource === "web"
+        ? uploadSource
+        : syncContentFp || syncMetaFp
+          ? "mobile_backup"
+          : "web";
 
     let b2FileId = "";
     if (isChunked) {
@@ -268,6 +278,7 @@ export async function POST(request: NextRequest) {
       if (parentObjectId) existingObject.parentObjectId = parentObjectId;
       if (syncContentFp) existingObject.syncContentFp = syncContentFp;
       if (syncMetaFp) existingObject.syncMetaFp = syncMetaFp;
+      existingObject.uploadSource = normalizedUploadSource;
       try {
         await existingObject.save();
       } catch (error) {
@@ -352,6 +363,7 @@ export async function POST(request: NextRequest) {
         parentObjectId: parentObjectId ?? undefined,
         syncContentFp: syncContentFp ?? undefined,
         syncMetaFp: syncMetaFp ?? undefined,
+        uploadSource: normalizedUploadSource,
         // Seed "recent" with the upload time so a never-opened file still has a
         // sensible position; opening the file later bumps it via GET /[id].
         lastAccessedAt: new Date(),

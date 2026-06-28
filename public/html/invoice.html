@@ -434,13 +434,10 @@
           <p><strong>Xenode Technologies Pvt. Ltd.</strong></p>
           <p class="muted">{{companyAddress}}</p>
           <p class="muted">{{companyCity}}</p>
-          <p class="muted">GSTIN: {{companyGSTIN}}</p>
         </div>
         <div class="card info-block">
           <div class="eyebrow">Bill To</div>
           <p><strong>{{clientName}}</strong></p>
-          <p class="muted">{{clientAddress}}</p>
-          <p class="muted">{{clientCity}}</p>
           <p class="muted">{{clientEmail}}</p>
         </div>
         <div class="card info-block">
@@ -461,11 +458,10 @@
         <table class="items-table">
           <thead>
             <tr>
-              <th style="width: 46%">Description</th>
-              <th class="center" style="width: 10%">Qty</th>
-              <th class="center" style="width: 16%">Unit Price</th>
-              <th class="center" style="width: 12%">Tax</th>
-              <th style="width: 16%">Amount</th>
+              <th style="width: 52%">Description</th>
+              <th class="center" style="width: 12%">Qty</th>
+              <th class="center" style="width: 18%">Unit Price</th>
+              <th style="width: 18%">Amount</th>
             </tr>
           </thead>
           <tbody id="lineItems">
@@ -473,19 +469,15 @@
           </tbody>
           <tfoot>
             <tr class="subtotal-row">
-              <td colspan="4">Subtotal</td>
+              <td colspan="3">Subtotal</td>
               <td id="subtotalCell">{{subtotal}}</td>
             </tr>
             <tr class="subtotal-row">
-              <td colspan="4">GST / Tax ({{taxRate}}%)</td>
-              <td id="taxCell">{{taxAmount}}</td>
-            </tr>
-            <tr class="subtotal-row">
-              <td colspan="4">Discount</td>
+              <td colspan="3">Discount</td>
               <td id="discountCell">{{discount}}</td>
             </tr>
             <tr class="total-row">
-              <td colspan="4">Total Due</td>
+              <td colspan="3">Total Due</td>
               <td id="totalCell">{{totalAmount}}</td>
             </tr>
           </tfoot>
@@ -555,16 +547,7 @@
               desc: "Monthly subscription — unlimited storage, priority sync",
               qty: 1,
               unit: "₹1,999.00",
-              tax: "18%",
-              amount: "₹2,358.82",
-            },
-            {
-              name: "Add-on: Team Collaboration",
-              desc: "Up to 10 members workspace access",
-              qty: 1,
-              unit: "₹499.00",
-              tax: "18%",
-              amount: "₹588.82",
+              amount: "₹1,999.00",
             },
           ],
         };
@@ -602,9 +585,6 @@
               "</td>" +
               '<td class="center">' +
               item.unit +
-              "</td>" +
-              '<td class="center">' +
-              item.tax +
               "</td>" +
               "<td>" +
               item.amount +

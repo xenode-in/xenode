@@ -11,6 +11,17 @@ import { RecentFilesTable } from "@/components/dashboard/RecentFilesTable";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type RecentObject = any;
 
+function isMobileBackupImage(file: {
+  contentType?: string;
+  mediaCategory?: string;
+  uploadSource?: string;
+  syncContentFp?: string;
+}) {
+  const isImage =
+    file.mediaCategory === "image" || file.contentType?.startsWith("image/");
+  return isImage && (file.uploadSource === "mobile_backup" || !!file.syncContentFp);
+}
+
 export function DashboardClient() {
   const { data: session } = useSession();
   const userId = session?.user?.id;
@@ -32,7 +43,7 @@ export function DashboardClient() {
           return;
         }
         const res = await fetch(
-          `/api/objects?bucketId=${bid}&sortBy=accessed&limit=8`,
+          `/api/objects?bucketId=${bid}&sortBy=accessed&limit=8&excludeMobileBackup=true`,
         );
         const data = await res.json();
         const objs = (data.objects ?? []).map(
@@ -63,7 +74,7 @@ export function DashboardClient() {
 
   const images = useLiveQuery(
     () => userId ? getDb(userId).files
-      .filter(f => f.contentType.startsWith("image/"))
+      .filter(f => f.contentType.startsWith("image/") && !isMobileBackupImage(f))
       .reverse()
       .limit(4)
       .toArray() : [],

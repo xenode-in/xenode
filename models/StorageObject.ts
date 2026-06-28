@@ -16,6 +16,8 @@ export interface IStorageObject extends Document {
   starred?: boolean;
   /** Last time the file was opened (preview/download). Powers "Recent". */
   lastAccessedAt?: Date;
+  /** Where the object was created. Used to keep automatic phone backups out of file dashboards. */
+  uploadSource?: "web" | "mobile_manual" | "mobile_backup" | "migration";
   createdAt: Date;
   updatedAt: Date;
   deletedAt?: Date;
@@ -123,6 +125,12 @@ const StorageObjectSchema = new Schema<IStorageObject>(
     },
     lastAccessedAt: {
       type: Date,
+    },
+    uploadSource: {
+      type: String,
+      enum: ["web", "mobile_manual", "mobile_backup", "migration"],
+      default: "web",
+      index: true,
     },
     thumbnail: {
       type: String,
@@ -295,6 +303,7 @@ StorageObjectSchema.index(
 
 // Recent view: list a bucket's files by most-recently-opened.
 StorageObjectSchema.index({ bucketId: 1, lastAccessedAt: -1 });
+StorageObjectSchema.index({ bucketId: 1, uploadSource: 1, mediaCategory: 1 });
 
 // Mobile sync dedup lookups — sparse so only fingerprinted (mobile-uploaded)
 // objects occupy the index. Covers the /api/objects/sync-check $in queries.

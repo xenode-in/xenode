@@ -14,9 +14,9 @@ import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 
 const LIST_PROJECTION =
-  "key size contentType encryptedContentType thumbnail tags position starred lastAccessedAt createdAt " +
+  "key size contentType encryptedContentType thumbnail tags position starred lastAccessedAt uploadSource createdAt " +
   "isEncrypted encryptedName encryptedDisplayName mediaCategory " +
-  "optimizedKey optimizedEncryptedDEK optimizedIV optimizedSize aspectRatio";
+  "optimizedKey optimizedEncryptedDEK optimizedIV optimizedSize aspectRatio syncContentFp";
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
@@ -89,6 +89,8 @@ export async function GET(request: NextRequest) {
 
     const contentTypeFilter = searchParams.get("contentType");
     const mediaCategoryFilter = searchParams.get("mediaCategory");
+    const excludeMobileBackup =
+      searchParams.get("excludeMobileBackup") === "true";
     const prefix = searchParams.get("prefix");
 
     await dbConnect();
@@ -162,6 +164,16 @@ export async function GET(request: NextRequest) {
 
     if (starredOnly) {
       query.starred = true;
+    }
+
+    if (excludeMobileBackup) {
+      query.$nor = [
+        { mediaCategory: "image", uploadSource: "mobile_backup" },
+        {
+          mediaCategory: "image",
+          syncContentFp: { $exists: true, $ne: null },
+        },
+      ];
     }
 
     if (bucket.userId === "system") {
