@@ -25,7 +25,7 @@ describe("Files sort and filter parity", () => {
     expect(controls).toContain('"Smallest"');
   });
 
-  it("paginates the active Android folder before local sorting", () => {
+  it("loads one lightweight Android manifest before local sorting", () => {
     const mobileFiles = readFileSync(
       path.join(
         repoRoot,
@@ -38,12 +38,12 @@ describe("Files sort and filter parity", () => {
       "utf8",
     );
 
-    expect(mobileObjects).toContain("export async function listFolderObjects");
-    expect(mobileObjects).toContain("prefix: params.prefix");
-    expect(mobileFiles).toContain("DriveCacheDb.getFolder");
-    expect(mobileFiles).toContain("await listFolderObjects");
-    expect(mobileFiles).toContain("onEndReached=");
-    expect(mobileFiles).toContain("load({ loadMore: true })");
+    expect(mobileObjects).toContain("export async function listObjectsManifest");
+    expect(mobileFiles).toContain("DriveCacheDb.getManifest");
+    expect(mobileFiles).toContain("getObjectsManifestCached");
+    expect(mobileFiles).not.toContain("onEndReached=");
+    expect(mobileFiles).toContain("onViewableItemsChanged=");
+    expect(mobileFiles).toContain("isFastScrolling");
     expect(mobileFiles).toContain("const displayData = useMemo");
     expect(mobileFiles).toContain("const sortedFiles = sortFiles");
     expect(mobileFiles).toContain("data={displayData as any}");

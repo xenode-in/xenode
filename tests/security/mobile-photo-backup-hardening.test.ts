@@ -341,4 +341,82 @@ describe("Android photo backup production hardening", () => {
     expect(photos).toContain("pre-render backup reconciliation");
     expect(photos).toContain("const ledger = await SyncDb.getCloudMap()");
   });
+
+  it("keeps cloud photos visible when device photo access is denied", () => {
+    const photos = readFileSync(
+      path.join(mobileRoot, "src/app/(drive)/photos.tsx"),
+      "utf8",
+    );
+
+    expect(photos).toContain("MediaLibrary.getPermissionsAsync");
+    expect(photos).toContain('if (access === "none")');
+    expect(photos).toContain("setPhotos(cloudOnly)");
+    expect(photos).toContain("Cloud photos remain available");
+    expect(photos).toContain("requestDevicePhotoAccess");
+  });
+
+  it("requests photo access only after the user confirms backup", () => {
+    const screen = readFileSync(
+      path.join(mobileRoot, "src/app/(drive)/sync.tsx"),
+      "utf8",
+    );
+    const engine = readFileSync(
+      path.join(mobileRoot, "src/sync/SyncEngine.ts"),
+      "utf8",
+    );
+
+    expect(screen).toContain("Protect your entire photo library");
+    expect(screen).toContain("choose “Allow all”");
+    expect(screen).toContain("enableBackupWithPermission");
+    expect(screen).toContain('permissionAccess === "limited"');
+    expect(screen).toContain("Backing up selected photos only");
+    expect(engine).toContain("MediaLibrary.getPermissionsAsync");
+    expect(engine).not.toContain("MediaLibrary.requestPermissionsAsync(true)");
+  });
+
+  it("removes completed backup tiles immediately and gates the queue on permission", () => {
+    const engine = readFileSync(
+      path.join(mobileRoot, "src/sync/SyncEngine.ts"),
+      "utf8",
+    );
+    const screen = readFileSync(
+      path.join(mobileRoot, "src/app/(drive)/sync.tsx"),
+      "utf8",
+    );
+
+    expect(engine).toContain("queue: [...this.queue.all]");
+    expect(screen).toContain("hasMediaAccess");
+    expect(screen).toContain("stickyPermissionCard");
+    expect(screen).toContain("Allow photo access");
+  });
+
+  it("does not cache encrypted thumbnails before keys are available", () => {
+    const cache = readFileSync(
+      path.join(mobileRoot, "src/hooks/thumbnailCache.ts"),
+      "utf8",
+    );
+    const photos = readFileSync(
+      path.join(mobileRoot, "src/app/(drive)/photos.tsx"),
+      "utf8",
+    );
+
+    expect(cache).toContain("thumbnails_v2");
+    expect(cache).toContain("isEncrypted && !decryptionKey");
+    expect(photos).toContain("isScrolling={isFastScrolling}");
+    expect(photos).toContain("drawDistance={SH}");
+    expect(photos).toContain("foregroundPerformance.beginPhotosInteraction");
+  });
+
+  it("uses immersive chrome and resolves cloud image size in the preview", () => {
+    const preview = readFileSync(
+      path.join(mobileRoot, "src/components/FilePreviewModal.tsx"),
+      "utf8",
+    );
+
+    expect(preview).toContain("setResolvedSize(meta.size)");
+    expect(preview).toContain('NavigationBar.setPositionAsync("absolute")');
+    expect(preview).toContain('NavigationBar.setVisibilityAsync("hidden")');
+    expect(preview).toContain("runOnJS(hideChrome)()");
+    expect(preview).toContain(".maxPointers(1)");
+  });
 });
