@@ -8,10 +8,7 @@ import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { authClient, useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
-import {
-  generateRecoveryKit,
-  formatRecoveryKitDownload,
-} from "@/lib/crypto/recovery";
+import { generateRecoveryKit } from "@/lib/crypto/recovery";
 import type { IPlan } from "@/models/PricingConfig";
 import {
   Moon,
@@ -193,21 +190,100 @@ export function OnboardingForm() {
     toast.success("Recovery kit copied");
   }, [kit]);
 
-  const handleDownload = useCallback(() => {
-    const text = formatRecoveryKitDownload(kit.words);
-    const blob = new Blob([text], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    const userName = session?.user?.name || "user";
-    const sanitizedName = userName
-      .toLowerCase()
-      .replace(/\s+/g, "-")
-      .replace(/[^a-z0-9-]/g, "");
-    a.download = `xenode-recovery-kit-${sanitizedName}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
-    toast.success("Recovery kit downloaded");
+  const [pdfGenerating, setPdfGenerating] = useState(false);
+
+  const handleDownloadPDF = useCallback(async () => {
+    setPdfGenerating(true);
+    let iframe: HTMLIFrameElement | null = null;
+    try {
+      // Render the real recovery-kit.html template in a hidden same-origin
+      // iframe and hand it to the browser's native print → "Save as PDF".
+      // This is fully client-side (E2EE-safe — the phrase never leaves the
+      // browser), produces selectable text, and matches the template exactly.
+      // The master password is intentionally NOT included: the 12-word phrase
+      // alone recovers the vault, so embedding the password only adds exposure.
+      const templateHtml = await (
+        await fetch("/html/recovery-kit.html")
+      ).text();
+
+      const userEmail = session?.user?.email ?? "";
+      const generatedDate = new Date().toLocaleDateString("en-IN", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      });
+      const userName = session?.user?.name ?? "user";
+      const sanitizedName = userName
+        .toLowerCase()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9-]/g, "");
+
+      const populated = templateHtml
+        .replace(/\{\{userEmail\}\}/g, userEmail)
+        .replace(/\{\{generatedDate\}\}/g, generatedDate)
+        .replace(/\{\{recoveryPhrase\}\}/g, kit.words.join(" "))
+        // Password card hides itself when this is empty (CSS :empty rule)
+        .replace(/\{\{accountPassword\}\}/g, "")
+        // The browser uses <title> as the default "Save as PDF" filename
+        .replace(
+          /<title>[^<]*<\/title>/i,
+          `<title>xenode-recovery-kit-${sanitizedName}</title>`,
+        );
+
+      iframe = document.createElement("iframe");
+      iframe.setAttribute("aria-hidden", "true");
+      iframe.style.cssText =
+        "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
+      document.body.appendChild(iframe);
+
+      const idoc = iframe.contentDocument;
+      if (!idoc) throw new Error("Could not access iframe document");
+      idoc.open();
+      idoc.write(populated);
+      idoc.close();
+
+      // Wait for the iframe (fonts, inline phrase-grid script, logo) to settle
+      await new Promise<void>((resolve) => {
+        if (idoc.readyState === "complete") resolve();
+        else iframe!.addEventListener("load", () => resolve(), { once: true });
+      });
+      await new Promise((r) => setTimeout(r, 200));
+
+      // Chrome derives the "Save as PDF" filename from the TOP document's title,
+      // not the iframe's. Temporarily swap it, then restore once printing ends.
+      const fileTitle = `xenode-recovery-kit-${sanitizedName}`;
+      const prevTitle = document.title;
+      document.title = fileTitle;
+
+      // Idempotent teardown — restore the title and remove the iframe. Driven by
+      // afterprint (fires when the dialog closes) so we never pull the source
+      // document out from under an open print preview. The long timeout is only
+      // a leak-guard for browsers that don't emit afterprint.
+      const frameRef = iframe;
+      let cleanedUp = false;
+      const cleanup = () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
+        document.title = prevTitle;
+        window.removeEventListener("afterprint", cleanup);
+        if (frameRef.parentNode) frameRef.parentNode.removeChild(frameRef);
+      };
+      window.addEventListener("afterprint", cleanup, { once: true });
+      setTimeout(cleanup, 60000);
+      iframe = null;
+
+      // Trigger the browser's print dialog targeted at the iframe content
+      frameRef.contentWindow?.focus();
+      frameRef.contentWindow?.print();
+
+      toast.success("Choose “Save as PDF” to download your recovery kit");
+    } catch (err) {
+      console.error("PDF generation failed:", err);
+      toast.error("Could not open the PDF — try copying the phrase instead.");
+      if (iframe?.parentNode) iframe.parentNode.removeChild(iframe);
+    } finally {
+      setPdfGenerating(false);
+    }
   }, [kit, session]);
 
   const nextStep = () => {
@@ -463,9 +539,19 @@ export function OnboardingForm() {
                         type="button"
                         variant="outline"
                         className="flex-1"
-                        onClick={handleDownload}
+                        onClick={handleDownloadPDF}
+                        disabled={pdfGenerating}
                       >
-                        <Download className="mr-2 h-4 w-4" /> Download
+                        {pdfGenerating ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Preparing…
+                          </>
+                        ) : (
+                          <>
+                            <Download className="mr-2 h-4 w-4" /> Save as PDF
+                          </>
+                        )}
                       </Button>
                     </div>
                     <label className="flex items-center gap-3 cursor-pointer select-none">
@@ -620,6 +706,7 @@ export function OnboardingForm() {
                           <img
                             src={form.watch("avatarUrl")}
                             alt="Selected avatar"
+                            crossOrigin="anonymous"
                             className="w-full h-full rounded-full object-cover"
                           />
                         ) : customAvatarPreview ? (
@@ -627,6 +714,7 @@ export function OnboardingForm() {
                           <img
                             src={customAvatarPreview}
                             alt="Custom avatar"
+                            crossOrigin="anonymous"
                             className="w-full h-full rounded-full object-cover"
                           />
                         ) : (
@@ -707,6 +795,7 @@ export function OnboardingForm() {
                                           <img
                                             src={url}
                                             alt="Avatar option"
+                                            crossOrigin="anonymous"
                                             className="w-full h-full object-cover bg-muted"
                                           />
                                         </div>
@@ -739,6 +828,7 @@ export function OnboardingForm() {
                                             <img
                                               src={customAvatarPreview}
                                               alt="Custom avatar"
+                                              crossOrigin="anonymous"
                                               className="w-full h-full object-cover"
                                             />
                                           ) : (
