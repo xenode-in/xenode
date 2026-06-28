@@ -128,7 +128,7 @@ export function AvatarSettingsSection() {
         <div className="w-10 h-10 rounded-full overflow-hidden border border-border bg-muted flex items-center justify-center shrink-0">
           {currentImage ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={currentImage} alt="Current avatar" className="w-full h-full object-cover" />
+            <img src={currentImage} alt="Current avatar" crossOrigin="anonymous" className="w-full h-full object-cover" />
           ) : (
             <ImageIcon className="w-4 h-4 text-muted-foreground" />
           )}
@@ -193,7 +193,7 @@ export function AvatarSettingsSection() {
                     }`}
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={url} alt="Avatar option" className="w-full h-full object-cover bg-muted" />
+                    <img src={url} alt="Avatar option" crossOrigin="anonymous" className="w-full h-full object-cover bg-muted" />
                   </button>
                 ))}
 
@@ -212,7 +212,7 @@ export function AvatarSettingsSection() {
             >
               {customPreview ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={customPreview} alt="Custom avatar preview" className="w-full h-full object-cover" />
+                <img src={customPreview} alt="Custom avatar preview" crossOrigin="anonymous" className="w-full h-full object-cover" />
               ) : (
                 <Upload className="h-5 w-5 text-muted-foreground" />
               )}
