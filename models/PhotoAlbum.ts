@@ -4,6 +4,7 @@ export interface IPhotoAlbum extends Document {
   _id: mongoose.Types.ObjectId;
   userId: string;
   name: string;
+  slug: string;
   description?: string;
   objectIds: mongoose.Types.ObjectId[];
   coverObjectId?: mongoose.Types.ObjectId;
@@ -23,6 +24,12 @@ const PhotoAlbumSchema = new Schema<IPhotoAlbum>(
       required: true,
       trim: true,
       maxlength: 80,
+    },
+    slug: {
+      type: String,
+      required: true,
+      trim: true,
+      maxlength: 120,
     },
     description: {
       type: String,
@@ -46,6 +53,8 @@ const PhotoAlbumSchema = new Schema<IPhotoAlbum>(
 );
 
 PhotoAlbumSchema.index({ userId: 1, updatedAt: -1 });
+// Slugs are unique per user so a slug resolves to exactly one album.
+PhotoAlbumSchema.index({ userId: 1, slug: 1 }, { unique: true });
 
 const PhotoAlbum: Model<IPhotoAlbum> =
   mongoose.models.PhotoAlbum ||

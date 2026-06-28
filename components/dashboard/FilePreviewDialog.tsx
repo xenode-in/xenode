@@ -34,6 +34,7 @@ import {
   decryptFileChunkedCombined,
   decryptMetadataString,
   decryptWithShareKey,
+  decryptChunk,
 } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
@@ -322,6 +323,8 @@ interface FilePreviewDialogProps {
   hasPrevious?: boolean;
   // Shared link specific props
   sharedToken?: string;
+  /** Public album share — streams photos via /api/album-share/[token]. */
+  albumShareToken?: string;
   shareKey?: string;
   password?: string;
   directShareId?: string;
@@ -698,6 +701,7 @@ export function FilePreviewDialog({
   hasNext,
   hasPrevious,
   sharedToken,
+  albumShareToken,
   shareKey,
   password,
   directShareId,
@@ -951,6 +955,15 @@ export function FilePreviewDialog({
           res = await fetch(`/api/direct-shares/${directShareId}/stream`, {
             method: "POST",
           });
+        } else if (albumShareToken) {
+          res = await fetch(
+            `/api/album-share/${albumShareToken}/objects/${file.id}/stream`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ password: password || undefined }),
+            },
+          );
         } else if (sharedToken) {
           res = await fetch(`/api/share/${sharedToken}/stream`, {
             method: "POST",
@@ -1317,6 +1330,7 @@ export function FilePreviewDialog({
     setModalOpen,
     metadataKey,
     sharedToken,
+    albumShareToken,
     shareKey,
     password,
     directShareId,
@@ -1333,7 +1347,7 @@ export function FilePreviewDialog({
     // Ref guard (not hdLoading/hdUrl state) so flipping loading state inside
     // the effect doesn't re-trigger it and cancel the in-flight request.
     if (!wantHd || hdRequestedRef.current) return;
-    if (sharedToken || directShareId || !file) return;
+    if (sharedToken || albumShareToken || directShareId || !file) return;
     const t = decryptedContentType || file.contentType || "";
     if (!t.startsWith("image/")) return;
 
@@ -1415,11 +1429,92 @@ export function FilePreviewDialog({
   const type = decryptedContentType || file.contentType || "";
 
   // HD applies to owned image files (shared links serve their own stream).
-  const canHd = !sharedToken && !directShareId && type.startsWith("image/");
+  const canHd =
+    !sharedToken &&
+    !albumShareToken &&
+    !directShareId &&
+    type.startsWith("image/");
 
   const handleDownload = async () => {
     if (directShareId) {
       onDownload?.();
+      return;
+    }
+
+    // Public album share: anonymous visitors have no vault, so decrypt with the
+    // per-photo DEK wrapped under the album share key (carried in the URL).
+    if (albumShareToken && file) {
+      try {
+        const res = await fetch(
+          `/api/album-share/${albumShareToken}/objects/${file.id}/stream`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ password: password || undefined }),
+          },
+        );
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Failed to load file");
+
+        const dlName = decryptedName || file.name || fileNameFromKey(file.key);
+        const dlType = decryptedContentType || data.contentType || file.contentType;
+        let blob: Blob;
+
+        if (data.isEncrypted) {
+          if (!shareKey || !data.shareEncryptedDEK) {
+            throw new Error("Missing decryption key");
+          }
+          const skBytes = fromB64(
+            shareKey
+              .replace(/-/g, "+")
+              .replace(/_/g, "/")
+              .padEnd(shareKey.length + ((4 - (shareKey.length % 4)) % 4), "="),
+          );
+          const shareKeyObj = await crypto.subtle.importKey(
+            "raw",
+            skBytes,
+            { name: "AES-GCM" },
+            false,
+            ["unwrapKey"],
+          );
+          const dek = await crypto.subtle.unwrapKey(
+            "raw",
+            fromB64(data.shareEncryptedDEK).buffer as ArrayBuffer,
+            shareKeyObj,
+            { name: "AES-GCM", iv: fromB64(data.shareKeyIv).buffer as ArrayBuffer },
+            { name: "AES-GCM" },
+            false,
+            ["decrypt"],
+          );
+
+          if (data.chunkUrls && data.chunkUrls.length > 0) {
+            const chunkIvs: string[] = JSON.parse(data.chunkIvs);
+            const parts: ArrayBuffer[] = [];
+            for (let i = 0; i < data.chunkUrls.length; i++) {
+              const cr = await fetch(data.chunkUrls[i]);
+              parts.push(await decryptChunk(await cr.arrayBuffer(), dek, chunkIvs[i]));
+            }
+            blob = new Blob(parts, { type: dlType });
+          } else {
+            const cipher = await (await fetch(data.url || data.streamUrl)).arrayBuffer();
+            blob = await decryptFileWithDEK(cipher, dek, data.iv, dlType);
+          }
+        } else {
+          const raw = await (await fetch(data.url || data.streamUrl)).arrayBuffer();
+          blob = new Blob([raw], { type: dlType });
+        }
+
+        const objectUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = objectUrl;
+        a.download = dlName;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(objectUrl);
+      } catch (err) {
+        console.error("Album share download failed:", err);
+      }
       return;
     }
 

@@ -5,6 +5,7 @@ import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import PhotoAlbum from "@/models/PhotoAlbum";
 import StorageObject from "@/models/StorageObject";
+import { generateUniqueAlbumSlug } from "@/lib/albums/slug";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ const COVER_PROJECTION =
 type AlbumDoc = {
   _id: Types.ObjectId;
   name: string;
+  slug?: string;
   description?: string;
   objectIds?: Types.ObjectId[];
   coverObjectId?: Types.ObjectId;
@@ -82,6 +84,7 @@ async function serializeAlbums(albums: AlbumDoc[]) {
     return {
       _id: String(album._id),
       name: album.name,
+      slug: album.slug ?? String(album._id),
       description: album.description ?? "",
       objectIds: ids,
       objectCount: ids.length,
@@ -126,9 +129,12 @@ export async function POST(request: NextRequest) {
       normalizeObjectIds(body.objectIds),
     );
 
+    const slug = await generateUniqueAlbumSlug(session.user.id, name);
+
     const album = await PhotoAlbum.create({
       userId: session.user.id,
       name,
+      slug,
       description:
         typeof body.description === "string"
           ? body.description.trim().slice(0, 500)

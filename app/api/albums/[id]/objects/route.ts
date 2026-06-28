@@ -5,6 +5,7 @@ import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import PhotoAlbum from "@/models/PhotoAlbum";
 import StorageObject from "@/models/StorageObject";
+import { albumIdentifierFilter } from "@/lib/albums/slug";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ interface RouteParams {
 
 type AlbumDoc = {
   _id: Types.ObjectId;
+  slug?: string;
   objectIds?: Types.ObjectId[];
   coverObjectId?: Types.ObjectId;
 };
@@ -49,6 +51,7 @@ function serializeAlbum(album: AlbumDoc) {
   return {
     ...album,
     _id: String(album._id),
+    slug: album.slug ?? String(album._id),
     objectIds,
     objectCount: objectIds.length,
     coverObjectId: album.coverObjectId ? String(album.coverObjectId) : null,
@@ -73,7 +76,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     const album = await PhotoAlbum.findOneAndUpdate(
-      { _id: id, userId: session.user.id },
+      albumIdentifierFilter(session.user.id, id),
       {
         $addToSet: { objectIds: { $each: verifiedIds } },
         $setOnInsert: { coverObjectId: verifiedIds[0] },
@@ -112,10 +115,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     await dbConnect();
 
-    const album = await PhotoAlbum.findOne({
-      _id: id,
-      userId: session.user.id,
-    });
+    const album = await PhotoAlbum.findOne(
+      albumIdentifierFilter(session.user.id, id),
+    );
 
     if (!album) {
       return NextResponse.json({ error: "Album not found" }, { status: 404 });

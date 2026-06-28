@@ -160,6 +160,9 @@ export function useGridObjects(
     enabled: !!bucketId,
     staleTime: 30_000,
     gcTime: 5 * 60_000,
+    // Always refetch when the gallery mounts so deletes/additions made on other
+    // pages (Files dashboard, Bin) are reflected on return, not served stale.
+    refetchOnMount: "always",
   });
 }
 

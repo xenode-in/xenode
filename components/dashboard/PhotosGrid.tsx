@@ -17,6 +17,7 @@ import {
   Loader2,
   Pencil,
   Plus,
+  Share2,
   Square,
   Trash2,
   X,
@@ -28,6 +29,7 @@ import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
 import { useThumbnail } from "@/hooks/useThumbnail";
 import { GridObject, useGridObjects } from "@/hooks/useLazyGallery";
 import { Scrubber } from "@/components/dashboard/Scrubber";
+import { AlbumShareDialog } from "@/components/dashboard/AlbumShareDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -64,6 +66,7 @@ type GridMode = "default" | "grid";
 
 type AlbumRecord = {
   _id: string;
+  slug: string;
   name: string;
   description?: string;
   objectIds: string[];
@@ -224,7 +227,9 @@ const PhotoThumbnail = memo(function PhotoThumbnail({
   );
 
   const activeAlbum = activeAlbumId
-    ? albums.find((album) => album._id === activeAlbumId)
+    ? albums.find(
+        (album) => album.slug === activeAlbumId || album._id === activeAlbumId,
+      )
     : null;
 
   return (
@@ -461,6 +466,7 @@ export function PhotosGrid({
   const [bulkTargetAlbumId, setBulkTargetAlbumId] = useState("");
   const [bulkAlbumSaving, setBulkAlbumSaving] = useState(false);
   const [dragBox, setDragBox] = useState<DragSelectionBox | null>(null);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
 
   const router = useRouter();
   const { openPreview } = usePreview();
@@ -534,8 +540,13 @@ export function PhotosGrid({
 
   const gridItems = gridData?.items;
   const allPhotos: GridObject[] = useMemo(() => gridItems ?? [], [gridItems]);
+  // `activeAlbumId` carries the URL identifier, which is a slug (older links
+  // may still pass a raw _id), so match on either.
   const activeAlbum = useMemo(
-    () => albums.find((album) => album._id === activeAlbumId) ?? null,
+    () =>
+      albums.find(
+        (album) => album.slug === activeAlbumId || album._id === activeAlbumId,
+      ) ?? null,
     [albums, activeAlbumId],
   );
   const showingAlbumList = viewMode === "albums" && !activeAlbumId;
@@ -1104,9 +1115,9 @@ export function PhotosGrid({
           setAlbums((prev) => [data.album, ...prev]);
           toast.success("Album created");
           if (pendingAlbumPhotos.length > 0) {
-            setActiveAlbumId(data.album._id);
+            setActiveAlbumId(data.album.slug);
             setViewMode("photos");
-            router.push(`/dashboard/albums/${data.album._id}`);
+            router.push(`/dashboard/albums/${data.album.slug}`);
             clearSelection();
           } else {
             setViewMode("albums");
@@ -1297,7 +1308,7 @@ export function PhotosGrid({
 
     setAlbums((prev) =>
       prev.map((item) =>
-        item._id === activeAlbumId
+        item._id === activeAlbum?._id
           ? {
               ...item,
               objectIds: item.objectIds.filter((id) => !photoIds.includes(id)),
@@ -1318,7 +1329,7 @@ export function PhotosGrid({
       const data = await res.json();
       setAlbums((prev) =>
         prev.map((item) =>
-          item._id === activeAlbumId
+          item._id === activeAlbum?._id
             ? {
                 ...item,
                 objectIds: data.album.objectIds,
@@ -1341,7 +1352,7 @@ export function PhotosGrid({
       );
       void loadAlbums();
     }
-  }, [activeAlbumId, clearSelection, loadAlbums, selectedPhotoIds]);
+  }, [activeAlbum, activeAlbumId, clearSelection, loadAlbums, selectedPhotoIds]);
 
   const handleDeleteAlbum = useCallback(
     async (albumId: string) => {
@@ -1358,7 +1369,7 @@ export function PhotosGrid({
         });
         if (!res.ok) throw new Error("Failed to delete album");
         setAlbums((prev) => prev.filter((item) => item._id !== albumId));
-        if (activeAlbumId === albumId) {
+        if (activeAlbum?._id === albumId) {
           setActiveAlbumId(null);
           setViewMode("albums");
           router.push("/dashboard/albums");
@@ -1370,7 +1381,7 @@ export function PhotosGrid({
         );
       }
     },
-    [activeAlbumId, albums, router],
+    [activeAlbum, albums, router],
   );
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -1521,6 +1532,16 @@ export function PhotosGrid({
 
               {activeAlbum && (
                 <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShareDialogOpen(true)}
+                    disabled={activeAlbum.objectCount === 0}
+                  >
+                    <Share2 className="h-4 w-4" />
+                    Share
+                  </Button>
                   <Button
                     type="button"
                     variant="ghost"
@@ -1693,10 +1714,10 @@ export function PhotosGrid({
                       <button
                         type="button"
                         onClick={() => {
-                          setActiveAlbumId(album._id);
+                          setActiveAlbumId(album.slug);
                           setViewMode("photos");
                           setSearch("");
-                          router.push(`/dashboard/albums/${album._id}`);
+                          router.push(`/dashboard/albums/${album.slug}`);
                         }}
                         className="block w-full text-left"
                       >
@@ -2092,6 +2113,18 @@ export function PhotosGrid({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {activeAlbum && (
+        <AlbumShareDialog
+          open={shareDialogOpen}
+          onOpenChange={setShareDialogOpen}
+          albumId={activeAlbum.slug}
+          albumName={activeAlbum.name}
+          photos={allPhotos
+            .filter((p) => activeAlbum.objectIds.includes(p._id))
+            .map((p) => ({ objectId: p._id, thumbnail: p.thumbnail }))}
+        />
+      )}
     </div>
     </TooltipProvider>
   );

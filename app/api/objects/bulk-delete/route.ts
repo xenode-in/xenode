@@ -35,6 +35,7 @@ import StorageObject from "@/models/StorageObject";
 import ShareLink from "@/models/ShareLink";
 import DirectShare from "@/models/DirectShare";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
+import { removeObjectsFromAlbums } from "@/lib/albums/cleanup";
 import {
   parentPrefixForKey,
   publishSyncEvent,
@@ -154,6 +155,9 @@ export async function POST(request: NextRequest) {
     // Revoke shares for everything binned.
     await ShareLink.deleteMany({ objectId: { $in: allDocIds } });
     await DirectShare.deleteMany({ objectId: { $in: allDocIds } });
+
+    // Drop them from any albums + album shares.
+    await removeObjectsFromAlbums(userId, allDocIds);
 
     const keys = objects.map((object) => object.key);
     const affectedPrefixes = Array.from(

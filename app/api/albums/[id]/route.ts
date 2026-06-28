@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import PhotoAlbum from "@/models/PhotoAlbum";
+import { albumIdentifierFilter } from "@/lib/albums/slug";
 
 export const dynamic = "force-dynamic";
 
@@ -26,8 +27,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     await dbConnect();
 
+    // Slug stays stable across renames so existing album URLs keep resolving.
     const album = await PhotoAlbum.findOneAndUpdate(
-      { _id: id, userId: session.user.id },
+      albumIdentifierFilter(session.user.id, id),
       {
         name,
         description:
@@ -46,6 +48,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       album: {
         ...album,
         _id: String(album._id),
+        slug: album.slug ?? String(album._id),
         objectIds: (album.objectIds ?? []).map(String),
         objectCount: album.objectIds?.length ?? 0,
       },
@@ -64,10 +67,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
     await dbConnect();
 
-    const result = await PhotoAlbum.deleteOne({
-      _id: id,
-      userId: session.user.id,
-    });
+    const result = await PhotoAlbum.deleteOne(
+      albumIdentifierFilter(session.user.id, id),
+    );
 
     if (result.deletedCount === 0) {
       return NextResponse.json({ error: "Album not found" }, { status: 404 });

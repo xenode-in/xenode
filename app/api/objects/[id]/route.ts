@@ -7,6 +7,7 @@ import StorageObject from "@/models/StorageObject";
 import { getDownloadUrl } from "@/lib/b2/objects";
 import ShareLink from "@/models/ShareLink";
 import DirectShare from "@/models/DirectShare";
+import { removeObjectsFromAlbums } from "@/lib/albums/cleanup";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
 import {
   parentPrefixForKey,
@@ -203,6 +204,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     // reachable. (Restore does not bring shares back; re-share if needed.)
     await ShareLink.deleteMany({ objectId: object._id });
     await DirectShare.deleteMany({ objectId: object._id });
+
+    // Drop it from any albums + album shares so it stops showing there.
+    await removeObjectsFromAlbums(userId, [object._id]);
 
     await publishSyncEvent({
       userId,

@@ -24,6 +24,7 @@ import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import ShareLink from "@/models/ShareLink";
 import DirectShare from "@/models/DirectShare";
+import { removeObjectsFromAlbums } from "@/lib/albums/cleanup";
 import { deleteObjects as deleteB2Objects } from "@/lib/b2/objects";
 import { decrementStorageBulk, updateBucketStats } from "@/lib/metering/usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
@@ -200,6 +201,7 @@ export async function POST(request: NextRequest) {
     // 3. Belt-and-suspenders share cleanup (normally already revoked at bin).
     await ShareLink.deleteMany({ objectId: { $in: allDocIds } });
     await DirectShare.deleteMany({ objectId: { $in: allDocIds } });
+    await removeObjectsFromAlbums(userId, allDocIds);
 
     // 4. Now — and only now — free the storage these bytes occupied.
     const totalSize = docs.reduce((sum, d) => sum + (d.size || 0), 0);
