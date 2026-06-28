@@ -971,12 +971,10 @@ export function PhotosGrid({
       dragSelectedIdsRef.current = new Set();
       lastDragPointRef.current = { x: event.clientX, y: event.clientY };
       dragMovedRef.current = false;
-
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId);
-      } catch {
-        // Pointer capture can fail if the browser has already cancelled it.
-      }
+      // NOTE: do NOT setPointerCapture here. Capturing on pointerdown
+      // redirects the subsequent `click` event to this container instead of
+      // the photo tile, which would swallow the tile click that opens the
+      // preview. Capture is acquired only once a real drag begins (below).
     },
     [filteredPhotos.length, gridError, gridLoading, showingAlbumList],
   );
@@ -997,6 +995,13 @@ export function PhotosGrid({
         selectionAnchorIdRef.current = null;
         setSelectionMode(true);
         startDragAutoScroll();
+        // Acquire pointer capture now that a drag is actually underway, so
+        // pointermove/up keep targeting the grid even if the cursor leaves it.
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch {
+          // Capture can fail if the browser already cancelled the gesture.
+        }
       }
 
       event.preventDefault();
