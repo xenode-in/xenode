@@ -5,7 +5,9 @@ import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import PhotoAlbum from "@/models/PhotoAlbum";
 import StorageObject from "@/models/StorageObject";
+import AlbumShareLink from "@/models/AlbumShareLink";
 import { albumIdentifierFilter } from "@/lib/albums/slug";
+import { deleteAlbumShareThumbnails } from "@/lib/albums/cleanup";
 
 export const dynamic = "force-dynamic";
 
@@ -134,6 +136,37 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       album.coverObjectId = album.objectIds[0];
     }
     await album.save();
+
+    const removedObjectIds = idsToRemove.map((value) => new Types.ObjectId(value));
+    const affectedLinks = await AlbumShareLink.find({
+      albumId: album._id,
+      createdBy: session.user.id,
+      "items.objectId": { $in: removedObjectIds },
+    })
+      .select("items")
+      .lean();
+    const removedSet = new Set(idsToRemove);
+    const removedItems = affectedLinks
+      .flatMap((link) => link.items)
+      .filter((item) => removedSet.has(String(item.objectId)));
+    await deleteAlbumShareThumbnails(session.user.id, removedItems);
+    await AlbumShareLink.updateMany(
+      {
+        albumId: album._id,
+        createdBy: session.user.id,
+        "items.objectId": { $in: removedObjectIds },
+      },
+      { $pull: { items: { objectId: { $in: removedObjectIds } } } },
+    );
+    await AlbumShareLink.updateMany(
+      {
+        albumId: album._id,
+        createdBy: session.user.id,
+        isRevoked: false,
+        items: { $size: 0 },
+      },
+      { $set: { isRevoked: true } },
+    );
 
     return NextResponse.json({ album: serializeAlbum(album.toObject()) });
   } catch (error: unknown) {

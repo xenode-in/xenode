@@ -25,7 +25,17 @@ import {
 import { toast } from "sonner";
 import { formatBytes, cn } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
+import {
+  decryptMetadataString,
+  decryptThumbnail,
+  encryptWithShareKey,
+} from "@/lib/crypto/fileEncryption";
+import { fromB64, toB64 } from "@/lib/crypto/utils";
+import {
+  bytesToBase64Url,
+  decryptOwnerShareKey,
+  importShareKey,
+} from "@/lib/crypto/shareKey";
 import { useThumbnail } from "@/hooks/useThumbnail";
 import { GridObject, useGridObjects } from "@/hooks/useLazyGallery";
 import { Scrubber } from "@/components/dashboard/Scrubber";
@@ -470,7 +480,7 @@ export function PhotosGrid({
 
   const router = useRouter();
   const { openPreview } = usePreview();
-  const { isUnlocked, metadataKey } = useCrypto();
+  const { isUnlocked, metadataKey, privateKey, setModalOpen } = useCrypto();
   const tileElementsRef = useRef<Map<string, HTMLDivElement>>(new Map());
   const selectedPhotoIdsRef = useRef<string[]>([]);
   const selectionAnchorIdRef = useRef<string | null>(null);
@@ -1092,6 +1102,187 @@ export function PhotosGrid({
     setAlbumDialogOpen(true);
   }, []);
 
+  const syncAlbumShare = useCallback(
+    async (
+      albumId: string,
+      options: { addedPhotoIds?: string[]; albumName?: string },
+    ) => {
+      const shareRes = await fetch(`/api/albums/${albumId}/share`, {
+        credentials: "include",
+      });
+      const shareData = await shareRes.json().catch(() => ({}));
+      if (!shareRes.ok || !shareData.share) return;
+
+      const ownerEncryptedShareKey = shareData.share.ownerEncryptedShareKey;
+      if (!ownerEncryptedShareKey) return;
+
+      if (!privateKey) {
+        setModalOpen(true);
+        toast.warning("Unlock your vault to update the live album link.");
+        return;
+      }
+
+      const shareKeyRaw = await decryptOwnerShareKey(
+        ownerEncryptedShareKey,
+        privateKey,
+      );
+      const shareKeyObj = await importShareKey(shareKeyRaw, [
+        "wrapKey",
+        "encrypt",
+      ]);
+      const payload: Record<string, unknown> = {};
+
+      if (options.albumName) {
+        payload.shareEncryptedAlbumName = await encryptWithShareKey(
+          options.albumName,
+          shareKeyObj,
+        );
+      }
+
+      const existingIds = new Set<string>(shareData.share.itemObjectIds ?? []);
+      const addedPhotoIds = options.addedPhotoIds ?? [];
+      const missingIds = addedPhotoIds.filter((id) => !existingIds.has(id));
+
+      if (missingIds.length > 0) {
+        let bucketId = "";
+        try {
+          const cfg = await (await fetch("/api/drive/config")).json();
+          bucketId = cfg?.bucket?._id ?? "";
+        } catch {
+          /* thumbnails simply won't upload */
+        }
+
+        const shareNonce = bytesToBase64Url(
+          crypto.getRandomValues(new Uint8Array(8)),
+        );
+        const photoById = new Map(allPhotos.map((photo) => [photo._id, photo]));
+        const items = await Promise.all(
+          missingIds.map(async (objectId) => {
+            const metaRes = await fetch(`/api/objects/${objectId}`, {
+              credentials: "include",
+            });
+            const meta = await metaRes.json();
+            if (!metaRes.ok) throw new Error(meta.error || "Failed to read photo");
+
+            const item: Record<string, string> = { objectId };
+
+            if (meta.isEncrypted) {
+              if (!meta.encryptedDEK) throw new Error("Photo missing encryption key");
+              const rawDEK = await crypto.subtle.decrypt(
+                { name: "RSA-OAEP" },
+                privateKey,
+                fromB64(meta.encryptedDEK),
+              );
+              const dekKey = await crypto.subtle.importKey(
+                "raw",
+                rawDEK,
+                { name: "AES-GCM" },
+                true,
+                ["encrypt", "decrypt"],
+              );
+              const iv = crypto.getRandomValues(new Uint8Array(12));
+              const wrapped = await crypto.subtle.wrapKey(
+                "raw",
+                dekKey,
+                shareKeyObj,
+                { name: "AES-GCM", iv },
+              );
+              item.shareEncryptedDEK = toB64(wrapped);
+              item.shareKeyIv = toB64(iv);
+
+              if (metadataKey) {
+                if (meta.encryptedName) {
+                  const plainName = await decryptMetadataString(
+                    meta.encryptedName,
+                    metadataKey,
+                  );
+                  item.shareEncryptedName = await encryptWithShareKey(
+                    plainName,
+                    shareKeyObj,
+                  );
+                }
+                if (meta.encryptedContentType) {
+                  const plainType = await decryptMetadataString(
+                    meta.encryptedContentType,
+                    metadataKey,
+                  );
+                  item.shareEncryptedContentType = await encryptWithShareKey(
+                    plainType,
+                    shareKeyObj,
+                  );
+                }
+              }
+            }
+
+            const photo = photoById.get(objectId);
+            try {
+              if (photo?.thumbnail && metadataKey && bucketId) {
+                const urlRes = await fetch("/api/objects/thumbnail/batch", {
+                  method: "POST",
+                  credentials: "include",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ keys: [photo.thumbnail] }),
+                });
+                const { urls } = await urlRes.json();
+                const signed = urls?.[photo.thumbnail];
+                if (signed) {
+                  const content = await (await fetch(signed)).text();
+                  const dataUrl = content.startsWith("enc:")
+                    ? await decryptThumbnail(content, metadataKey)
+                    : content;
+                  const reEncrypted = await encryptWithShareKey(
+                    dataUrl,
+                    shareKeyObj,
+                  );
+                  const presignRes = await fetch("/api/objects/presign-upload", {
+                    method: "POST",
+                    credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      bucketId,
+                      prefix: "shares/",
+                      fileName: `album-${objectId}-${shareNonce}-thumb`,
+                      fileType: "application/octet-stream",
+                      fileSize: reEncrypted.length,
+                    }),
+                  });
+                  const { uploadUrl, objectKey } = await presignRes.json();
+                  if (uploadUrl && objectKey) {
+                    await fetch(uploadUrl, {
+                      method: "PUT",
+                      body: reEncrypted,
+                      headers: { "Content-Type": "application/octet-stream" },
+                    });
+                    item.shareEncryptedThumbnail = objectKey;
+                  }
+                }
+              }
+            } catch (thumbErr) {
+              console.warn("Failed to prepare shared thumbnail", thumbErr);
+            }
+
+            return item;
+          }),
+        );
+        payload.items = items;
+      }
+
+      if (!payload.items && !payload.shareEncryptedAlbumName) return;
+
+      const patchRes = await fetch(`/api/albums/${albumId}/share`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!patchRes.ok) {
+        const data = await patchRes.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to update live album share");
+      }
+    },
+    [allPhotos, metadataKey, privateKey, setModalOpen],
+  );
+
   const handleSaveAlbum = useCallback(
     async (event: React.FormEvent<HTMLFormElement>) => {
       event.preventDefault();
@@ -1143,6 +1334,15 @@ export function PhotosGrid({
                 : album,
             ),
           );
+          await syncAlbumShare(editingAlbumId, { albumName: data.album.name }).catch(
+            (syncError) => {
+              toast.warning(
+                syncError instanceof Error
+                  ? syncError.message
+                  : "Album renamed, but the live share name was not updated.",
+              );
+            },
+          );
           toast.success("Album renamed");
         }
         setAlbumDialogOpen(false);
@@ -1161,6 +1361,7 @@ export function PhotosGrid({
       editingAlbumId,
       pendingAlbumPhotos,
       router,
+      syncAlbumShare,
     ],
   );
 
@@ -1202,6 +1403,16 @@ export function PhotosGrid({
               : item,
           ),
         );
+        await syncAlbumShare(albumId, {
+          addedPhotoIds: [photoId],
+          albumName: data.album.name,
+        }).catch((syncError) => {
+          toast.warning(
+            syncError instanceof Error
+              ? syncError.message
+              : "Added to album, but the live share was not updated.",
+          );
+        });
         toast.success("Added to album");
         void loadAlbums();
       } catch (error) {
@@ -1209,7 +1420,7 @@ export function PhotosGrid({
         void loadAlbums();
       }
     },
-    [albums, loadAlbums],
+    [albums, loadAlbums, syncAlbumShare],
   );
 
   const handleAddSelectionToAlbum = useCallback(async () => {
@@ -1236,8 +1447,18 @@ export function PhotosGrid({
                 coverObjectId: data.album.coverObjectId,
               }
             : item,
-        ),
+          ),
       );
+      await syncAlbumShare(bulkTargetAlbumId, {
+        addedPhotoIds: photoIds,
+        albumName: data.album.name,
+      }).catch((syncError) => {
+        toast.warning(
+          syncError instanceof Error
+            ? syncError.message
+            : "Added to album, but the live share was not updated.",
+        );
+      });
       toast.success(
         `${photoIds.length} photo${photoIds.length !== 1 ? "s" : ""} added`,
       );
@@ -1253,7 +1474,13 @@ export function PhotosGrid({
     } finally {
       setBulkAlbumSaving(false);
     }
-  }, [bulkTargetAlbumId, clearSelection, loadAlbums, selectedPhotoIds]);
+  }, [
+    bulkTargetAlbumId,
+    clearSelection,
+    loadAlbums,
+    selectedPhotoIds,
+    syncAlbumShare,
+  ]);
 
   const handleRemoveFromAlbum = useCallback(
     async (albumId: string, photoId: string) => {

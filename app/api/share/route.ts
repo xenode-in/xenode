@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
       token, objectId, expiresIn, maxDownloads, password,
       accessType = "download", shareEncryptedDEK, shareKeyIv,
       shareEncryptedName, shareEncryptedContentType, shareEncryptedThumbnail,
+      ownerEncryptedShareKey,
       sharedWith = [],
     } = await req.json();
 
@@ -65,6 +66,9 @@ export async function POST(req: NextRequest) {
       shareData.shareEncryptedDEK = shareEncryptedDEK;
       shareData.shareKeyIv = shareKeyIv;
       shareData.shareEncryptedName = shareEncryptedName;
+      if (ownerEncryptedShareKey) {
+        shareData.ownerEncryptedShareKey = ownerEncryptedShareKey;
+      }
       if (shareEncryptedContentType) {
         shareData.shareEncryptedContentType = shareEncryptedContentType;
       }

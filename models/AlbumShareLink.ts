@@ -28,6 +28,8 @@ export interface IAlbumShareLink extends Document {
   createdBy: string;
   /** Album name encrypted with the share key. */
   shareEncryptedAlbumName?: string;
+  /** Album share key encrypted to the owner's vault public key. */
+  ownerEncryptedShareKey?: string;
   items: IAlbumShareItem[];
   expiresAt?: Date;
   maxViews?: number;
@@ -74,6 +76,7 @@ const AlbumShareLinkSchema = new Schema<IAlbumShareLink>(
     },
     createdBy: { type: String, required: true, index: true },
     shareEncryptedAlbumName: { type: String, required: false },
+    ownerEncryptedShareKey: { type: String, required: false },
     items: { type: [AlbumShareItemSchema], default: [] },
     expiresAt: { type: Date, required: false },
     maxViews: { type: Number, required: false, min: 1 },

@@ -48,6 +48,11 @@ import {
   encryptWithShareKey,
 } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
+import {
+  bytesToBase64Url,
+  decryptOwnerShareKey,
+  encryptShareKeyForOwner,
+} from "@/lib/crypto/shareKey";
 
 interface SharedObject {
   _id: string;
@@ -69,6 +74,7 @@ interface PublicShare {
   maxDownloads?: number;
   isPasswordProtected: boolean;
   sharedWith: string[];
+  ownerEncryptedShareKey?: string;
   createdAt: string;
 }
 
@@ -100,6 +106,7 @@ type ShareRow = {
   sharedWith: string[];
   recipients?: DirectRecipient[];
   token?: string;
+  ownerEncryptedShareKey?: string;
 };
 
 interface ObjectKeyPackage {
@@ -118,13 +125,6 @@ interface RecipientLookup {
 function bytesToB64(buf: ArrayBuffer | Uint8Array): string {
   const bytes = buf instanceof Uint8Array ? buf : new Uint8Array(buf);
   return btoa(String.fromCharCode(...bytes));
-}
-
-function bytesToB64url(bytes: Uint8Array): string {
-  return bytesToB64(bytes)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=/g, "");
 }
 
 function parseEmails(input: string) {
@@ -156,7 +156,7 @@ export default function SharedPage() {
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>(
     {},
   );
-  const { isUnlocked, metadataKey, privateKey, setModalOpen } = useCrypto();
+  const { isUnlocked, metadataKey, privateKey, publicKey, setModalOpen } = useCrypto();
 
   const fetchShares = useCallback(async () => {
     try {
@@ -186,6 +186,7 @@ export default function SharedPage() {
           isPasswordProtected: link.isPasswordProtected,
           sharedWith: link.sharedWith || [],
           token: link.token,
+          ownerEncryptedShareKey: link.ownerEncryptedShareKey,
         }),
       );
 
@@ -312,6 +313,13 @@ export default function SharedPage() {
       shareKeyIv: bytesToB64(iv),
     };
 
+    if (publicKey) {
+      packageData.ownerEncryptedShareKey = await encryptShareKeyForOwner(
+        shareKeyRaw,
+        publicKey,
+      );
+    }
+
     if (metadataKey && encryptedName) {
       const name = await decryptMetadataString(encryptedName, metadataKey);
       packageData.shareEncryptedName = await encryptWithShareKey(
@@ -371,16 +379,33 @@ export default function SharedPage() {
       let url = `${window.location.origin}/shared/${row.token}`;
 
       if (row.objectId.isEncrypted) {
-        const { packageData, shareKeyRaw } = await buildShareKeyPackage(row);
-        const res = await fetch(`/api/share/${row.token}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(packageData),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || "Failed to refresh link key");
-        url += `#${bytesToB64url(shareKeyRaw)}`;
-        await fetchShares();
+        let shareKeyRaw: Uint8Array;
+        if (row.ownerEncryptedShareKey) {
+          if (!privateKey) {
+            setModalOpen(true);
+            throw new Error("Unlock your vault to copy this encrypted link");
+          }
+          shareKeyRaw = await decryptOwnerShareKey(
+            row.ownerEncryptedShareKey,
+            privateKey,
+          );
+        } else {
+          if (!publicKey) {
+            setModalOpen(true);
+            throw new Error("Unlock your vault to refresh this encrypted link");
+          }
+          const built = await buildShareKeyPackage(row);
+          shareKeyRaw = built.shareKeyRaw;
+          const res = await fetch(`/api/share/${row.token}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(built.packageData),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || "Failed to refresh link key");
+          await fetchShares();
+        }
+        url += `#key=${bytesToBase64Url(shareKeyRaw)}`;
       }
 
       await navigator.clipboard.writeText(url);

@@ -21,6 +21,8 @@ export interface IShareLink extends Document {
   shareEncryptedName?: string;
   shareEncryptedContentType?: string;
   shareEncryptedThumbnail?: string;
+  /** Public-link share key encrypted to the owner's vault public key. */
+  ownerEncryptedShareKey?: string;
   accessType: "view" | "download";
   sharedWith: string[]; // Array of emails or user IDs the file is explicitly shared with
   createdAt: Date;
@@ -61,6 +63,7 @@ const ShareLinkSchema = new Schema<IShareLink>(
     shareEncryptedName: { type: String, required: false },
     shareEncryptedContentType: { type: String, required: false },
     shareEncryptedThumbnail: { type: String, required: false },
+    ownerEncryptedShareKey: { type: String, required: false },
     accessType: {
       type: String,
       enum: ["view", "download"],

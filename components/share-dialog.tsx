@@ -19,6 +19,7 @@ import {
   encryptWithShareKey,
 } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
+import { encryptShareKeyForOwner } from "@/lib/crypto/shareKey";
 import {
   Dialog,
   DialogContent,
@@ -88,7 +89,7 @@ export function ShareDialog({
   const [directShareSummary, setDirectShareSummary] = useState<string | null>(
     null,
   );
-  const { metadataKey } = useCrypto();
+  const { metadataKey, publicKey } = useCrypto();
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -118,6 +119,7 @@ export function ShareDialog({
       let shareEncryptedName: string | undefined;
       let shareEncryptedContentType: string | undefined;
       let shareEncryptedThumbnail: string | undefined;
+      let ownerEncryptedShareKey: string | undefined;
       let fragment: string | undefined;
       let shareKeyRaw: Uint8Array | undefined;
 
@@ -131,6 +133,9 @@ export function ShareDialog({
 
       if (file.isEncrypted && getDEKBytes) {
         const dekBytes = await getDEKBytes(file.id);
+        if (!publicKey) {
+          throw new Error("Unlock your vault before creating encrypted links");
+        }
         shareKeyRaw = crypto.getRandomValues(new Uint8Array(32));
         const shareKeyObj = await crypto.subtle.importKey(
           "raw",
@@ -168,6 +173,10 @@ export function ShareDialog({
         shareEncryptedDEK = bytesToB64(wrapped);
         shareKeyIv = bytesToB64(iv);
         fragment = bytesToB64url(shareKeyRaw);
+        ownerEncryptedShareKey = await encryptShareKeyForOwner(
+          shareKeyRaw,
+          publicKey,
+        );
 
         if (metadataKey) {
           const nameToDecrypt = file.encryptedDisplayName || file.encryptedName;
@@ -241,6 +250,9 @@ export function ShareDialog({
         (body as { token?: string }).token = token;
         if (shareEncryptedDEK) body.shareEncryptedDEK = shareEncryptedDEK;
         if (shareKeyIv) body.shareKeyIv = shareKeyIv;
+        if (ownerEncryptedShareKey) {
+          body.ownerEncryptedShareKey = ownerEncryptedShareKey;
+        }
         if (shareEncryptedName) body.shareEncryptedName = shareEncryptedName;
         if (shareEncryptedContentType) {
           body.shareEncryptedContentType = shareEncryptedContentType;

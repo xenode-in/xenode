@@ -3,7 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import PhotoAlbum from "@/models/PhotoAlbum";
+import AlbumShareLink from "@/models/AlbumShareLink";
 import { albumIdentifierFilter } from "@/lib/albums/slug";
+import { deleteAlbumShareThumbnails } from "@/lib/albums/cleanup";
 
 export const dynamic = "force-dynamic";
 
@@ -67,13 +69,30 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
     await dbConnect();
 
-    const result = await PhotoAlbum.deleteOne(
+    const album = await PhotoAlbum.findOne(
       albumIdentifierFilter(session.user.id, id),
-    );
+    ).lean();
 
-    if (result.deletedCount === 0) {
+    if (!album) {
       return NextResponse.json({ error: "Album not found" }, { status: 404 });
     }
+
+    const links = await AlbumShareLink.find({
+      albumId: album._id,
+      createdBy: session.user.id,
+      isRevoked: false,
+    })
+      .select("items")
+      .lean();
+    for (const link of links) {
+      await deleteAlbumShareThumbnails(session.user.id, link.items);
+    }
+    await AlbumShareLink.updateMany(
+      { albumId: album._id, createdBy: session.user.id, isRevoked: false },
+      { $set: { isRevoked: true } },
+    );
+
+    await PhotoAlbum.deleteOne({ _id: album._id, userId: session.user.id });
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {

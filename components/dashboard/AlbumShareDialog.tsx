@@ -22,6 +22,12 @@ import {
 } from "@/lib/crypto/fileEncryption";
 import { fromB64, toB64 } from "@/lib/crypto/utils";
 import {
+  bytesToBase64Url,
+  decryptOwnerShareKey,
+  encryptShareKeyForOwner,
+  importShareKey,
+} from "@/lib/crypto/shareKey";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -57,10 +63,6 @@ interface AlbumShareDialogProps {
   photos: SharePhoto[];
 }
 
-function bytesToB64url(bytes: Uint8Array): string {
-  return toB64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
-}
-
 const CONCURRENCY = 4;
 
 export function AlbumShareDialog({
@@ -70,7 +72,7 @@ export function AlbumShareDialog({
   albumName,
   photos,
 }: AlbumShareDialogProps) {
-  const { metadataKey, privateKey, setModalOpen } = useCrypto();
+  const { metadataKey, privateKey, publicKey, setModalOpen } = useCrypto();
 
   const [creating, setCreating] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -81,6 +83,8 @@ export function AlbumShareDialog({
     token: string;
     shareUrl: string;
     itemCount: number;
+    itemObjectIds?: string[];
+    ownerEncryptedShareKey?: string | null;
   } | null>(null);
 
   const [expiresIn, setExpiresIn] = useState("never");
@@ -99,8 +103,6 @@ export function AlbumShareDialog({
         });
         const data = await res.json();
         if (!cancelled && res.ok && data.share) {
-          // We can't reconstruct the #key fragment (it never left the creator's
-          // browser), so we only flag that a link exists.
           setExisting(data.share);
         }
       } catch {
@@ -112,12 +114,12 @@ export function AlbumShareDialog({
     };
   }, [open, albumId]);
 
-  async function processObject(
+  const processObject = useCallback(async (
     photo: SharePhoto,
     shareKeyObj: CryptoKey,
     bucketId: string,
     shareNonce: string,
-  ) {
+  ) => {
     const objectId = photo.objectId;
     const metaRes = await fetch(`/api/objects/${objectId}`, {
       credentials: "include",
@@ -221,7 +223,7 @@ export function AlbumShareDialog({
     }
 
     return item;
-  }
+  }, [metadataKey, privateKey]);
 
   const create = useCallback(async () => {
     if (photos.length === 0) {
@@ -241,17 +243,31 @@ export function AlbumShareDialog({
     try {
       // Random per-share id so this share's thumbnails live at fresh B2 keys,
       // never colliding with a prior share's cached (differently-keyed) blobs.
-      const shareNonce = bytesToB64url(crypto.getRandomValues(new Uint8Array(8)));
+      const shareNonce = bytesToBase64Url(crypto.getRandomValues(new Uint8Array(8)));
 
-      // One random 32-byte AES-GCM share key for the whole album.
-      const shareKeyRaw = crypto.getRandomValues(new Uint8Array(32));
-      const shareKeyObj = await crypto.subtle.importKey(
-        "raw",
-        shareKeyRaw.buffer.slice(0) as ArrayBuffer,
-        { name: "AES-GCM" },
-        false,
-        ["wrapKey", "encrypt"],
-      );
+      let shareKeyRaw: Uint8Array;
+      let ownerEncryptedShareKey: string | undefined;
+      if (existing?.ownerEncryptedShareKey) {
+        shareKeyRaw = await decryptOwnerShareKey(
+          existing.ownerEncryptedShareKey,
+          privateKey,
+        );
+      } else {
+        if (!publicKey) {
+          setModalOpen(true);
+          setError("Unlock your vault to create a share.");
+          return;
+        }
+        shareKeyRaw = crypto.getRandomValues(new Uint8Array(32));
+        ownerEncryptedShareKey = await encryptShareKeyForOwner(
+          shareKeyRaw,
+          publicKey,
+        );
+      }
+      const shareKeyObj = await importShareKey(shareKeyRaw, [
+        "wrapKey",
+        "encrypt",
+      ]);
 
       // Need the user's bucket for thumbnail uploads.
       let bucketId = "";
@@ -262,10 +278,15 @@ export function AlbumShareDialog({
         /* thumbnails simply won't upload */
       }
 
+      const existingIds = new Set(existing?.itemObjectIds ?? []);
+      const photosToShare = existing
+        ? photos.filter((photo) => !existingIds.has(photo.objectId))
+        : photos;
+
       const items: Array<Record<string, string>> = [];
       let done = 0;
-      for (let i = 0; i < photos.length; i += CONCURRENCY) {
-        const batch = photos.slice(i, i + CONCURRENCY);
+      for (let i = 0; i < photosToShare.length; i += CONCURRENCY) {
+        const batch = photosToShare.slice(i, i + CONCURRENCY);
         const results = await Promise.all(
           batch.map((photo) =>
             processObject(photo, shareKeyObj, bucketId, shareNonce).catch((e) => {
@@ -276,10 +297,14 @@ export function AlbumShareDialog({
         );
         for (const r of results) if (r) items.push(r);
         done += batch.length;
-        setProgress(Math.round((done / photos.length) * 100));
+        setProgress(
+          photosToShare.length > 0
+            ? Math.round((done / photosToShare.length) * 100)
+            : 100,
+        );
       }
 
-      if (items.length === 0) {
+      if (!existing && items.length === 0) {
         throw new Error("Could not prepare any photos for sharing.");
       }
 
@@ -289,12 +314,13 @@ export function AlbumShareDialog({
       );
 
       const res = await fetch(`/api/albums/${albumId}/share`, {
-        method: "POST",
+        method: existing?.ownerEncryptedShareKey ? "PATCH" : "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           items,
           shareEncryptedAlbumName,
+          ...(ownerEncryptedShareKey && { ownerEncryptedShareKey }),
           ...(expiresIn !== "never" && { expiresIn: parseInt(expiresIn, 10) }),
           ...(maxViews && { maxViews: parseInt(maxViews, 10) }),
           ...(usePass && pass && { password: pass }),
@@ -303,10 +329,11 @@ export function AlbumShareDialog({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to create share");
 
-      const fragment = bytesToB64url(shareKeyRaw);
-      setShareUrl(`${data.shareUrl}#key=${fragment}`);
-      setExisting(null);
-      toast.success("Album share link created");
+      const fragment = bytesToBase64Url(shareKeyRaw);
+      const nextShareUrl = data.share?.shareUrl || data.shareUrl || existing?.shareUrl;
+      setShareUrl(`${nextShareUrl}#key=${fragment}`);
+      setExisting(data.share ?? null);
+      toast.success(existing ? "Album share link updated" : "Album share link created");
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to create share");
     } finally {
@@ -315,9 +342,11 @@ export function AlbumShareDialog({
   }, [
     albumId,
     albumName,
+    existing,
     photos,
     privateKey,
-    metadataKey,
+    processObject,
+    publicKey,
     expiresIn,
     maxViews,
     usePass,
@@ -336,6 +365,31 @@ export function AlbumShareDialog({
       toast.success("Share link revoked");
     } catch {
       toast.error("Failed to revoke link");
+    }
+  }
+
+  async function copyExisting() {
+    if (!existing?.ownerEncryptedShareKey) {
+      setError("This older link needs to be refreshed once before it can be copied again.");
+      return;
+    }
+    if (!privateKey) {
+      setModalOpen(true);
+      setError("Unlock your vault to copy this share link.");
+      return;
+    }
+    try {
+      const raw = await decryptOwnerShareKey(
+        existing.ownerEncryptedShareKey,
+        privateKey,
+      );
+      const url = `${existing.shareUrl}#key=${bytesToBase64Url(raw)}`;
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+      toast.success("Link copied");
+    } catch {
+      setError("Could not decrypt this share link. Refresh it to rotate the key.");
     }
   }
 
@@ -442,6 +496,17 @@ export function AlbumShareDialog({
                 >
                   <Trash2 className="mr-1.5 h-3 w-3" /> Revoke current link
                 </Button>
+                {existing.ownerEncryptedShareKey && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 border-border"
+                    onClick={copyExisting}
+                  >
+                    <Copy className="mr-1.5 h-3 w-3" />
+                    {copied ? "Copied" : "Copy link"}
+                  </Button>
+                )}
               </div>
             )}
 
@@ -524,7 +589,7 @@ export function AlbumShareDialog({
               ) : (
                 <>
                   <Link2 className="mr-2 h-4 w-4" />{" "}
-                  {existing ? "Refresh Public Link" : "Create Public Link"}
+                  {existing ? "Update Public Link" : "Create Public Link"}
                 </>
               )}
             </Button>

@@ -57,6 +57,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         token: link.token,
         shareUrl: shareUrl(link.token),
         itemCount: link.items.length,
+        itemObjectIds: link.items.map((item) => String(item.objectId)),
+        ownerEncryptedShareKey: link.ownerEncryptedShareKey ?? null,
         isPasswordProtected: link.isPasswordProtected,
         expiresAt: link.expiresAt ?? null,
         maxViews: link.maxViews ?? null,
@@ -172,6 +174,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         typeof body.shareEncryptedAlbumName === "string"
           ? body.shareEncryptedAlbumName
           : undefined,
+      ownerEncryptedShareKey:
+        typeof body.ownerEncryptedShareKey === "string"
+          ? body.ownerEncryptedShareKey
+          : undefined,
       items,
       isPasswordProtected: !!body.password,
     };
@@ -202,6 +208,119 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       },
       { status: 201 },
     );
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+/** PATCH — update the active share without rotating token/key. */
+export async function PATCH(request: NextRequest, { params }: RouteParams) {
+  try {
+    const session = await requireAuth(request);
+    const userId = session.user.id;
+    const { id } = await params;
+    const body = await request.json().catch(() => ({}));
+
+    await dbConnect();
+
+    const album = await PhotoAlbum.findOne(
+      albumIdentifierFilter(userId, id),
+    ).lean();
+    if (!album) {
+      return NextResponse.json({ error: "Album not found" }, { status: 404 });
+    }
+
+    const link = await AlbumShareLink.findOne({
+      albumId: album._id,
+      createdBy: userId,
+      isRevoked: false,
+    });
+    if (!link) {
+      return NextResponse.json({ error: "Share link not found" }, { status: 404 });
+    }
+
+    const update: Record<string, unknown> = {};
+    if (typeof body.shareEncryptedAlbumName === "string") {
+      update.shareEncryptedAlbumName = body.shareEncryptedAlbumName;
+    }
+    if (typeof body.ownerEncryptedShareKey === "string") {
+      update.ownerEncryptedShareKey = body.ownerEncryptedShareKey;
+    }
+
+    const incoming: IncomingItem[] = Array.isArray(body.items) ? body.items : [];
+    const requestedIds = incoming
+      .map((item) => item.objectId)
+      .filter((v): v is string => typeof v === "string" && Types.ObjectId.isValid(v));
+
+    let itemsToAdd: Array<{
+      objectId: Types.ObjectId;
+      shareEncryptedDEK: string;
+      shareKeyIv: string;
+      shareEncryptedName?: string;
+      shareEncryptedContentType?: string;
+      shareEncryptedThumbnail?: string;
+    }> = [];
+
+    if (requestedIds.length > 0) {
+      const albumObjectIds = new Set((album.objectIds ?? []).map(String));
+      const existingItemIds = new Set(link.items.map((item) => String(item.objectId)));
+      const ownedObjects = await StorageObject.find({
+        _id: { $in: requestedIds.map((v) => new Types.ObjectId(v)) },
+        userId,
+        deletedAt: { $exists: false },
+      })
+        .select("_id isEncrypted")
+        .lean<Array<{ _id: Types.ObjectId; isEncrypted?: boolean }>>();
+      const ownedById = new Map(ownedObjects.map((o) => [String(o._id), o]));
+
+      itemsToAdd = incoming
+        .filter((item) => {
+          const oid = item.objectId ?? "";
+          if (!albumObjectIds.has(oid) || existingItemIds.has(oid) || !ownedById.has(oid)) {
+            return false;
+          }
+          const obj = ownedById.get(oid);
+          if (obj?.isEncrypted && (!item.shareEncryptedDEK || !item.shareKeyIv)) {
+            return false;
+          }
+          return true;
+        })
+        .map((item) => ({
+          objectId: new Types.ObjectId(item.objectId),
+          shareEncryptedDEK: item.shareEncryptedDEK ?? "",
+          shareKeyIv: item.shareKeyIv ?? "",
+          shareEncryptedName: item.shareEncryptedName,
+          shareEncryptedContentType: item.shareEncryptedContentType,
+          shareEncryptedThumbnail: item.shareEncryptedThumbnail,
+        }));
+    }
+
+    if (Object.keys(update).length > 0) {
+      link.set(update);
+    }
+    if (itemsToAdd.length > 0) {
+      link.items.push(...itemsToAdd);
+    }
+
+    await link.save();
+
+    return NextResponse.json({
+      share: {
+        token: link.token,
+        shareUrl: shareUrl(link.token),
+        itemCount: link.items.length,
+        itemObjectIds: link.items.map((item) => String(item.objectId)),
+        ownerEncryptedShareKey: link.ownerEncryptedShareKey ?? null,
+        isPasswordProtected: link.isPasswordProtected,
+        expiresAt: link.expiresAt ?? null,
+        maxViews: link.maxViews ?? null,
+        viewCount: link.viewCount,
+        createdAt: link.createdAt,
+      },
+    });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

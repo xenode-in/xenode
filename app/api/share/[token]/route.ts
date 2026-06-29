@@ -121,6 +121,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       update.shareKeyIv = body.shareKeyIv;
       update.shareEncryptedName = body.shareEncryptedName;
       update.shareEncryptedContentType = body.shareEncryptedContentType;
+      if (body.ownerEncryptedShareKey) {
+        update.ownerEncryptedShareKey = body.ownerEncryptedShareKey;
+      }
     }
 
     const link = await ShareLink.findOneAndUpdate(
