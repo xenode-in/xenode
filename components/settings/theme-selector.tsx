@@ -30,14 +30,6 @@ const themes = [
       primary: "bg-zinc-100",
     },
   },
-  // {
-  //   id: "xenode-green",
-  //   name: "Xenode Green",
-  //   colors: {
-  //     bg: "bg-[#0f1a12]",
-  //     primary: "bg-[#7cb686]",
-  //   },
-  // },
 ];
 
 export function ThemeSelector() {
@@ -49,7 +41,7 @@ export function ThemeSelector() {
   }, []);
 
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
       {themes.map((item) => (
         <button
           key={item.id}

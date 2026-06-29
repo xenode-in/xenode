@@ -192,7 +192,7 @@ export default function PlansPageClient() {
   const handleSelect = (slug: string, name: string) => {
     if (!session) {
       toast.error("Please sign in first.");
-      router.push("/sign-in");
+      router.push("/login");
       return;
     }
     // Yearly users switching to monthly: deferred to period end. Open the
@@ -305,7 +305,11 @@ export default function PlansPageClient() {
                     layoutId="plans-cycle-indicator"
                     className="absolute inset-0 bg-background rounded-lg shadow-sm"
                     style={{ zIndex: -1 }}
-                    transition={{ type: "spring", bounce: 0.15, duration: 0.45 }}
+                    transition={{
+                      type: "spring",
+                      bounce: 0.15,
+                      duration: 0.45,
+                    }}
                   />
                 )}
                 <span className="relative">
@@ -536,7 +540,7 @@ export default function PlansPageClient() {
           transition={{ delay: 0.7 }}
           className="mt-12 text-center text-xs text-muted-foreground"
         >
-          All plans include End-to-End Encryption and a 30-day refund policy.
+          All plans include End-to-End Encryption and a 14-day refund policy.
           You can cancel anytime from your billing page.
         </motion.p>
       </main>
@@ -560,7 +564,8 @@ export default function PlansPageClient() {
               Your current annual plan will continue as-is until it ends
               {currentPeriodEnd ? (
                 <>
-                  {" "}on{" "}
+                  {" "}
+                  on{" "}
                   <strong className="text-foreground">
                     {new Date(currentPeriodEnd).toLocaleDateString(undefined, {
                       year: "numeric",
@@ -570,8 +575,8 @@ export default function PlansPageClient() {
                   </strong>
                 </>
               ) : null}
-              . After that, you&apos;ll move to {deferredSwitchPlan.name} Monthly
-              billing.
+              . After that, you&apos;ll move to {deferredSwitchPlan.name}{" "}
+              Monthly billing.
             </p>
 
             <div className="mt-4 rounded-lg bg-muted/40 border border-border px-4 py-3 text-xs text-muted-foreground space-y-1">
@@ -579,10 +584,19 @@ export default function PlansPageClient() {
                 <strong className="text-foreground">What this means:</strong>
               </p>
               <ul className="list-disc list-inside space-y-1 pl-1">
-                <li>You keep your annual plan and benefits until the end date above.</li>
+                <li>
+                  You keep your annual plan and benefits until the end date
+                  above.
+                </li>
                 <li>No refund is issued — you paid for the full year.</li>
-                <li>On the renewal date, you&apos;ll be charged monthly going forward.</li>
-                <li>You can cancel the scheduled change anytime before it takes effect.</li>
+                <li>
+                  On the renewal date, you&apos;ll be charged monthly going
+                  forward.
+                </li>
+                <li>
+                  You can cancel the scheduled change anytime before it takes
+                  effect.
+                </li>
               </ul>
             </div>
 

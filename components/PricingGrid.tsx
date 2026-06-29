@@ -121,7 +121,7 @@ export default function PricingGrid({
   const handleSelectPlan = (slug: string) => {
     if (!session) {
       toast.error("Please sign in first to subscribe.");
-      router.push("/sign-in");
+      router.push("/login");
       return;
     }
     window.location.assign(`/checkout?plan=${slug}&cycle=${cycle}`);
@@ -362,7 +362,7 @@ export default function PricingGrid({
             transition={{ delay: 0.7 }}
             className="mt-12 text-center text-xs text-muted-foreground"
           >
-            All plans include End-to-End Encryption and a 30-day refund policy.
+            All plans include End-to-End Encryption and a 14-day refund policy.
             You can cancel anytime from your billing page.
           </motion.p>
         )}

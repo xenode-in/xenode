@@ -39,7 +39,7 @@ The billing system interacts with `Usage.totalStorageBytes` and `Usage.storageLi
 
 ### 5. Refund & Expiry policy
 
-Xenode offers a **30-day refund policy** for all paid plans.
+Xenode offers a **14-day refund policy** for all paid plans.
 
 When a plan expires or a subscription is cancelled:
 - **New uploads are blocked** (HTTP 402) if usage exceeds the free tier limit.

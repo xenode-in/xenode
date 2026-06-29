@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useTheme } from "next-themes";
-import { Monitor, Moon, Sun, Palette } from "lucide-react";
+import { Monitor, Moon, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 export function MinimalThemeSelector() {
-  const { setTheme, theme } = useTheme();
+  const { setTheme } = useTheme();
 
   return (
     <DropdownMenu>
@@ -40,23 +40,6 @@ export function MinimalThemeSelector() {
         <DropdownMenuItem onClick={() => setTheme("system")} className="cursor-pointer flex items-center gap-2">
           <Monitor className="h-4 w-4" />
           <span>System</span>
-        </DropdownMenuItem>
-        
-        <DropdownMenuSeparator />
-        <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">Custom Themes</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        
-        <DropdownMenuItem onClick={() => setTheme("xenode-green")} className="cursor-pointer flex items-center gap-2">
-          <div className="h-4 w-4 rounded-full bg-[#7cb686] border border-black/20" />
-          <span>Xenode Green</span>
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setTheme("imperial")} className="cursor-pointer flex items-center gap-2">
-          <div className="h-4 w-4 rounded-full bg-[#a33243] border border-black/20" />
-          <span>Imperial</span>
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => setTheme("deep-navy")} className="cursor-pointer flex items-center gap-2">
-          <div className="h-4 w-4 rounded-full bg-[#3b82f6] border border-black/20" />
-          <span>Deep Navy</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

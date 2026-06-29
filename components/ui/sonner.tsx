@@ -27,14 +27,6 @@ const Toaster = ({ ...props }: ToasterProps) => {
   // Define theme-specific styling
   const themeStyles = (() => {
     switch (currentTheme) {
-      case "xenode-green":
-        return {
-          "--normal-bg": "#0f1a12",
-          "--normal-text": "#e8e4d9",
-          "--normal-border": "rgba(124, 182, 134, 0.2)",
-          "--border-radius": "12px",
-          "--toast-border": "1px solid rgba(124, 182, 134, 0.3)",
-        };
       case "light":
         return {
           "--normal-bg": "#f0f4ff",

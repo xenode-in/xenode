@@ -156,7 +156,7 @@ function LoginForm() {
           <div className="absolute inset-0 z-0 opacity-80 dark:opacity-60 mix-blend-multiply dark:mix-blend-screen pointer-events-none">
             <Dithering
               colorBack="#00000000" // Transparent background
-              colorFront="#7cb686" // Xenode green accent
+              colorFront="#7cb686" // Brand green accent
               shape="warp"
               type="4x4"
               speed={isHovered ? 0.6 : 0.2}
