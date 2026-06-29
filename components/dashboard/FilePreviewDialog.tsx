@@ -5,6 +5,7 @@ const NOOP = () => {};
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import dynamic from "next/dynamic";
 import DocxViewer from "./DocxViewer";
+import { FileVersionsDialog } from "./FileVersionsDialog";
 import {
   Dialog,
   DialogClose,
@@ -24,6 +25,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Pencil,
+  History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -734,6 +736,7 @@ export function FilePreviewDialog({
     string | null
   >(null);
   const [fetchedData, setFetchedData] = useState<ObjectData | null>(null);
+  const [showVersions, setShowVersions] = useState(false);
 
   // HD / original-quality preview. The main preview loads the optimized
   // version; `wantHd` lazily loads + decrypts the ORIGINAL into `hdUrl` and
@@ -1435,6 +1438,9 @@ export function FilePreviewDialog({
     !directShareId &&
     type.startsWith("image/");
 
+  // Version history is an owner-only feature (not for shared/album/direct views).
+  const canVersions = !sharedToken && !albumShareToken && !directShareId;
+
   const handleDownload = async () => {
     if (directShareId) {
       onDownload?.();
@@ -1688,6 +1694,7 @@ export function FilePreviewDialog({
   };
 
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={onClose} modal={false}>
       <DialogPortal>
         <DialogOverlay className={isMinimized ? "hidden" : ""} />
@@ -1793,6 +1800,19 @@ export function FilePreviewDialog({
                 </div>
               )}
 
+              {canVersions && !isMinimized && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowVersions(true)}
+                  className="h-8 gap-1.5"
+                  title="View version history"
+                >
+                  <History className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">History</span>
+                </Button>
+              )}
+
               <Button
                 variant="ghost"
                 size="icon"
@@ -1854,5 +1874,16 @@ export function FilePreviewDialog({
         </DialogPrimitive.Content>
       </DialogPortal>
     </Dialog>
+
+    {canVersions && (
+      <FileVersionsDialog
+        fileId={file.id}
+        fileName={name}
+        isOpen={showVersions}
+        onClose={() => setShowVersions(false)}
+        onRestored={() => setShowVersions(false)}
+      />
+    )}
+    </>
   );
 }

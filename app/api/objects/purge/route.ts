@@ -17,11 +17,15 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
-import { requireAuth } from "@/lib/auth/session";
+import { requireAccessContext, bucketOwnershipClause } from "@/lib/authz";
 import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
-import StorageObject from "@/models/StorageObject";
+import StorageObject, { type IStorageObjectVersion } from "@/models/StorageObject";
+import {
+  collectVersionB2Keys,
+  versionsTotalBytes,
+} from "@/lib/storage/versions";
 import ShareLink from "@/models/ShareLink";
 import DirectShare from "@/models/DirectShare";
 import { removeObjectsFromAlbums } from "@/lib/albums/cleanup";
@@ -39,9 +43,10 @@ type PurgeDoc = {
   thumbnail?: string;
   optimizedKey?: string;
   size?: number;
+  versions?: IStorageObjectVersion[];
 };
 
-const PURGE_PROJECTION = "_id key thumbnail optimizedKey size";
+const PURGE_PROJECTION = "_id key thumbnail optimizedKey size versions";
 
 function collectB2Keys(docs: PurgeDoc[]): string[] {
   const keys: string[] = [];
@@ -49,6 +54,10 @@ function collectB2Keys(docs: PurgeDoc[]): string[] {
     if (d.key) keys.push(d.key);
     if (d.thumbnail && d.thumbnail.startsWith("users/")) keys.push(d.thumbnail);
     if (d.optimizedKey) keys.push(d.optimizedKey);
+    // Version history blobs are freed too.
+    for (const v of d.versions ?? []) {
+      keys.push(...collectVersionB2Keys(v));
+    }
   }
   return keys;
 }
@@ -60,8 +69,8 @@ export async function POST(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(request);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    userId = ctx.userId;
     await enforceStorageAccess(userId);
 
     let body: { bucketId?: unknown; ids?: unknown; all?: unknown };
@@ -114,7 +123,7 @@ export async function POST(request: NextRequest) {
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     })
       .select("_id b2BucketId")
       .lean<{ _id: unknown; b2BucketId: string }>();
@@ -204,7 +213,10 @@ export async function POST(request: NextRequest) {
     await removeObjectsFromAlbums(userId, allDocIds);
 
     // 4. Now — and only now — free the storage these bytes occupied.
-    const totalSize = docs.reduce((sum, d) => sum + (d.size || 0), 0);
+    const totalSize = docs.reduce(
+      (sum, d) => sum + (d.size || 0) + versionsTotalBytes(d.versions ?? []),
+      0,
+    );
     await decrementStorageBulk(userId, totalSize, allDocIds.length);
     await updateBucketStats(String(bucket._id), -allDocIds.length, -totalSize);
 

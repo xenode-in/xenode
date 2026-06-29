@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import { requireAccessContext, ownerClause, bucketOwnershipClause } from "@/lib/authz";
 import { logRequest } from "@/lib/logRequest";
 
 export const dynamic = "force-dynamic";
@@ -22,15 +22,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(request);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    userId = ctx.userId;
     const { id } = await params;
 
     await dbConnect();
 
     const bucket = await Bucket.findOne({
       _id: id,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     }).lean();
 
     if (!bucket) {
@@ -71,13 +71,13 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(request);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    userId = ctx.userId;
     const { id } = await params;
 
     await dbConnect();
 
-    const bucket = await Bucket.findOne({ _id: id, userId });
+    const bucket = await Bucket.findOne({ _id: id, ...ownerClause(ctx) });
     if (!bucket) {
       statusCode = 404;
       errorMessage = "Bucket not found";

@@ -21,11 +21,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
-import StorageObject from "@/models/StorageObject";
+import StorageObject, { type IStorageObjectVersion } from "@/models/StorageObject";
 import ShareLink from "@/models/ShareLink";
 import DirectShare from "@/models/DirectShare";
 import { deleteObjects as deleteB2Objects } from "@/lib/b2/objects";
 import { decrementStorageBulk, updateBucketStats } from "@/lib/metering/usage";
+import {
+  collectVersionB2Keys,
+  versionsTotalBytes,
+} from "@/lib/storage/versions";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +45,7 @@ type ExpiredDoc = {
   thumbnail?: string;
   optimizedKey?: string;
   size?: number;
+  versions?: IStorageObjectVersion[];
 };
 
 export async function GET(req: NextRequest) {
@@ -59,7 +64,7 @@ export async function GET(req: NextRequest) {
 
     for (let batch = 0; batch < MAX_BATCHES; batch++) {
       const docs = await StorageObject.find({ deletedAt: { $lte: cutoff } })
-        .select("_id bucketId userId key thumbnail optimizedKey size")
+        .select("_id bucketId userId key thumbnail optimizedKey size versions")
         .limit(BATCH)
         .lean<ExpiredDoc[]>();
 
@@ -92,9 +97,10 @@ export async function GET(req: NextRequest) {
           if (d.thumbnail && d.thumbnail.startsWith("users/"))
             arr.push(d.thumbnail);
           if (d.optimizedKey) arr.push(d.optimizedKey);
+          for (const v of d.versions ?? []) arr.push(...collectVersionB2Keys(v));
           keysByB2.set(b2, arr);
         }
-        const sz = d.size || 0;
+        const sz = (d.size || 0) + versionsTotalBytes(d.versions ?? []);
         userSize.set(d.userId, (userSize.get(d.userId) ?? 0) + sz);
         userCount.set(d.userId, (userCount.get(d.userId) ?? 0) + 1);
         bucketSize.set(bid, (bucketSize.get(bid) ?? 0) + sz);

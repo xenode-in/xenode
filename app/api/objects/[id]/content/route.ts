@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import { requireAccessContext, objectFilter } from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
@@ -15,16 +15,17 @@ interface RouteParams {
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    const userId = ctx.userId;
     await enforceStorageAccess(userId);
     const { id } = await params;
     const { searchParams } = new URL(request.url);
     const isPreview = searchParams.get("preview") === "true";
+    const versionId = searchParams.get("version");
 
     await dbConnect();
 
-    const object = await StorageObject.findOne({ _id: id, userId });
+    const object = await StorageObject.findOne(objectFilter(ctx, id));
     if (!object) {
       return NextResponse.json({ error: "Object not found" }, { status: 404 });
     }
@@ -41,10 +42,17 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
 
-    const signedUrl = await getDownloadUrl(
-      bucket.b2BucketId,
-      isPreview && object.optimizedKey ? object.optimizedKey : object.key,
-    );
+    // Serve a specific historical version when `?version=` is supplied.
+    let keyToServe = isPreview && object.optimizedKey ? object.optimizedKey : object.key;
+    if (versionId) {
+      const version = (object.versions || []).find((v) => v.versionId === versionId);
+      if (!version) {
+        return NextResponse.json({ error: "Version not found" }, { status: 404 });
+      }
+      keyToServe = version.key;
+    }
+
+    const signedUrl = await getDownloadUrl(bucket.b2BucketId, keyToServe);
     const upstreamHeaders: Record<string, string> = {};
     const rangeHeader = request.headers.get("Range");
     if (rangeHeader) upstreamHeaders["Range"] = rangeHeader;

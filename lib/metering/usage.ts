@@ -60,13 +60,48 @@ export async function recalculateUsage(userId: string) {
   const [storageAgg, objectCount, bucketCount] = await Promise.all([
     StorageObject.aggregate([
       { $match: { userId } },
-      { $group: { _id: null, totalSize: { $sum: "$size" } } },
+      {
+        $group: {
+          _id: null,
+          // Current content bytes.
+          currentSize: { $sum: "$size" },
+          // Retained version bytes — chunk blobs when chunked, else the entry
+          // size. Mirrors versionsTotalBytes() so recalc matches the
+          // incremental accounting done on overwrite/restore/delete.
+          versionSize: {
+            $sum: {
+              $reduce: {
+                input: { $ifNull: ["$versions", []] },
+                initialValue: 0,
+                in: {
+                  $add: [
+                    "$$value",
+                    {
+                      $cond: [
+                        {
+                          $gt: [
+                            { $size: { $ifNull: ["$$this.chunks", []] } },
+                            0,
+                          ],
+                        },
+                        { $sum: "$$this.chunks.size" },
+                        { $ifNull: ["$$this.size", 0] },
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
     ]),
     StorageObject.countDocuments({ userId }),
     Bucket.countDocuments({ userId }),
   ]);
 
-  const totalStorageBytes = storageAgg[0]?.totalSize || 0;
+  const totalStorageBytes =
+    (storageAgg[0]?.currentSize || 0) + (storageAgg[0]?.versionSize || 0);
 
   return Usage.findOneAndUpdate(
     { userId },

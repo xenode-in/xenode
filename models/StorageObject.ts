@@ -64,6 +64,31 @@ export interface IStorageObject extends Document {
    */
   syncContentFp?: string;
   syncMetaFp?: string;
+  /**
+   * File version history — newest first, capped at MAX_VERSIONS_PER_OBJECT.
+   * Each entry is a *previous* content snapshot living at its own B2 `key`
+   * (the current content stays on the top-level fields). `createdBy` records the
+   * actor who produced that version — distinct from `userId` (the file owner) so
+   * the model is correct for org-shared files where teammates edit.
+   */
+  versions?: IStorageObjectVersion[];
+}
+
+export interface IStorageObjectVersion {
+  versionId: string;
+  key: string;
+  b2FileId: string;
+  size: number;
+  contentType?: string;
+  encryptedDEK?: string;
+  iv?: string;
+  chunkSize?: number;
+  chunkCount?: number;
+  chunkIvs?: string;
+  chunks?: { index: number; key: string; size: number }[];
+  encryptedMetadata?: string;
+  createdAt: Date;
+  createdBy: string;
 }
 
 const StorageObjectSchema = new Schema<IStorageObject>(
@@ -237,6 +262,39 @@ const StorageObjectSchema = new Schema<IStorageObject>(
     },
     syncMetaFp: {
       type: String,
+      required: false,
+    },
+    versions: {
+      type: [
+        new Schema<IStorageObjectVersion>(
+          {
+            versionId: { type: String, required: true },
+            key: { type: String, required: true },
+            b2FileId: { type: String, default: "" },
+            size: { type: Number, required: true, min: 0 },
+            contentType: { type: String, required: false },
+            encryptedDEK: { type: String, required: false },
+            iv: { type: String, required: false },
+            chunkSize: { type: Number, required: false },
+            chunkCount: { type: Number, required: false },
+            chunkIvs: { type: String, required: false },
+            chunks: {
+              type: [
+                {
+                  index: { type: Number, required: true },
+                  key: { type: String, required: true },
+                  size: { type: Number, required: true },
+                },
+              ],
+              required: false,
+            },
+            encryptedMetadata: { type: String, required: false },
+            createdAt: { type: Date, required: true },
+            createdBy: { type: String, required: true },
+          },
+          { _id: false },
+        ),
+      ],
       required: false,
     },
   },

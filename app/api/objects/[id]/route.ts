@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import { requireAccessContext, objectFilter, bucketOwnershipClause } from "@/lib/authz";
 import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
@@ -31,8 +31,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(request);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    userId = ctx.userId;
     await enforceStorageAccess(userId);
 
     const { id } = await params;
@@ -40,7 +40,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     await dbConnect();
 
-    const object = await StorageObject.findOne({ _id: id, userId }).lean();
+    const object = await StorageObject.findOne(objectFilter(ctx, id)).lean();
     if (!object) {
       statusCode = 404;
       errorMessage = "Object not found";
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const bucket = await Bucket.findOne({
       _id: object.bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     })
       .select("b2BucketId")
       .lean();
@@ -167,15 +167,15 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(request);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    userId = ctx.userId;
     await enforceStorageAccess(userId);
 
     const { id } = await params;
 
     await dbConnect();
 
-    const object = await StorageObject.findOne({ _id: id, userId }).lean();
+    const object = await StorageObject.findOne(objectFilter(ctx, id)).lean();
     if (!object) {
       statusCode = 404;
       errorMessage = "Object not found";
@@ -262,8 +262,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(request);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    userId = ctx.userId;
     await enforceStorageAccess(userId);
 
     const { id } = await params;
@@ -281,7 +281,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     await dbConnect();
 
-    const object = await StorageObject.findOne({ _id: id, userId });
+    const object = await StorageObject.findOne(objectFilter(ctx, id));
     if (!object) {
       statusCode = 404;
       errorMessage = "Object not found";

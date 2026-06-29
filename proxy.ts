@@ -21,6 +21,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
+import { getSessionCookie } from "better-auth/cookies";
 
 const ADMIN_HOSTNAMES = [
   "admin.xenode.in",
@@ -33,6 +34,60 @@ const DOCS_HOSTNAMES = [
   "docs.localhost",
   "docs.localhost:3000",
 ];
+
+/**
+ * ── Defense-in-depth auth gate (main domain only) ────────────────────────────
+ * A cheap, optimistic credential-presence check (no DB call) that bounces
+ * unauthenticated traffic early. Route handlers + the dashboard layout remain
+ * the real source of truth. Credential = a better-auth session cookie (web) OR
+ * the `x-better-auth-cookie` header sent by the expo() mobile plugin.
+ *
+ * Scope is deliberately conservative — only unambiguously-private resources.
+ * Sharing families (/api/share, /api/direct-shares, /api/albums) and other-auth
+ * surfaces (/api/auth, /api/admin, /api/cron, payment webhooks) are NOT gated
+ * here; they enforce their own (public-token / non-session) auth.
+ */
+const PROTECTED_PAGE_PREFIXES = ["/dashboard", "/sync"];
+const PROTECTED_API_PREFIXES = [
+  "/api/objects",
+  "/api/buckets",
+  "/api/keys",
+  "/api/sessions",
+  "/api/usage",
+  "/api/billing",
+  "/api/subscriptions",
+  "/api/refunds",
+  "/api/support",
+];
+
+function hasCredential(req: NextRequest): boolean {
+  if (getSessionCookie(req)) return true;
+  if (req.headers.get("x-better-auth-cookie")) return true;
+  return false;
+}
+
+function authGate(req: NextRequest): NextResponse | null {
+  const { pathname, search } = req.nextUrl;
+
+  const isProtectedApi = PROTECTED_API_PREFIXES.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`),
+  );
+  const isProtectedPage = PROTECTED_PAGE_PREFIXES.some(
+    (p) => pathname === p || pathname.startsWith(`${p}/`),
+  );
+
+  if (!isProtectedApi && !isProtectedPage) return null;
+  if (hasCredential(req)) return null;
+
+  if (isProtectedApi) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  const loginUrl = req.nextUrl.clone();
+  loginUrl.pathname = "/login";
+  loginUrl.search = "";
+  loginUrl.searchParams.set("next", pathname + search);
+  return NextResponse.redirect(loginUrl);
+}
 
 export function proxy(req: NextRequest) {
   const hostname = req.headers.get("host") || "";
@@ -88,6 +143,10 @@ export function proxy(req: NextRequest) {
     url.pathname = "/404";
     return NextResponse.rewrite(url);
   }
+
+  // ── Main domain: defense-in-depth auth gate for private routes ────────────
+  const gated = authGate(req);
+  if (gated) return gated;
 
   return NextResponse.next();
 }
