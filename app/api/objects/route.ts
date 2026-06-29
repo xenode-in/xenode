@@ -127,6 +127,7 @@ export async function GET(request: NextRequest) {
       !fetchAll &&
       !deleted &&
       !starredOnly &&
+      !excludeMobileBackup &&
       !contentTypeFilter &&
       !mediaCategoryFilter;
     let cacheKey: string | null = null;

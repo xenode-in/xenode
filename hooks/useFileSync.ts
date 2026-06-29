@@ -13,6 +13,7 @@ interface FetchObjectsParams {
   sortDir?: "asc" | "desc";
   mediaCategory?: string | null;
   fetchAll?: boolean;
+  excludeMobileBackup?: boolean;
 }
 
 export function useFileSync({
@@ -23,9 +24,18 @@ export function useFileSync({
   sortDir = "desc",
   mediaCategory,
   fetchAll = false,
+  excludeMobileBackup = false,
 }: FetchObjectsParams) {
   return useInfiniteQuery({
-    queryKey: ["files", bucketId, sortBy, sortDir, mediaCategory, fetchAll],
+    queryKey: [
+      "files",
+      bucketId,
+      sortBy,
+      sortDir,
+      mediaCategory,
+      fetchAll,
+      excludeMobileBackup,
+    ],
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }) => {
       if (!bucketId || !userId)
@@ -41,6 +51,9 @@ export function useFileSync({
 
       if (mediaCategory) {
         url += `&mediaCategory=${encodeURIComponent(mediaCategory)}`;
+      }
+      if (excludeMobileBackup) {
+        url += "&excludeMobileBackup=true";
       }
       if (pageParam) {
         url += `&before=${encodeURIComponent(pageParam)}`;

@@ -100,6 +100,9 @@ interface ObjectData {
   encryptedName?: string;
   encryptedDisplayName?: string;
   encryptedContentType?: string;
+  mediaCategory?: string;
+  uploadSource?: "web" | "mobile_manual" | "mobile_backup" | "migration";
+  syncContentFp?: string;
 }
 
 interface BucketData {
@@ -202,6 +205,15 @@ function matchesFilter(obj: ObjectData, filter: string): boolean {
     "javascript",
     "xml",
   ].some((value) => contentType.includes(value));
+}
+
+function isMobileBackupImage(obj: ObjectData): boolean {
+  const isImage =
+    obj.mediaCategory === "image" || obj.contentType.startsWith("image/");
+  return (
+    isImage &&
+    (obj.uploadSource === "mobile_backup" || Boolean(obj.syncContentFp))
+  );
 }
 
 // ─── Toolbar ──────────────────────────────────────────────────────────────────
@@ -619,6 +631,7 @@ export default function FilesPage() {
     fetchAll: true,
     sortBy: sortField,
     sortDir: sortDir,
+    excludeMobileBackup: true,
   });
 
   const localFiles =
@@ -630,10 +643,15 @@ export default function FilesPage() {
 
   // Temporarily map Dexie models to the expected ObjectData array to minimize disruptions
   const objects = useMemo(() => {
-    return localFiles.map((f) => ({
-      ...f,
-      _id: f.id,
-    })) as unknown as ObjectData[];
+    return localFiles
+      .map((f) => ({
+        ...f,
+        _id: f.id,
+        encryptedName: f.encryptedName ?? undefined,
+        encryptedDisplayName: f.encryptedDisplayName ?? undefined,
+        encryptedContentType: f.encryptedContentType ?? undefined,
+      }))
+      .filter((obj) => !isMobileBackupImage(obj)) as unknown as ObjectData[];
   }, [localFiles]);
 
   const [initialLoading, setInitialLoading] = useState(true);
