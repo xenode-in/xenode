@@ -146,7 +146,7 @@ export default function TermsPage() {
                 Xenode is an open-source, end-to-end encrypted cloud storage
                 platform. Our entire codebase is publicly available on{" "}
                 <a
-                  href="https://github.com/santhoshkumar-dev/Xenode"
+                  href="https://github.com/xenode-in/xenode"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-primary underline underline-offset-4 hover:text-primary/80 transition-colors"
@@ -275,7 +275,7 @@ export default function TermsPage() {
                   Xenode is proudly open source. Our source code is publicly
                   available on{" "}
                   <a
-                    href="https://github.com/santhoshkumar-dev/Xenode"
+                    href="https://github.com/xenode-in/xenode"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-primary underline underline-offset-4 hover:text-primary/80 transition-colors"

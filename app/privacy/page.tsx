@@ -109,7 +109,7 @@ export default function PrivacyPage() {
                 protect your information. You don&apos;t just have to take our
                 word for it — our entire codebase is publicly available on{" "}
                 <a
-                  href="https://github.com/santhoshkumar-dev/Xenode"
+                  href="https://github.com/xenode-in/xenode"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-primary underline underline-offset-4 hover:text-primary/80 transition-colors"
@@ -351,7 +351,7 @@ export default function PrivacyPage() {
                   </strong>{" "}
                   Our entire codebase is{" "}
                   <a
-                    href="https://github.com/santhoshkumar-dev/Xenode"
+                    href="https://github.com/xenode-in/xenode"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-primary underline underline-offset-4 hover:text-primary/80 transition-colors"
@@ -448,7 +448,7 @@ export default function PrivacyPage() {
                 open-source project, all changes to our codebase — including
                 those related to data handling — are publicly tracked on our{" "}
                 <a
-                  href="https://github.com/santhoshkumar-dev/Xenode"
+                  href="https://github.com/xenode-in/xenode"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-primary underline underline-offset-4 hover:text-primary/80 transition-colors"

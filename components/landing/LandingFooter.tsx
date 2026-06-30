@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Github, Twitter } from "lucide-react";
+import { Github, Twitter, Linkedin } from "lucide-react";
 import { AnimatedLink } from "@/components/AnimatedLink";
 
 const links = [
@@ -45,7 +45,7 @@ export function LandingFooter() {
           {/* Social */}
           <div className="flex items-center gap-4">
             <a
-              href="https://github.com/santhoshkumar-dev/Xenode"
+              href="https://github.com/xenode-in/xenode"
               target="_blank"
               rel="noopener noreferrer"
               className="opacity-50 hover:opacity-90 transition-opacity"
@@ -61,6 +61,15 @@ export function LandingFooter() {
               aria-label="Twitter"
             >
               <Twitter className="w-5 h-5" />
+            </a>
+            <a
+              href="https://www.linkedin.com/company/xenode-in/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="opacity-50 hover:opacity-90 transition-opacity"
+              aria-label="LinkedIn"
+            >
+              <Linkedin className="w-5 h-5" />
             </a>
           </div>
         </div>
