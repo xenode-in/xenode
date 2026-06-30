@@ -46,4 +46,4 @@ edges — please report issues so we can fix them before 1.0.
 - Public beta: data, pricing, and APIs may change before 1.0.
 - Lost passwords cannot recover encrypted data — by design, there is no backdoor.
 
-[0.1.0-beta.1]: https://github.com/santhoshkumar-dev/xenode/releases/tag/v0.1.0-beta.1
+[0.1.0-beta.1]: https://github.com/xenode-in/xenode/releases/tag/v0.1.0-beta.1
