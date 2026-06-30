@@ -4,9 +4,11 @@
 
 Xenode is a modern, open-source cloud storage platform where **only you can read your files**. Everything is encrypted in your browser before it ever leaves your device. The server sees nothing but locked ciphertext — not your files, not their names, not your passwords.
 
-[![Next.js](https://img.shields.io/badge/Next.js_15-black?logo=next.js)](https://nextjs.org)
+[![Next.js](https://img.shields.io/badge/Next.js_16-black?logo=next.js)](https://nextjs.org)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![MongoDB](https://img.shields.io/badge/MongoDB-green?logo=mongodb)](https://mongodb.com)
+[![Redis](https://img.shields.io/badge/Redis-black?logo=redis)](https://redis.com)
+[![Coolify](https://img.shields.io/badge/coolify-black?logo=coolify)](https://coolify.io)
 
 ---
 
