@@ -316,6 +316,12 @@ function calculateDelta(
   return newFirstMdatOffset - firstMdat.offset;
 }
 
+function copyToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
 // ─── Assembly ─────────────────────────────────────────────────────────────────
 
 /**
@@ -361,7 +367,7 @@ async function assembleParts(
   }
 
   // 3. Patched moov
-  parts.push(patchedMoov);
+  parts.push(copyToArrayBuffer(patchedMoov));
 
   // 4. Everything else in original order. For the common [ftyp][mdat][moov]
   //    layout, this places mdat after moov, which is the actual faststart move.
