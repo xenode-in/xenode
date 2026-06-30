@@ -6,7 +6,7 @@
 
 ```bash
 # 1. Clone repo
-git clone https://github.com/santhoshkumar-dev/Xenode.git
+git clone https://github.com/xenode-in/xenode
 cd Xenode
 
 # 2. Install dependencies
