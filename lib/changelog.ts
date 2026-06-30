@@ -31,30 +31,45 @@ export interface ChangelogGroup {
   entries: ChangelogEntryMeta[];
 }
 
-export function getAllChangelogEntries(): ChangelogEntryMeta[] {
-  if (!fs.existsSync(CHANGELOG_PATH)) {
-    fs.mkdirSync(CHANGELOG_PATH, { recursive: true });
+function getChangelogFiles(): string[] {
+  try {
+    if (!fs.existsSync(CHANGELOG_PATH)) {
+      return [];
+    }
+
+    return fs
+      .readdirSync(CHANGELOG_PATH)
+      .filter((file) => file.endsWith(".mdx"));
+  } catch (error) {
+    console.warn("[changelog] Unable to read changelog directory", error);
     return [];
   }
+}
 
-  const files = fs
-    .readdirSync(CHANGELOG_PATH)
-    .filter((file) => file.endsWith(".mdx"));
+export function getAllChangelogEntries(): ChangelogEntryMeta[] {
+  const files = getChangelogFiles();
 
-  const entries = files.map((file) => {
+  const entries = files.flatMap((file) => {
     const filePath = path.join(CHANGELOG_PATH, file);
-    const source = fs.readFileSync(filePath, "utf-8");
-    const { data } = matter(source);
-    const slug = file.replace(".mdx", "");
+    try {
+      const source = fs.readFileSync(filePath, "utf-8");
+      const { data } = matter(source);
+      const slug = file.replace(".mdx", "");
 
-    return {
-      slug,
-      title: data.title || "Untitled",
-      date: data.date || new Date().toISOString(),
-      tag: data.tag || "Update",
-      summary: data.summary || "",
-      image: data.image || undefined,
-    };
+      return [
+        {
+          slug,
+          title: data.title || "Untitled",
+          date: data.date || new Date().toISOString(),
+          tag: data.tag || "Update",
+          summary: data.summary || "",
+          image: data.image || undefined,
+        },
+      ];
+    } catch (error) {
+      console.warn(`[changelog] Unable to read changelog entry: ${file}`, error);
+      return [];
+    }
   });
 
   return entries.sort(
@@ -69,7 +84,14 @@ export function getChangelogBySlug(slug: string): ChangelogEntry | null {
     return null;
   }
 
-  const source = fs.readFileSync(filePath, "utf-8");
+  let source: string;
+  try {
+    source = fs.readFileSync(filePath, "utf-8");
+  } catch (error) {
+    console.warn(`[changelog] Unable to read changelog entry: ${slug}`, error);
+    return null;
+  }
+
   const { data, content } = matter(source);
 
   return {

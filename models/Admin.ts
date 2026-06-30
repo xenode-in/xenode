@@ -60,7 +60,6 @@ AdminSchema.methods.comparePassword = async function (
 };
 
 // Index
-AdminSchema.index({ username: 1 }, { unique: true });
 AdminSchema.index({ role: 1 });
 
 const Admin: Model<IAdmin> =
