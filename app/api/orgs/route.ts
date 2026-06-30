@@ -11,6 +11,10 @@ import {
   type OrganizationRecord,
 } from "@/lib/orgs/access";
 import dbConnect from "@/lib/mongodb";
+import { listUserOrgs } from "@/lib/orgs/listUserOrgs";
+import { orgStorageOwnerId } from "@/lib/orgs/storage";
+import { ensureWorkspaceBucket } from "@/lib/storage/workspaceBucket";
+import Bucket from "@/models/Bucket";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
 
 export const dynamic = "force-dynamic";
@@ -68,35 +72,13 @@ export async function GET(request: NextRequest) {
   try {
     const ctx = await requireAccessContext(request);
     assertOrganizationsEnabled();
-    await dbConnect();
 
-    const members = await mongoose.connection
-      .collection<MemberRecord>("member")
-      .find({ userId: ctx.userId })
-      .sort({ createdAt: -1 })
-      .toArray();
-    const orgIds = members.map((member) => member.organizationId);
+    const activeOrgId = (ctx.session.session as {
+      activeOrganizationId?: string | null;
+    }).activeOrganizationId;
+    const organizations = await listUserOrgs(ctx.userId, activeOrgId);
 
-    if (orgIds.length === 0) {
-      return NextResponse.json({ organizations: [] });
-    }
-
-    const orgs = await mongoose.connection
-      .collection<OrganizationRecord>("organization")
-      .find({ id: { $in: orgIds } })
-      .toArray();
-    const orgById = new Map(orgs.map((org) => [org.id, org]));
-    const activeOrgId = (ctx.session.session as { activeOrganizationId?: string | null })
-      .activeOrganizationId;
-
-    return NextResponse.json({
-      organizations: members
-        .map((member) => {
-          const org = orgById.get(member.organizationId);
-          return org ? serializeOrg(org, member, activeOrgId) : null;
-        })
-        .filter(Boolean),
-    });
+    return NextResponse.json({ organizations });
   } catch (error) {
     if (isAuthzError(error)) {
       return toJsonResponse(error);
@@ -182,11 +164,24 @@ export async function POST(request: NextRequest) {
           rotationReason: "initial",
         });
       }
+      // No per-org B2 bucket: all org workspaces live in the single shared
+      // organization bucket, isolated by the `workspaces/{orgId}/...` key
+      // prefix. The default "workspace" Bucket doc is a logical container.
+      const b2BucketId = await ensureWorkspaceBucket("ORGANIZATION");
+      await Bucket.create({
+        userId: orgStorageOwnerId(org.id),
+        ownerScope: "organization",
+        orgId: org.id,
+        createdBy: ctx.userId,
+        name: "workspace",
+        b2BucketId,
+      });
     } catch (error) {
       await organizations.deleteOne({ id: org.id }).catch(() => {});
       await members
         .deleteOne({ organizationId: org.id, userId: ctx.userId })
         .catch(() => {});
+      await Bucket.deleteMany({ orgId: org.id }).catch(() => {});
       throw error;
     }
 
@@ -194,6 +189,7 @@ export async function POST(request: NextRequest) {
       {
         organization: serializeOrg(org, member, null),
         spaceKeyReady: !!ownerWrappedSpaceKey,
+        defaultBucketReady: true,
       },
       { status: 201 },
     );

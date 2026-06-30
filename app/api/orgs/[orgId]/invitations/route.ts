@@ -59,6 +59,19 @@ function normalizeOptionalString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+function userAuthId(user?: UserRecord | null): string | null {
+  if (!user) return null;
+  return user.id || String(user._id ?? "") || null;
+}
+
+function userIdLookup(userId: string) {
+  const clauses: Array<Record<string, unknown>> = [{ id: userId }];
+  if (mongoose.Types.ObjectId.isValid(userId)) {
+    clauses.push({ _id: new mongoose.Types.ObjectId(userId) });
+  }
+  return { $or: clauses };
+}
+
 function serializeInvitation(invitation: InvitationRecord) {
   return {
     id: invitation.id,
@@ -152,12 +165,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         recipientUserId
           ? mongoose.connection
               .collection<UserRecord>("user")
-              .findOne({ id: recipientUserId })
+              .findOne(userIdLookup(recipientUserId))
           : mongoose.connection
               .collection<UserRecord>("user")
               .findOne({ email }),
       ]);
-    const resolvedRecipientUserId = recipientUserId ?? recipient?.id ?? null;
+    const resolvedRecipientUserId = recipientUserId ?? userAuthId(recipient);
     const existingMember = resolvedRecipientUserId
       ? await mongoose.connection.collection("member").findOne({
           organizationId: orgId,

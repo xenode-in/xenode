@@ -82,7 +82,7 @@ describe("organization storage scope model fields", () => {
       userId: "creator_1",
       ownerScope: "organization",
       orgId: "org_1",
-      key: "orgs/org_1/file",
+      key: "workspaces/org_1/objects/file",
       size: 789,
       contentType: "application/octet-stream",
       mediaCategory: "other",

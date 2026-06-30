@@ -120,6 +120,7 @@ describe("organization lifecycle API", () => {
     expect(body.organization.slug).toBe("acme-labs");
     expect(body.organization.role).toBe("owner");
     expect(body.spaceKeyReady).toBe(true);
+    expect(body.defaultBucketReady).toBe(true);
 
     const org = await Bucket.db.collection("organization").findOne({
       id: body.organization.id,
@@ -131,6 +132,12 @@ describe("organization lifecycle API", () => {
 
     expect(org?.slug).toBe("acme-labs");
     expect(member?.role).toBe("owner");
+    await expect(Bucket.countDocuments({
+      ownerScope: "organization",
+      orgId: body.organization.id,
+      name: "workspace",
+      userId: `org:${body.organization.id}`,
+    })).resolves.toBe(1);
     expect(await OrgKeyGrant.countDocuments({
       orgId: body.organization.id,
       memberUserId: "owner_1",
