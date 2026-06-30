@@ -300,15 +300,16 @@ function calculateDelta(
   firstMdat: Mp4Box,
   ftyp: Mp4Box | undefined,
 ): number {
-  // Base: ftyp (if present) + moov
+  // Base: ftyp (if present) + moov.
   let newFirstMdatOffset = (ftyp?.size ?? 0) + moov.size;
 
-  // Add any structural boxes that appeared between file-start and moov
-  // in the original (e.g. "free" padding). They go between ftyp and moov
-  // in the new layout, so they shift mdat forward by their combined size.
+  // Keep small structural boxes that originally appeared before the first
+  // mdat (for example ftyp/free/wide padding) before moov. Never count mdat
+  // itself here: in the rewritten layout moov must precede the media data.
   for (const box of boxes) {
     if (box.type === "ftyp" || box.type === "moov") continue;
-    if (box.offset >= moov.offset) break;
+    if (box.type === "mdat") continue;
+    if (box.offset >= firstMdat.offset) break;
     newFirstMdatOffset += box.size;
   }
 
@@ -336,30 +337,37 @@ async function assembleParts(
   boxes: Mp4Box[],
   ftyp: Mp4Box | undefined,
   moov: Mp4Box,
+  firstMdat: Mp4Box,
   patchedMoov: Uint8Array,
 ): Promise<BlobPart[]> {
   const parts: BlobPart[] = [];
+  const leadingStructuralBoxes = boxes.filter(
+    (box) =>
+      box.type !== "ftyp" &&
+      box.type !== "moov" &&
+      box.type !== "mdat" &&
+      box.offset < firstMdat.offset,
+  );
 
   // 1. ftyp — always first if present
   if (ftyp) {
     parts.push(await readSlice(file, ftyp.offset, ftyp.offset + ftyp.size));
   }
 
-  // 2. Any structural boxes that were before moov in the original
-  //    (e.g. "free" padding written by some encoders between ftyp and moov)
-  for (const box of boxes) {
-    if (box.type === "ftyp" || box.type === "moov") continue;
-    if (box.offset >= moov.offset) break;
+  // 2. Any non-media structural boxes that were before the first mdat in the
+  //    original (e.g. "free" padding written between ftyp and mdat).
+  for (const box of leadingStructuralBoxes) {
     parts.push(await readSlice(file, box.offset, box.offset + box.size));
   }
 
   // 3. Patched moov
-  parts.push(patchedMoov as any);
+  parts.push(patchedMoov);
 
-  // 4. Everything that came after moov in the original (mdat + any trailing boxes)
+  // 4. Everything else in original order. For the common [ftyp][mdat][moov]
+  //    layout, this places mdat after moov, which is the actual faststart move.
   for (const box of boxes) {
     if (box.type === "ftyp" || box.type === "moov") continue;
-    if (box.offset < moov.offset) continue; // already handled in step 2
+    if (leadingStructuralBoxes.includes(box)) continue;
 
     if (box.type === "mdat") {
       // Never load mdat into RAM — lazy reference, zero memory cost
@@ -482,7 +490,14 @@ export async function optimizeVideoForStreaming(
       patchChunkOffsets(patchedMoov, delta);
 
       // 8. Assemble output (mdat stays as lazy blob — zero extra RAM)
-      const parts = await assembleParts(file, boxes, ftyp, moov, patchedMoov);
+      const parts = await assembleParts(
+        file,
+        boxes,
+        ftyp,
+        moov,
+        firstMdat,
+        patchedMoov,
+      );
 
       const optimized = new File(parts, file.name, {
         type: file.type || "video/mp4",
@@ -504,14 +519,16 @@ export async function optimizeVideoForStreaming(
 
   // ── Race against global timeout ───────────────────────────────────────────
   let workSettled = false;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
 
   return Promise.race([
     work().then((result) => {
       workSettled = true;
+      if (timeoutId) clearTimeout(timeoutId);
       return result;
     }),
     new Promise<FaststartResult>((resolve) =>
-      setTimeout(() => {
+      timeoutId = setTimeout(() => {
         if (workSettled) return;
         warn(
           `Timed out after ${FASTSTART_TIMEOUT_MS / 1000} s — returning original file.`,

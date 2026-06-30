@@ -22,6 +22,11 @@ if (!global.mongoose) {
   global.mongoose = cached;
 }
 
+// Mongoose 9 requires this option before accepting MongoDB pipeline updates
+// like Model.updateMany(filter, [{ $set: ... }]). Several object cleanup flows
+// share that pattern when they need to derive values from the current document.
+mongoose.set("updatePipeline", true);
+
 async function dbConnect(): Promise<typeof mongoose> {
   if (cached.conn) {
     return cached.conn;

@@ -19,12 +19,10 @@ import {
 } from "@/lib/crypto/fileEncryption";
 import { failClosedOnEncryptionError } from "@/lib/crypto/encryptionPolicy";
 import { extractMetadata } from "@/lib/metadata/extractor";
-import { toB64 } from "@/lib/crypto/utils";
+import type { FileMetadata } from "@/lib/metadata/types";
 import { optimizeVideoForStreaming } from "@/lib/video/faststart";
 import { generatePreview } from "@/lib/images/optimizer";
 import { upsertLocalObject } from "@/lib/db/object-cache";
-import { extractSubtitleToVTT } from "@/lib/video/demuxer";
-import { extractAudioTrack } from "@/lib/video/audio-extractor";
 
 export interface UploadTask {
   id: string;
@@ -49,36 +47,72 @@ const UploadContext = createContext<UploadContextType | undefined>(undefined);
 
 const MAX_CONCURRENT_UPLOADS = 5;
 
-// Helper to resize image and get base64
+// Helper to resize media and get base64
 const THUMB_TIMEOUT_MS = 8_000;
+const THUMB_MAX_SIZE = 320;
+const VIDEO_FRAME_TIMEOUT_MS = 350;
+
+const IMAGE_EXTENSIONS = new Set([
+  "avif",
+  "bmp",
+  "gif",
+  "heic",
+  "heif",
+  "jpeg",
+  "jpg",
+  "png",
+  "webp",
+]);
+
+const VIDEO_EXTENSIONS = new Set([
+  "3gp",
+  "avi",
+  "m4v",
+  "mkv",
+  "mov",
+  "mp4",
+  "mpeg",
+  "mpg",
+  "webm",
+]);
+
+const fileExtension = (file: File): string =>
+  file.name.split(".").pop()?.toLowerCase() ?? "";
+
+const isImageFile = (file: File): boolean =>
+  file.type.startsWith("image/") || IMAGE_EXTENSIONS.has(fileExtension(file));
+
+const isVideoFile = (file: File): boolean =>
+  file.type.startsWith("video/") || VIDEO_EXTENSIONS.has(fileExtension(file));
+
+type ThumbnailResult = { thumbnail: string; aspectRatio: number };
 
 const generateThumbnail = (
   file: File,
-): Promise<{ thumbnail: string; aspectRatio: number } | undefined> => {
+): Promise<ThumbnailResult | undefined> => {
   const work = new Promise<
     { thumbnail: string; aspectRatio: number } | undefined
   >((resolve) => {
     // Handle images (existing logic)
-    if (file.type.startsWith("image/")) {
+    if (isImageFile(file)) {
       const reader = new FileReader();
       reader.onload = (e) => {
         const img = new Image();
         img.onload = () => {
           const canvas = document.createElement("canvas");
           const aspectRatio = img.width / img.height;
-          const MAX_SIZE = 320;
           let width = img.width;
           let height = img.height;
 
           if (width > height) {
-            if (width > MAX_SIZE) {
-              height *= MAX_SIZE / width;
-              width = MAX_SIZE;
+            if (width > THUMB_MAX_SIZE) {
+              height *= THUMB_MAX_SIZE / width;
+              width = THUMB_MAX_SIZE;
             }
           } else {
-            if (height > MAX_SIZE) {
-              width *= MAX_SIZE / height;
-              height = MAX_SIZE;
+            if (height > THUMB_MAX_SIZE) {
+              width *= THUMB_MAX_SIZE / height;
+              height = THUMB_MAX_SIZE;
             }
           }
 
@@ -106,10 +140,11 @@ const generateThumbnail = (
     }
 
     // Handle videos
-    if (file.type.startsWith("video/")) {
+    if (isVideoFile(file)) {
       const video = document.createElement("video");
       const url = URL.createObjectURL(file);
       let settled = false;
+      let drawAttempts = 0;
 
       const finish = (
         result: { thumbnail: string; aspectRatio: number } | undefined,
@@ -123,55 +158,82 @@ const generateThumbnail = (
       };
 
       const drawFrame = () => {
-        const canvas = document.createElement("canvas");
-        const MAX_SIZE = 320;
-        let width = video.videoWidth;
-        let height = video.videoHeight;
+        if (settled) return;
+        try {
+          const sourceWidth = video.videoWidth;
+          const sourceHeight = video.videoHeight;
 
-        if (!width || !height) {
-          finish(undefined);
-          return;
-        }
-
-        if (width > height) {
-          if (width > MAX_SIZE) {
-            height *= MAX_SIZE / width;
-            width = MAX_SIZE;
+          if (!sourceWidth || !sourceHeight || video.readyState < 2) {
+            drawAttempts += 1;
+            if (drawAttempts < 12) {
+              requestAnimationFrame(drawFrame);
+            } else {
+              finish(undefined);
+            }
+            return;
           }
-        } else if (height > MAX_SIZE) {
-          width *= MAX_SIZE / height;
-          height = MAX_SIZE;
+
+          const canvas = document.createElement("canvas");
+          let width = sourceWidth;
+          let height = sourceHeight;
+
+          if (width > height) {
+            if (width > THUMB_MAX_SIZE) {
+              height *= THUMB_MAX_SIZE / width;
+              width = THUMB_MAX_SIZE;
+            }
+          } else if (height > THUMB_MAX_SIZE) {
+            width *= THUMB_MAX_SIZE / height;
+            height = THUMB_MAX_SIZE;
+          }
+
+          canvas.width = Math.max(1, Math.round(width));
+          canvas.height = Math.max(1, Math.round(height));
+          const ctx = canvas.getContext("2d");
+
+          if (!ctx) {
+            finish(undefined);
+            return;
+          }
+
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          finish({
+            thumbnail: canvas.toDataURL("image/jpeg", 0.8),
+            aspectRatio: sourceWidth / sourceHeight,
+          });
+        } catch {
+          drawAttempts += 1;
+          if (drawAttempts < 12) {
+            requestAnimationFrame(drawFrame);
+          } else {
+            finish(undefined);
+          }
         }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-
-        if (!ctx) {
-          finish(undefined);
-          return;
-        }
-
-        ctx.drawImage(video, 0, 0, width, height);
-        finish({
-          thumbnail: canvas.toDataURL("image/jpeg", 0.8),
-          aspectRatio: video.videoWidth / video.videoHeight,
-        });
       };
 
       const scheduleDraw = () => {
         if (typeof video.requestVideoFrameCallback === "function") {
-          video.requestVideoFrameCallback(() => drawFrame());
+          let frameSettled = false;
+          const fallbackId = setTimeout(() => {
+            if (frameSettled) return;
+            frameSettled = true;
+            requestAnimationFrame(() => drawFrame());
+          }, VIDEO_FRAME_TIMEOUT_MS);
+
+          video.requestVideoFrameCallback(() => {
+            if (frameSettled) return;
+            frameSettled = true;
+            clearTimeout(fallbackId);
+            drawFrame();
+          });
         } else {
           requestAnimationFrame(() => drawFrame());
         }
       };
 
-      video.src = url;
       video.muted = true;
       video.playsInline = true;
       video.preload = "auto";
-      video.load();
 
       video.addEventListener("loadedmetadata", () => {
         // Seek to 10% of duration or 1s, whichever is smaller.
@@ -190,6 +252,14 @@ const generateThumbnail = (
         }, 1500);
       });
 
+      video.addEventListener("loadeddata", () => {
+        scheduleDraw();
+      });
+
+      video.addEventListener("canplay", () => {
+        scheduleDraw();
+      });
+
       video.addEventListener("seeked", () => {
         scheduleDraw();
       });
@@ -204,6 +274,9 @@ const generateThumbnail = (
           finish(undefined);
         }
       }, THUMB_TIMEOUT_MS);
+
+      video.src = url;
+      video.load();
 
       return;
     }
@@ -380,9 +453,21 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
       try {
         let uploadFile = task.file;
+        let thumbResultPromise: Promise<ThumbnailResult | undefined> | undefined;
+
+        if (isVideoFile(task.file)) {
+          setTasks((prev) =>
+            prev.map((t) =>
+              t.id === task.id ? { ...t, statusText: "Generating preview…" } : t,
+            ),
+          );
+          thumbResultPromise = generateThumbnail(task.file).catch(
+            () => undefined,
+          );
+        }
 
         // Step 1: Optimize video for streaming (Faststart)
-        if (task.file.type.startsWith("video/")) {
+        if (isVideoFile(task.file)) {
           setTasks((prev) =>
             prev.map((t) =>
               t.id === task.id
@@ -405,9 +490,17 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             t.id === task.id ? { ...t, statusText: "Generating preview…" } : t,
           ),
         );
-        const thumbResult = await generateThumbnail(uploadFile).catch(
-          () => undefined,
-        );
+        let thumbResult = thumbResultPromise
+          ? await thumbResultPromise
+          : await generateThumbnail(uploadFile).catch(() => undefined);
+        if (!thumbResult?.thumbnail && uploadFile !== task.file && isVideoFile(uploadFile)) {
+          console.warn(
+            `[Upload] Thumbnail generation failed for original video, retrying optimized video (${task.file.name})`,
+          );
+          thumbResult = await generateThumbnail(uploadFile).catch(
+            () => undefined,
+          );
+        }
         const rawThumbnail = thumbResult?.thumbnail;
         const aspectRatio = thumbResult?.aspectRatio;
         console.log(`[Upload] ✅ Thumbnail step done (${task.file.name}, generated: ${!!rawThumbnail}, aspectRatio: ${aspectRatio ?? "n/a"})`);
@@ -438,7 +531,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         let chunkIvs: string | undefined;
 
         let encryptedMetadata: string | undefined;
-        let metadata: any = null;
+        let metadata: FileMetadata | null = null;
 
         if (shouldEncryptNow()) {
           try {
@@ -833,7 +926,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         }
 
         const completeData = await completeResponse.json();
-        const mainObjectId = completeData.object?._id;
         await upsertLocalObject(
           sessionRef.current?.user?.id,
           completeData.object,
