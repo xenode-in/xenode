@@ -1,13 +1,35 @@
 import { NextRequest } from "next/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { POST } from "@/app/api/objects/sync-check/route";
-import { requireAuth } from "@/lib/auth/session";
+import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import { makeUserId } from "../helpers/factories";
 
-const mockedRequireAuth = vi.mocked(requireAuth);
+const mockedGetServerSession = vi.mocked(getServerSession);
+
+function mockSession(userId: string) {
+  mockedGetServerSession.mockResolvedValue({
+    user: {
+      id: userId,
+      email: `${userId}@example.com`,
+      name: "Test User",
+      emailVerified: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+    session: {
+      id: `session-${userId}`,
+      userId,
+      token: `token-${userId}`,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+      activeOrganizationId: "org_1",
+    },
+  } as unknown as Awaited<ReturnType<typeof getServerSession>>);
+}
 
 async function createBucket(userId: string, suffix: string) {
   return Bucket.create({
@@ -48,9 +70,15 @@ function request(body: unknown) {
 }
 
 describe("photo backup sync-check contract", () => {
+  afterEach(() => {
+    delete process.env.ORGS_ENABLED;
+    delete process.env.NEXT_PUBLIC_ORGS_ENABLED;
+    mockedGetServerSession.mockReset();
+  });
+
   it("returns active fingerprint matches and ignores deleted objects", async () => {
     const userId = makeUserId();
-    mockedRequireAuth.mockResolvedValue({ user: { id: userId } } as never);
+    mockSession(userId);
     const bucket = await createBucket(userId, "active");
     const active = await createObject({
       bucketId: String(bucket._id),
@@ -83,7 +111,7 @@ describe("photo backup sync-check contract", () => {
   it("does not allow a user to probe another user's bucket", async () => {
     const ownerId = makeUserId();
     const callerId = makeUserId();
-    mockedRequireAuth.mockResolvedValue({ user: { id: callerId } } as never);
+    mockSession(callerId);
     const bucket = await createBucket(ownerId, "foreign");
 
     const response = await POST(
@@ -103,7 +131,7 @@ describe("photo backup sync-check contract", () => {
   it("scopes shared system buckets to the caller's prefix", async () => {
     const callerId = makeUserId();
     const otherId = makeUserId();
-    mockedRequireAuth.mockResolvedValue({ user: { id: callerId } } as never);
+    mockSession(callerId);
     const bucket = await createBucket("system", "system");
     const callerObject = await createObject({
       bucketId: String(bucket._id),
@@ -129,6 +157,40 @@ describe("photo backup sync-check contract", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       matches: [{ fp: "same-meta", id: String(callerObject._id) }],
+    });
+  });
+
+  it("fails closed for explicit org-scope fingerprint probes until org storage is enabled", async () => {
+    process.env.ORGS_ENABLED = "true";
+    const callerId = makeUserId();
+    mockSession(callerId);
+    const bucket = await createBucket(callerId, "org-probe");
+    await Bucket.db.collection("member").insertOne({
+      userId: callerId,
+      organizationId: "org_1",
+      role: "admin",
+      createdAt: new Date(),
+    });
+
+    const response = await POST(
+      new NextRequest("http://localhost/api/objects/sync-check", {
+        method: "POST",
+        body: JSON.stringify({
+          bucketId: String(bucket._id),
+          kind: "content",
+          fingerprints: ["opaque-fingerprint"],
+        }),
+        headers: {
+          "content-type": "application/json",
+          "x-xenode-drive-scope": "organization",
+        },
+      }),
+    );
+
+    expect(response.status).toBe(501);
+    await expect(response.json()).resolves.toEqual({
+      error: "Organization storage is not enabled yet",
+      code: "organization_storage_not_ready",
     });
   });
 });

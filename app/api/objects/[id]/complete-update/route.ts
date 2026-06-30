@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  isAuthzError,
+  objectFilter,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import StorageObject from "@/models/StorageObject";
-import { decrementStorage, updateBucketStats } from "@/lib/metering/usage";
+import { updateBucketStats } from "@/lib/metering/usage";
 
 export const dynamic = "force-dynamic";
 
@@ -15,8 +20,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
     const { id } = await params;
     const { size } = await request.json();
 
@@ -26,7 +30,7 @@ export async function POST(
 
     await dbConnect();
 
-    const object = await StorageObject.findOne({ _id: id, userId });
+    const object = await StorageObject.findOne(objectFilter(ctx, id));
     if (!object) {
       return NextResponse.json({ error: "Object not found" }, { status: 404 });
     }
@@ -47,6 +51,9 @@ export async function POST(
 
     return NextResponse.json({ success: true, object });
   } catch (error: any) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

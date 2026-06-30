@@ -4,6 +4,10 @@ export interface IStorageObject extends Document {
   _id: mongoose.Types.ObjectId;
   bucketId: mongoose.Types.ObjectId;
   userId: string;
+  ownerScope?: "personal" | "organization" | "team";
+  orgId?: string;
+  teamId?: string;
+  createdBy?: string;
   key: string;
   size: number;
   contentType: string;
@@ -25,6 +29,10 @@ export interface IStorageObject extends Document {
   /** E2EE fields — undefined on legacy plaintext files */
   isEncrypted: boolean;
   encryptedDEK?: string; // Base64 RSA-OAEP wrapped AES-256 DEK
+  wrappedBy?: "user" | "space";
+  spaceKeyId?: mongoose.Types.ObjectId;
+  spaceKeyVersion?: number;
+  spaceKeyWrapIv?: string;
   iv?: string; // Base64 12-byte GCM IV (legacy single-blob only)
   encryptedName?: string; // Base64 AES-GCM encrypted original filename
   encryptedDisplayName?: string; // For E2EE folders
@@ -81,6 +89,10 @@ export interface IStorageObjectVersion {
   size: number;
   contentType?: string;
   encryptedDEK?: string;
+  wrappedBy?: "user" | "space";
+  spaceKeyId?: mongoose.Types.ObjectId;
+  spaceKeyVersion?: number;
+  spaceKeyWrapIv?: string;
   iv?: string;
   chunkSize?: number;
   chunkCount?: number;
@@ -102,6 +114,27 @@ const StorageObjectSchema = new Schema<IStorageObject>(
     userId: {
       type: String,
       required: [true, "User ID is required"],
+      index: true,
+    },
+    ownerScope: {
+      type: String,
+      enum: ["personal", "organization", "team"],
+      default: "personal",
+      index: true,
+    },
+    orgId: {
+      type: String,
+      required: false,
+      index: true,
+    },
+    teamId: {
+      type: String,
+      required: false,
+      index: true,
+    },
+    createdBy: {
+      type: String,
+      required: false,
       index: true,
     },
     key: {
@@ -167,6 +200,25 @@ const StorageObjectSchema = new Schema<IStorageObject>(
       index: true,
     },
     encryptedDEK: {
+      type: String,
+      required: false,
+    },
+    wrappedBy: {
+      type: String,
+      enum: ["user", "space"],
+      required: false,
+    },
+    spaceKeyId: {
+      type: Schema.Types.ObjectId,
+      ref: "SpaceKey",
+      required: false,
+      index: true,
+    },
+    spaceKeyVersion: {
+      type: Number,
+      required: false,
+    },
+    spaceKeyWrapIv: {
       type: String,
       required: false,
     },
@@ -274,6 +326,18 @@ const StorageObjectSchema = new Schema<IStorageObject>(
             size: { type: Number, required: true, min: 0 },
             contentType: { type: String, required: false },
             encryptedDEK: { type: String, required: false },
+            wrappedBy: {
+              type: String,
+              enum: ["user", "space"],
+              required: false,
+            },
+            spaceKeyId: {
+              type: Schema.Types.ObjectId,
+              ref: "SpaceKey",
+              required: false,
+            },
+            spaceKeyVersion: { type: Number, required: false },
+            spaceKeyWrapIv: { type: String, required: false },
             iv: { type: String, required: false },
             chunkSize: { type: Number, required: false },
             chunkCount: { type: Number, required: false },
@@ -321,6 +385,10 @@ const StorageObjectSchema = new Schema<IStorageObject>(
 StorageObjectSchema.index({ bucketId: 1, key: 1 }, { unique: true });
 StorageObjectSchema.index({ bucketId: 1, createdAt: -1 });
 StorageObjectSchema.index({ userId: 1, _id: 1 });
+StorageObjectSchema.index({ ownerScope: 1, orgId: 1, _id: 1 });
+StorageObjectSchema.index({ ownerScope: 1, teamId: 1, _id: 1 });
+StorageObjectSchema.index({ ownerScope: 1, orgId: 1, bucketId: 1, createdAt: -1 });
+StorageObjectSchema.index({ ownerScope: 1, teamId: 1, bucketId: 1, createdAt: -1 });
 StorageObjectSchema.index({ key: 1, bucketId: 1 });
 StorageObjectSchema.index({ bucketId: 1, position: 1 });
 StorageObjectSchema.index({ tags: 1 });

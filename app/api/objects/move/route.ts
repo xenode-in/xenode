@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  objectOwnershipClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
@@ -26,8 +32,8 @@ function errorMessage(error: unknown): string {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    const userId = ctx.userId;
     const { bucketId, sourceKeys, destinationPrefix } = await request.json();
 
     if (
@@ -46,7 +52,7 @@ export async function POST(request: NextRequest) {
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     });
     if (!bucket) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
@@ -146,7 +152,7 @@ export async function POST(request: NextRequest) {
 
           const objectsToMove = await StorageObject.find({
             bucketId: bucket._id,
-            userId,
+            ...objectOwnershipClause(ctx),
             key: { $regex: `^${escapeRegex(sourceKey)}` },
           }).sort({ key: 1 });
 
@@ -169,7 +175,7 @@ export async function POST(request: NextRequest) {
         } else {
           const object = await StorageObject.findOne({
             bucketId: bucket._id,
-            userId,
+            ...objectOwnershipClause(ctx),
             key: sourceKey,
           });
           if (!object) throw new Error("File not found");
@@ -215,6 +221,9 @@ export async function POST(request: NextRequest) {
       errors,
     });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

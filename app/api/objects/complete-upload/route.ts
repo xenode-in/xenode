@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
@@ -109,8 +114,8 @@ async function emitObjectChange(
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    const userId = ctx.userId;
 
     const {
       objectKey,
@@ -172,7 +177,7 @@ export async function POST(request: NextRequest) {
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     });
 
     if (!bucket) {
@@ -336,6 +341,8 @@ export async function POST(request: NextRequest) {
       storageObject = await StorageObject.create({
         bucketId,
         userId,
+        ownerScope: "personal",
+        createdBy: userId,
         key: objectKey,
         size,
         contentType:
@@ -416,6 +423,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ object: storageObject }, { status: 201 });
   } catch (error) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "QUOTA_EXCEEDED") {
       return NextResponse.json(
         { error: "Storage quota exceeded" },

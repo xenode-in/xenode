@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  assertObjectAccess,
+  isAuthzError,
+  ownerClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import ShareLink from "@/models/ShareLink";
-import StorageObject from "@/models/StorageObject";
 import bcrypt from "bcryptjs";
 import { captureEvent } from "@/lib/posthog";
 
@@ -17,8 +22,8 @@ export async function POST(req: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(req);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(req);
+    userId = ctx.userId;
 
     const {
       token, objectId, expiresIn, maxDownloads, password,
@@ -36,12 +41,7 @@ export async function POST(req: NextRequest) {
 
     await dbConnect();
 
-    const object = await StorageObject.findOne({ _id: objectId, userId });
-    if (!object) {
-      statusCode = 404;
-      errorMessage = "File not found";
-      return NextResponse.json({ error: errorMessage }, { status: statusCode });
-    }
+    const object = await assertObjectAccess(ctx, objectId, "share");
 
     if (object.isEncrypted && !shareEncryptedDEK) {
       statusCode = 400;
@@ -94,6 +94,15 @@ export async function POST(req: NextRequest) {
       isPasswordProtected: link.isPasswordProtected,
     });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      statusCode = error.status;
+      errorMessage =
+        error.code === "object_not_found" ? "File not found" : error.message;
+      return NextResponse.json(
+        { error: errorMessage, code: error.code },
+        { status: statusCode },
+      );
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       statusCode = 401;
       errorMessage = "Unauthorized";
@@ -124,8 +133,9 @@ export async function GET(req: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(req);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(req);
+    userId = ctx.userId;
+    ownerClause(ctx);
     await dbConnect();
 
     const links = await ShareLink.find({ createdBy: userId, isRevoked: false })
@@ -138,6 +148,11 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ shareLinks: links });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      statusCode = error.status;
+      errorMessage = error.message;
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       statusCode = 401;
       errorMessage = "Unauthorized";

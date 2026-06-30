@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import DirectShare from "@/models/DirectShare";
 import StorageObject from "@/models/StorageObject";
@@ -14,7 +18,7 @@ interface RouteParams {
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
     const { id } = await params;
     await dbConnect();
 
@@ -24,7 +28,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     const recipient = share.recipients.find(
-      (item) => item.recipientUserId === session.user.id,
+      (item) => item.recipientUserId === ctx.userId,
     );
     if (!recipient) {
       return NextResponse.json({ error: "You do not have access to this share" }, { status: 403 });
@@ -53,7 +57,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     await DirectShare.updateOne(
-      { _id: share._id, "recipients.recipientUserId": session.user.id },
+      { _id: share._id, "recipients.recipientUserId": ctx.userId },
       { $set: { "recipients.$.lastAccessedAt": new Date() } },
     );
 
@@ -75,8 +79,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       thumbnail: share.shareEncryptedThumbnail || object.thumbnail,
     });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
     }
 
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

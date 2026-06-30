@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  objectFilter,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
@@ -22,8 +28,8 @@ export async function GET(
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(request);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    userId = ctx.userId;
 
     if (!id) {
       statusCode = 400;
@@ -34,7 +40,9 @@ export async function GET(
     await dbConnect();
 
     // 1. Fetch the object
-    const object = await StorageObject.findById(id).select("bucketId encryptedMetadata").lean();
+    const object = await StorageObject.findOne(objectFilter(ctx, id))
+      .select("bucketId encryptedMetadata")
+      .lean();
 
     if (!object) {
       statusCode = 404;
@@ -45,7 +53,7 @@ export async function GET(
     // 2. Security check: Ensure the user owns the bucket or it's a system bucket and the key prefix matches
     const bucket = await Bucket.findOne({
       _id: object.bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     }).lean();
 
     if (!bucket) {
@@ -59,6 +67,11 @@ export async function GET(
       encryptedMetadata: object.encryptedMetadata || null,
     });
   } catch (error: any) {
+    if (isAuthzError(error)) {
+      statusCode = error.status;
+      errorMessage = error.message;
+      return toJsonResponse(error);
+    }
     statusCode = error.message === "Unauthorized" ? 401 : 500;
     errorMessage = error.message || "Internal server error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });

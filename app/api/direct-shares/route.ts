@@ -1,16 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  assertObjectAccess,
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import DirectShare from "@/models/DirectShare";
-import StorageObject from "@/models/StorageObject";
 import { captureEvent, countBucket } from "@/lib/posthog";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    const userId = ctx.userId;
     const {
       objectId,
       shareEncryptedDEK,
@@ -31,10 +35,7 @@ export async function POST(request: NextRequest) {
 
     await dbConnect();
 
-    const object = await StorageObject.findOne({ _id: objectId, userId }).lean();
-    if (!object) {
-      return NextResponse.json({ error: "File not found" }, { status: 404 });
-    }
+    const object = await assertObjectAccess(ctx, objectId, "share", { lean: true });
 
     if (object.isEncrypted && (!shareEncryptedDEK || !shareKeyIv)) {
       return NextResponse.json(
@@ -85,8 +86,11 @@ export async function POST(request: NextRequest) {
       recipientCount: normalizedRecipients.length,
     });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      if (error.code === "object_not_found") {
+        return NextResponse.json({ error: "File not found" }, { status: 404 });
+      }
+      return toJsonResponse(error);
     }
 
     return NextResponse.json({ error: error instanceof Error ? error.message : "Internal server error" }, { status: 500 });
@@ -95,11 +99,11 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
     await dbConnect();
 
     const directShares = await DirectShare.find({
-      createdBy: session.user.id,
+      createdBy: ctx.userId,
       isRevoked: false,
     })
       .populate(
@@ -111,8 +115,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ directShares });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
     }
 
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

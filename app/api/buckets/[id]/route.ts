@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAccessContext, ownerClause, bucketOwnershipClause } from "@/lib/authz";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  ownerClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import { logRequest } from "@/lib/logRequest";
 
 export const dynamic = "force-dynamic";
@@ -41,10 +47,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ bucket });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      statusCode = 401;
-      errorMessage = "Unauthorized";
-      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    if (isAuthzError(error)) {
+      statusCode = error.status;
+      errorMessage = error.message;
+      return toJsonResponse(error);
     }
     statusCode = 500;
     errorMessage = error instanceof Error ? error.message : "Internal server error";
@@ -110,10 +116,10 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      statusCode = 401;
-      errorMessage = "Unauthorized";
-      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    if (isAuthzError(error)) {
+      statusCode = error.status;
+      errorMessage = error.message;
+      return toJsonResponse(error);
     }
     statusCode = 500;
     errorMessage = error instanceof Error ? error.message : "Internal server error";

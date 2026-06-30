@@ -37,7 +37,12 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
@@ -68,8 +73,8 @@ export async function GET(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(request);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    userId = ctx.userId;
 
     const { searchParams } = request.nextUrl;
     const bucketId = searchParams.get("bucketId");
@@ -86,7 +91,7 @@ export async function GET(request: NextRequest) {
     // Same ownership check as /api/objects and /api/objects/metadata.
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     })
       .select("_id userId")
       .lean<{ _id: unknown; userId: string }>();
@@ -150,6 +155,11 @@ export async function GET(request: NextRequest) {
     response.headers.set("Cache-Control", "private, max-age=30");
     return response;
   } catch (err: any) {
+    if (isAuthzError(err)) {
+      statusCode = err.status;
+      errorMessage = err.message;
+      return toJsonResponse(err);
+    }
     statusCode = err?.message === "Unauthorized" ? 401 : 500;
     errorMessage = err?.message ?? "Internal error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });

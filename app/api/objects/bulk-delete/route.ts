@@ -27,7 +27,13 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  objectOwnershipClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
@@ -54,8 +60,8 @@ export async function POST(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(request);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    userId = ctx.userId;
     await enforceStorageAccess(userId);
 
     let body: { bucketId?: unknown; ids?: unknown };
@@ -102,7 +108,7 @@ export async function POST(request: NextRequest) {
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     })
       .select("_id")
       .lean<{ _id: unknown }>();
@@ -118,7 +124,7 @@ export async function POST(request: NextRequest) {
     const objects = await StorageObject.find({
       _id: { $in: ids },
       bucketId,
-      userId,
+      ...objectOwnershipClause(ctx),
       deletedAt: { $exists: false },
     })
       .select("_id key")
@@ -137,7 +143,7 @@ export async function POST(request: NextRequest) {
     // Cascade to sidecars (subtitles / extra audio tracks) of every object.
     const sidecars = await StorageObject.find({
       parentObjectId: { $in: objectIds },
-      userId,
+      ...objectOwnershipClause(ctx),
       deletedAt: { $exists: false },
     })
       .select("_id")
@@ -182,6 +188,11 @@ export async function POST(request: NextRequest) {
       removedCount: allDocIds.length,
     });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      statusCode = error.status;
+      errorMessage = error.message;
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       statusCode = 401;
       errorMessage = "Unauthorized";

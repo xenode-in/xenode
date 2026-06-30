@@ -8,13 +8,34 @@ vi.mock("@/lib/b2/client", () => ({
 }));
 
 import { POST } from "@/app/api/objects/complete-upload/route";
-import { requireAuth } from "@/lib/auth/session";
+import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import Usage from "@/models/Usage";
 import { createUsage, makeUserId } from "../helpers/factories";
 
-const mockedRequireAuth = vi.mocked(requireAuth);
+const mockedGetServerSession = vi.mocked(getServerSession);
+
+function mockSession(userId: string) {
+  mockedGetServerSession.mockResolvedValue({
+    user: {
+      id: userId,
+      email: `${userId}@example.com`,
+      name: "Test User",
+      emailVerified: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+    session: {
+      id: `session-${userId}`,
+      userId,
+      token: `token-${userId}`,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      expiresAt: new Date(Date.now() + 60_000),
+    },
+  } as unknown as Awaited<ReturnType<typeof getServerSession>>);
+}
 
 function request(body: unknown) {
   return new NextRequest("http://localhost/api/objects/complete-upload", {
@@ -54,7 +75,7 @@ function encryptedUpload(userId: string, bucketId: string) {
 describe("photo backup complete-upload finalization", () => {
   it("rolls back metadata and uploaded blobs when quota rejects finalization", async () => {
     const userId = makeUserId();
-    mockedRequireAuth.mockResolvedValue({ user: { id: userId } } as never);
+    mockSession(userId);
     const bucket = await createBucket(userId, "quota");
     await createUsage({
       userId,
@@ -86,7 +107,7 @@ describe("photo backup complete-upload finalization", () => {
 
   it("does not mutate an existing object when its size increase exceeds quota", async () => {
     const userId = makeUserId();
-    mockedRequireAuth.mockResolvedValue({ user: { id: userId } } as never);
+    mockSession(userId);
     const bucket = await createBucket(userId, "existing-quota");
     const body = encryptedUpload(userId, String(bucket._id));
     await StorageObject.create({
@@ -119,7 +140,7 @@ describe("photo backup complete-upload finalization", () => {
 
   it("adjusts only bytes when an existing object changes size", async () => {
     const userId = makeUserId();
-    mockedRequireAuth.mockResolvedValue({ user: { id: userId } } as never);
+    mockSession(userId);
     const bucket = await createBucket(userId, "existing-resize");
     const body = encryptedUpload(userId, String(bucket._id));
     await StorageObject.create({
@@ -150,7 +171,7 @@ describe("photo backup complete-upload finalization", () => {
 
   it("rejects related ciphertext keys outside the authenticated user's prefix", async () => {
     const userId = makeUserId();
-    mockedRequireAuth.mockResolvedValue({ user: { id: userId } } as never);
+    mockSession(userId);
     const bucket = await createBucket(userId, "prefix");
     send.mockClear();
 

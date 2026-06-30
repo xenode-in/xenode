@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import DirectShare from "@/models/DirectShare";
 import type { IDirectShareRecipient } from "@/models/DirectShare";
@@ -9,11 +13,11 @@ export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
     await dbConnect();
 
     const shares = await DirectShare.find({
-      "recipients.recipientUserId": session.user.id,
+      "recipients.recipientUserId": ctx.userId,
       isRevoked: false,
     })
       .populate("objectId", "key size contentType isEncrypted encryptedName thumbnail")
@@ -36,14 +40,14 @@ export async function GET(request: NextRequest) {
           }
         : null,
       recipient: ((share.recipients || []) as IDirectShareRecipient[]).find(
-        (recipient) => recipient.recipientUserId === session.user.id,
+        (recipient) => recipient.recipientUserId === ctx.userId,
       ),
     }));
 
     return NextResponse.json({ directShares: result });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
     }
 
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

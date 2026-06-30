@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
@@ -17,8 +22,8 @@ export const dynamic = "force-dynamic";
 /** POST /api/objects/folder - Create a new folder */
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    const userId = ctx.userId;
     const body = await request.json();
     const { bucketId, name, encryptedDisplayName, prefix = "" } = body;
 
@@ -34,7 +39,7 @@ export async function POST(request: NextRequest) {
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     });
 
     if (!bucket) {
@@ -58,6 +63,8 @@ export async function POST(request: NextRequest) {
     const folder = await StorageObject.create({
       bucketId: bucket._id,
       userId,
+      ownerScope: "personal",
+      createdBy: userId,
       key: fullKey,
       size: 0,
       contentType: "application/x-directory",
@@ -81,8 +88,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ folder }, { status: 201 });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
     }
     return NextResponse.json({ error: "Failed to create folder" }, { status: 500 });
   }
@@ -91,8 +98,8 @@ export async function POST(request: NextRequest) {
 /** DELETE /api/objects/folder - Recursively delete a folder and its contents */
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    const userId = ctx.userId;
     const body = await request.json();
     const { bucketId, prefix } = body;
 
@@ -104,7 +111,7 @@ export async function DELETE(request: NextRequest) {
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     });
 
     if (!bucket) {
@@ -149,8 +156,8 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ success: true, deletedCount: deletedObjectIds.length });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
     }
     return NextResponse.json({ error: "Failed to delete folder" }, { status: 500 });
   }

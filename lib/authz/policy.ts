@@ -14,6 +14,15 @@ import { AuthzError } from "./errors";
  */
 export type Action = "read" | "write" | "delete" | "share" | "manage";
 
+function assertPersonalStorageScope(ctx: AccessContext): void {
+  if (ctx.scope.type === "personal") return;
+  throw new AuthzError(
+    501,
+    "organization_storage_not_ready",
+    "Organization storage is not enabled yet",
+  );
+}
+
 /**
  * ── The ownership seam ───────────────────────────────────────────────────────
  * These builders return the Mongoose filter that scopes a query to what the
@@ -30,6 +39,7 @@ export type Action = "read" | "write" | "delete" | "share" | "manage";
  * scope today; org scope adds an $or on the future orgId field.
  */
 export function ownerClause(ctx: AccessContext): Record<string, unknown> {
+  assertPersonalStorageScope(ctx);
   return { userId: ctx.userId };
 }
 
@@ -53,6 +63,7 @@ export function objectFilter(
  * readable/usable by everyone (used for app-managed folders, migrations, etc.).
  */
 export function bucketOwnershipClause(ctx: AccessContext): Record<string, unknown> {
+  assertPersonalStorageScope(ctx);
   return { $or: [{ userId: ctx.userId }, { userId: "system" }] };
 }
 

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { requireAuth } from "@/lib/auth/session";
+import {
+  isAuthzError,
+  ownerClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import PhotoAlbum from "@/models/PhotoAlbum";
 import AlbumShareLink from "@/models/AlbumShareLink";
@@ -19,7 +24,8 @@ function normalizeName(value: unknown) {
 
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
+    ownerClause(ctx);
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
     const name = normalizeName(body.name);
@@ -31,7 +37,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     // Slug stays stable across renames so existing album URLs keep resolving.
     const album = await PhotoAlbum.findOneAndUpdate(
-      albumIdentifierFilter(session.user.id, id),
+      albumIdentifierFilter(ctx.userId, id),
       {
         name,
         description:
@@ -56,6 +62,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       },
     });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -65,12 +74,13 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
+    ownerClause(ctx);
     const { id } = await params;
     await dbConnect();
 
     const album = await PhotoAlbum.findOne(
-      albumIdentifierFilter(session.user.id, id),
+      albumIdentifierFilter(ctx.userId, id),
     ).lean();
 
     if (!album) {
@@ -79,23 +89,26 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     const links = await AlbumShareLink.find({
       albumId: album._id,
-      createdBy: session.user.id,
+      createdBy: ctx.userId,
       isRevoked: false,
     })
       .select("items")
       .lean();
     for (const link of links) {
-      await deleteAlbumShareThumbnails(session.user.id, link.items);
+      await deleteAlbumShareThumbnails(ctx.userId, link.items);
     }
     await AlbumShareLink.updateMany(
-      { albumId: album._id, createdBy: session.user.id, isRevoked: false },
+      { albumId: album._id, createdBy: ctx.userId, isRevoked: false },
       { $set: { isRevoked: true } },
     );
 
-    await PhotoAlbum.deleteOne({ _id: album._id, userId: session.user.id });
+    await PhotoAlbum.deleteOne({ _id: album._id, ...ownerClause(ctx) });
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

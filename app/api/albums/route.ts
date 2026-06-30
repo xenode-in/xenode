@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
 
-import { requireAuth } from "@/lib/auth/session";
+import {
+  type AccessContext,
+  isAuthzError,
+  objectOwnershipClause,
+  ownerClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import PhotoAlbum from "@/models/PhotoAlbum";
 import StorageObject from "@/models/StorageObject";
@@ -51,11 +58,11 @@ function normalizeObjectIds(value: unknown): string[] {
   );
 }
 
-async function verifiedImageIds(userId: string, objectIds: string[]) {
+async function verifiedImageIds(ctx: AccessContext, objectIds: string[]) {
   if (objectIds.length === 0) return [];
   const objects = await StorageObject.find({
     _id: { $in: objectIds.map((id) => new Types.ObjectId(id)) },
-    userId,
+    ...objectOwnershipClause(ctx),
     mediaCategory: "image",
     deletedAt: { $exists: false },
     isSidecar: { $ne: true },
@@ -65,13 +72,16 @@ async function verifiedImageIds(userId: string, objectIds: string[]) {
   return objects.map((object) => object._id);
 }
 
-async function serializeAlbums(albums: AlbumDoc[]) {
+async function serializeAlbums(ctx: AccessContext, albums: AlbumDoc[]) {
   const coverIds = albums
     .map((album) => album.coverObjectId ?? album.objectIds?.[0])
     .filter((id): id is Types.ObjectId => !!id);
 
   const covers = coverIds.length
-    ? await StorageObject.find({ _id: { $in: coverIds } })
+    ? await StorageObject.find({
+        _id: { $in: coverIds },
+        ...objectOwnershipClause(ctx),
+      })
         .select(COVER_PROJECTION)
         .lean<CoverDoc[]>()
     : [];
@@ -97,15 +107,18 @@ async function serializeAlbums(albums: AlbumDoc[]) {
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
     await dbConnect();
 
-    const albums = await PhotoAlbum.find({ userId: session.user.id })
+    const albums = await PhotoAlbum.find(ownerClause(ctx))
       .sort({ updatedAt: -1 })
       .lean<AlbumDoc[]>();
 
-    return NextResponse.json({ albums: await serializeAlbums(albums) });
+    return NextResponse.json({ albums: await serializeAlbums(ctx, albums) });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -115,7 +128,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
     const body = await request.json().catch(() => ({}));
     const name = normalizeName(body.name);
     if (!name) {
@@ -125,14 +138,14 @@ export async function POST(request: NextRequest) {
     await dbConnect();
 
     const objectIds = await verifiedImageIds(
-      session.user.id,
+      ctx,
       normalizeObjectIds(body.objectIds),
     );
 
-    const slug = await generateUniqueAlbumSlug(session.user.id, name);
+    const slug = await generateUniqueAlbumSlug(ctx.userId, name);
 
     const album = await PhotoAlbum.create({
-      userId: session.user.id,
+      userId: ctx.userId,
       name,
       slug,
       description:
@@ -143,9 +156,12 @@ export async function POST(request: NextRequest) {
       coverObjectId: objectIds[0],
     });
 
-    const [serialized] = await serializeAlbums([album.toObject()]);
+    const [serialized] = await serializeAlbums(ctx, [album.toObject()]);
     return NextResponse.json({ album: serialized }, { status: 201 });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

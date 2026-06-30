@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { randomBytes } from "crypto";
@@ -12,8 +17,8 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    const userId = ctx.userId;
     await enforceStorageAccess(userId);
 
     const S3_ENDPOINT =
@@ -42,7 +47,7 @@ export async function POST(request: NextRequest) {
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     });
 
     if (!bucket) {
@@ -120,6 +125,9 @@ export async function POST(request: NextRequest) {
       bucketId: bucket._id.toString(),
     });
   } catch (error) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.name === "SubscriptionRequired") {
       return NextResponse.json(
         { error: "Active subscription required" },

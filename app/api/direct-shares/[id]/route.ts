@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import DirectShare from "@/models/DirectShare";
 import type { IDirectShareRecipient } from "@/models/DirectShare";
@@ -13,7 +17,7 @@ interface RouteParams {
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
     const { id } = await params;
     await dbConnect();
 
@@ -27,7 +31,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const recipients = (share.recipients || []) as IDirectShareRecipient[];
     const recipient = recipients.find(
-      (item) => item.recipientUserId === session.user.id,
+      (item) => item.recipientUserId === ctx.userId,
     );
 
     if (!recipient) {
@@ -51,8 +55,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       createdAt: share.createdAt,
     });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
     }
 
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -61,12 +65,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
     const { id } = await params;
     await dbConnect();
 
     const share = await DirectShare.findOneAndUpdate(
-      { _id: id, createdBy: session.user.id },
+      { _id: id, createdBy: ctx.userId },
       { isRevoked: true },
       { new: true },
     );
@@ -77,8 +81,8 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
     }
 
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -87,7 +91,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
     const { id } = await params;
     const body = await request.json();
     await dbConnect();
@@ -127,7 +131,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     }
 
     const share = await DirectShare.findOneAndUpdate(
-      { _id: id, createdBy: session.user.id, isRevoked: false },
+      { _id: id, createdBy: ctx.userId, isRevoked: false },
       { $set: update },
       { new: true },
     )
@@ -143,8 +147,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ directShare: share });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
     }
 
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  isAuthzError,
+  ownerClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import ShareLink from "@/models/ShareLink";
 
@@ -62,11 +67,12 @@ export async function GET(_: NextRequest, { params }: Params) {
 export async function DELETE(request: NextRequest, { params }: Params) {
   try {
     const resolvedParams = await params;
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
+    ownerClause(ctx);
     await dbConnect();
 
     const link = await ShareLink.findOneAndUpdate(
-      { token: resolvedParams.token, createdBy: session.user.id },
+      { token: resolvedParams.token, createdBy: ctx.userId },
       { isRevoked: true },
       { new: true },
     );
@@ -75,6 +81,9 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized")
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -84,7 +93,8 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     const resolvedParams = await params;
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
+    ownerClause(ctx);
     const body = await request.json();
     await dbConnect();
 
@@ -129,7 +139,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const link = await ShareLink.findOneAndUpdate(
       {
         token: resolvedParams.token,
-        createdBy: session.user.id,
+        createdBy: ctx.userId,
         isRevoked: false,
       },
       {
@@ -148,6 +158,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
     return NextResponse.json({ shareLink: link });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized")
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

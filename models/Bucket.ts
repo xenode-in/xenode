@@ -3,6 +3,10 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 export interface IBucket extends Document {
   _id: mongoose.Types.ObjectId;
   userId: string;
+  ownerScope?: "personal" | "organization" | "team";
+  orgId?: string;
+  teamId?: string;
+  createdBy?: string;
   name: string;
   b2BucketId: string;
   region: string;
@@ -17,6 +21,27 @@ const BucketSchema = new Schema<IBucket>(
     userId: {
       type: String,
       required: [true, "User ID is required"],
+      index: true,
+    },
+    ownerScope: {
+      type: String,
+      enum: ["personal", "organization", "team"],
+      default: "personal",
+      index: true,
+    },
+    orgId: {
+      type: String,
+      required: false,
+      index: true,
+    },
+    teamId: {
+      type: String,
+      required: false,
+      index: true,
+    },
+    createdBy: {
+      type: String,
+      required: false,
       index: true,
     },
     name: {
@@ -62,6 +87,10 @@ const BucketSchema = new Schema<IBucket>(
  */
 BucketSchema.index({ userId: 1, name: 1 }, { unique: true });
 BucketSchema.index({ userId: 1, createdAt: -1 });
+BucketSchema.index({ ownerScope: 1, orgId: 1, createdAt: -1 });
+BucketSchema.index({ ownerScope: 1, teamId: 1, createdAt: -1 });
+BucketSchema.index({ ownerScope: 1, orgId: 1, name: 1 });
+BucketSchema.index({ ownerScope: 1, teamId: 1, name: 1 });
 
 const Bucket: Model<IBucket> =
   mongoose.models.Bucket || mongoose.model<IBucket>("Bucket", BucketSchema);

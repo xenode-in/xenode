@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  isAuthzError,
+  objectOwnershipClause,
+  ownerClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import { getOrCreateUsage, recalculateUsage } from "@/lib/metering/usage";
 import StorageObject from "@/models/StorageObject";
@@ -31,8 +37,9 @@ function normalizeCategory(category: string | null | undefined): string {
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
-    const cacheKey = storageCacheKey(session.user.id);
+    const ctx = await requireAccessContext(request);
+    ownerClause(ctx);
+    const cacheKey = storageCacheKey(ctx.userId);
     const cached = await withRedis((redis) => redis.get(cacheKey));
     if (cached) {
       return NextResponse.json(JSON.parse(cached), {
@@ -43,15 +50,15 @@ export async function GET(request: NextRequest) {
     await dbConnect();
 
     const [usage, rawBreakdown] = await Promise.all([
-      recalculateUsage(session.user.id).then(
-        (value) => value || getOrCreateUsage(session.user.id),
+      recalculateUsage(ctx.userId).then(
+        (value) => value || getOrCreateUsage(ctx.userId),
       ),
       StorageObject.aggregate<{
         _id: string | null;
         bytes: number;
         count: number;
       }>([
-        { $match: { userId: session.user.id } },
+        { $match: objectOwnershipClause(ctx) },
         {
           $group: {
             _id: "$mediaCategory",
@@ -96,6 +103,9 @@ export async function GET(request: NextRequest) {
       headers: { "x-xenode-cache": "MISS" },
     });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     const message = error instanceof Error ? error.message : "Failed to load usage";
     if (message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

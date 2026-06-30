@@ -10,7 +10,12 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
@@ -34,8 +39,8 @@ export async function GET(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(request);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    userId = ctx.userId;
 
     const { searchParams } = request.nextUrl;
     const bucketId = searchParams.get("bucketId");
@@ -55,7 +60,7 @@ export async function GET(request: NextRequest) {
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     })
       .select("_id userId")
       .lean<{ _id: unknown; userId: string }>();
@@ -122,6 +127,11 @@ export async function GET(request: NextRequest) {
     response.headers.set("Cache-Control", "private, max-age=30");
     return response;
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      statusCode = error.status;
+      errorMessage = error.message;
+      return toJsonResponse(error);
+    }
     statusCode =
       error instanceof Error && error.message === "Unauthorized" ? 401 : 500;
     errorMessage =
