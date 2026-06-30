@@ -8,12 +8,21 @@ import { ThemeGradientBackground } from "@/components/ThemeGradientBackground";
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
-export const revalidate = 60;
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export const metadata: Metadata = {
-  title: "Blog",
+  title: "Blog | Xenode",
   description:
-    "Insights, security deep-dives, and product updates from the Xenode team.",
+    "Insights, security deep-dives, and product updates from the Xenode team. Learn about encrypted cloud storage, privacy, and security.",
+  keywords: [
+    "xenode blog",
+    "encrypted cloud storage blog",
+    "privacy security articles",
+    "e2ee storage news",
+    "cloud storage updates",
+    "xenode announcements",
+  ],
   alternates: {
     canonical: `${BASE_URL}/blog`,
   },
@@ -23,6 +32,7 @@ export const metadata: Metadata = {
     title: "Blog | Xenode",
     description:
       "Insights, security deep-dives, and product updates from the Xenode team.",
+    siteName: "Xenode",
     images: [
       {
         url: `${BASE_URL}/og-image.png`,

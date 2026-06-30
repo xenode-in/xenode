@@ -20,7 +20,8 @@ import remarkGfm from "remark-gfm";
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
-export const revalidate = 60;
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 // Folder colour helpers (same palette as blog/page.tsx)
 const FOLDER_GRADIENTS: Record<string, string> = {

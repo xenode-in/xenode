@@ -9,7 +9,7 @@ import { PreviewProvider } from "@/contexts/PreviewContext";
 import { DownloadProvider } from "@/contexts/DownloadContext";
 import { CryptoDashboardWrapper } from "@/components/dashboard/CryptoDashboardWrapper";
 import { DownloadProgress } from "@/components/dashboard/DownloadProgress";
-import UploadDebugOverlay from "@/components/debug/UploadDebugOverlay"; // TODO: Remove after iOS debugging
+// import UploadDebugOverlay from "@/components/debug/UploadDebugOverlay"; // TODO: Remove after iOS debugging
 
 export const metadata: Metadata = {
   title: "Dashboard",
@@ -57,7 +57,7 @@ export default async function DashboardLayout({
               <UploadProgress />
               <DownloadProgress />
             </div>
-            <UploadDebugOverlay /> {/* TODO: Remove after iOS debugging */}
+            {/* <UploadDebugOverlay /> TODO: Remove after iOS debugging */}
           </UploadProvider>
         </PreviewProvider>
       </DownloadProvider>
