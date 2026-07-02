@@ -97,6 +97,25 @@ interface ItemProps {
   onSelect?: (item: ObjectData, e: React.MouseEvent) => void;
   registerItemRef?: (id: string, el: HTMLElement | null) => void;
   onShare?: (item: ObjectData) => void;
+  mobileContextOpen?: boolean;
+  onMobileContextOpenChange?: (open: boolean) => void;
+}
+
+function useIsCoarsePointer() {
+  const [isCoarsePointer, setIsCoarsePointer] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+
+    const mediaQuery = window.matchMedia("(pointer: coarse)");
+    const update = () => setIsCoarsePointer(mediaQuery.matches);
+    update();
+
+    mediaQuery.addEventListener("change", update);
+    return () => mediaQuery.removeEventListener("change", update);
+  }, []);
+
+  return isCoarsePointer;
 }
 
 // ─── Presentational Component — List View ─────────────────────────────────────
@@ -118,6 +137,8 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
       isSelected,
       onSelect,
       onShare,
+      mobileContextOpen,
+      onMobileContextOpenChange,
     },
     ref,
   ) => {
@@ -134,6 +155,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     );
     const [isMetaOpen, setIsMetaOpen] = useState(false);
     const { starred, toggle: toggleStar } = useStarToggle(item);
+    const isCoarsePointer = useIsCoarsePointer();
 
     useEffect(() => {
       if (isUnlocked && metadataKey) {
@@ -246,6 +268,19 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
               : "hover:bg-accent"
         }`}
         onClick={(e) => {
+          if (isCoarsePointer) {
+            if (mobileContextOpen) {
+              e.stopPropagation();
+              e.preventDefault();
+              return;
+            }
+            if (isFolder && onNavigate) {
+              onNavigate(name);
+            } else if (!isFolder && onPreview) {
+              onPreview(item);
+            }
+            return;
+          }
           if (onSelect) {
             onSelect(item, e);
             return;
@@ -426,7 +461,10 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     }
 
     return (
-      <ContextMenu>
+      <ContextMenu
+        open={mobileContextOpen}
+        onOpenChange={onMobileContextOpenChange}
+      >
         <ContextMenuTrigger asChild>{content}</ContextMenuTrigger>
         <ContextMenuContent className="w-64 bg-card border-border text-foreground">
           {isFolder ? (
@@ -502,6 +540,8 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
       isSelected,
       onSelect,
       onShare,
+      mobileContextOpen,
+      onMobileContextOpenChange,
     },
     ref,
   ) => {
@@ -518,6 +558,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
     );
     const [isMetaOpen, setIsMetaOpen] = useState(false);
     const { starred, toggle: toggleStar } = useStarToggle(item);
+    const isCoarsePointer = useIsCoarsePointer();
 
     useEffect(() => {
       if (isUnlocked && metadataKey) {
@@ -621,6 +662,19 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
         style={style}
         {...dragHandleProps}
         onClick={(e) => {
+          if (isCoarsePointer) {
+            if (mobileContextOpen) {
+              e.stopPropagation();
+              e.preventDefault();
+              return;
+            }
+            if (isFolder && onNavigate) {
+              onNavigate(name);
+            } else if (!isFolder && onPreview) {
+              onPreview(item);
+            }
+            return;
+          }
           if (onSelect) {
             onSelect(item, e);
             return;
@@ -815,7 +869,10 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
     if (isOverlay) return content;
 
     return (
-      <ContextMenu>
+      <ContextMenu
+        open={mobileContextOpen}
+        onOpenChange={onMobileContextOpenChange}
+      >
         <ContextMenuTrigger asChild>{content}</ContextMenuTrigger>
         <ContextMenuContent className="w-64 bg-card border-border text-foreground">
           {isFolder ? (
@@ -876,6 +933,8 @@ FileCard.displayName = "FileCard";
 
 export const FileItemInner = memo(function FileItemInner(props: ItemProps) {
   const { registerItemRef } = props;
+  const [mobileContextOpen, setMobileContextOpen] = useState(false);
+  const isCoarsePointer = useIsCoarsePointer();
 
   const {
     attributes,
@@ -955,6 +1014,9 @@ export const FileItemInner = memo(function FileItemInner(props: ItemProps) {
       } as unknown as React.MouseEvent;
 
       props.onSelect(props.item, mockEvent);
+      if (isCoarsePointer || e.type.startsWith("touch")) {
+        setMobileContextOpen(true);
+      }
 
       if (typeof navigator !== "undefined" && navigator.vibrate) {
         navigator.vibrate(50);
@@ -975,6 +1037,8 @@ export const FileItemInner = memo(function FileItemInner(props: ItemProps) {
         ref={refCallback}
         style={style}
         dragHandleProps={mergedHandleProps}
+        mobileContextOpen={mobileContextOpen}
+        onMobileContextOpenChange={setMobileContextOpen}
         {...props}
       />
     );
@@ -985,6 +1049,8 @@ export const FileItemInner = memo(function FileItemInner(props: ItemProps) {
       ref={refCallback}
       style={style}
       dragHandleProps={mergedHandleProps}
+      mobileContextOpen={mobileContextOpen}
+      onMobileContextOpenChange={setMobileContextOpen}
       {...props}
     />
   );

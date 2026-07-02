@@ -71,7 +71,13 @@ const sidebarItems = [
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 
-function SidebarNav({ pathname }: { pathname: string }) {
+function SidebarNav({
+  pathname,
+  onNavigate,
+}: {
+  pathname: string;
+  onNavigate?: () => void;
+}) {
   return (
     <nav className="flex flex-col gap-1 px-3">
       {sidebarItems.map((item) => {
@@ -84,6 +90,7 @@ function SidebarNav({ pathname }: { pathname: string }) {
           <Link
             key={item.href}
             href={item.href}
+            onClick={onNavigate}
             className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group ${
               isActive
                 ? "bg-sidebar-accent text-sidebar-accent-foreground"
@@ -125,6 +132,11 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
     }
     return () => clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setMobileOpen(false), 0);
+    return () => clearTimeout(timer);
+  }, [pathname]);
 
   const initials = user.name
     ? user.name
@@ -214,7 +226,10 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
                     </span>
                   </div>
                   <div className="py-4">
-                    <SidebarNav pathname={pathname} />
+                    <SidebarNav
+                      pathname={pathname}
+                      onNavigate={() => setMobileOpen(false)}
+                    />
                   </div>
                 </SheetContent>
               </Sheet>
