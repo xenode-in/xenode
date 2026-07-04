@@ -4,6 +4,7 @@ import { isOrganizationFeatureEnabled } from "@/lib/auth/organization";
 import { assertOrgMember } from "@/lib/orgs/access";
 import { OrgFilesClient } from "@/components/organizations/OrgFilesClient";
 import { OrgActivityFeed } from "@/components/organizations/OrgActivityFeed";
+import { OrgTeamsClient } from "@/components/organizations/OrgTeamsClient";
 import { OrgComingSoon } from "@/components/dashboard/OrgComingSoon";
 
 interface PageProps {
@@ -121,6 +122,19 @@ export default async function OrgSectionPage({ params }: PageProps) {
   // the same feed component; the API enforces the non-guest gate.
   if (section === "activity" || section === "audit") {
     return <OrgActivityFeed orgId={activeOrgId} />;
+  }
+
+  if (section === "team-spaces") {
+    if (membership.role === "guest") {
+      redirect("/dashboard");
+    }
+    return (
+      <OrgTeamsClient
+        orgId={activeOrgId}
+        orgName={membership.organization.name}
+        role={membership.role}
+      />
+    );
   }
 
   const meta = SECTION_META[section] ?? {

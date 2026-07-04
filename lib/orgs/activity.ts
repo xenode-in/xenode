@@ -55,6 +55,8 @@ export const ActivityAction = {
 
   TEAM_CREATED: "team.created",
   TEAM_DELETED: "team.deleted",
+  TEAM_MEMBER_ADDED: "team.member_added",
+  TEAM_MEMBER_REMOVED: "team.member_removed",
 
   DOMAIN_ADDED: "domain.added",
   DOMAIN_VERIFIED: "domain.verified",

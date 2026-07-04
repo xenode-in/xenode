@@ -64,12 +64,23 @@ function displayObjectName(key: string): string {
 export function OrgFilesClient({
   orgId,
   orgName,
+  teamId,
 }: {
   orgId: string;
   orgName: string;
+  /** When set, the client operates on a team drive under the org. */
+  teamId?: string;
 }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const { privateKey, setModalOpen } = useCrypto();
+  const apiBase = useMemo(
+    () => (teamId ? `/api/orgs/${orgId}/teams/${teamId}` : `/api/orgs/${orgId}`),
+    [orgId, teamId],
+  );
+  const keysUrl = useMemo(
+    () => `/api/orgs/${orgId}/keys${teamId ? `?teamId=${teamId}` : ""}`,
+    [orgId, teamId],
+  );
   const [buckets, setBuckets] = useState<BucketRow[]>([]);
   const [objects, setObjects] = useState<ObjectRow[]>([]);
   const [selectedBucketId, setSelectedBucketId] = useState("");
@@ -87,7 +98,7 @@ export function OrgFilesClient({
 
   const loadBuckets = useCallback(async () => {
     const data = await readJson<{ buckets: BucketRow[] }>(
-      await fetch(`/api/orgs/${orgId}/buckets`),
+      await fetch(`${apiBase}/buckets`),
     );
     setBuckets(data.buckets);
     setSelectedBucketId((current) => {
@@ -96,7 +107,7 @@ export function OrgFilesClient({
       }
       return data.buckets[0]?._id || "";
     });
-  }, [orgId]);
+  }, [apiBase]);
 
   const loadObjects = useCallback(async () => {
     if (!selectedBucket?.["_id"]) {
@@ -105,11 +116,11 @@ export function OrgFilesClient({
     }
     const data = await readJson<{ objects: ObjectRow[] }>(
       await fetch(
-        `/api/orgs/${orgId}/objects?bucketId=${selectedBucket._id}&fetchAll=true`,
+        `${apiBase}/objects?bucketId=${selectedBucket._id}&fetchAll=true`,
       ),
     );
     setObjects(data.objects);
-  }, [orgId, selectedBucket]);
+  }, [apiBase, selectedBucket]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -141,7 +152,7 @@ export function OrgFilesClient({
     setBusy("bucket");
     try {
       const data = await readJson<{ bucket: BucketRow }>(
-        await fetch(`/api/orgs/${orgId}/buckets`, {
+        await fetch(`${apiBase}/buckets`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ name }),
@@ -170,11 +181,15 @@ export function OrgFilesClient({
     }
 
     const data = await readJson<{ grants: SpaceKeyGrant[] }>(
-      await fetch(`/api/orgs/${orgId}/keys`),
+      await fetch(keysUrl),
     );
     const grant = data.grants[0];
     if (!grant) {
-      throw new Error("Your organization space key is not available");
+      throw new Error(
+        teamId
+          ? "Your team space key is not available"
+          : "Your organization space key is not available",
+      );
     }
 
     return {
@@ -202,13 +217,14 @@ export function OrgFilesClient({
         objectKey: string;
         bucketId: string;
       }>(
-        await fetch(`/api/orgs/${orgId}/objects/presign-upload`, {
+        await fetch(`${apiBase}/objects/presign-upload`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             bucketId: selectedBucket._id,
             fileName: opaqueName,
             fileType: "application/octet-stream",
+            size: encrypted.encryptedBlob.size,
           }),
         }),
       );
@@ -223,7 +239,7 @@ export function OrgFilesClient({
       }
 
       await readJson<{ object: ObjectRow }>(
-        await fetch(`/api/orgs/${orgId}/objects/complete-upload`, {
+        await fetch(`${apiBase}/objects/complete-upload`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -273,7 +289,9 @@ export function OrgFilesClient({
           <div>
             <h2 className="text-lg font-semibold text-foreground">Files</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Buckets and uploads for {orgName}. New organizations start with a shared workspace bucket.
+              {teamId
+                ? `Team drive for ${orgName}. Files here are encrypted with the team space key.`
+                : `Buckets and uploads for ${orgName}. New organizations start with a shared workspace bucket.`}
             </p>
           </div>
           <Button variant="outline" onClick={refresh} disabled={busy !== null}>

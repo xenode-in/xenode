@@ -2,6 +2,7 @@ import { AuthzError } from "@/lib/authz";
 import type { OrgRole } from "@/lib/auth/organization";
 import {
   assertOrgMemberRole,
+  assertTeamMember,
   type OrgMembership,
 } from "@/lib/orgs/access";
 import Bucket, { type IBucket } from "@/models/Bucket";
@@ -80,6 +81,79 @@ export async function loadOrgBucket(args: {
   const bucket = await Bucket.findOne({
     _id: args.bucketId,
     ...orgBucketClause(args.orgId),
+  });
+
+  if (!bucket) {
+    throw new AuthzError(404, "bucket_not_found", "Bucket not found");
+  }
+  return bucket;
+}
+
+// ── Team drives ──────────────────────────────────────────────────────────────
+// A team drive is a Bucket with ownerScope:"team" + teamId, nested under the
+// org's key prefix so org-wide listing/containment still holds. Storage still
+// rolls up to OrgUsage (teams are an access boundary, not a billing boundary).
+
+export function teamObjectKeyPrefix(orgId: string, teamId: string): string {
+  return `workspaces/${orgId}/teams/${teamId}/objects/`;
+}
+
+export function teamBucketClause(
+  orgId: string,
+  teamId: string,
+): Record<string, unknown> {
+  return { ownerScope: "team", orgId, teamId };
+}
+
+export function teamObjectClause(
+  orgId: string,
+  teamId: string,
+): Record<string, unknown> {
+  return { ownerScope: "team", orgId, teamId };
+}
+
+export function assertTeamObjectKey(args: {
+  orgId: string;
+  teamId: string;
+  key: unknown;
+}): string {
+  if (typeof args.key !== "string" || !args.key) {
+    throw new AuthzError(400, "object_key_required", "Object key is required");
+  }
+  if (!args.key.startsWith(teamObjectKeyPrefix(args.orgId, args.teamId))) {
+    throw new AuthzError(
+      403,
+      "invalid_team_object_key",
+      "Object key must stay inside this team",
+    );
+  }
+  return args.key;
+}
+
+/**
+ * Any member of the team may read/write its drive. Team creation/deletion is
+ * gated separately at the org-admin level in the team CRUD routes.
+ */
+export async function requireTeamStorageMembership(args: {
+  userId: string;
+  orgId: string;
+  teamId: string;
+}): Promise<void> {
+  await assertTeamMember({
+    userId: args.userId,
+    orgId: args.orgId,
+    teamId: args.teamId,
+  });
+}
+
+export async function loadTeamBucket(args: {
+  orgId: string;
+  teamId: string;
+  bucketId: string;
+}): Promise<IBucket> {
+  const bucket = await Bucket.findOne({
+    _id: args.bucketId,
+    ...teamBucketClause(args.orgId, args.teamId),
   });
 
   if (!bucket) {
