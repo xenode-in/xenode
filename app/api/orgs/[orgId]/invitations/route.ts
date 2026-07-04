@@ -15,6 +15,7 @@ import {
   type OrganizationRecord,
   type UserRecord,
 } from "@/lib/orgs/access";
+import { assertSeatHeadroomForInvite } from "@/lib/orgs/billing/seats";
 
 export const dynamic = "force-dynamic";
 
@@ -150,6 +151,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const membership = await assertOrgMember({ userId: ctx.userId, orgId });
     if (membership.role !== "owner" && membership.role !== "admin") {
       throw new AuthzError(403, "organization_admin_required", "Forbidden");
+    }
+
+    // Non-guest members consume a billing seat — block over-provisioning.
+    // Guests are free and skip the seat check.
+    if (role !== "guest") {
+      await assertSeatHeadroomForInvite(orgId);
     }
 
     await dbConnect();

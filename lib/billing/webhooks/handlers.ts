@@ -12,6 +12,7 @@ import {
   createSubscriptionPaymentIfMissing,
   syncUserSubscriptionState,
 } from "@/lib/subscriptions/service";
+import { syncOrgSubscriptionState } from "@/lib/orgs/billing/service";
 import { SUBSCRIPTION_GRACE_PERIOD_MS } from "@/lib/subscriptions/constants";
 import { getPlanByRazorpayPlanIdFromDB } from "@/lib/config/getPricingConfig";
 import { BillingEventType, emitBillingEvent } from "@/lib/billing/events";
@@ -85,6 +86,9 @@ async function loadSubscription(entity: any) {
     {
       $setOnInsert: {
         userId: notes.userId || null,
+        // Billing account: `org:{orgId}` for organization subscriptions, else
+        // the payer's userId. Routes state changes to the right sync fn.
+        accountId: notes.accountId || notes.userId || null,
         planSlug: notes.planSlug || null,
         status: "created",
         subscription_id: razorpaySubscriptionId,
@@ -112,11 +116,60 @@ async function loadSubscription(entity: any) {
           planName: notes.planName || notes.planSlug || "",
           billingCycle: notes.billingCycle || "monthly",
           razorpayPlanId: notes.razorpayPlanId || "",
+          // Org billing context (null for personal subscriptions).
+          orgId: notes.orgId || null,
+          seats: notes.seats ? Number(notes.seats) : null,
         },
       },
     },
     { upsert: true, new: true },
   );
+}
+
+/**
+ * Route a subscription state change to the correct usage sync function.
+ * Organization subscriptions (`accountId` = `org:{orgId}`) flow to
+ * `syncOrgSubscriptionState` (mutates OrgUsage); everything else flows to
+ * `syncUserSubscriptionState` (mutates User + Usage). Seat quantity, when the
+ * webhook carries it, is applied at the org single-mutation point.
+ */
+async function routeSubscriptionSync(
+  sub: {
+    _id: mongoose.Types.ObjectId | string;
+    userId: string;
+    accountId?: string | null;
+  },
+  subEntity: { quantity?: number } | null | undefined,
+  args: {
+    status: "none" | "active" | "past_due" | "halted" | "cancelled";
+    expiresAt?: Date | null;
+    autopayActive?: boolean;
+    gracePeriod?: { active: boolean; endsAt: Date | null };
+  },
+): Promise<void> {
+  const accountId = typeof sub.accountId === "string" ? sub.accountId : null;
+  if (accountId && accountId.startsWith("org:")) {
+    const seats =
+      typeof subEntity?.quantity === "number" ? subEntity.quantity : undefined;
+    await syncOrgSubscriptionState({
+      orgId: accountId.slice(4),
+      subscriptionDocId: sub._id,
+      status: args.status,
+      expiresAt: args.expiresAt ?? null,
+      autopayActive: args.autopayActive,
+      gracePeriod: args.gracePeriod,
+      seats,
+    });
+    return;
+  }
+  await syncUserSubscriptionState({
+    userId: sub.userId,
+    subscriptionDocId: sub._id,
+    status: args.status,
+    expiresAt: args.expiresAt ?? null,
+    autopayActive: args.autopayActive,
+    gracePeriod: args.gracePeriod,
+  });
 }
 
 // ─── Refund handlers (subscription payments are refundable via Razorpay) ──
@@ -403,9 +456,7 @@ const handleSubscriptionActivated: Handler = async (ctx) => {
   if (snap.paid_count !== undefined) sub.paid_count = snap.paid_count;
   await sub.save();
 
-  await syncUserSubscriptionState({
-    userId: sub.userId,
-    subscriptionDocId: sub._id,
+  await routeSubscriptionSync(sub, subEntity, {
     status: "active",
     expiresAt: sub.current_period_end || sub.endDate,
     autopayActive: true,
@@ -492,9 +543,7 @@ const handleSubscriptionCharged: Handler = async (ctx) => {
     });
   }
 
-  await syncUserSubscriptionState({
-    userId: sub.userId,
-    subscriptionDocId: sub._id,
+  await routeSubscriptionSync(sub, subEntity, {
     status: "active",
     expiresAt: sub.current_period_end || sub.endDate,
     autopayActive: true,
@@ -588,9 +637,7 @@ const setStatusAndSync = async (
         }
       : undefined;
 
-  await syncUserSubscriptionState({
-    userId: sub.userId,
-    subscriptionDocId: sub._id,
+  await routeSubscriptionSync(sub, subEntity, {
     status: userStatus,
     expiresAt: sub.current_period_end || sub.endDate || null,
     autopayActive: userStatus === "active",
@@ -626,9 +673,7 @@ const handleSubscriptionResumed: Handler = async (ctx) => {
   sub.status = "active";
   await sub.save();
 
-  await syncUserSubscriptionState({
-    userId: sub.userId,
-    subscriptionDocId: sub._id,
+  await routeSubscriptionSync(sub, subEntity, {
     status: "active",
     expiresAt: sub.current_period_end || sub.endDate,
     autopayActive: true,
@@ -732,10 +777,13 @@ const handleSubscriptionUpdated: Handler = async (ctx) => {
   }
   await sub.save();
 
-  if (planApplied && sub.status === "active") {
-    await syncUserSubscriptionState({
-      userId: sub.userId,
-      subscriptionDocId: sub._id,
+  // Apply plan/seat changes to usage. For org subs, seat quantity changes flow
+  // through here (routeSubscriptionSync reads subEntity.quantity), so sync even
+  // when only the quantity changed — not just on a plan swap.
+  const accountId = typeof sub.accountId === "string" ? sub.accountId : null;
+  const isOrgSub = !!accountId && accountId.startsWith("org:");
+  if (sub.status === "active" && (planApplied || isOrgSub)) {
+    await routeSubscriptionSync(sub, subEntity, {
       status: "active",
       expiresAt: sub.current_period_end || sub.endDate,
       autopayActive: true,

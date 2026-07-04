@@ -13,6 +13,7 @@ import {
   orgObjectKeyPrefix,
   requireOrgStorageMembership,
 } from "@/lib/orgs/storage";
+import { assertOrgStorageHeadroom } from "@/lib/orgs/billing/orgUsage";
 
 export const dynamic = "force-dynamic";
 
@@ -34,11 +35,19 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       bucketId,
       fileName,
       fileType,
+      size,
       prefix = orgObjectKeyPrefix(orgId),
     } = await request.json().catch(() => ({}));
 
     if (!bucketId) {
       return NextResponse.json({ error: "bucketId required" }, { status: 400 });
+    }
+
+    // Soft pre-check when the client sends the size — the authoritative,
+    // atomic ceiling enforcement happens at complete-upload.
+    const uploadSize = Number(size);
+    if (Number.isFinite(uploadSize) && uploadSize > 0) {
+      await assertOrgStorageHeadroom(orgId, uploadSize);
     }
 
     const S3_KEY_ID = process.env.S3_KEY_ID?.trim();

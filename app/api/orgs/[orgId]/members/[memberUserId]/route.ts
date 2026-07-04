@@ -13,6 +13,7 @@ import {
   assertOrgMember,
   type OrgMemberRecord,
 } from "@/lib/orgs/access";
+import { syncSeatsUsed } from "@/lib/orgs/billing/seats";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
 
 export const dynamic = "force-dynamic";
@@ -305,6 +306,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         }
       }
     });
+
+    // Refresh the cached seat count now that a member is gone (best-effort).
+    await syncSeatsUsed(orgId).catch(() => {});
 
     return NextResponse.json({
       removedMemberUserId: memberUserId,

@@ -15,6 +15,11 @@ import {
   orgStorageOwnerId,
   requireOrgStorageMembership,
 } from "@/lib/orgs/storage";
+import {
+  adjustOrgStorage,
+  decrementOrgStorage,
+  incrementOrgStorage,
+} from "@/lib/orgs/billing/orgUsage";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 
@@ -162,6 +167,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     if (existingObject) {
       const sizeDiff = size - existingObject.size;
+      // Enforce the org ceiling on growth before persisting (throws 402).
+      if (sizeDiff !== 0) {
+        await adjustOrgStorage(orgId, sizeDiff);
+      }
       Object.assign(existingObject, objectUpdate);
       await existingObject.save();
       if (sizeDiff !== 0) {
@@ -173,7 +182,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ object: existingObject });
     }
 
-    const object = await StorageObject.create(objectUpdate);
+    // Reserve org quota atomically first (throws 402 if it would exceed the
+    // ceiling); roll back the reservation if the metadata write then fails.
+    await incrementOrgStorage(orgId, size);
+    let object;
+    try {
+      object = await StorageObject.create(objectUpdate);
+    } catch (err) {
+      await decrementOrgStorage(orgId, size).catch(() => {});
+      throw err;
+    }
     await Bucket.updateOne(
       { _id: bucket._id },
       { $inc: { objectCount: 1, totalSizeBytes: size } },

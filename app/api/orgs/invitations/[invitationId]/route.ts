@@ -9,6 +9,7 @@ import {
 } from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import { assertOrganizationsEnabled } from "@/lib/orgs/access";
+import { syncSeatsUsed } from "@/lib/orgs/billing/seats";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
 
 export const dynamic = "force-dynamic";
@@ -204,6 +205,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         });
       }
       throw error;
+    }
+
+    // A newly accepted non-guest member consumes a seat (best-effort cache).
+    if (invitation.role !== "guest") {
+      await syncSeatsUsed(invitation.organizationId).catch(() => {});
     }
 
     return NextResponse.json({
