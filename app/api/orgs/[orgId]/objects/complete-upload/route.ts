@@ -20,6 +20,8 @@ import {
   decrementOrgStorage,
   incrementOrgStorage,
 } from "@/lib/orgs/billing/orgUsage";
+import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
+import { sizeBucket } from "@/lib/posthog";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 
@@ -196,6 +198,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       { _id: bucket._id },
       { $inc: { objectCount: 1, totalSizeBytes: size } },
     );
+
+    // Audit: object id + size bucket only — never the plaintext name or key.
+    await emitActivity({
+      orgId,
+      action: ActivityAction.FILE_UPLOADED,
+      actorUserId: ctx.userId,
+      target: { type: "object", id: object._id.toString() },
+      metadata: { sizeBucket: sizeBucket(size), bucketId },
+    });
 
     return NextResponse.json({ object }, { status: 201 });
   } catch (error) {

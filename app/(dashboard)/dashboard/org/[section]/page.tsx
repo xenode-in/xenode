@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/auth/session";
 import { isOrganizationFeatureEnabled } from "@/lib/auth/organization";
 import { assertOrgMember } from "@/lib/orgs/access";
 import { OrgFilesClient } from "@/components/organizations/OrgFilesClient";
+import { OrgActivityFeed } from "@/components/organizations/OrgActivityFeed";
 import { OrgComingSoon } from "@/components/dashboard/OrgComingSoon";
 
 interface PageProps {
@@ -114,6 +115,12 @@ export default async function OrgSectionPage({ params }: PageProps) {
         orgName={membership.organization.name}
       />
     );
+  }
+
+  // Activity feed (all non-guest members) and Audit Logs (admin nav entry) share
+  // the same feed component; the API enforces the non-guest gate.
+  if (section === "activity" || section === "audit") {
+    return <OrgActivityFeed orgId={activeOrgId} />;
   }
 
   const meta = SECTION_META[section] ?? {

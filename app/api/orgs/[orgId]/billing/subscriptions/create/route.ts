@@ -10,6 +10,7 @@ import { countNonGuestMembers } from "@/lib/orgs/billing/seats";
 import { BillingError, jsonError } from "@/lib/billing/http";
 import { cachedResponse, withIdempotency } from "@/lib/billing/idempotency";
 import { cleanNotes } from "@/lib/payment/razorpayUtils";
+import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import type { BillingCycle } from "@/types/pricing";
 
 export const dynamic = "force-dynamic";
@@ -144,6 +145,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       planSlug: planContext.plan.slug,
       billingCycle,
     };
+    await emitActivity({
+      orgId,
+      action: ActivityAction.BILLING_CHECKOUT_STARTED,
+      actorUserId: ctx.userId,
+      target: { type: "subscription", id: razorpaySubscription.id },
+      metadata: { planSlug: planContext.plan.slug, billingCycle, seats },
+    });
+
     await idempotency.complete(200, responseBody);
     return NextResponse.json(responseBody);
   } catch (error) {

@@ -9,6 +9,7 @@ import { getOrgPlanBySlug } from "@/lib/orgs/billing/orgPlans";
 import { countNonGuestMembers } from "@/lib/orgs/billing/seats";
 import { calculateProration } from "@/lib/billing/proration";
 import { BillingError, jsonError } from "@/lib/billing/http";
+import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import type { BillingCycle } from "@/types/pricing";
 
 export const dynamic = "force-dynamic";
@@ -112,6 +113,14 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       pendingSeats: seats,
     };
     await subscription.save();
+
+    await emitActivity({
+      orgId,
+      action: ActivityAction.BILLING_SEATS_CHANGED,
+      actorUserId: ctx.userId,
+      target: { type: "subscription", id: subscription.subscription_id },
+      metadata: { seats, previousSeats },
+    });
 
     return NextResponse.json({ seats, proration });
   } catch (error) {

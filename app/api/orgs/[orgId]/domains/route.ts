@@ -7,6 +7,7 @@ import {
 } from "@/lib/authz";
 import { assertOrgMember, assertOrgMemberRole } from "@/lib/orgs/access";
 import dbConnect from "@/lib/mongodb";
+import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import OrgDomain, { type IOrgDomain } from "@/models/OrgDomain";
 
 export const dynamic = "force-dynamic";
@@ -94,6 +95,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       status: "pending",
       method: "dns_txt",
       createdBy: ctx.userId,
+    });
+
+    await emitActivity({
+      orgId,
+      action: ActivityAction.DOMAIN_ADDED,
+      actorUserId: ctx.userId,
+      target: { type: "domain", id: created._id.toString() },
+      metadata: { domain },
     });
 
     return NextResponse.json(

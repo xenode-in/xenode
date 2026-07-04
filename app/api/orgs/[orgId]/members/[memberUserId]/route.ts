@@ -14,6 +14,7 @@ import {
   type OrgMemberRecord,
 } from "@/lib/orgs/access";
 import { syncSeatsUsed } from "@/lib/orgs/billing/seats";
+import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
 
 export const dynamic = "force-dynamic";
@@ -309,6 +310,14 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     // Refresh the cached seat count now that a member is gone (best-effort).
     await syncSeatsUsed(orgId).catch(() => {});
+
+    await emitActivity({
+      orgId,
+      action: ActivityAction.MEMBER_REMOVED,
+      actorUserId: ctx.userId,
+      target: { type: "member", id: memberUserId },
+      metadata: { role: targetRole, rotated: !!nextKeyVersion },
+    });
 
     return NextResponse.json({
       removedMemberUserId: memberUserId,

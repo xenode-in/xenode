@@ -7,6 +7,7 @@ import {
 } from "@/lib/authz";
 import { assertOrgMemberRole } from "@/lib/orgs/access";
 import dbConnect from "@/lib/mongodb";
+import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import OrgDomain from "@/models/OrgDomain";
 
 export const dynamic = "force-dynamic";
@@ -40,6 +41,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     domain.verifiedAt = verified ? now : null;
     domain.lastCheckedAt = now;
     await domain.save();
+
+    await emitActivity({
+      orgId,
+      action: verified
+        ? ActivityAction.DOMAIN_VERIFIED
+        : ActivityAction.DOMAIN_VERIFICATION_FAILED,
+      actorUserId: ctx.userId,
+      target: { type: "domain", id: domain._id.toString() },
+      metadata: { domain: domain.domain },
+    });
 
     if (!verified) {
       return NextResponse.json(

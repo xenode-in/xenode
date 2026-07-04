@@ -11,6 +11,7 @@ import {
   requireOrgStorageMembership,
 } from "@/lib/orgs/storage";
 import { getBucketForWorkspace } from "@/lib/storage/workspaceBucket";
+import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { createBucketSchema } from "@/lib/validations";
 import Bucket from "@/models/Bucket";
 
@@ -76,6 +77,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       createdBy: ctx.userId,
       name,
       b2BucketId: getBucketForWorkspace("ORGANIZATION"),
+    });
+
+    await emitActivity({
+      orgId,
+      action: ActivityAction.BUCKET_CREATED,
+      actorUserId: ctx.userId,
+      target: { type: "bucket", id: bucket._id.toString() },
     });
 
     return NextResponse.json({ bucket }, { status: 201 });

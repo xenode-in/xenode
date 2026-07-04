@@ -13,6 +13,7 @@ import {
 import dbConnect from "@/lib/mongodb";
 import { listUserOrgs } from "@/lib/orgs/listUserOrgs";
 import { orgStorageOwnerId } from "@/lib/orgs/storage";
+import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { ensureWorkspaceBucket } from "@/lib/storage/workspaceBucket";
 import Bucket from "@/models/Bucket";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
@@ -184,6 +185,14 @@ export async function POST(request: NextRequest) {
       await Bucket.deleteMany({ orgId: org.id }).catch(() => {});
       throw error;
     }
+
+    await emitActivity({
+      orgId: org.id,
+      action: ActivityAction.ORG_CREATED,
+      actorUserId: ctx.userId,
+      target: { type: "organization", id: org.id },
+      metadata: { slug: org.slug },
+    });
 
     return NextResponse.json(
       {

@@ -16,6 +16,7 @@ import {
   type UserRecord,
 } from "@/lib/orgs/access";
 import { assertSeatHeadroomForInvite } from "@/lib/orgs/billing/seats";
+import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 
 export const dynamic = "force-dynamic";
 
@@ -244,6 +245,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       invitationId: invitation.id,
       role,
       expiresAt: invitation.expiresAt,
+    });
+
+    await emitActivity({
+      orgId,
+      action: ActivityAction.MEMBER_INVITED,
+      actorUserId: ctx.userId,
+      target: { type: "invitation", id: invitation.id },
+      metadata: { role },
     });
 
     return NextResponse.json(

@@ -10,6 +10,7 @@ import {
 import dbConnect from "@/lib/mongodb";
 import { assertOrganizationsEnabled } from "@/lib/orgs/access";
 import { syncSeatsUsed } from "@/lib/orgs/billing/seats";
+import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
 
 export const dynamic = "force-dynamic";
@@ -118,6 +119,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         },
       );
 
+      await emitActivity({
+        orgId: invitation.organizationId,
+        action: ActivityAction.MEMBER_INVITE_REJECTED,
+        actorUserId: ctx.userId,
+        target: { type: "invitation", id: invitation.id },
+        metadata: { role: invitation.role },
+      });
+
       return NextResponse.json({
         invitation: serializeInvitation({
           ...invitation,
@@ -211,6 +220,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (invitation.role !== "guest") {
       await syncSeatsUsed(invitation.organizationId).catch(() => {});
     }
+
+    await emitActivity({
+      orgId: invitation.organizationId,
+      action: ActivityAction.MEMBER_JOINED,
+      actorUserId: ctx.userId,
+      target: { type: "member", id: ctx.userId },
+      metadata: { role: invitation.role },
+    });
 
     return NextResponse.json({
       invitation: serializeInvitation({
