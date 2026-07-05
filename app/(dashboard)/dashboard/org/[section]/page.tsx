@@ -5,6 +5,17 @@ import { assertOrgMember } from "@/lib/orgs/access";
 import { OrgFilesClient } from "@/components/organizations/OrgFilesClient";
 import { OrgActivityFeed } from "@/components/organizations/OrgActivityFeed";
 import { OrgTeamsClient } from "@/components/organizations/OrgTeamsClient";
+import { OrgRequestsClient } from "@/components/organizations/OrgRequestsClient";
+import { OrgSettingsClient } from "@/components/organizations/OrgSettingsClient";
+import { OrgGeneralSettings } from "@/components/organizations/OrgGeneralSettings";
+import { OrgUsersClient } from "@/components/organizations/OrgUsersClient";
+import { OrgBillingClient } from "@/components/organizations/OrgBillingClient";
+import { OrgAnalyticsClient } from "@/components/organizations/OrgAnalyticsClient";
+import { OrgSecurityClient } from "@/components/organizations/OrgSecurityClient";
+import { OrgPeopleClient } from "@/components/organizations/OrgPeopleClient";
+import { OrgObjectList } from "@/components/organizations/OrgObjectList";
+import { OrgSharesClient } from "@/components/organizations/OrgSharesClient";
+import { OrgPageHeader } from "@/components/organizations/org-ui";
 import { OrgComingSoon } from "@/components/dashboard/OrgComingSoon";
 
 interface PageProps {
@@ -114,6 +125,7 @@ export default async function OrgSectionPage({ params }: PageProps) {
       <OrgFilesClient
         orgId={activeOrgId}
         orgName={membership.organization.name}
+        role={membership.role}
       />
     );
   }
@@ -134,6 +146,67 @@ export default async function OrgSectionPage({ params }: PageProps) {
         orgName={membership.organization.name}
         role={membership.role}
       />
+    );
+  }
+
+  if (section === "requests") {
+    return <OrgRequestsClient orgId={activeOrgId} role={membership.role} />;
+  }
+
+  const isAdmin =
+    membership.role === "owner" || membership.role === "admin";
+
+  // Admin-only sections — block non-admins who deep-link the URL.
+  const ADMIN_SECTIONS = new Set(["users", "billing", "analytics", "security"]);
+  if (ADMIN_SECTIONS.has(section) && !isAdmin) {
+    redirect("/dashboard");
+  }
+
+  if (section === "users") {
+    return <OrgUsersClient orgId={activeOrgId} role={membership.role} />;
+  }
+  if (section === "billing") {
+    return <OrgBillingClient orgId={activeOrgId} />;
+  }
+  if (section === "analytics") {
+    return <OrgAnalyticsClient orgId={activeOrgId} />;
+  }
+  if (section === "security") {
+    return <OrgSecurityClient orgId={activeOrgId} canManage={isAdmin} />;
+  }
+
+  if (section === "people") {
+    return <OrgPeopleClient orgId={activeOrgId} />;
+  }
+
+  if (section === "shared-with-me") {
+    return <OrgSharesClient orgId={activeOrgId} scope="with-me" />;
+  }
+  if (section === "shared") {
+    if (membership.role === "guest") {
+      redirect("/dashboard");
+    }
+    return <OrgSharesClient orgId={activeOrgId} scope="shared" />;
+  }
+
+  // Collaboration file views need a space key — guests can't use them.
+  if (section === "recent" || section === "favorites" || section === "bin") {
+    if (membership.role === "guest") {
+      redirect("/dashboard");
+    }
+    return <OrgObjectList orgId={activeOrgId} scope={section} />;
+  }
+
+  if (section === "settings") {
+    return (
+      <div className="mx-auto w-full max-w-3xl space-y-6">
+        <OrgPageHeader
+          title="Settings"
+          description="Organization info, verified domains, and workspace controls."
+        />
+        {isAdmin && <OrgGeneralSettings orgId={activeOrgId} />}
+        <OrgSettingsClient orgId={activeOrgId} canAdmin={isAdmin} />
+      </div>
     );
   }
 

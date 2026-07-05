@@ -12,10 +12,8 @@ import {
 } from "@/lib/orgs/access";
 import dbConnect from "@/lib/mongodb";
 import { listUserOrgs } from "@/lib/orgs/listUserOrgs";
-import { orgStorageOwnerId } from "@/lib/orgs/storage";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
-import { ensureWorkspaceBucket } from "@/lib/storage/workspaceBucket";
-import Bucket from "@/models/Bucket";
+import { ensureSystemWorkspaceBucketRecord } from "@/lib/storage/workspaceBucket";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
 
 export const dynamic = "force-dynamic";
@@ -165,24 +163,12 @@ export async function POST(request: NextRequest) {
           rotationReason: "initial",
         });
       }
-      // No per-org B2 bucket: all org workspaces live in the single shared
-      // organization bucket, isolated by the `workspaces/{orgId}/...` key
-      // prefix. The default "workspace" Bucket doc is a logical container.
-      const b2BucketId = await ensureWorkspaceBucket("ORGANIZATION");
-      await Bucket.create({
-        userId: orgStorageOwnerId(org.id),
-        ownerScope: "organization",
-        orgId: org.id,
-        createdBy: ctx.userId,
-        name: "workspace",
-        b2BucketId,
-      });
+      await ensureSystemWorkspaceBucketRecord("ORGANIZATION");
     } catch (error) {
       await organizations.deleteOne({ id: org.id }).catch(() => {});
       await members
         .deleteOne({ organizationId: org.id, userId: ctx.userId })
         .catch(() => {});
-      await Bucket.deleteMany({ orgId: org.id }).catch(() => {});
       throw error;
     }
 

@@ -14,8 +14,10 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { decryptFileChunkedCombined } from "@/lib/crypto/fileEncryption";
+import { decryptFileChunkedCombined, unwrapDEKWithSpaceKey } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
+import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
+import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 
 export interface SidecarAudioTrack {
   id: string;
@@ -51,6 +53,8 @@ export function useAudioTrackSyncer({
   const [activeTrackId, setActiveTrackId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const workspace = useOptionalWorkspace();
+  const workspaceSpaceKey = useWorkspaceSpaceKey();
 
   const audioCtxRef = useRef<AudioContext | null>(null);
   const gainNodeRef = useRef<GainNode | null>(null);
@@ -156,9 +160,10 @@ export function useAudioTrackSyncer({
 
       try {
         // 1. Get signed chunk URLs and encryption info for the sidecar
-        const infoRes = await fetch(
-          `/api/objects/${track.objectId}?preview=true`,
-        );
+        const infoUrl = `/api/objects/${track.objectId}?preview=true`;
+        const infoRes = workspace?.scopedFetch
+          ? await workspace.scopedFetch(infoUrl)
+          : await fetch(infoUrl);
         if (!infoRes.ok) throw new Error("Failed to fetch sidecar info");
         const info = await infoRes.json();
 
@@ -184,7 +189,16 @@ export function useAudioTrackSyncer({
         let sidecarDek: CryptoKey | null = info.isEncrypted ? null : dek;
 
         if (info.isEncrypted) {
-          if (info.encryptedDEK && privateKey) {
+          if (info.wrappedBy === "space") {
+            if (!info.encryptedDEK || !info.spaceKeyWrapIv || !workspaceSpaceKey.rawSpaceKey) {
+              throw new Error("Missing organization audio track key");
+            }
+            sidecarDek = await unwrapDEKWithSpaceKey(
+              info.encryptedDEK,
+              info.spaceKeyWrapIv,
+              workspaceSpaceKey.rawSpaceKey,
+            );
+          } else if (info.encryptedDEK && privateKey) {
             try {
               console.log("[AudioTrackSyncer] Unwrapping sidecar DEK via RSA-OAEP...");
               const rawSidecarDek = await crypto.subtle.decrypt(
@@ -269,7 +283,7 @@ export function useAudioTrackSyncer({
         setIsLoading(false);
       }
     },
-    [dek, privateKey, metadataKey, playSynced],
+    [dek, privateKey, metadataKey, playSynced, workspace, workspaceSpaceKey.rawSpaceKey],
   );
 
   // Public API: select a track by ID (null = use video's native audio)

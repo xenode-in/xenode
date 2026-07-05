@@ -1,9 +1,6 @@
 import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  GET as bucketsGET,
-  POST as bucketsPOST,
-} from "@/app/api/orgs/[orgId]/buckets/route";
+import { GET as bucketsGET } from "@/app/api/orgs/[orgId]/buckets/route";
 import { GET as objectsGET } from "@/app/api/orgs/[orgId]/objects/route";
 import { POST as completeUploadPOST } from "@/app/api/orgs/[orgId]/objects/complete-upload/route";
 import { POST as presignPOST } from "@/app/api/orgs/[orgId]/objects/presign-upload/route";
@@ -70,14 +67,19 @@ async function addMember(userId: string, role = "member", orgId = "org_1") {
 }
 
 async function createOrgBucket(orgId = "org_1") {
-  return Bucket.create({
-    userId: `org:${orgId}`,
-    ownerScope: "organization",
-    orgId,
-    createdBy: "owner_1",
-    name: `${orgId.replace(/_/g, "-")}-files`,
-    b2BucketId: `b2-${orgId}`,
-  });
+  await createOrg(orgId).catch(() => {});
+  return Bucket.findOneAndUpdate(
+    { userId: "system", name: "xenode-organization-dev" },
+    {
+      $setOnInsert: {
+        userId: "system",
+        ownerScope: "organization",
+        name: "xenode-organization-dev",
+        b2BucketId: "xenode-organization-dev",
+      },
+    },
+    { new: true, upsert: true },
+  );
 }
 
 function params(orgId = "org_1") {
@@ -105,26 +107,11 @@ describe("organization storage API", () => {
     mockedGetServerSession.mockReset();
   });
 
-  it("creates and lists buckets in the organization scope", async () => {
+  it("lists the shared organization storage bucket", async () => {
     process.env.ORGS_ENABLED = "true";
     mockSession("owner_1");
     await createOrg();
     await addMember("owner_1", "owner");
-
-    const createResponse = await bucketsPOST(
-      request("/api/orgs/org_1/buckets", "POST", { name: "team-files" }),
-      params(),
-    );
-    const createBody = await createResponse.json();
-
-    expect(createResponse.status).toBe(201);
-    expect(createBody.bucket).toMatchObject({
-      userId: "org:org_1",
-      ownerScope: "organization",
-      orgId: "org_1",
-      createdBy: "owner_1",
-      name: "team-files",
-    });
 
     const listResponse = await bucketsGET(
       request("/api/orgs/org_1/buckets"),
@@ -134,7 +121,12 @@ describe("organization storage API", () => {
 
     expect(listResponse.status).toBe(200);
     expect(listBody.buckets).toHaveLength(1);
-    expect(listBody.buckets[0].orgId).toBe("org_1");
+    expect(listBody.buckets[0]).toMatchObject({
+      userId: "system",
+      ownerScope: "organization",
+      name: "xenode-organization-dev",
+      b2BucketId: "xenode-organization-dev",
+    });
   });
 
   it("does not allow guests to use organization storage", async () => {
@@ -164,7 +156,7 @@ describe("organization storage API", () => {
 
     const response = await completeUploadPOST(
       request("/api/orgs/org_1/objects/complete-upload", "POST", {
-        bucketId: bucket._id.toString(),
+        bucketId: bucket!._id.toString(),
         objectKey: "workspaces/org_1/objects/file.txt",
         size: 10,
         contentType: "text/plain",
@@ -195,7 +187,7 @@ describe("organization storage API", () => {
 
     const response = await presignPOST(
       request("/api/orgs/org_1/objects/presign-upload", "POST", {
-        bucketId: bucket._id.toString(),
+        bucketId: bucket!._id.toString(),
         fileName: "../leaky-name.txt",
         fileType: "text/plain",
         prefix: "users/member_1/",
@@ -224,7 +216,7 @@ describe("organization storage API", () => {
     const otherBucket = await createOrgBucket("org_2");
 
     await StorageObject.create({
-      bucketId: otherBucket._id,
+      bucketId: otherBucket!._id,
       userId: "org:org_2",
       ownerScope: "organization",
       orgId: "org_2",
@@ -242,7 +234,7 @@ describe("organization storage API", () => {
 
     const completeResponse = await completeUploadPOST(
       request("/api/orgs/org_1/objects/complete-upload", "POST", {
-        bucketId: bucket._id.toString(),
+        bucketId: bucket!._id.toString(),
         objectKey: "workspaces/org_1/objects/file.txt",
         size: 10,
         contentType: "text/plain",
@@ -268,7 +260,7 @@ describe("organization storage API", () => {
     });
 
     const listResponse = await objectsGET(
-      request(`/api/orgs/org_1/objects?bucketId=${bucket._id.toString()}&fetchAll=true`),
+      request(`/api/orgs/org_1/objects?bucketId=${bucket!._id.toString()}&fetchAll=true`),
       params("org_1"),
     );
     const listBody = await listResponse.json();

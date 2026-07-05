@@ -29,6 +29,19 @@ function serializeUser(user?: UserRecord) {
     : null;
 }
 
+// better-auth stores `member.userId` as the string form of the user document's
+// `_id`, and the user docs have no separate `id` field — so match on both.
+function userIdLookup(userIds: string[]) {
+  const objectIds = userIds
+    .filter((id) => mongoose.Types.ObjectId.isValid(id))
+    .map((id) => new mongoose.Types.ObjectId(id));
+  return { $or: [{ id: { $in: userIds } }, { _id: { $in: objectIds } }] };
+}
+
+function userAuthId(user: UserRecord): string {
+  return user.id || String(user._id ?? "");
+}
+
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const ctx = await requireAccessContext(request);
@@ -47,12 +60,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       .sort({ createdAt: 1 })
       .toArray();
     const userIds = members.map((member) => member.userId);
-    const users = await mongoose.connection
-      .collection<UserRecord>("user")
-      .find({ id: { $in: userIds } })
-      .project({ id: 1, email: 1, name: 1, image: 1 })
-      .toArray();
-    const userById = new Map(users.map((user) => [user.id, user]));
+    const users = userIds.length
+      ? await mongoose.connection
+          .collection<UserRecord>("user")
+          .find(userIdLookup(userIds))
+          .project({ id: 1, email: 1, name: 1, image: 1 })
+          .toArray()
+      : [];
+    const userById = new Map(users.map((user) => [userAuthId(user), user]));
 
     return NextResponse.json({
       members: members.map((member) => ({

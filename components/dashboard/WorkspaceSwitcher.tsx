@@ -76,7 +76,7 @@ export function WorkspaceSwitcher({ orgs, activeOrgId }: WorkspaceSwitcherProps)
         throw new Error(data.error || "Failed to switch workspace");
       }
       setOpen(false);
-      router.push("/dashboard");
+      router.push(orgId ? "/dashboard/org/files" : "/dashboard");
       router.refresh();
     } catch (error) {
       toast.error(

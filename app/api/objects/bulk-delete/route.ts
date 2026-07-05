@@ -53,6 +53,15 @@ export const dynamic = "force-dynamic";
 // library; the client chunks anything bigger. Keeps the $in queries sane.
 const MAX_IDS = 10000;
 
+function canDeleteInScope(ctx: Awaited<ReturnType<typeof requireAccessContext>>): boolean {
+  if (ctx.scope.type === "personal") return true;
+  return (
+    ctx.scope.role === "owner" ||
+    ctx.scope.role === "admin" ||
+    ctx.scope.role === "manager"
+  );
+}
+
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
   let userId: string | null = null;
@@ -63,6 +72,15 @@ export async function POST(request: NextRequest) {
     const ctx = await requireAccessContext(request);
     userId = ctx.userId;
     await enforceStorageAccess(userId);
+
+    if (!canDeleteInScope(ctx)) {
+      statusCode = 403;
+      errorMessage = "Forbidden";
+      return NextResponse.json(
+        { error: errorMessage, code: "workspace_delete_role_required" },
+        { status: statusCode },
+      );
+    }
 
     let body: { bucketId?: unknown; ids?: unknown };
     try {

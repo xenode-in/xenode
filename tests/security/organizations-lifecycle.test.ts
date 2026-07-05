@@ -133,10 +133,9 @@ describe("organization lifecycle API", () => {
     expect(org?.slug).toBe("acme-labs");
     expect(member?.role).toBe("owner");
     await expect(Bucket.countDocuments({
-      ownerScope: "organization",
-      orgId: body.organization.id,
-      name: "workspace",
-      userId: `org:${body.organization.id}`,
+      userId: "system",
+      name: "xenode-organization-dev",
+      b2BucketId: "xenode-organization-dev",
     })).resolves.toBe(1);
     expect(await OrgKeyGrant.countDocuments({
       orgId: body.organization.id,

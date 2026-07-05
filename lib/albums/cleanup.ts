@@ -117,7 +117,7 @@ export async function removeObjectsFromAlbums(
         },
       },
     },
-  ]);
+  ], { updatePipeline: true });
 
   // 3. Drop the matching items from any active album share links.
   await AlbumShareLink.updateMany(

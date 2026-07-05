@@ -14,6 +14,7 @@ import {
   requireOrgStorageMembership,
 } from "@/lib/orgs/storage";
 import { assertOrgStorageHeadroom } from "@/lib/orgs/billing/orgUsage";
+import { enforceRateLimit } from "@/lib/ratelimit/limiter";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const ctx = await requireAccessContext(request);
     const { orgId } = await params;
     await requireOrgStorageMembership({ userId: ctx.userId, orgId, action: "write" });
+    await enforceRateLimit({
+      key: `org-presign:${ctx.userId}`,
+      limit: 600,
+      windowMs: 60 * 1000,
+    });
 
     const {
       bucketId,

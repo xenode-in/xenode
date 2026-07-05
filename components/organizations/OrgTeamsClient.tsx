@@ -404,7 +404,12 @@ export function OrgTeamsClient({
           </section>
         )}
 
-        <OrgFilesClient orgId={orgId} orgName={openTeam.name} teamId={openTeam.id} />
+        <OrgFilesClient
+          orgId={orgId}
+          orgName={openTeam.name}
+          teamId={openTeam.id}
+          role={role}
+        />
       </div>
     );
   }

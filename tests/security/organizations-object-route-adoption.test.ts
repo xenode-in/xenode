@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET as metadataGET } from "@/app/api/objects/metadata/route";
+import { DELETE as objectDELETE } from "@/app/api/objects/[id]/route";
+import { POST as completeUploadPOST } from "@/app/api/objects/complete-upload/route";
 import { POST as folderPOST } from "@/app/api/objects/folder/route";
 import { PATCH as reorderPATCH } from "@/app/api/objects/reorder/route";
 import { getServerSession } from "@/lib/auth/session";
@@ -8,6 +10,16 @@ import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 
 const mockedGetServerSession = vi.mocked(getServerSession);
+
+vi.mock("@/lib/subscriptions/service", () => ({
+  enforceStorageAccess: vi.fn(async () => undefined),
+}));
+
+vi.mock("@/lib/b2/client", () => ({
+  getS3Client: vi.fn(() => ({
+    send: vi.fn(async () => ({ VersionId: "b2-version" })),
+  })),
+}));
 
 function mockSession(userId = "user_1") {
   mockedGetServerSession.mockResolvedValue({
@@ -39,19 +51,26 @@ async function createBucket(userId = "user_1") {
   });
 }
 
-async function addOrgMember(userId = "user_1") {
+async function addOrgMember(userId = "user_1", role = "admin") {
   await Bucket.db.collection("member").insertOne({
     userId,
     organizationId: "org_1",
-    role: "admin",
+    role,
     createdAt: new Date(),
   });
 }
 
-function expectOrgStorageClosed(body: unknown) {
-  expect(body).toEqual({
-    error: "Organization storage is not enabled yet",
-    code: "organization_storage_not_ready",
+async function addTeamMember(userId = "user_1", teamId = "team_1") {
+  await Bucket.db.collection("team").insertOne({
+    id: teamId,
+    name: "Engineering",
+    organizationId: "org_1",
+    createdAt: new Date(),
+  });
+  await Bucket.db.collection("teamMember").insertOne({
+    userId,
+    teamId,
+    createdAt: new Date(),
   });
 }
 
@@ -88,7 +107,7 @@ describe("organization object route adoption", () => {
     expect(body.items[0]._id).toBe(String(object._id));
   });
 
-  it("fails closed for explicit org metadata requests", async () => {
+  it("does not expose personal metadata buckets under org scope", async () => {
     process.env.ORGS_ENABLED = "true";
     mockSession("user_1");
     const bucket = await createBucket("user_1");
@@ -101,11 +120,11 @@ describe("organization object route adoption", () => {
       ),
     );
 
-    expect(response.status).toBe(501);
-    expectOrgStorageClosed(await response.json());
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "Bucket not found" });
   });
 
-  it("fails closed for explicit org folder creation requests", async () => {
+  it("does not create folders in personal buckets under org scope", async () => {
     process.env.ORGS_ENABLED = "true";
     mockSession("user_1");
     const bucket = await createBucket("user_1");
@@ -126,11 +145,11 @@ describe("organization object route adoption", () => {
       }),
     );
 
-    expect(response.status).toBe(501);
-    expectOrgStorageClosed(await response.json());
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "Bucket not found" });
   });
 
-  it("fails closed for explicit org reorder requests", async () => {
+  it("does not reorder personal bucket objects under org scope", async () => {
     process.env.ORGS_ENABLED = "true";
     mockSession("user_1");
     const bucket = await createBucket("user_1");
@@ -150,7 +169,139 @@ describe("organization object route adoption", () => {
       }),
     );
 
-    expect(response.status).toBe(501);
-    expectOrgStorageClosed(await response.json());
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({ error: "Bucket not found" });
+  });
+
+  it("requires space-wrapped encryption on generic org complete-upload", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("user_1");
+    await addOrgMember("user_1", "member");
+    const bucket = await Bucket.create({
+      userId: "system",
+      name: "xenode-organization-dev",
+      b2BucketId: "xenode-organization-dev",
+    });
+
+    const response = await completeUploadPOST(
+      new NextRequest("http://localhost/api/objects/complete-upload", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-xenode-drive-scope": "organization",
+        },
+        body: JSON.stringify({
+          bucketId: String(bucket._id),
+          objectKey: "workspaces/org_1/objects/file.txt",
+          size: 10,
+          contentType: "application/octet-stream",
+          originalContentType: "text/plain",
+          isEncrypted: true,
+          wrappedBy: "user",
+          encryptedDEK: "rsa-wrapped",
+          iv: "iv",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error:
+        "Organization and team uploads must be encrypted and wrapped by the workspace space key",
+      code: "workspace_space_wrapped_encryption_required",
+    });
+  });
+
+  it("forbids ordinary team members from deleting team drive objects", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("user_1");
+    await addOrgMember("user_1", "member");
+    await addTeamMember("user_1");
+    const bucket = await Bucket.create({
+      userId: "system",
+      name: "xenode-organization-dev",
+      b2BucketId: "xenode-organization-dev",
+    });
+    const object = await StorageObject.create({
+      bucketId: bucket._id,
+      userId: "org:org_1",
+      ownerScope: "team",
+      orgId: "org_1",
+      teamId: "team_1",
+      key: "workspaces/org_1/teams/team_1/objects/file.txt",
+      size: 10,
+      contentType: "text/plain",
+      mediaCategory: "document",
+      b2FileId: "b2-file",
+      isEncrypted: true,
+      wrappedBy: "space",
+      encryptedDEK: "wrapped",
+      spaceKeyVersion: 1,
+      spaceKeyWrapIv: "wrap-iv",
+    });
+
+    const response = await objectDELETE(
+      new NextRequest(`http://localhost/api/objects/${object._id}`, {
+        method: "DELETE",
+        headers: {
+          "x-xenode-drive-scope": "team",
+          "x-xenode-team-id": "team_1",
+        },
+      }),
+      { params: Promise.resolve({ id: object._id.toString() }) },
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: "Forbidden",
+      code: "workspace_delete_role_required",
+    });
+  });
+
+  it("allows org managers to delete team drive objects", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("manager_1");
+    await addOrgMember("manager_1", "manager");
+    await addTeamMember("manager_1");
+    const bucket = await Bucket.create({
+      userId: "system",
+      name: "xenode-organization-dev",
+      b2BucketId: "xenode-organization-dev",
+    });
+    const object = await StorageObject.create({
+      bucketId: bucket._id,
+      userId: "org:org_1",
+      ownerScope: "team",
+      orgId: "org_1",
+      teamId: "team_1",
+      key: "workspaces/org_1/teams/team_1/objects/file.txt",
+      size: 10,
+      contentType: "text/plain",
+      mediaCategory: "document",
+      b2FileId: "b2-file",
+      isEncrypted: true,
+      wrappedBy: "space",
+      encryptedDEK: "wrapped",
+      spaceKeyVersion: 1,
+      spaceKeyWrapIv: "wrap-iv",
+    });
+
+    const response = await objectDELETE(
+      new NextRequest(`http://localhost/api/objects/${object._id}`, {
+        method: "DELETE",
+        headers: {
+          "x-xenode-drive-scope": "team",
+          "x-xenode-team-id": "team_1",
+        },
+      }),
+      { params: Promise.resolve({ id: object._id.toString() }) },
+    );
+
+    const body = await response.json();
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(body).toEqual({ success: true });
+    await expect(
+      StorageObject.exists({ _id: object._id, deletedAt: { $exists: true } }),
+    ).resolves.toBeTruthy();
   });
 });

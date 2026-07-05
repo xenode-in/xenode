@@ -271,6 +271,7 @@ export function OrganizationsClient() {
       );
       toast.success(orgId ? "Organization selected" : "Personal scope selected");
       await refresh();
+      router.push(orgId ? "/dashboard/org/files" : "/dashboard");
       router.refresh();
     } catch (error) {
       toast.error(

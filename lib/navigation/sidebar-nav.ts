@@ -21,7 +21,6 @@ import {
   Activity,
   GitPullRequest,
   UserCog,
-  Layers,
   ShieldCheck,
   ScrollText,
   Webhook,
@@ -81,12 +80,13 @@ export const ORG_NAV: NavItem[] = [
   { label: "Shared", href: "/dashboard/org/shared", icon: Share2, roles: MEMBERS },
   { label: "Shared With Me", href: "/dashboard/org/shared-with-me", icon: Inbox, roles: ["guest"] },
   { label: "People", href: "/dashboard/org/people", icon: Contact },
-  { label: "Recent", href: "/dashboard/org/recent", icon: Clock },
+  { label: "Recent", href: "/dashboard/org/recent", icon: Clock, roles: MEMBERS },
   { label: "Favorites", href: "/dashboard/org/favorites", icon: Star, roles: MEMBERS },
   { label: "Activity", href: "/dashboard/org/activity", icon: Activity },
   { label: "Requests", href: "/dashboard/org/requests", icon: GitPullRequest },
   { label: "Users", href: "/dashboard/org/users", icon: UserCog, roles: ADMINS },
-  { label: "Teams", href: "/dashboard/org/teams", icon: Layers, roles: ADMINS },
+  // Team management lives under "Team Spaces" (create/rename/delete + members) —
+  // no separate admin "Teams" item to avoid a duplicate destination.
   { label: "Analytics", href: "/dashboard/org/analytics", icon: BarChart3, roles: ADMINS },
   { label: "Security", href: "/dashboard/org/security", icon: ShieldCheck, roles: ADMINS },
   { label: "Audit Logs", href: "/dashboard/org/audit", icon: ScrollText, roles: ADMINS },

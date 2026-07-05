@@ -46,6 +46,9 @@ export const ActivityAction = {
   ORG_CREATED: "org.created",
   ORG_SETTINGS_UPDATED: "org.settings_updated",
   ORG_OWNERSHIP_TRANSFERRED: "org.ownership_transferred",
+  ORG_DELETED: "org.deleted",
+  ORG_RESTORED: "org.restored",
+  MEMBER_INVITE_CANCELLED: "member.invite_cancelled",
 
   MEMBER_INVITED: "member.invited",
   MEMBER_JOINED: "member.joined",

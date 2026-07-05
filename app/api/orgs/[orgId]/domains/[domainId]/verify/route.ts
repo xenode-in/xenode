@@ -8,6 +8,7 @@ import {
 import { assertOrgMemberRole } from "@/lib/orgs/access";
 import dbConnect from "@/lib/mongodb";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
+import { enforceRateLimit } from "@/lib/ratelimit/limiter";
 import OrgDomain from "@/models/OrgDomain";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +25,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       userId: ctx.userId,
       orgId,
       allowed: ["owner", "admin"],
+    });
+    await enforceRateLimit({
+      key: `domain-verify:${orgId}`,
+      limit: 20,
+      windowMs: 10 * 60 * 1000,
     });
     await dbConnect();
 

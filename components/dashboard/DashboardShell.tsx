@@ -13,6 +13,7 @@ import {
   WorkspaceSwitcher,
   type SwitcherOrg,
 } from "@/components/dashboard/WorkspaceSwitcher";
+import { NotificationBell } from "@/components/dashboard/NotificationBell";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -240,8 +241,9 @@ export function DashboardShell({
             </div>
             
 
-            {/* User dropdown */}
-            <div className="ml-auto flex items-center shrink-0">
+            {/* Notifications + user dropdown */}
+            <div className="ml-auto flex items-center gap-1 shrink-0">
+              {mounted && <NotificationBell />}
               {mounted ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>

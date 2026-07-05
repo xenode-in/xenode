@@ -6,7 +6,6 @@ import { POST as teamMemberPOST } from "@/app/api/orgs/[orgId]/teams/[teamId]/me
 import { DELETE as teamMemberDELETE } from "@/app/api/orgs/[orgId]/teams/[teamId]/members/[memberUserId]/route";
 import { POST as teamCompletePOST } from "@/app/api/orgs/[orgId]/teams/[teamId]/objects/complete-upload/route";
 import { getServerSession } from "@/lib/auth/session";
-import { orgBucketClause } from "@/lib/orgs/storage";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
@@ -92,7 +91,7 @@ describe("organization teams & team drives", () => {
     mockedGetServerSession.mockReset();
   });
 
-  it("lets an owner create a team with drive + owner team key grant", async () => {
+  it("lets an owner create a team with owner team key grant", async () => {
     process.env.ORGS_ENABLED = "true";
     mockSession("owner_1");
     await createOrg();
@@ -107,14 +106,10 @@ describe("organization teams & team drives", () => {
     ).resolves.toBe(1);
     await expect(
       Bucket.countDocuments({ ownerScope: "team", orgId: "org_1", teamId, name: "workspace" }),
-    ).resolves.toBe(1);
+    ).resolves.toBe(0);
     await expect(
       OrgKeyGrant.countDocuments({ orgId: "org_1", teamId, memberUserId: "owner_1" }),
     ).resolves.toBe(1);
-
-    // Team bucket must NOT be matched by the org (non-team) bucket clause.
-    const orgScoped = await Bucket.findOne({ ...orgBucketClause("org_1"), teamId });
-    expect(orgScoped).toBeNull();
   });
 
   it("forbids non-admins from creating teams", async () => {
@@ -203,11 +198,16 @@ describe("organization teams & team drives", () => {
     await addOrgMember("owner_1", "owner");
     const { body } = await createTeam();
     const teamId = body.team.id;
-    const bucket = await Bucket.findOne({ ownerScope: "team", orgId: "org_1", teamId });
+    const bucket = await Bucket.create({
+      userId: "system",
+      ownerScope: "organization",
+      name: "xenode-organization-dev",
+      b2BucketId: "xenode-organization-dev",
+    });
 
     const res = await teamCompletePOST(
       req(`/api/orgs/org_1/teams/${teamId}/objects/complete-upload`, {
-        bucketId: bucket!._id.toString(),
+        bucketId: bucket._id.toString(),
         objectKey: `workspaces/org_1/teams/${teamId}/objects/file.bin`,
         size: 500,
         contentType: "text/plain",

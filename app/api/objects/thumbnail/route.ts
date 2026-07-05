@@ -8,6 +8,7 @@ import {
 import { getDownloadUrl } from "@/lib/b2/objects";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
+import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -30,10 +31,20 @@ export async function GET(request: NextRequest) {
 
     const userId = ctx?.userId ?? null;
 
+    const workspacePrefix =
+      ctx?.scope.type === "organization"
+        ? orgObjectKeyPrefix(ctx.scope.orgId)
+        : ctx?.scope.type === "team"
+          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+          : null;
+
     if (key.startsWith("shares/")) {
       // Public share thumbnails are intentionally readable without auth.
     } else if (userId && key.startsWith(`users/${userId}/`)) {
       // The ownership query below also fails closed for non-personal scopes.
+    } else if (workspacePrefix && key.startsWith(workspacePrefix)) {
+      // Org/team thumbnails — access is already gated by the resolved scope
+      // (getAccessContext verified org/team membership).
     } else {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }

@@ -8,10 +8,7 @@ import {
   assertOrgMemberRole,
   type TeamRecord,
 } from "@/lib/orgs/access";
-import { orgStorageOwnerId } from "@/lib/orgs/storage";
-import { getBucketForWorkspace } from "@/lib/storage/workspaceBucket";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
-import Bucket from "@/models/Bucket";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
 
 export const dynamic = "force-dynamic";
@@ -131,21 +128,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           rotationReason: "initial",
         });
       }
-      await Bucket.create({
-        userId: orgStorageOwnerId(orgId),
-        ownerScope: "team",
-        orgId,
-        teamId: team.id,
-        createdBy: ctx.userId,
-        name: "workspace",
-        b2BucketId: getBucketForWorkspace("ORGANIZATION"),
-      });
     } catch (error) {
       await mongoose.connection.collection("team").deleteOne({ id: team.id });
       await mongoose.connection
         .collection("teamMember")
         .deleteMany({ teamId: team.id });
-      await Bucket.deleteMany({ orgId, teamId: team.id });
       await OrgKeyGrant.deleteMany({ orgId, teamId: team.id });
       throw error;
     }

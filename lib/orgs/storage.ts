@@ -6,6 +6,7 @@ import {
   type OrgMembership,
 } from "@/lib/orgs/access";
 import Bucket, { type IBucket } from "@/models/Bucket";
+import { systemWorkspaceBucketName } from "@/lib/storage/workspaceBucket";
 
 export type OrgStorageAction = "read" | "write" | "manage" | "delete";
 
@@ -80,7 +81,9 @@ export async function loadOrgBucket(args: {
 }): Promise<IBucket> {
   const bucket = await Bucket.findOne({
     _id: args.bucketId,
-    ...orgBucketClause(args.orgId),
+    userId: "system",
+    name: systemWorkspaceBucketName("ORGANIZATION"),
+    b2BucketId: systemWorkspaceBucketName("ORGANIZATION"),
   });
 
   if (!bucket) {
@@ -153,7 +156,9 @@ export async function loadTeamBucket(args: {
 }): Promise<IBucket> {
   const bucket = await Bucket.findOne({
     _id: args.bucketId,
-    ...teamBucketClause(args.orgId, args.teamId),
+    userId: "system",
+    name: systemWorkspaceBucketName("ORGANIZATION"),
+    b2BucketId: systemWorkspaceBucketName("ORGANIZATION"),
   });
 
   if (!bucket) {

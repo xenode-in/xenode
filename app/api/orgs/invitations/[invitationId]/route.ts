@@ -11,6 +11,7 @@ import dbConnect from "@/lib/mongodb";
 import { assertOrganizationsEnabled } from "@/lib/orgs/access";
 import { syncSeatsUsed } from "@/lib/orgs/billing/seats";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
+import { emitNotification } from "@/lib/notifications/emit";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
 
 export const dynamic = "force-dynamic";
@@ -227,6 +228,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       actorUserId: ctx.userId,
       target: { type: "member", id: ctx.userId },
       metadata: { role: invitation.role },
+    });
+    await emitNotification({
+      userId: invitation.inviterId,
+      type: "invite_accepted",
+      title: "Invitation accepted",
+      body: "A member accepted your organization invitation.",
+      orgId: invitation.organizationId,
+      metadata: { invitationId: invitation.id },
     });
 
     return NextResponse.json({

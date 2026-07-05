@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   bucketOwnershipClause,
   isAuthzError,
+  objectOwnershipClause,
   requireAccessContext,
   toJsonResponse,
 } from "@/lib/authz";
@@ -17,11 +18,12 @@ export const dynamic = "force-dynamic";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 
 const LIST_PROJECTION =
   "key size contentType encryptedContentType thumbnail tags position starred lastAccessedAt uploadSource createdAt " +
-  "isEncrypted encryptedName encryptedDisplayName mediaCategory " +
-  "optimizedKey optimizedEncryptedDEK optimizedIV optimizedSize aspectRatio syncContentFp";
+  "isEncrypted encryptedName encryptedDisplayName mediaCategory wrappedBy spaceKeyVersion spaceKeyWrapIv " +
+  "optimizedKey optimizedEncryptedDEK optimizedIV optimizedSpaceKeyWrapIv optimizedSize aspectRatio syncContentFp";
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
@@ -116,10 +118,17 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
+    const allowedSystemPrefix =
+      ctx.scope.type === "organization"
+        ? orgObjectKeyPrefix(ctx.scope.orgId)
+        : ctx.scope.type === "team"
+          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+        : `users/${userId}/`;
+
     if (
       prefix !== null &&
       bucket.userId === "system" &&
-      !prefix.startsWith(`users/${userId}/`)
+      !prefix.startsWith(allowedSystemPrefix)
     ) {
       statusCode = 403;
       errorMessage = "Access denied to this folder";
@@ -164,6 +173,7 @@ export async function GET(request: NextRequest) {
 
     const query: Record<string, unknown> = {
       bucketId,
+      ...objectOwnershipClause(ctx),
       deletedAt: { $exists: deleted },
       isSidecar: { $ne: true }, // exclude subtitle/audio sidecar files from listings
     };
@@ -183,8 +193,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (bucket.userId === "system") {
-      const prefix = `users/${userId}/`;
-      query.key = { $gte: prefix, $lt: prefix + "\uffff" };
+      query.key = { $gte: allowedSystemPrefix, $lt: allowedSystemPrefix + "\uffff" };
     }
 
     if (prefix !== null) {

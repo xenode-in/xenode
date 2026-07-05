@@ -29,6 +29,7 @@ interface OrgRow {
   name: string;
   slug?: string | null;
   logo?: string | null;
+  deletedAt?: Date | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -65,6 +66,7 @@ export async function listUserOrgs(
     .map((member): UserOrgSummary | null => {
       const org = orgById.get(member.organizationId);
       if (!org) return null;
+      if (org.deletedAt) return null; // hide soft-deleted orgs
       return {
         id: org.id,
         name: org.name,

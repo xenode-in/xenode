@@ -11,6 +11,10 @@
     {
       "path": "/api/cron/purge-bin",
       "schedule": "0 2 * * *"
+    },
+    {
+      "path": "/api/cron/purge-orgs",
+      "schedule": "0 3 * * *"
     }
   ]
 }

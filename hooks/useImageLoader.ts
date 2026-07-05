@@ -3,8 +3,11 @@ import { useThumbnail } from "./useThumbnail";
 import {
   decryptFile,
   decryptFileChunkedCombined,
+  decryptFileWithDEK,
+  unwrapDEKWithSpaceKey,
 } from "@/lib/crypto/fileEncryption";
-import { fromB64 } from "@/lib/crypto/utils";
+import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
+import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 
 interface UseImageLoaderProps {
   thumbnail?: string;
@@ -31,6 +34,8 @@ export function useImageLoader({
   loadFull = true,
 }: UseImageLoaderProps) {
   const thumbnailUrl = useThumbnail(thumbnail, metadataKey);
+  const workspace = useOptionalWorkspace();
+  const workspaceSpaceKey = useWorkspaceSpaceKey();
   const [fullUrl, setFullUrl] = useState<string | null>(null);
   const [isLoadingFull, setIsLoadingFull] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +51,9 @@ export function useImageLoader({
       setError(null);
 
       try {
-        const res = await fetch(`/api/objects/${fileId}`);
+        const res = workspace?.scopedFetch
+          ? await workspace.scopedFetch(`/api/objects/${fileId}`)
+          : await fetch(`/api/objects/${fileId}`);
         if (!res.ok) throw new Error("Failed to fetch image metadata");
         const data = await res.json();
 
@@ -58,7 +65,7 @@ export function useImageLoader({
         let finalBlob: Blob;
 
         if (isEncrypted && data.isEncrypted) {
-          if (!privateKey)
+          if (!privateKey && data.wrappedBy !== "space")
             throw new Error("Private key required for decryption");
 
           // Standard or Chunked Fetching
@@ -67,14 +74,33 @@ export function useImageLoader({
             throw new Error("Failed to download encrypted file");
           const ciphertextBuf = await fetchRes.arrayBuffer();
 
+          let workspaceDEK: CryptoKey | null = null;
+          if (data.wrappedBy === "space") {
+            if (!workspaceSpaceKey.rawSpaceKey || !data.spaceKeyWrapIv) {
+              throw new Error("Workspace key required for decryption");
+            }
+            workspaceDEK = await unwrapDEKWithSpaceKey(
+              data.encryptedDEK,
+              data.spaceKeyWrapIv,
+              workspaceSpaceKey.rawSpaceKey,
+            );
+          }
+
           if (data.chunkIvs && data.chunkSize && data.chunkCount) {
             finalBlob = await decryptFileChunkedCombined(
               ciphertextBuf,
-              data.encryptedDEK,
+              workspaceDEK ? null : data.encryptedDEK,
               data.chunkIvs,
               data.chunkSize,
               data.chunkCount,
-              privateKey,
+              workspaceDEK ?? privateKey!,
+              type,
+            );
+          } else if (workspaceDEK) {
+            finalBlob = await decryptFileWithDEK(
+              ciphertextBuf,
+              workspaceDEK,
+              data.iv,
               type,
             );
           } else {
@@ -84,7 +110,7 @@ export function useImageLoader({
               ciphertextBuf,
               data.encryptedDEK,
               data.iv,
-              privateKey,
+              privateKey!,
               type,
             );
           }
@@ -123,6 +149,8 @@ export function useImageLoader({
     fileId,
     isEncrypted,
     privateKey,
+    workspace,
+    workspaceSpaceKey.rawSpaceKey,
     fullUrl,
     isLoadingFull,
   ]);

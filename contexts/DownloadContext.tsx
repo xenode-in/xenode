@@ -11,7 +11,11 @@ import {
   decryptFile,
   decryptFileChunkedCombined,
   decryptMetadataString,
+  decryptFileWithDEK,
+  unwrapDEKWithSpaceKey,
 } from "@/lib/crypto/fileEncryption";
+import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
+import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 import {
   getCachedSize,
   getCachedBytes,
@@ -64,6 +68,8 @@ const abortControllers = new Map<string, AbortController>();
 export function DownloadProvider({ children }: { children: React.ReactNode }) {
   const [tasks, setTasks] = useState<DownloadTask[]>([]);
   const [pendingResumes, setPendingResumes] = useState<PendingResume[]>([]);
+  const workspace = useOptionalWorkspace();
+  const workspaceSpaceKey = useWorkspaceSpaceKey();
 
   useEffect(() => {
     getCachedIds().then(async (ids) => {
@@ -73,7 +79,9 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
           const cachedBytes = await getCachedSize(id);
           let name = id;
           try {
-            const res = await fetch(`/api/objects/${id}`);
+            const res = workspace?.scopedFetch
+              ? await workspace.scopedFetch(`/api/objects/${id}`)
+              : await fetch(`/api/objects/${id}`);
             if (res.ok) {
               const data = await res.json();
               name = (data.key as string)?.split("/").pop() ?? id;
@@ -164,7 +172,11 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
       ]);
 
       try {
-        const res = await fetch(`/api/objects/${obj.id}`, {
+        const res = workspace?.scopedFetch
+          ? await workspace.scopedFetch(`/api/objects/${obj.id}`, {
+              signal: controller.signal,
+            })
+          : await fetch(`/api/objects/${obj.id}`, {
           signal: controller.signal,
         });
         const data = await res.json();
@@ -184,7 +196,21 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        if (!privateKey) throw new Error("Vault locked. Please unlock first.");
+        if (!privateKey && data.wrappedBy !== "space") {
+          throw new Error("Vault locked. Please unlock first.");
+        }
+
+        let workspaceDEK: CryptoKey | null = null;
+        if (data.wrappedBy === "space") {
+          if (!workspaceSpaceKey.rawSpaceKey || !data.spaceKeyWrapIv) {
+            throw new Error("Workspace key unavailable. Please unlock first.");
+          }
+          workspaceDEK = await unwrapDEKWithSpaceKey(
+            data.encryptedDEK,
+            data.spaceKeyWrapIv,
+            workspaceSpaceKey.rawSpaceKey,
+          );
+        }
 
         const isChunked = !!(
           data.chunkUrls &&
@@ -378,11 +404,18 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         if (isChunked) {
           decryptedBlob = await decryptFileChunkedCombined(
             cachedBytes.buffer as ArrayBuffer,
-            data.encryptedDEK,
+            workspaceDEK ? null : data.encryptedDEK,
             data.chunkIvs,
             data.chunkSize,
             data.chunkCount,
-            privateKey,
+            workspaceDEK ?? privateKey!,
+            finalContentType,
+          );
+        } else if (workspaceDEK) {
+          decryptedBlob = await decryptFileWithDEK(
+            cachedBytes.buffer as ArrayBuffer,
+            workspaceDEK,
+            data.iv,
             finalContentType,
           );
         } else {
@@ -390,7 +423,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
             cachedBytes.buffer as ArrayBuffer,
             data.encryptedDEK,
             data.iv,
-            privateKey,
+            privateKey!,
             finalContentType,
           );
         }
@@ -418,7 +451,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         abortControllers.delete(obj.id);
       }
     },
-    [updateTask],
+    [updateTask, workspace, workspaceSpaceKey.rawSpaceKey],
   );
 
   return (

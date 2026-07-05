@@ -17,6 +17,8 @@ import {
 } from "@/lib/orgs/access";
 import { assertSeatHeadroomForInvite } from "@/lib/orgs/billing/seats";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
+import { emitNotification } from "@/lib/notifications/emit";
+import { enforceRateLimit } from "@/lib/ratelimit/limiter";
 
 export const dynamic = "force-dynamic";
 
@@ -154,6 +156,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       throw new AuthzError(403, "organization_admin_required", "Forbidden");
     }
 
+    await enforceRateLimit({
+      key: `org-invite:${ctx.userId}`,
+      limit: 30,
+      windowMs: 60 * 60 * 1000,
+    });
+
     // Non-guest members consume a billing seat — block over-provisioning.
     // Guests are free and skip the seat check.
     if (role !== "guest") {
@@ -254,6 +262,16 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       target: { type: "invitation", id: invitation.id },
       metadata: { role },
     });
+    if (resolvedRecipientUserId) {
+      await emitNotification({
+        userId: resolvedRecipientUserId,
+        type: "invite_received",
+        title: `You've been invited to ${organization.name}`,
+        body: `Role: ${role}. Open Organizations to accept.`,
+        orgId,
+        metadata: { invitationId: invitation.id, role },
+      });
+    }
 
     return NextResponse.json(
       { invitation: serializeInvitation(invitation) },

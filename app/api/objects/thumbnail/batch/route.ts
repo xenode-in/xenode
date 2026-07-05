@@ -17,6 +17,7 @@ import {
 import { getSignedFileUrl } from "@/lib/b2/cdn";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
+import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -39,12 +40,20 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const keys: string[] = Array.isArray(body?.keys) ? body.keys : [];
 
+    const workspacePrefix =
+      ctx?.scope.type === "organization"
+        ? orgObjectKeyPrefix(ctx.scope.orgId)
+        : ctx?.scope.type === "team"
+          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+          : null;
+
     const allowed = keys
       .filter(
         (key) =>
           typeof key === "string" &&
           (key.startsWith("shares/") ||
-            (userId && key.startsWith(`users/${userId}/`))),
+            (userId && key.startsWith(`users/${userId}/`)) ||
+            (workspacePrefix && key.startsWith(workspacePrefix))),
       )
       .slice(0, MAX_KEYS);
 
@@ -54,11 +63,13 @@ export async function POST(request: NextRequest) {
 
     await dbConnect();
 
-    const hasUserKeys = allowed.some(
-      (key) => userId && key.startsWith(`users/${userId}/`),
+    const hasScopedKeys = allowed.some(
+      (key) =>
+        (userId && key.startsWith(`users/${userId}/`)) ||
+        (workspacePrefix && key.startsWith(workspacePrefix)),
     );
     const bucket = await Bucket.findOne(
-      ctx && hasUserKeys ? bucketOwnershipClause(ctx) : { userId: "system" },
+      ctx && hasScopedKeys ? bucketOwnershipClause(ctx) : { userId: "system" },
     )
       .select("b2BucketId")
       .lean<{ b2BucketId: string }>();

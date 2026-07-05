@@ -11,6 +11,7 @@ import {
   type UserRecord,
 } from "@/lib/orgs/access";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
+import { enforceRateLimit } from "@/lib/ratelimit/limiter";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
 
 export const dynamic = "force-dynamic";
@@ -88,6 +89,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       allowed: ["owner", "admin", "manager"],
     });
     await assertTeamInOrg({ orgId, teamId });
+    await enforceRateLimit({
+      key: `team-add:${ctx.userId}`,
+      limit: 60,
+      windowMs: 60 * 60 * 1000,
+    });
 
     const body = await request.json().catch(() => ({}));
     const memberUserId =

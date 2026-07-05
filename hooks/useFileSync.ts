@@ -4,6 +4,7 @@ import {
   mapServerObjectToLocalFile,
   ServerObject,
 } from "@/lib/db/object-cache";
+import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 
 interface FetchObjectsParams {
   bucketId: string | null;
@@ -26,10 +27,12 @@ export function useFileSync({
   fetchAll = false,
   excludeMobileBackup = false,
 }: FetchObjectsParams) {
+  const workspace = useOptionalWorkspace();
   return useInfiniteQuery({
     queryKey: [
       "files",
       bucketId,
+      workspace?.driveScope,
       sortBy,
       sortDir,
       mediaCategory,
@@ -59,7 +62,9 @@ export function useFileSync({
         url += `&before=${encodeURIComponent(pageParam)}`;
       }
 
-      const res = await fetch(url);
+      const res = workspace?.scopedFetch
+        ? await workspace.scopedFetch(url)
+        : await fetch(url);
       if (!res.ok) throw new Error("Failed to fetch objects");
 
       const data = await res.json();

@@ -12,6 +12,7 @@ import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
+import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -92,7 +93,19 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const basePrefix = prefix || `users/${userId}/`;
+    const allowedPrefix =
+      ctx.scope.type === "organization"
+        ? orgObjectKeyPrefix(ctx.scope.orgId)
+        : ctx.scope.type === "team"
+          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+        : `users/${userId}/`;
+    const basePrefix = typeof prefix === "string" && prefix ? prefix : allowedPrefix;
+    if (!basePrefix.startsWith(allowedPrefix)) {
+      return NextResponse.json(
+        { error: "Access denied to this folder" },
+        { status: 403 },
+      );
+    }
 
     // Fallback to random hex if no filename is provided
     let safeFileName = fileName || randomBytes(16).toString("hex");

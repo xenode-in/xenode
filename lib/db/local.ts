@@ -22,6 +22,9 @@ export interface LocalFile {
   createdAt: string;
   updatedAt: string;
   isEncrypted: boolean;
+  wrappedBy?: "user" | "space";
+  spaceKeyVersion?: number;
+  spaceKeyWrapIv?: string;
   tags: string[];
   thumbnail?: string;
   bucketId: string;
@@ -33,6 +36,7 @@ export interface LocalFile {
   // Preview/optimized version
   optimizedKey?: string;
   optimizedEncryptedDEK?: string;
+  optimizedSpaceKeyWrapIv?: string;
   optimizedIV?: string;
   optimizedSize?: number;
   aspectRatio?: number;

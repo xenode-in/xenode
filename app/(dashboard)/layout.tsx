@@ -67,10 +67,10 @@ export default async function DashboardLayout({
 
   return (
     <CryptoProvider initialUserId={session.user.id}>
-      <DownloadProvider>
-        <PreviewProvider>
-          <UploadProvider>
-            <WorkspaceProvider workspace={workspace}>
+      <WorkspaceProvider workspace={workspace}>
+        <DownloadProvider>
+          <PreviewProvider>
+            <UploadProvider>
               <DashboardShell
                 user={{
                   id: session.user.id,
@@ -84,15 +84,15 @@ export default async function DashboardLayout({
               >
                 <CryptoDashboardWrapper>{children}</CryptoDashboardWrapper>
               </DashboardShell>
-            </WorkspaceProvider>
-            <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-4 w-96 max-w-[calc(100vw-2rem)] pointer-events-none *:pointer-events-auto">
-              <UploadProgress />
-              <DownloadProgress />
-            </div>
-            <UploadDebugOverlay /> {/* TODO: Remove after iOS debugging */}
-          </UploadProvider>
-        </PreviewProvider>
-      </DownloadProvider>
+              <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-4 w-96 max-w-[calc(100vw-2rem)] pointer-events-none *:pointer-events-auto">
+                <UploadProgress />
+                <DownloadProgress />
+              </div>
+              <UploadDebugOverlay /> {/* TODO: Remove after iOS debugging */}
+            </UploadProvider>
+          </PreviewProvider>
+        </DownloadProvider>
+      </WorkspaceProvider>
     </CryptoProvider>
   );
 }

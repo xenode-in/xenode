@@ -8,15 +8,34 @@ import {
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import { createB2Bucket } from "@/lib/b2/buckets";
+import {
+  ensureSystemWorkspaceBucketRecord,
+} from "@/lib/storage/workspaceBucket";
+import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 
 const GLOBAL_BUCKET_NAME = process.env.S3_BUCKET_NAME || "xenode-drive-storage";
 
 export async function GET(request: NextRequest) {
   try {
     const ctx = await requireAccessContext(request);
-    bucketOwnershipClause(ctx);
     await dbConnect();
 
+    if (ctx.scope.type === "organization") {
+      const bucket = await ensureSystemWorkspaceBucketRecord("ORGANIZATION");
+      return NextResponse.json({
+        bucket,
+        rootPrefix: orgObjectKeyPrefix(ctx.scope.orgId),
+      });
+    }
+    if (ctx.scope.type === "team") {
+      const bucket = await ensureSystemWorkspaceBucketRecord("ORGANIZATION");
+      return NextResponse.json({
+        bucket,
+        rootPrefix: teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId),
+      });
+    }
+
+    bucketOwnershipClause(ctx);
     let bucket = await Bucket.findOne({ name: GLOBAL_BUCKET_NAME });
 
     if (!bucket) {

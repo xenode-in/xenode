@@ -18,6 +18,7 @@ import {
   publishSyncEvent,
   toSyncObjectSnapshot,
 } from "@/lib/realtime/publish";
+import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,15 @@ function escapeRegex(value: string): string {
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function canManageInScope(ctx: Awaited<ReturnType<typeof requireAccessContext>>): boolean {
+  if (ctx.scope.type === "personal") return true;
+  return (
+    ctx.scope.role === "owner" ||
+    ctx.scope.role === "admin" ||
+    ctx.scope.role === "manager"
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -48,6 +58,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!canManageInScope(ctx)) {
+      return NextResponse.json(
+        { error: "Forbidden", code: "workspace_manage_role_required" },
+        { status: 403 },
+      );
+    }
+
     await dbConnect();
 
     const bucket = await Bucket.findOne({
@@ -58,9 +75,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
 
+    const allowedPrefix =
+      ctx.scope.type === "organization"
+        ? orgObjectKeyPrefix(ctx.scope.orgId)
+        : ctx.scope.type === "team"
+          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+        : `users/${userId}/`;
+
     if (
       bucket.userId === "system" &&
-      !destinationPrefix.startsWith(`users/${userId}/`)
+      !destinationPrefix.startsWith(allowedPrefix)
     ) {
       return NextResponse.json(
         { error: "Access denied to destination" },
@@ -131,7 +155,7 @@ export async function POST(request: NextRequest) {
     for (const sourceKey of Array.from(new Set(sourceKeys.map(String)))) {
       if (
         bucket.userId === "system" &&
-        !sourceKey.startsWith(`users/${userId}/`)
+        !sourceKey.startsWith(allowedPrefix)
       ) {
         errors.push({ key: sourceKey, error: "Access denied to source" });
         continue;

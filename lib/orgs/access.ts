@@ -12,6 +12,13 @@ export interface OrganizationRecord {
   name: string;
   slug?: string;
   logo?: string | null;
+  primaryColor?: string | null;
+  emailBranding?: string | null;
+  domainJoinPolicy?: "off" | "suggest" | "auto";
+  autoJoinRequiresApproval?: boolean;
+  /** Soft-deletion marker. Set → org is scheduled for purge and inaccessible. */
+  deletedAt?: Date | null;
+  scheduledPurgeAt?: Date | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -80,6 +87,13 @@ export async function assertOrgMember(args: {
   if (!organization) {
     throw new AuthzError(404, "organization_not_found", "Organization not found");
   }
+  if (organization.deletedAt) {
+    throw new AuthzError(
+      410,
+      "organization_deleted",
+      "This organization is scheduled for deletion",
+    );
+  }
   if (!member) {
     throw new AuthzError(
       403,
@@ -130,6 +144,35 @@ export async function assertMemberInOrg(args: {
     );
   }
   return member;
+}
+
+/**
+ * Guard for account deletion / leaving: reject if `userId` is the SOLE owner of
+ * any organization. An org must never be left ownerless — the user must transfer
+ * ownership (or delete the org) first. Returns the list of blocking org ids.
+ */
+export async function assertNotSoleOwner(userId: string): Promise<void> {
+  await dbConnect();
+  const ownerMemberships = await mongoose.connection
+    .collection<OrgMemberRecord>("member")
+    .find({ userId, role: "owner" })
+    .toArray();
+
+  const blocking: string[] = [];
+  for (const m of ownerMemberships) {
+    const ownerCount = await mongoose.connection
+      .collection<OrgMemberRecord>("member")
+      .countDocuments({ organizationId: m.organizationId, role: "owner" });
+    if (ownerCount <= 1) blocking.push(m.organizationId);
+  }
+
+  if (blocking.length > 0) {
+    throw new AuthzError(
+      409,
+      "sole_owner_transfer_required",
+      "Transfer ownership or delete these organizations before deleting your account",
+    );
+  }
 }
 
 export async function assertTeamInOrg(args: {

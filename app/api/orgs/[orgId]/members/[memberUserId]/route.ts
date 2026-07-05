@@ -15,6 +15,7 @@ import {
 } from "@/lib/orgs/access";
 import { syncSeatsUsed } from "@/lib/orgs/billing/seats";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
+import { emitNotification } from "@/lib/notifications/emit";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
 
 export const dynamic = "force-dynamic";
@@ -334,6 +335,203 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     }
     const message =
       error instanceof Error ? error.message : "Failed to remove member";
+    return NextResponse.json({ error: message }, { status: 500 });
+  } finally {
+    await mongoSession.endSession();
+  }
+}
+
+const ASSIGNABLE_ROLES: OrgRole[] = ["admin", "manager", "member", "guest"];
+const ORG_GRANT_SCOPE = {
+  $or: [{ teamId: { $exists: false } }, { teamId: null }, { teamId: "" }],
+};
+
+/**
+ * PATCH /api/orgs/[orgId]/members/[memberUserId] — change a member's role.
+ *
+ * Owner/admin only. Owner role is managed via ownership transfer, not here.
+ * E2EE: rotation is driven by crossing the guest boundary —
+ *   - non-guest → guest: revoke their grant + rotate the space key (rotationGrants required)
+ *   - guest → non-guest: install a fresh wrapped grant (no version bump)
+ *   - admin ↔ manager ↔ member: no key change.
+ */
+export async function PATCH(request: NextRequest, { params }: RouteParams) {
+  const mongoSession = await mongoose.startSession();
+  try {
+    const ctx = await requireAccessContext(request);
+    const { orgId, memberUserId } = await params;
+    const body = await request.json().catch(() => ({}));
+    const newRole = body.role as OrgRole;
+
+    const membership = await assertOrgMember({ userId: ctx.userId, orgId });
+    assertOrgAdminRole(membership.role);
+
+    if (!ASSIGNABLE_ROLES.includes(newRole)) {
+      throw new AuthzError(400, "invalid_role", "A valid assignable role is required");
+    }
+    if (memberUserId === ctx.userId) {
+      throw new AuthzError(
+        400,
+        "self_role_change_not_supported",
+        "Change your own role via ownership transfer",
+      );
+    }
+
+    await dbConnect();
+    const membersCol = mongoose.connection.collection<OrgMemberRecord>("member");
+    const [target, allMembers, currentGrant] = await Promise.all([
+      membersCol.findOne({ organizationId: orgId, userId: memberUserId }),
+      membersCol.find({ organizationId: orgId }).toArray(),
+      OrgKeyGrant.findOne({ orgId })
+        .sort({ keyVersion: -1 })
+        .select("keyVersion")
+        .lean<{ keyVersion: number }>(),
+    ]);
+
+    if (!target) {
+      throw new AuthzError(404, "member_not_found", "Member not found");
+    }
+    const currentRole = normalizeOrgRole(target.role);
+    if (currentRole === "owner") {
+      throw new AuthzError(
+        403,
+        "cannot_change_owner_role",
+        "Use ownership transfer to change the owner",
+      );
+    }
+    if (currentRole === newRole) {
+      return NextResponse.json({ memberUserId, role: newRole, unchanged: true });
+    }
+
+    const wasNonGuest = currentRole !== "guest";
+    const willBeNonGuest = newRole !== "guest";
+    const now = new Date();
+    let rotated = false;
+
+    if (wasNonGuest && !willBeNonGuest) {
+      // Demotion out of key access → revoke + rotate for remaining members.
+      const rotationGrants = normalizeRotationGrants(body.rotationGrants);
+      const remainingKeyMembers = allMembers.filter(
+        (m) => m.userId !== memberUserId && nonGuest(m),
+      );
+      const nextKeyVersion = validateRotation({
+        targetRole: "member",
+        currentMaxKeyVersion: currentGrant?.keyVersion ?? 0,
+        remainingKeyMembers,
+        rotationGrants,
+      });
+      rotated = !!nextKeyVersion;
+
+      await mongoSession.withTransaction(async () => {
+        await membersCol.updateOne(
+          { organizationId: orgId, userId: memberUserId },
+          { $set: { role: newRole } },
+          { session: mongoSession },
+        );
+        await OrgKeyGrant.updateMany(
+          { orgId, memberUserId, revokedAt: { $exists: false }, ...ORG_GRANT_SCOPE },
+          { $set: { revokedAt: now, rotationReason: "member_removed" } },
+          { session: mongoSession },
+        );
+        if (nextKeyVersion) {
+          const remainingIds = remainingKeyMembers.map((m) => m.userId);
+          await OrgKeyGrant.updateMany(
+            {
+              orgId,
+              memberUserId: { $in: remainingIds },
+              keyVersion: { $lt: nextKeyVersion },
+              revokedAt: { $exists: false },
+              ...ORG_GRANT_SCOPE,
+            },
+            { $set: { revokedAt: now, rotationReason: "member_removed" } },
+            { session: mongoSession },
+          );
+          for (const grant of rotationGrants) {
+            await OrgKeyGrant.findOneAndUpdate(
+              { orgId, teamId: null, memberUserId: grant.memberUserId, keyVersion: grant.keyVersion },
+              {
+                $set: {
+                  orgId,
+                  teamId: null,
+                  memberUserId: grant.memberUserId,
+                  wrappedSpaceKey: grant.wrappedSpaceKey,
+                  keyVersion: grant.keyVersion,
+                  wrappedByUserId: ctx.userId,
+                  createdBy: ctx.userId,
+                  rotationReason: "member_removed",
+                },
+                $unset: { revokedAt: "" },
+              },
+              { new: true, upsert: true, setDefaultsOnInsert: true, session: mongoSession },
+            );
+          }
+        }
+      });
+    } else if (!wasNonGuest && willBeNonGuest) {
+      // Promotion into key access → requires a fresh wrapped grant (no bump).
+      const wrappedSpaceKey =
+        typeof body.wrappedSpaceKey === "string" ? body.wrappedSpaceKey.trim() : "";
+      const keyVersion = Number(body.keyVersion);
+      if (!wrappedSpaceKey || !Number.isInteger(keyVersion) || keyVersion < 1) {
+        throw new AuthzError(
+          400,
+          "space_key_grant_required",
+          "Promoting a guest requires a wrapped space key",
+        );
+      }
+      await mongoSession.withTransaction(async () => {
+        await membersCol.updateOne(
+          { organizationId: orgId, userId: memberUserId },
+          { $set: { role: newRole } },
+          { session: mongoSession },
+        );
+        await OrgKeyGrant.findOneAndUpdate(
+          { orgId, teamId: null, memberUserId, keyVersion },
+          {
+            $set: {
+              orgId,
+              teamId: null,
+              memberUserId,
+              wrappedSpaceKey,
+              keyVersion,
+              wrappedByUserId: ctx.userId,
+              createdBy: ctx.userId,
+              rotationReason: "member_added",
+            },
+            $unset: { revokedAt: "" },
+          },
+          { new: true, upsert: true, setDefaultsOnInsert: true, session: mongoSession },
+        );
+      });
+    } else {
+      // Lateral non-guest change — no key implications.
+      await membersCol.updateOne(
+        { organizationId: orgId, userId: memberUserId },
+        { $set: { role: newRole } },
+      );
+    }
+
+    await emitActivity({
+      orgId,
+      action: ActivityAction.MEMBER_ROLE_CHANGED,
+      actorUserId: ctx.userId,
+      target: { type: "member", id: memberUserId },
+      metadata: { from: currentRole, to: newRole, rotated },
+    });
+    await emitNotification({
+      userId: memberUserId,
+      type: "role_changed",
+      title: "Your role changed",
+      body: `Your role is now ${newRole}.`,
+      orgId,
+      metadata: { from: currentRole, to: newRole },
+    });
+
+    return NextResponse.json({ memberUserId, role: newRole, rotated });
+  } catch (error) {
+    if (isAuthzError(error)) return toJsonResponse(error);
+    const message =
+      error instanceof Error ? error.message : "Failed to change member role";
     return NextResponse.json({ error: message }, { status: 500 });
   } finally {
     await mongoSession.endSession();

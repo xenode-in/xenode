@@ -56,6 +56,7 @@ export interface IStorageObject extends Document {
   optimizedContentType?: string; // Content type of the optimized version (e.g. image/webp)
   optimizedIV?: string; // IV for the encrypted optimized version
   optimizedEncryptedDEK?: string; // Wrapped DEK for the optimized version
+  optimizedSpaceKeyWrapIv?: string; // AES-GCM wrap IV for space-wrapped optimized DEK
   aspectRatio?: number; // width / height
   isSidecar?: boolean; // True if this file is a sidecar (like subtitle.vtt) to another asset
   parentObjectId?: mongoose.Types.ObjectId; // ID of the primary object this sidecar belongs to
@@ -294,6 +295,10 @@ const StorageObjectSchema = new Schema<IStorageObject>(
       required: false,
     },
     optimizedEncryptedDEK: {
+      type: String,
+      required: false,
+    },
+    optimizedSpaceKeyWrapIv: {
       type: String,
       required: false,
     },

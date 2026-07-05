@@ -3,6 +3,8 @@ import StorageObject, { type IStorageObject } from "@/models/StorageObject";
 import Bucket, { type IBucket } from "@/models/Bucket";
 import { type AccessContext } from "./context";
 import { AuthzError } from "./errors";
+import { orgObjectClause, teamObjectClause } from "@/lib/orgs/storage";
+import { systemWorkspaceBucketName } from "@/lib/storage/workspaceBucket";
 
 /**
  * Actions a caller may attempt on a resource.
@@ -45,6 +47,12 @@ export function ownerClause(ctx: AccessContext): Record<string, unknown> {
 
 /** Ownership clause for a StorageObject query (excluding `_id`). */
 export function objectOwnershipClause(ctx: AccessContext): Record<string, unknown> {
+  if (ctx.scope.type === "organization") {
+    return orgObjectClause(ctx.scope.orgId);
+  }
+  if (ctx.scope.type === "team") {
+    return teamObjectClause(ctx.scope.orgId, ctx.scope.teamId);
+  }
   return ownerClause(ctx);
 }
 
@@ -63,6 +71,13 @@ export function objectFilter(
  * readable/usable by everyone (used for app-managed folders, migrations, etc.).
  */
 export function bucketOwnershipClause(ctx: AccessContext): Record<string, unknown> {
+  if (ctx.scope.type === "organization" || ctx.scope.type === "team") {
+    return {
+      userId: "system",
+      name: systemWorkspaceBucketName("ORGANIZATION"),
+      b2BucketId: systemWorkspaceBucketName("ORGANIZATION"),
+    };
+  }
   assertPersonalStorageScope(ctx);
   return { $or: [{ userId: ctx.userId }, { userId: "system" }] };
 }

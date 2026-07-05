@@ -9,6 +9,9 @@ export type ServerObject = {
   createdAt?: string | Date;
   updatedAt?: string | Date;
   isEncrypted?: boolean;
+  wrappedBy?: "user" | "space" | null;
+  spaceKeyVersion?: number | null;
+  spaceKeyWrapIv?: string | null;
   encryptedName?: string | null;
   encryptedDisplayName?: string | null;
   encryptedContentType?: string | null;
@@ -18,6 +21,7 @@ export type ServerObject = {
   mediaCategory?: string;
   optimizedKey?: string;
   optimizedEncryptedDEK?: string;
+  optimizedSpaceKeyWrapIv?: string;
   optimizedIV?: string;
   optimizedSize?: number;
   aspectRatio?: number;
@@ -52,6 +56,9 @@ export function mapServerObjectToLocalFile(
     createdAt: toIso(object.createdAt, now),
     updatedAt: toIso(object.updatedAt, now),
     isEncrypted: object.isEncrypted || false,
+    wrappedBy: object.wrappedBy || undefined,
+    spaceKeyVersion: object.spaceKeyVersion || undefined,
+    spaceKeyWrapIv: object.spaceKeyWrapIv || undefined,
     tags: object.tags || [],
     thumbnail: object.thumbnail,
     bucketId: normalizeBucketId(object.bucketId, fallbackBucketId),
@@ -60,6 +67,7 @@ export function mapServerObjectToLocalFile(
     mediaCategory: object.mediaCategory,
     optimizedKey: object.optimizedKey,
     optimizedEncryptedDEK: object.optimizedEncryptedDEK,
+    optimizedSpaceKeyWrapIv: object.optimizedSpaceKeyWrapIv,
     optimizedIV: object.optimizedIV,
     optimizedSize: object.optimizedSize,
     aspectRatio: object.aspectRatio,
