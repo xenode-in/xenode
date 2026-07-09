@@ -43,24 +43,6 @@ function makePreviewName(originalName: string, ext: string): string {
   return `${originalName.replace(/\.[^.]+$/, "")}_preview.${ext}`;
 }
 
-function sleep(ms: number): Promise<never> {
-  return new Promise((_, reject) => {
-    globalThis.setTimeout(() => reject(new Error(`Timed out after ${ms}ms`)), ms);
-  });
-}
-
-async function withTimeout<T>(
-  work: Promise<T>,
-  timeoutMs: number,
-  label: string,
-): Promise<T> {
-  try {
-    return await Promise.race([work, sleep(timeoutMs)]);
-  } catch (err) {
-    throw new Error(`${label} failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
 type CanvasLike = OffscreenCanvas | HTMLCanvasElement;
 type Canvas2DContext = OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
 
@@ -173,20 +155,18 @@ function hasTransparency(imageData: ImageData): boolean {
 
 // Preview encoder
 //
-// iOS Safari can report a successful WebP canvas encode while returning a large
-// PNG-like blob. WASM encoders can also fail softly under mobile memory pressure.
-// Every tier below must prove its output is meaningfully smaller before it is
-// accepted as the optimized sidecar.
+// Keep this path browser-native. Client-side WASM image codecs are powerful, but
+// they add large browser chunks and can make Turbopack production builds crawl.
+// Canvas WebP is tried opportunistically, then adaptive JPEG is the universal
+// fallback. Every tier must prove its output is actually small before acceptance.
 
 const QUALITY_PHOTO = 55;
 const QUALITY_GRAPHIC = 65;
 const QUALITY_INTERMEDIATE = 60;
-const AVIF_SPEED = 8;
-const WEBP_FALLBACK_QUALITY = 75;
+const WEBP_FALLBACK_QUALITIES = [0.72, 0.62, 0.52];
 const JPEG_FALLBACK_QUALITIES = [0.72, 0.62, 0.52, 0.44, 0.36];
 const JPEG_FALLBACK_SCALES = [1, 0.85, 0.7, 0.55, 0.4, 0.3, 0.22];
 const MAX_DIMENSION = 1600;
-const WASM_TIMEOUT_MS = 15_000;
 const TARGET_PREVIEW_BYTES = 500 * 1024;
 const MIN_COMPRESSION_RATIO = 0.75;
 const MAX_BYTES_PER_PIXEL = 0.85;
@@ -218,44 +198,6 @@ function isUsefulPreview(candidate: Blob, targetBytes: number): boolean {
   return candidate.size > 0 && candidate.size <= targetBytes;
 }
 
-async function encodeAvif(
-  imageData: ImageData,
-  quality: number,
-): Promise<EncodedPreview> {
-  const encode = (await import("@jsquash/avif/encode")).default;
-  const buf = await withTimeout(
-    encode(imageData, { quality, speed: AVIF_SPEED }),
-    WASM_TIMEOUT_MS,
-    "AVIF encode",
-  );
-
-  return {
-    blob: new Blob([buf as BlobPart], { type: "image/avif" }),
-    ext: "avif",
-    mime: "image/avif",
-    label: "AVIF",
-  };
-}
-
-async function encodeWebp(imageData: ImageData): Promise<EncodedPreview> {
-  const encode = (await import("@jsquash/webp/encode")).default;
-  const buf = await withTimeout(
-    encode(imageData, {
-      quality: WEBP_FALLBACK_QUALITY,
-      method: 4,
-    }),
-    WASM_TIMEOUT_MS,
-    "WebP encode",
-  );
-
-  return {
-    blob: new Blob([buf as BlobPart], { type: "image/webp" }),
-    ext: "webp",
-    mime: "image/webp",
-    label: "WebP",
-  };
-}
-
 function drawScaledCanvas(source: CanvasLike, width: number, height: number): CanvasLike {
   const canvas = createCanvas(width, height);
   const ctx = getCanvasContext(canvas);
@@ -263,6 +205,29 @@ function drawScaledCanvas(source: CanvasLike, width: number, height: number): Ca
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(source, 0, 0, width, height);
   return canvas;
+}
+
+async function encodeWebpFallback(
+  canvas: CanvasLike,
+  targetBytes: number,
+): Promise<EncodedPreview[]> {
+  const attempts: EncodedPreview[] = [];
+
+  for (const quality of WEBP_FALLBACK_QUALITIES) {
+    const blob = await canvasToBlob(canvas, "image/webp", quality);
+    attempts.push({
+      blob,
+      ext: "webp",
+      mime: "image/webp",
+      label: `WebP q${quality}`,
+    });
+
+    if (blob.type === "image/webp" && isUsefulPreview(blob, targetBytes)) {
+      return attempts;
+    }
+  }
+
+  return attempts;
 }
 
 async function encodeJpegFallback(
@@ -355,23 +320,15 @@ async function compressWithVerifiedEncoders(
   const targetBytes = targetPreviewBytes(originalSize, raster.pixels);
   const attempts: EncodedPreview[] = [];
 
-  onProgress?.({ stage: "optimizing", progress: 45 });
+  onProgress?.({ stage: "optimizing", progress: 55 });
 
   try {
-    attempts.push(await encodeAvif(raster.imageData, quality));
-  } catch (err) {
-    console.warn("[Preview] AVIF encode failed:", err);
-  }
-
-  onProgress?.({ stage: "optimizing", progress: 65 });
-
-  try {
-    attempts.push(await encodeWebp(raster.imageData));
+    attempts.push(...(await encodeWebpFallback(raster.canvas, targetBytes)));
   } catch (err) {
     console.warn("[Preview] WebP encode failed:", err);
   }
 
-  onProgress?.({ stage: "optimizing", progress: 85 });
+  onProgress?.({ stage: "optimizing", progress: 80 });
 
   try {
     attempts.push(
@@ -387,7 +344,11 @@ async function compressWithVerifiedEncoders(
   }
 
   const accepted = attempts
-    .filter((attempt) => isUsefulPreview(attempt.blob, targetBytes))
+    .filter((attempt) => {
+      if (!isUsefulPreview(attempt.blob, targetBytes)) return false;
+      if (attempt.mime === "image/webp") return attempt.blob.type === "image/webp";
+      return true;
+    })
     .sort((a, b) => a.blob.size - b.blob.size)[0];
 
   onProgress?.({ stage: "optimizing", progress: 100 });
