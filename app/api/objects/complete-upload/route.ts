@@ -15,6 +15,7 @@ import {
   publishSyncEvent,
   toSyncObjectSnapshot,
 } from "@/lib/realtime/publish";
+import { completeUploadSession } from "@/lib/uploads/session";
 
 export const dynamic = "force-dynamic";
 
@@ -293,6 +294,7 @@ export async function POST(request: NextRequest) {
         await updateBucketStats(bucketId, 0, sizeDiff);
       }
       await emitObjectChange(userId, existingObject, "FILE_UPDATED");
+      await completeUploadSession(bucketId, objectKey);
       return NextResponse.json({ object: existingObject });
     }
 
@@ -413,6 +415,7 @@ export async function POST(request: NextRequest) {
     }
     await updateBucketStats(bucketId, 1, size);
     await emitObjectChange(userId, storageObject, "FILE_CREATED");
+    await completeUploadSession(bucketId, objectKey);
 
     return NextResponse.json({ object: storageObject }, { status: 201 });
   } catch (error) {

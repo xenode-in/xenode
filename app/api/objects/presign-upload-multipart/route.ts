@@ -7,6 +7,7 @@ import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
+import { recordUploadSession } from "@/lib/uploads/session";
 
 export const dynamic = "force-dynamic";
 
@@ -125,8 +126,10 @@ export async function POST(request: NextRequest) {
     const logicalKey = `${basePrefix}${safeFileName}`;
 
     const urls = [];
+    const chunkKeys: string[] = [];
     for (let i = 0; i < chunkCount; i++) {
       const chunkKey = `${logicalKey}-chunk-${i}`;
+      chunkKeys.push(chunkKey);
       const command = new PutObjectCommand({
         Bucket: bucket.b2BucketId,
         Key: chunkKey,
@@ -143,12 +146,24 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Ledger every B2 key this chunked upload will write (main logical key,
+    // each chunk, and the derived thumbnail) so the cleanup-orphans cron can
+    // reclaim them if the upload is abandoned. Re-presigning the same fileName
+    // on resume refreshes the same session and reuses the same chunk keys.
+    const sessionId = await recordUploadSession({
+      userId,
+      bucketId: bucket._id,
+      fileId: logicalKey,
+      keys: [logicalKey, ...chunkKeys, `${logicalKey}-thumb`],
+    });
+
     return NextResponse.json({
       fileId: logicalKey,
       chunkSize,
       chunkCount,
       urls,
       bucketId: bucket._id.toString(),
+      sessionId,
     });
   } catch (error) {
     if (error instanceof Error && error.name === "SubscriptionRequired") {

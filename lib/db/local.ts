@@ -12,6 +12,71 @@ export interface ThumbnailCache {
   lastAccessed: number; // For LRU eviction
 }
 
+/**
+ * A durable snapshot of an in-flight upload, so it can resume after a page
+ * reload. We persist the ENCRYPTED bytes (never plaintext) plus every field
+ * `complete-upload` needs, so resume re-PUTs byte-identical data with no
+ * re-encryption — matching any chunks already in B2. `bytes`/`optimizedBytes`
+ * are only stored when the total is within the resume cap (see UploadContext);
+ * otherwise `bytesPersisted` is false and the row exists only to surface the
+ * interrupted upload and drive server-side orphan cleanup.
+ */
+export interface UploadRecord {
+  id: string; // matches UploadTask.id
+  userId: string;
+  status: "uploading" | "paused" | "failed";
+  createdAt: number;
+
+  // identity / display
+  fileName: string; // real filename (also used to reconstruct the presign fileName on resume)
+  size: number; // plaintext size
+  type: string; // mime
+  mediaCategory: string;
+  bucketId: string;
+  prefix: string;
+  aspectRatio?: number;
+
+  // routing / crypto
+  isChunked: boolean;
+  isEncrypted: boolean;
+
+  // main object
+  fileId: string; // logical/main B2 key (== objectKey), stable across resume
+  sessionId?: string;
+  uploadContentType: string; // Content-Type used for the PUT
+  encryptedDEK?: string;
+  iv?: string; // single-PUT only
+
+  // chunk fields (chunked path)
+  chunkSize?: number;
+  cipherChunkSize?: number;
+  chunkCount?: number;
+  chunkIvs?: string; // JSON string of base64 IVs
+  chunks?: { index: number; key: string; size: number }[];
+  completedChunks: number[];
+
+  // encrypted metadata for complete-upload
+  encryptedName?: string;
+  encryptedContentType?: string;
+  encryptedMetadata?: string;
+
+  // thumbnail (already-encrypted `enc:` string or plaintext data URL) → `${fileId}-thumb`
+  thumbnail?: string;
+  thumbnailKey?: string;
+
+  // optimized preview (single-PUT image path only)
+  optimizedKey?: string;
+  optimizedIV?: string;
+  optimizedEncryptedDEK?: string;
+  optimizedSize?: number;
+  optimizedContentType?: string;
+
+  // persisted ciphertext (only when within the resume byte cap)
+  bytesPersisted: boolean;
+  mainBytes?: Blob; // ciphertext for the main object / whole chunked ciphertext
+  optimizedBytes?: Blob; // ciphertext of the optimized preview
+}
+
 export interface LocalFile {
   id: string;
   key: string;
@@ -41,6 +106,7 @@ export class XenodeDatabase extends Dexie {
   files!: Table<LocalFile, string>;
   metadataCache!: Table<MetadataCache, string>;
   thumbnailCache!: Table<ThumbnailCache, string>;
+  uploads!: Table<UploadRecord, string>;
 
   constructor(userId: string) {
     super(`XenodeDB-${userId}`); // scoped per user
@@ -49,6 +115,11 @@ export class XenodeDatabase extends Dexie {
         "id, key, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName, mediaCategory, optimizedKey, uploadSource, syncContentFp",
       metadataCache: "id",
       thumbnailCache: "id, lastAccessed",
+    });
+    // v2 adds the resumable-upload journal. Dexie inherits the v1 stores, so
+    // only the new table is declared here.
+    this.version(2).stores({
+      uploads: "id, status, createdAt",
     });
   }
 }

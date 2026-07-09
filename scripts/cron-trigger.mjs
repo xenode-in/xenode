@@ -55,6 +55,11 @@ const JOBS = {
     path: "/api/cron/purge-bin",
     description: "Hard-delete files in the trash older than 30 days",
   },
+  "cleanup-orphans": {
+    method: "GET",
+    path: "/api/cron/cleanup-orphans",
+    description: "Delete orphaned B2 blobs from abandoned/incomplete uploads",
+  },
   "charge-recurring": {
     method: "POST",
     path: "/api/payment/payu/charge-recurring",

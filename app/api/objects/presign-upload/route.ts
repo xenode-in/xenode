@@ -7,6 +7,7 @@ import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
+import { recordUploadSession } from "@/lib/uploads/session";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +32,7 @@ export async function POST(request: NextRequest) {
 
     const keyId = S3_KEY_ID.trim();
     const appKey = S3_APPLICATION_KEY.trim();
-    const { fileSize, fileType, bucketId, prefix, fileName } =
+    const { fileSize, fileType, bucketId, prefix, fileName, sessionFileId } =
       await request.json();
 
     if (!bucketId) {
@@ -114,10 +115,30 @@ export async function POST(request: NextRequest) {
       expiresIn: 3600,
     });
 
+    // Ledger the in-flight upload so the cleanup-orphans cron can reclaim its
+    // blobs if it never finishes. `sessionFileId` lets a secondary blob (the
+    // optimized preview / thumbnail of a main upload) attach to that main
+    // upload's session instead of spawning its own; otherwise this key owns a
+    // fresh session and pre-registers its derived `-thumb` key.
+    const ownsSession =
+      typeof sessionFileId !== "string" ||
+      !sessionFileId.startsWith(`users/${userId}/`);
+    const sessionKey = ownsSession ? opaqueKey : sessionFileId;
+    const sessionKeys = ownsSession
+      ? [opaqueKey, `${opaqueKey}-thumb`]
+      : [opaqueKey];
+    const sessionId = await recordUploadSession({
+      userId,
+      bucketId: bucket._id,
+      fileId: sessionKey,
+      keys: sessionKeys,
+    });
+
     return NextResponse.json({
       uploadUrl: presignedUrl,
       objectKey: opaqueKey,
       bucketId: bucket._id.toString(),
+      sessionId,
     });
   } catch (error) {
     if (error instanceof Error && error.name === "SubscriptionRequired") {
