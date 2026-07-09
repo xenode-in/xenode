@@ -35,6 +35,7 @@ import {
   Copy,
   Edit3,
   FileText,
+  FolderOpen,
   Loader2,
   Lock,
   Share2,
@@ -69,6 +70,9 @@ interface PublicShare {
   _id: string;
   token: string;
   objectId: SharedObject;
+  isBundle?: boolean;
+  bundleName?: string;
+  bundleItems?: { objectId?: SharedObject }[];
   expiresAt?: string;
   downloadCount: number;
   maxDownloads?: number;
@@ -76,6 +80,10 @@ interface PublicShare {
   sharedWith: string[];
   ownerEncryptedShareKey?: string;
   createdAt: string;
+}
+
+interface BundleShareItem {
+  objectId?: SharedObject;
 }
 
 interface DirectRecipient {
@@ -98,6 +106,12 @@ type ShareRow = {
   id: string;
   type: "public" | "direct";
   objectId: SharedObject;
+  isBundle?: boolean;
+  bundleName?: string;
+  bundleItems?: BundleShareItem[];
+  bundleItemCount?: number;
+  bundleSize?: number;
+  hasEncryptedItems?: boolean;
   createdAt: string;
   expiresAt?: string;
   downloadCount: number;
@@ -147,8 +161,11 @@ export default function SharedPage() {
   const [saving, setSaving] = useState(false);
   const [editRow, setEditRow] = useState<ShareRow | null>(null);
   const [usersRow, setUsersRow] = useState<ShareRow | null>(null);
+  const [bundleRow, setBundleRow] = useState<ShareRow | null>(null);
   const [expiresAt, setExpiresAt] = useState("");
   const [maxDownloads, setMaxDownloads] = useState("");
+  const [bundleNameInput, setBundleNameInput] = useState("");
+  const [bundleItemIds, setBundleItemIds] = useState<Set<string>>(new Set());
   const [sharedWithInput, setSharedWithInput] = useState("");
   const [accessType, setAccessType] = useState<"view" | "download">(
     "download",
@@ -179,6 +196,17 @@ export default function SharedPage() {
           id: link._id,
           type: "public",
           objectId: link.objectId,
+          isBundle: !!link.isBundle,
+          bundleName: link.bundleName,
+          bundleItems: link.bundleItems || [],
+          bundleItemCount: link.bundleItems?.length || 0,
+          bundleSize: (link.bundleItems || []).reduce(
+            (sum, item) => sum + (item.objectId?.size || 0),
+            0,
+          ),
+          hasEncryptedItems: (link.bundleItems || []).some(
+            (item) => !!item.objectId?.isEncrypted,
+          ),
           createdAt: link.createdAt,
           expiresAt: link.expiresAt,
           downloadCount: link.downloadCount,
@@ -236,7 +264,7 @@ export default function SharedPage() {
     const run = async () => {
       const nextNames: Record<string, string> = {};
       for (const row of rows) {
-        if (row.objectId.isEncrypted && row.objectId.encryptedName) {
+        if (!row.isBundle && row.objectId.isEncrypted && row.objectId.encryptedName) {
           try {
             nextNames[row.id] = await decryptMetadataString(
               row.objectId.encryptedName,
@@ -378,7 +406,9 @@ export default function SharedPage() {
     try {
       let url = `${window.location.origin}/shared/${row.token}`;
 
-      if (row.objectId.isEncrypted) {
+      const needsShareKey =
+        row.objectId.isEncrypted || row.hasEncryptedItems || !!row.ownerEncryptedShareKey;
+      if (needsShareKey) {
         let shareKeyRaw: Uint8Array;
         if (row.ownerEncryptedShareKey) {
           if (!privateKey) {
@@ -389,7 +419,7 @@ export default function SharedPage() {
             row.ownerEncryptedShareKey,
             privateKey,
           );
-        } else {
+        } else if (!row.isBundle) {
           if (!publicKey) {
             setModalOpen(true);
             throw new Error("Unlock your vault to refresh this encrypted link");
@@ -404,6 +434,8 @@ export default function SharedPage() {
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data.error || "Failed to refresh link key");
           await fetchShares();
+        } else {
+          throw new Error("This bundle link is missing its stored key. Recreate the bundle share.");
         }
         url += `#key=${bytesToBase64Url(shareKeyRaw)}`;
       }
@@ -476,6 +508,50 @@ export default function SharedPage() {
     setUsersRow(row);
     setSharedWithInput(row.sharedWith.join(", "));
     setAccessType(row.recipients?.[0]?.accessType || "download");
+  };
+
+  const openBundle = (row: ShareRow) => {
+    setBundleRow(row);
+    setBundleNameInput(row.bundleName || `${row.bundleItemCount || 0} shared files`);
+    setBundleItemIds(
+      new Set(
+        (row.bundleItems || [])
+          .map((item) => item.objectId?._id)
+          .filter(Boolean) as string[],
+      ),
+    );
+  };
+
+  const saveBundle = async () => {
+    if (!bundleRow?.token) return;
+    if (bundleItemIds.size === 0) {
+      toast.error("Keep at least one file in the bundle");
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/share/${bundleRow.token}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bundleName: bundleNameInput,
+          bundleItemIds: Array.from(bundleItemIds),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Failed to update bundle");
+
+      setBundleRow(null);
+      await fetchShares();
+      toast.success("Bundle updated");
+    } catch (saveError) {
+      toast.error(
+        saveError instanceof Error ? saveError.message : "Failed to update bundle",
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   const saveUsers = async () => {
@@ -634,23 +710,35 @@ export default function SharedPage() {
                 const isExpired =
                   row.expiresAt && new Date(row.expiresAt) < new Date();
                 const displayName =
-                  decryptedNames[row.id] ||
-                  row.objectId.key.split("/").pop() ||
-                  row.objectId.key;
+                  row.isBundle
+                    ? row.bundleName || `${row.bundleItemCount || 0} shared files`
+                    : decryptedNames[row.id] ||
+                      row.objectId.key.split("/").pop() ||
+                      row.objectId.key;
+                const displaySize = row.isBundle
+                  ? row.bundleSize || row.objectId.size
+                  : row.objectId.size;
 
                 return (
                   <TableRow key={row.id}>
                     <TableCell>
                       <div className="flex items-center gap-3">
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-secondary text-secondary-foreground">
-                          <FileText className="h-5 w-5" />
+                          {row.isBundle ? (
+                            <FolderOpen className="h-5 w-5" />
+                          ) : (
+                            <FileText className="h-5 w-5" />
+                          )}
                         </div>
                         <div className="flex flex-col overflow-hidden">
                           <span className="truncate font-medium">
                             {displayName}
                           </span>
                           <span className="text-xs text-muted-foreground">
-                            {formatBytes(row.objectId.size)} -{" "}
+                            {row.isBundle
+                              ? `${row.bundleItemCount || 0} files - `
+                              : ""}
+                            {formatBytes(displaySize)} -{" "}
                             {new Date(row.createdAt).toLocaleDateString()}
                           </span>
                         </div>
@@ -701,7 +789,15 @@ export default function SharedPage() {
                             <Lock className="h-3 w-3 mr-1" /> Pass
                           </Badge>
                         )}
-                        {row.objectId.isEncrypted && (
+                        {!row.isBundle && row.objectId.isEncrypted && (
+                          <Badge
+                            variant="outline"
+                            className="text-green-500 border-green-500/20 bg-green-500/10 px-1 py-0 h-5"
+                          >
+                            E2EE
+                          </Badge>
+                        )}
+                        {row.hasEncryptedItems && (
                           <Badge
                             variant="outline"
                             className="text-green-500 border-green-500/20 bg-green-500/10 px-1 py-0 h-5"
@@ -738,6 +834,17 @@ export default function SharedPage() {
                             ) : (
                               <Copy className="h-4 w-4" />
                             )}
+                          </Button>
+                        )}
+                        {row.isBundle && (
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => openBundle(row)}
+                            title="Manage bundle"
+                          >
+                            <FolderOpen className="h-4 w-4" />
                           </Button>
                         )}
                         <Button
@@ -848,6 +955,88 @@ export default function SharedPage() {
             <Button onClick={saveEdit} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!bundleRow}
+        onOpenChange={(open) => !open && setBundleRow(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Manage bundle</DialogTitle>
+            <DialogDescription>
+              Rename this shared bundle or remove files from the link. Removing
+              a file here does not delete it from your drive.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="bundleName">Bundle name</Label>
+              <Input
+                id="bundleName"
+                value={bundleNameInput}
+                onChange={(event) => setBundleNameInput(event.target.value)}
+                placeholder="Shared project files"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Files in this bundle</Label>
+              <div className="max-h-72 space-y-2 overflow-y-auto rounded-md border border-border p-2">
+                {(bundleRow?.bundleItems || []).map((item, index) => {
+                  const object = item.objectId;
+                  if (!object) return null;
+                  const isIncluded = bundleItemIds.has(object._id);
+                  const name =
+                    object.key.split("/").filter(Boolean).pop() ||
+                    `File ${index + 1}`;
+                  return (
+                    <div
+                      key={object._id}
+                      className="flex items-center gap-3 rounded-md bg-secondary/30 p-2"
+                    >
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-background">
+                        <FileText className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium">{name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {formatBytes(object.size)}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant={isIncluded ? "outline" : "secondary"}
+                        size="sm"
+                        onClick={() => {
+                          setBundleItemIds((current) => {
+                            const next = new Set(current);
+                            if (next.has(object._id)) next.delete(object._id);
+                            else next.add(object._id);
+                            return next;
+                          });
+                        }}
+                      >
+                        {isIncluded ? "Remove" : "Add back"}
+                      </Button>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {bundleItemIds.size} file{bundleItemIds.size === 1 ? "" : "s"} will remain shared.
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBundleRow(null)}>
+              Cancel
+            </Button>
+            <Button onClick={saveBundle} disabled={saving || bundleItemIds.size === 0}>
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save bundle
             </Button>
           </DialogFooter>
         </DialogContent>

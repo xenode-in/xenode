@@ -51,6 +51,7 @@ import {
   AlertTriangle,
   FolderOpen,
   Filter,
+  Share2,
 } from "lucide-react";
 import { ShareDialog, ShareableFile } from "@/components/share-dialog";
 import { useUpload } from "@/contexts/UploadContext";
@@ -86,7 +87,10 @@ import {
   getCoreRowModel,
   flexRender,
   ColumnDef,
+  Row,
+  RowSelectionState,
   SortingState,
+  Updater,
 } from "@tanstack/react-table";
 import { useWindowVirtualizer } from "@tanstack/react-virtual";
 
@@ -119,6 +123,8 @@ interface BucketData {
 
 type SortField = "name" | "size" | "type" | "date";
 type SortDir = "asc" | "desc";
+type BackGridCard = { id: "back-row-card"; isBackCard: true };
+type GridItem = Row<ObjectData> | BackGridCard;
 type FilterType =
   | "all"
   | "folders"
@@ -127,6 +133,10 @@ type FilterType =
   | "documents"
   | "archives"
   | "audio";
+
+function isBackGridCard(item: GridItem): item is BackGridCard {
+  return "isBackCard" in item && item.isBackCard;
+}
 
 const FILTER_OPTIONS: { value: FilterType; label: string }[] = [
   { value: "all", label: "All files" },
@@ -227,6 +237,7 @@ function Toolbar({
   onSelectAll,
   onClearSelection,
   onDelete,
+  onShare,
   onCut,
   onPaste,
   clipboard,
@@ -249,6 +260,7 @@ function Toolbar({
   onSelectAll: () => void;
   onClearSelection: () => void;
   onDelete: () => void;
+  onShare: () => void;
   onCut: () => void;
   onPaste: () => void;
   clipboard: { action: "move"; items: ObjectData[] } | null;
@@ -290,6 +302,15 @@ function Toolbar({
           <span className="text-sm font-medium text-foreground/60 mr-1 whitespace-nowrap">
             {selectedIds.size} selected
           </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onShare}
+            className="h-8 gap-1.5 text-foreground/60 hover:text-foreground hover:bg-secondary/60 px-2 sm:px-3"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Share</span>
+          </Button>
           {canManageWorkspace && (
             <>
               <Button
@@ -621,6 +642,7 @@ export function FilesBrowser() {
     return "asc";
   });
   const [shareFile, setShareFile] = useState<ShareableFile | null>(null);
+  const [shareFiles, setShareFiles] = useState<ShareableFile[]>([]);
   const [decryptedFolderNameMap, setDecryptedFolderNameMap] = useState<
     Record<string, string>
   >({});
@@ -975,7 +997,7 @@ export function FilesBrowser() {
   }, [sortField, sortDir]);
 
   const onSortingChange = useCallback(
-    (updater: any) => {
+    (updater: Updater<SortingState>) => {
       const nextState =
         typeof updater === "function" ? updater(sorting) : updater;
       setSorting(nextState);
@@ -1000,7 +1022,7 @@ export function FilesBrowser() {
   }, [selectedIds]);
 
   const handleRowSelectionChange = useCallback(
-    (updater: any) => {
+    (updater: Updater<RowSelectionState>) => {
       const nextSelection =
         typeof updater === "function" ? updater(rowSelection) : updater;
       const nextSelectedIds = new Set<string>();
@@ -1109,7 +1131,7 @@ export function FilesBrowser() {
     };
   }, [currentPrefix]);
 
-  const gridItems = useMemo(() => {
+  const gridItems = useMemo<GridItem[]>(() => {
     const rows = table.getRowModel().rows;
     if (hasBackRow) {
       return [{ id: "back-row-card", isBackCard: true }, ...rows];
@@ -1118,7 +1140,7 @@ export function FilesBrowser() {
   }, [table.getRowModel().rows, hasBackRow]);
 
   const gridRows = useMemo(() => {
-    const chunked = [];
+    const chunked: GridItem[][] = [];
     for (let i = 0; i < gridItems.length; i += cols) {
       chunked.push(gridItems.slice(i, i + cols));
     }
@@ -1179,6 +1201,33 @@ export function FilesBrowser() {
     },
     [selectedIds],
   );
+
+  const handleShareSelection = useCallback(() => {
+    const selectedItems = [...viewObjects.folders, ...viewObjects.files].filter(
+      (item) => selectedIds.has(item.id),
+    );
+    const selectedFiles = selectedItems.filter(
+      (item) =>
+        item.contentType !== "application/x-directory" &&
+        !item.key.endsWith("/"),
+    );
+
+    if (selectedFiles.length === 0) {
+      setError("Select one or more files to share");
+      return;
+    }
+    if (selectedFiles.length !== selectedItems.length) {
+      setError("Folder contents cannot be bundled yet. Select the files inside the folder.");
+    }
+
+    setShareFiles(selectedFiles);
+    setShareFile(selectedFiles[0]);
+  }, [selectedIds, viewObjects]);
+
+  const handleShareItem = useCallback((item: ShareableFile) => {
+    setShareFiles([]);
+    setShareFile(item);
+  }, []);
 
   const handlePreview = useCallback(
     (file: ObjectData) => {
@@ -1848,6 +1897,7 @@ export function FilesBrowser() {
         onSelectAll={() => setSelectedIds(new Set(allIds))}
         onClearSelection={() => setSelectedIds(new Set())}
         onDelete={() => setDeleteIds(Array.from(selectedIds))}
+        onShare={handleShareSelection}
         onCut={handleCut}
         onPaste={handlePaste}
         clipboard={clipboard}
@@ -1990,7 +2040,7 @@ export function FilesBrowser() {
                       onDownload={!isFolder ? handleDownload : undefined}
                       onTag={setTaggingObj}
                       onCut={canManageWorkspace ? handleCut : undefined}
-                      onShare={setShareFile}
+                      onShare={handleShareItem}
                       onDelete={canManageWorkspace ? handleDeleteItem : undefined}
                       isDownloading={
                         !isFolder && downloadingId === item.id
@@ -2044,7 +2094,7 @@ export function FilesBrowser() {
                   className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 px-4 py-2"
                 >
                   {rowItems.map((rowOrBack) => {
-                    if ("isBackCard" in rowOrBack && rowOrBack.isBackCard) {
+                    if (isBackGridCard(rowOrBack)) {
                       return (
                         <div
                           key="back-card"
@@ -2059,8 +2109,7 @@ export function FilesBrowser() {
                       );
                     }
 
-                    const row = rowOrBack as any;
-                    const item = row.original;
+                    const item = rowOrBack.original;
                     const isFolder =
                       item.contentType === "application/x-directory" ||
                       item.key.endsWith("/");
@@ -2077,7 +2126,7 @@ export function FilesBrowser() {
                         onDownload={!isFolder ? handleDownload : undefined}
                         onTag={setTaggingObj}
                         onCut={canManageWorkspace ? handleCut : undefined}
-                        onShare={setShareFile}
+                        onShare={handleShareItem}
                         onDelete={canManageWorkspace ? handleDeleteItem : undefined}
                         isDownloading={
                           !isFolder && downloadingId === item.id
@@ -2234,8 +2283,14 @@ export function FilesBrowser() {
 
       <ShareDialog
         open={!!shareFile}
-        onOpenChange={(o) => !o && setShareFile(null)}
+        onOpenChange={(o) => {
+          if (!o) {
+            setShareFile(null);
+            setShareFiles([]);
+          }
+        }}
         file={shareFile}
+        files={shareFiles.length > 1 ? shareFiles : undefined}
         getDEKBytes={getDEKBytes}
       />
     </div>

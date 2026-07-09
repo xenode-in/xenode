@@ -278,15 +278,16 @@ export function useThumbnail(
     const abortCtrl = new AbortController();
 
     async function loadThumbnail() {
-      if (!userId) return; // wait for session
+      const isPublicShareThumbnail = thumbnail!.startsWith("shares/");
+      if (!userId && !isPublicShareThumbnail) return; // wait for session
 
-      const db = getDb(userId);
+      const db = userId ? getDb(userId) : null;
 
       try {
         // ── 1. Dexie LRU cache ───────────────────────────────────────────
-        const cached = await db.thumbnailCache.get(thumbnail!);
+        const cached = db ? await db.thumbnailCache.get(thumbnail!) : null;
         if (cached) {
-          db.thumbnailCache
+          db!.thumbnailCache
             .update(thumbnail!, { lastAccessed: Date.now() })
             .catch(() => {});
           if (!cancelled) {
@@ -343,18 +344,20 @@ export function useThumbnail(
         if (cancelled) return;
 
         // ── 5. Store in Dexie with LRU eviction ──────────────────────────
-        const count = await db.thumbnailCache.count();
-        if (count >= MAX_THUMBNAILS) {
-          const oldest = await db.thumbnailCache
-            .orderBy("lastAccessed")
-            .first();
-          if (oldest) await db.thumbnailCache.delete(oldest.id);
+        if (db) {
+          const count = await db.thumbnailCache.count();
+          if (count >= MAX_THUMBNAILS) {
+            const oldest = await db.thumbnailCache
+              .orderBy("lastAccessed")
+              .first();
+            if (oldest) await db.thumbnailCache.delete(oldest.id);
+          }
+          await db.thumbnailCache.put({
+            id: thumbnail!,
+            blob,
+            lastAccessed: Date.now(),
+          });
         }
-        await db.thumbnailCache.put({
-          id: thumbnail!,
-          blob,
-          lastAccessed: Date.now(),
-        });
 
         if (!cancelled) {
           // Revoke previous object URL before creating new one

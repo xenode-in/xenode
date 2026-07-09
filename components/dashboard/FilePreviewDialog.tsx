@@ -334,6 +334,7 @@ interface FilePreviewDialogProps {
   password?: string;
   directShareId?: string;
   directShareWrappedKey?: string;
+  sharedItemId?: string;
   onDownload?: () => void;
 }
 
@@ -408,10 +409,14 @@ const ChunkedStreamPlayer = ({
         title="Encrypted Media"
         src={blobUrl || ""}
         onProviderSetup={(provider) => {
+          const mediaProvider = provider as {
+            video?: HTMLVideoElement;
+            audio?: HTMLAudioElement;
+          };
           if (provider.type === "video") {
-            setVideoElement((provider as any).video);
+            setVideoElement(mediaProvider.video ?? null);
           } else if (provider.type === "audio") {
-            setVideoElement((provider as any).audio);
+            setVideoElement(mediaProvider.audio ?? null);
           }
         }}
         onCanPlay={onReady}
@@ -711,6 +716,7 @@ export function FilePreviewDialog({
   password,
   directShareId,
   directShareWrappedKey,
+  sharedItemId,
   onDownload,
 }: FilePreviewDialogProps) {
   const [url, setUrl] = useState<string | null>(null);
@@ -977,7 +983,10 @@ export function FilePreviewDialog({
           res = await fetch(`/api/share/${sharedToken}/stream`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ password: password || undefined }),
+            body: JSON.stringify({
+              password: password || undefined,
+              itemId: sharedItemId,
+            }),
           });
         } else {
           res = workspace?.scopedFetch
@@ -1376,6 +1385,7 @@ export function FilePreviewDialog({
     workspaceSpaceKey.isLoading,
     workspaceSpaceKey.error,
     sharedToken,
+    sharedItemId,
     albumShareToken,
     shareKey,
     password,
@@ -1483,6 +1493,7 @@ export function FilePreviewDialog({
   }, [
     wantHd,
     sharedToken,
+    sharedItemId,
     directShareId,
     file,
     privateKey,

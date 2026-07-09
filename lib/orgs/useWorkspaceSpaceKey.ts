@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
-import { useCrypto } from "@/contexts/CryptoContext";
+import { useOptionalCrypto } from "@/contexts/CryptoContext";
 import { unwrapSpaceKeyGrant } from "@/lib/orgs/spaceKeyClient";
 
 export interface WorkspaceSpaceKeyState {
@@ -16,7 +16,8 @@ export interface WorkspaceSpaceKeyState {
 
 export function useWorkspaceSpaceKey(): WorkspaceSpaceKeyState {
   const workspace = useOptionalWorkspace();
-  const { privateKey } = useCrypto();
+  const cryptoContext = useOptionalCrypto();
+  const privateKey = cryptoContext?.privateKey ?? null;
   const [rawSpaceKey, setRawSpaceKey] = useState<Uint8Array | null>(null);
   const [keyVersion, setKeyVersion] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);

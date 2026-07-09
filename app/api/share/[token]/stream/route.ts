@@ -29,7 +29,7 @@ interface Params {
 export async function POST(req: NextRequest, { params }: Params) {
   const resolvedParams = await params;
   const body = await req.json().catch(() => ({}));
-  const { password } = body;
+  const { password, itemId } = body;
 
   await dbConnect();
 
@@ -64,7 +64,16 @@ export async function POST(req: NextRequest, { params }: Params) {
     );
   }
 
-  const object = await StorageObject.findById(link.objectId).lean();
+  const selectedItem =
+    link.isBundle && itemId
+      ? link.bundleItems?.find((item) => item.objectId.toString() === itemId)
+      : null;
+  if (link.isBundle && itemId && !selectedItem) {
+    return NextResponse.json({ error: "File not found in share" }, { status: 404 });
+  }
+
+  const objectId = selectedItem?.objectId || link.objectId;
+  const object = await StorageObject.findById(objectId).lean();
   if (!object)
     return NextResponse.json({ error: "File not found" }, { status: 404 });
 
@@ -94,18 +103,18 @@ export async function POST(req: NextRequest, { params }: Params) {
     chunkUrls,
     isEncrypted: object.isEncrypted,
     iv: object.iv,
-    contentType: link.shareEncryptedContentType || object.contentType,
+    contentType: selectedItem?.shareEncryptedContentType || link.shareEncryptedContentType || object.contentType,
     mediaCategory: object.mediaCategory,
-    fileName: link.shareEncryptedName || (object.encryptedName || object.key.split("/").pop())!,
-    shareEncryptedName: link.shareEncryptedName,
-    shareEncryptedContentType: link.shareEncryptedContentType,
-    shareEncryptedThumbnail: link.shareEncryptedThumbnail,
-    shareEncryptedDEK: link.shareEncryptedDEK,
-    shareKeyIv: link.shareKeyIv,
+    fileName: selectedItem?.shareEncryptedName || link.shareEncryptedName || (object.encryptedName || object.key.split("/").pop())!,
+    shareEncryptedName: selectedItem?.shareEncryptedName || link.shareEncryptedName,
+    shareEncryptedContentType: selectedItem?.shareEncryptedContentType || link.shareEncryptedContentType,
+    shareEncryptedThumbnail: selectedItem?.shareEncryptedThumbnail || link.shareEncryptedThumbnail,
+    shareEncryptedDEK: selectedItem?.shareEncryptedDEK || link.shareEncryptedDEK,
+    shareKeyIv: selectedItem?.shareKeyIv || link.shareKeyIv,
     // Chunked encryption metadata (undefined for legacy single-blob files)
     chunkSize: object.chunkSize,
     chunkCount: object.chunkCount,
     chunkIvs: object.chunkIvs, // JSON string, parse on client
-    thumbnail: link.shareEncryptedThumbnail || object.thumbnail,
+    thumbnail: selectedItem?.shareEncryptedThumbnail || link.shareEncryptedThumbnail || object.thumbnail,
   });
 }

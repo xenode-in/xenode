@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Link2, Users, Inbox, Share2 } from "lucide-react";
+import { FolderOpen, Link2, Users, Inbox, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -15,6 +15,9 @@ interface ShareRow {
   id: string;
   objectId: string;
   type: "link" | "direct";
+  isBundle?: boolean;
+  bundleName?: string | null;
+  itemCount?: number | null;
   createdBy: string | null;
   recipientCount?: number | null;
   accessType?: string;
@@ -91,12 +94,24 @@ export function OrgSharesClient({
           {shares.map((s) => (
             <li key={s.id} className="flex items-center gap-3 px-4 py-3">
               <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary/50 text-muted-foreground">
-                {s.type === "link" ? <Link2 className="h-4 w-4" /> : <Users className="h-4 w-4" />}
+                {s.isBundle ? (
+                  <FolderOpen className="h-4 w-4" />
+                ) : s.type === "link" ? (
+                  <Link2 className="h-4 w-4" />
+                ) : (
+                  <Users className="h-4 w-4" />
+                )}
               </span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">Encrypted file</p>
+                <p className="truncate text-sm font-medium text-foreground">
+                  {s.isBundle
+                    ? s.bundleName || `${s.itemCount || 0} shared files`
+                    : "Encrypted file"}
+                </p>
                 <p className="text-xs text-muted-foreground">
-                  {s.type === "link" ? "Public link" : "Direct share"}
+                  {s.isBundle
+                    ? `Bundle${typeof s.itemCount === "number" ? ` Â· ${s.itemCount} file${s.itemCount === 1 ? "" : "s"}` : ""}`
+                    : s.type === "link" ? "Public link" : "Direct share"}
                   {typeof s.recipientCount === "number" && ` · ${s.recipientCount} recipient${s.recipientCount === 1 ? "" : "s"}`}
                   {s.createdAt && ` · ${formatDate(s.createdAt)}`}
                 </p>

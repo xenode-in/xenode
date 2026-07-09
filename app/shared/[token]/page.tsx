@@ -14,6 +14,7 @@ import {
   Loader2,
   Eye,
   X,
+  FileStack,
 } from "lucide-react";
 import { getFileIcon } from "@/lib/file-icons";
 import { DocViewerRenderers } from "@cyntler/react-doc-viewer";
@@ -32,6 +33,8 @@ import { LandingFooter } from "@/components/landing/LandingFooter";
 import { FilePreviewDialog } from "@/components/dashboard/FilePreviewDialog";
 
 interface ShareMeta {
+  id?: string;
+  name?: string;
   fileName: string;
   size: number;
   contentType: string;
@@ -46,6 +49,88 @@ interface ShareMeta {
   shareEncryptedName?: string;
   shareEncryptedContentType?: string;
   mediaCategory?: string;
+  isBundle?: boolean;
+  bundleName?: string;
+  items?: ShareMetaItem[];
+}
+
+interface ShareMetaItem {
+  id: string;
+  name?: string;
+  fileName?: string;
+  size: number;
+  contentType: string;
+  isEncrypted: boolean;
+  thumbnail?: string;
+  shareEncryptedDEK?: string;
+  shareKeyIv?: string;
+  shareEncryptedName?: string;
+  shareEncryptedContentType?: string;
+  mediaCategory?: string;
+}
+
+function BundleFileCard({
+  item,
+  displayName,
+  displayType,
+  shareKeyObj,
+  downloading,
+  onPreview,
+  onDownload,
+}: {
+  item: ShareMetaItem;
+  displayName: string;
+  displayType: string;
+  shareKeyObj: CryptoKey | null;
+  downloading: boolean;
+  onPreview: () => void;
+  onDownload: () => void;
+}) {
+  const thumbnailUrl = useThumbnail(item.thumbnail, shareKeyObj);
+
+  return (
+    <div className="group overflow-hidden rounded-xl border border-border bg-background/50 transition-colors hover:border-primary/40 hover:bg-secondary/20">
+      <button
+        type="button"
+        onClick={onPreview}
+        className="block w-full text-left"
+      >
+        <div className="flex aspect-video items-center justify-center bg-secondary/30">
+          {thumbnailUrl ? (
+            <img
+              src={thumbnailUrl}
+              alt={displayName}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            getFileIcon(displayType, "h-10 w-10", item.mediaCategory)
+          )}
+        </div>
+        <div className="min-w-0 p-3">
+          <p className="truncate text-sm font-medium">{displayName}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {formatBytes(item.size)}
+          </p>
+        </div>
+      </button>
+      <div className="border-t border-border/60 p-2">
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 w-full"
+          onClick={onDownload}
+          disabled={downloading}
+        >
+          {downloading ? (
+            <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Download className="mr-2 h-3.5 w-3.5" />
+          )}
+          Download
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function b64ToBytes(b64: string): Uint8Array {
@@ -140,12 +225,16 @@ export default function SharedFilePage() {
   const [decryptedContentType, setDecryptedContentType] = useState<
     string | null
   >(null);
+  const [decryptedItems, setDecryptedItems] = useState<
+    Record<string, { name?: string; contentType?: string }>
+  >({});
   const [shareKey, setShareKey] = useState("");
   const [shareKeyObj, setShareKeyObj] = useState<CryptoKey | null>(null);
   const [isKeyValid, setIsKeyValid] = useState(true);
   const [isKeyMissing, setIsKeyMissing] = useState(false);
 
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewItem, setPreviewItem] = useState<ShareMetaItem | null>(null);
   const decryptedThumbnailUrl = useThumbnail(meta?.thumbnail, shareKeyObj);
 
   // Sync shareKey from URL hash
@@ -176,11 +265,30 @@ export default function SharedFilePage() {
 
   const displayName =
     decryptedName ||
+    (meta?.isBundle && meta.bundleName ? meta.bundleName : null) ||
     (meta?.fileName ? meta.fileName.split("/").pop() : "File") ||
     "File";
 
   const fileStub = useMemo(() => {
     if (!meta) return null;
+    if (previewItem) {
+      const itemDecrypted = decryptedItems[previewItem.id];
+      const itemName =
+        itemDecrypted?.name ||
+        previewItem.fileName ||
+        previewItem.name ||
+        "Shared file";
+      return {
+        id: previewItem.id,
+        key: itemName,
+        size: previewItem.size,
+        contentType:
+          itemDecrypted?.contentType || previewItem.contentType,
+        isEncrypted: previewItem.isEncrypted,
+        name: itemName,
+        mediaCategory: previewItem.mediaCategory,
+      };
+    }
     return {
       id: token as string,
       key: meta.fileName || "",
@@ -190,7 +298,7 @@ export default function SharedFilePage() {
       name: displayName,
       mediaCategory: meta.mediaCategory,
     };
-  }, [meta, token, decryptedContentType, displayName]);
+  }, [meta, previewItem, decryptedItems, token, decryptedContentType, displayName]);
 
   // Consolidated data loader
   useEffect(() => {
@@ -211,7 +319,11 @@ export default function SharedFilePage() {
           setMeta(d);
 
           // Decrypt shared metadata if key is present in hash
-          if (d.shareEncryptedName && shareKey) {
+          if (
+            shareKey &&
+            (d.shareEncryptedName ||
+              d.items?.some((item: ShareMetaItem) => item.shareEncryptedName))
+          ) {
             try {
               const skBytes = b64urlToBytes(shareKey);
               const shareKeyObj = await crypto.subtle.importKey(
@@ -225,11 +337,13 @@ export default function SharedFilePage() {
                 ["decrypt", "unwrapKey"],
               );
               setShareKeyObj(shareKeyObj);
-              const name = await decryptWithShareKey(
-                d.shareEncryptedName,
-                shareKeyObj,
-              );
-              setDecryptedName(name);
+              if (d.shareEncryptedName) {
+                const name = await decryptWithShareKey(
+                  d.shareEncryptedName,
+                  shareKeyObj,
+                );
+                setDecryptedName(name);
+              }
 
               if (d.shareEncryptedContentType) {
                 const type = await decryptWithShareKey(
@@ -237,6 +351,29 @@ export default function SharedFilePage() {
                   shareKeyObj,
                 );
                 setDecryptedContentType(type);
+              }
+              if (Array.isArray(d.items)) {
+                const nextItems: Record<
+                  string,
+                  { name?: string; contentType?: string }
+                > = {};
+                for (const item of d.items as ShareMetaItem[]) {
+                  const nextItem: { name?: string; contentType?: string } = {};
+                  if (item.shareEncryptedName) {
+                    nextItem.name = await decryptWithShareKey(
+                      item.shareEncryptedName,
+                      shareKeyObj,
+                    );
+                  }
+                  if (item.shareEncryptedContentType) {
+                    nextItem.contentType = await decryptWithShareKey(
+                      item.shareEncryptedContentType,
+                      shareKeyObj,
+                    );
+                  }
+                  nextItems[item.id] = nextItem;
+                }
+                setDecryptedItems(nextItems);
               }
               setIsKeyValid(true);
             } catch (err) {
@@ -254,24 +391,35 @@ export default function SharedFilePage() {
   }, [token, shareKey]);
 
   const handlePreview = useCallback(() => {
+    setPreviewItem(null);
     setIsPreviewOpen(true);
   }, []);
 
-  const handleDownload = useCallback(async () => {
+  const handlePreviewItem = useCallback((item: ShareMetaItem) => {
+    setPreviewItem(item);
+    setIsPreviewOpen(true);
+  }, []);
+
+  const handleDownload = useCallback(async (item?: ShareMetaItem) => {
     if (!meta) return;
+    const target = item || meta;
+    const targetDecrypted = item ? decryptedItems[item.id] : undefined;
     setDownloading(true);
     setError(null);
     try {
       const res = await fetch(`/api/share/${token}/download`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: password || undefined }),
+        body: JSON.stringify({
+          password: password || undefined,
+          itemId: item?.id,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to load stream info");
 
       const shareEncryptedDEK =
-        data.shareEncryptedDEK || meta.shareEncryptedDEK;
+        data.shareEncryptedDEK || target.shareEncryptedDEK;
 
       if (data.isEncrypted && (!shareKey || !shareEncryptedDEK)) {
         throw new Error("Missing decryption key.");
@@ -314,14 +462,19 @@ export default function SharedFilePage() {
             );
           }
           blob = new Blob(plaintextChunks, {
-            type: decryptedContentType || data.contentType,
+            type:
+              targetDecrypted?.contentType ||
+              decryptedContentType ||
+              data.contentType,
           });
         } else {
+          const fileUrl = data.downloadUrl || data.streamUrl;
+          if (!fileUrl) throw new Error("No download URL returned");
           const raw = await fetchWithProgress(
-            data.downloadUrl,
+            fileUrl,
             setDownloadProgress,
             undefined,
-            meta.size,
+            target.size,
           );
           const ivBytes = b64ToBytes(data.iv);
           const decrypted = await crypto.subtle.decrypt(
@@ -330,18 +483,26 @@ export default function SharedFilePage() {
             raw,
           );
           blob = new Blob([decrypted], {
-            type: decryptedContentType || data.contentType,
+            type:
+              targetDecrypted?.contentType ||
+              decryptedContentType ||
+              data.contentType,
           });
         }
       } else {
+        const fileUrl = data.downloadUrl || data.streamUrl;
+        if (!fileUrl) throw new Error("No download URL returned");
         const raw = await fetchWithProgress(
-          data.downloadUrl,
+          fileUrl,
           setDownloadProgress,
           undefined,
-          meta.size,
+          target.size,
         );
         blob = new Blob([raw], {
-          type: decryptedContentType || data.contentType,
+          type:
+            targetDecrypted?.contentType ||
+            decryptedContentType ||
+            data.contentType,
         });
       }
 
@@ -349,9 +510,15 @@ export default function SharedFilePage() {
       const a = document.createElement("a");
       a.href = url;
       a.download =
-        decryptedName || data.fileName || meta.fileName || "download";
+        targetDecrypted?.name ||
+        decryptedName ||
+        data.fileName ||
+        target.fileName ||
+        target.name ||
+        "download";
       document.body.appendChild(a);
       a.click();
+      a.remove();
       URL.revokeObjectURL(url);
       setDone(true);
     } catch (e: unknown) {
@@ -359,13 +526,25 @@ export default function SharedFilePage() {
     } finally {
       setDownloading(false);
     }
-  }, [meta, token, password, shareKey, decryptedName, decryptedContentType]);
+  }, [
+    meta,
+    token,
+    password,
+    shareKey,
+    decryptedName,
+    decryptedContentType,
+    decryptedItems,
+  ]);
 
   const handleClosePreview = useCallback(() => {
     setIsPreviewOpen(false);
+    setPreviewItem(null);
   }, []);
 
-  if (isKeyMissing) {
+  const shareRequiresKey =
+    !!meta?.isEncrypted || !!meta?.items?.some((item) => item.isEncrypted);
+
+  if (isKeyMissing && shareRequiresKey) {
     return (
       <div className="min-h-screen flex flex-col bg-background">
         <Navbar />
@@ -435,10 +614,12 @@ export default function SharedFilePage() {
     <div className="min-h-screen flex flex-col bg-background">
       <Navbar />
       <main className="grow flex items-center justify-center p-4 md:p-8 relative overflow-hidden bg-background">
-        <Card className="w-full max-w-md relative z-10 shadow-2xl border-border/50 backdrop-blur-sm bg-card/90">
+        <Card className={`w-full ${meta.isBundle ? "max-w-3xl" : "max-w-md"} relative z-10 shadow-2xl border-border/50 backdrop-blur-sm bg-card/90`}>
           <CardHeader className="text-center">
             <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-2xl bg-primary/10 overflow-hidden shadow-inner">
-              {decryptedThumbnailUrl ? (
+              {meta.isBundle ? (
+                <FileStack className="h-10 w-10 text-primary" />
+              ) : decryptedThumbnailUrl ? (
                 <img
                   src={decryptedThumbnailUrl}
                   alt={displayName}
@@ -456,7 +637,9 @@ export default function SharedFilePage() {
               {displayName}
             </CardTitle>
             <p className="text-sm text-muted-foreground mt-1">
-              {formatBytes(meta.size)}
+              {meta.isBundle && meta.items
+                ? `${meta.items.length} files`
+                : formatBytes(meta.size)}
             </p>
           </CardHeader>
           <CardContent className="space-y-4 pt-2">
@@ -474,46 +657,81 @@ export default function SharedFilePage() {
                 />
               </div>
             )}
-            <div className="grid grid-cols-1 gap-3 pt-2">
-              <Button
-                className="w-full h-11 text-base font-medium transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
-                onClick={handleDownload}
-                disabled={downloading}
-              >
-                {downloading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Downloading {downloadProgress}%
-                  </>
-                ) : (
-                  <>
-                    <Download className="mr-2 h-4 w-4" />
-                    Download File
-                  </>
-                )}
-              </Button>
-              <Button
-                variant="outline"
-                className="w-full h-11 text-base font-medium bg-background/50 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
-                onClick={handlePreview}
-              >
-                <Eye className="mr-2 h-4 w-4" />
-                Preview Online
-              </Button>
-            </div>
+            {error && (
+              <div className="flex items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/10 p-3 text-xs text-destructive">
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                {error}
+              </div>
+            )}
+            {meta.isBundle && meta.items ? (
+              <div className="grid grid-cols-1 gap-3 pt-2 sm:grid-cols-2">
+                {meta.items.map((item) => {
+                  const itemName =
+                    decryptedItems[item.id]?.name ||
+                    item.fileName ||
+                    item.name ||
+                    "Shared file";
+                  const itemType =
+                    decryptedItems[item.id]?.contentType || item.contentType;
+                  return (
+                    <BundleFileCard
+                      key={item.id}
+                      item={item}
+                      displayName={itemName}
+                      displayType={itemType}
+                      shareKeyObj={shareKeyObj}
+                      downloading={downloading}
+                      onPreview={() => handlePreviewItem(item)}
+                      onDownload={() => void handleDownload(item)}
+                    />
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3 pt-2">
+                <Button
+                  className="w-full h-11 text-base font-medium transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
+                  onClick={() => void handleDownload()}
+                  disabled={downloading}
+                >
+                  {downloading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Downloading {downloadProgress}%
+                    </>
+                  ) : (
+                    <>
+                      <Download className="mr-2 h-4 w-4" />
+                      Download File
+                    </>
+                  )}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full h-11 text-base font-medium bg-background/50 transition-all duration-300 hover:scale-[1.02] active:scale-[0.98]"
+                  onClick={handlePreview}
+                >
+                  <Eye className="mr-2 h-4 w-4" />
+                  Preview Online
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
       </main>
       <LandingFooter />
 
-      <FilePreviewDialog
-        file={fileStub}
-        isOpen={isPreviewOpen}
-        onClose={handleClosePreview}
-        sharedToken={token}
-        shareKey={shareKey}
-        password={password}
-      />
+      {(!meta.isBundle || previewItem) && (
+        <FilePreviewDialog
+          file={fileStub}
+          isOpen={isPreviewOpen}
+          onClose={handleClosePreview}
+          sharedToken={token}
+          sharedItemId={previewItem?.id}
+          shareKey={shareKey}
+          password={password}
+        />
+      )}
     </div>
   );
 }

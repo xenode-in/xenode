@@ -24,6 +24,7 @@ import {
   decryptFileChunkedCombined,
 } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
+import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 
 interface VersionEntry {
   versionId: string;
@@ -65,6 +66,7 @@ export function FileVersionsDialog({
 }: FileVersionsDialogProps) {
   const crypto = useOptionalCrypto();
   const privateKey = crypto?.privateKey;
+  const workspace = useOptionalWorkspace();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -76,7 +78,9 @@ export function FileVersionsDialog({
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`/api/objects/${fileId}/versions`);
+      const res = workspace?.scopedFetch
+        ? await workspace.scopedFetch(`/api/objects/${fileId}/versions`)
+        : await fetch(`/api/objects/${fileId}/versions`);
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Failed to load versions");
@@ -89,7 +93,7 @@ export function FileVersionsDialog({
     } finally {
       setLoading(false);
     }
-  }, [fileId]);
+  }, [fileId, workspace]);
 
   useEffect(() => {
     if (isOpen) void load();
@@ -98,10 +102,15 @@ export function FileVersionsDialog({
   const handleRestore = async (versionId: string) => {
     setBusyId(versionId);
     try {
-      const res = await fetch(
-        `/api/objects/${fileId}/versions/${versionId}/restore`,
-        { method: "POST" },
-      );
+      const res = workspace?.scopedFetch
+        ? await workspace.scopedFetch(
+            `/api/objects/${fileId}/versions/${versionId}/restore`,
+            { method: "POST" },
+          )
+        : await fetch(
+            `/api/objects/${fileId}/versions/${versionId}/restore`,
+            { method: "POST" },
+          );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Restore failed");
@@ -121,10 +130,15 @@ export function FileVersionsDialog({
       return;
     setBusyId(versionId);
     try {
-      const res = await fetch(
-        `/api/objects/${fileId}/versions/${versionId}`,
-        { method: "DELETE" },
-      );
+      const res = workspace?.scopedFetch
+        ? await workspace.scopedFetch(
+            `/api/objects/${fileId}/versions/${versionId}`,
+            { method: "DELETE" },
+          )
+        : await fetch(
+            `/api/objects/${fileId}/versions/${versionId}`,
+            { method: "DELETE" },
+          );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Delete failed");
@@ -141,9 +155,13 @@ export function FileVersionsDialog({
   const handleDownload = async (v: VersionEntry) => {
     setBusyId(v.versionId);
     try {
-      const res = await fetch(
-        `/api/objects/${fileId}/content?version=${v.versionId}`,
-      );
+      const res = workspace?.scopedFetch
+        ? await workspace.scopedFetch(
+            `/api/objects/${fileId}/content?version=${v.versionId}`,
+          )
+        : await fetch(
+            `/api/objects/${fileId}/content?version=${v.versionId}`,
+          );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Failed to fetch version");

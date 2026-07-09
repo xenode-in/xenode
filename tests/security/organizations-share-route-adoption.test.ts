@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { POST } from "@/app/api/share/route";
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
+import OrganizationPolicy from "@/models/OrganizationPolicy";
 import ShareLink from "@/models/ShareLink";
 import StorageObject from "@/models/StorageObject";
 
@@ -59,6 +60,41 @@ async function createObject(userId: string) {
   });
 }
 
+async function createOrganizationObject(orgId = "org_1") {
+  const bucket = await Bucket.create({
+    userId: "system",
+    ownerScope: "organization",
+    orgId,
+    name: "xenode-organization-dev",
+    b2BucketId: "xenode-organization-dev",
+  });
+
+  return StorageObject.create({
+    bucketId: bucket._id,
+    userId: "system",
+    ownerScope: "organization",
+    orgId,
+    key: `workspaces/${orgId}/objects/file`,
+    size: 100,
+    contentType: "application/octet-stream",
+    mediaCategory: "other",
+    b2FileId: "b2-org-file",
+    isEncrypted: true,
+    encryptedDEK: "wrapped-org-dek",
+    spaceKeyWrapIv: "space-key-iv",
+    spaceKeyVersion: 1,
+  });
+}
+
+async function addOrgMember(userId = "user_1", role = "admin", orgId = "org_1") {
+  await Bucket.db.collection("member").insertOne({
+    userId,
+    organizationId: orgId,
+    role,
+    createdAt: new Date(),
+  });
+}
+
 function shareBody(objectId: string) {
   return {
     token: `token-${objectId}`,
@@ -103,15 +139,32 @@ describe("organization share-link route adoption", () => {
     expect(await ShareLink.countDocuments()).toBe(0);
   });
 
-  it("fails closed for explicit org share-link creation until org storage is enabled", async () => {
+  it("creates share links for organization objects in organization scope", async () => {
     process.env.ORGS_ENABLED = "true";
     mockSession("user_1");
-    const object = await createObject("user_1");
-    await Bucket.db.collection("member").insertOne({
-      userId: "user_1",
-      organizationId: "org_1",
-      role: "admin",
-      createdAt: new Date(),
+    const object = await createOrganizationObject();
+    await addOrgMember();
+
+    const response = await POST(
+      request(shareBody(String(object._id)), {
+        "x-xenode-drive-scope": "organization",
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.token).toBe(`token-${object._id}`);
+    expect(await ShareLink.countDocuments({ createdBy: "user_1" })).toBe(1);
+  });
+
+  it("enforces disabled public links for organization share links", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("user_1");
+    const object = await createOrganizationObject();
+    await addOrgMember();
+    await OrganizationPolicy.create({
+      orgId: "org_1",
+      allowPublicLinks: false,
     });
 
     const response = await POST(
@@ -121,11 +174,49 @@ describe("organization share-link route adoption", () => {
     );
     const body = await response.json();
 
-    expect(response.status).toBe(501);
-    expect(body).toEqual({
-      error: "Organization storage is not enabled yet",
-      code: "organization_storage_not_ready",
-    });
+    expect(response.status).toBe(403);
+    expect(body.code).toBe("organization_public_links_disabled");
     expect(await ShareLink.countDocuments()).toBe(0);
+  });
+
+  it("enforces password and expiry requirements for organization share links", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("user_1");
+    const object = await createOrganizationObject();
+    await addOrgMember();
+    await OrganizationPolicy.create({
+      orgId: "org_1",
+      requirePassword: true,
+      requireExpiry: true,
+    });
+
+    const missingPassword = await POST(
+      request({ ...shareBody(String(object._id)), expiresIn: 24 }, {
+        "x-xenode-drive-scope": "organization",
+      }),
+    );
+    expect(missingPassword.status).toBe(400);
+    await expect(missingPassword.json()).resolves.toMatchObject({
+      code: "organization_share_password_required",
+    });
+
+    const missingExpiry = await POST(
+      request({ ...shareBody(String(object._id)), password: "secret" }, {
+        "x-xenode-drive-scope": "organization",
+      }),
+    );
+    expect(missingExpiry.status).toBe(400);
+    await expect(missingExpiry.json()).resolves.toMatchObject({
+      code: "organization_share_expiry_required",
+    });
+
+    const allowed = await POST(
+      request(
+        { ...shareBody(String(object._id)), password: "secret", expiresIn: 24 },
+        { "x-xenode-drive-scope": "organization" },
+      ),
+    );
+    expect(allowed.status).toBe(200);
+    expect(await ShareLink.countDocuments()).toBe(1);
   });
 });

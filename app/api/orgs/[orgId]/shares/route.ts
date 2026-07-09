@@ -71,7 +71,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     const [links, direct] = await Promise.all([
-      ShareLink.find({ objectId: { $in: objectIds }, isRevoked: false })
+      ShareLink.find({
+        isRevoked: false,
+        $or: [
+          { objectId: { $in: objectIds } },
+          { "bundleItems.objectId": { $in: objectIds } },
+        ],
+      })
         .sort({ createdAt: -1 })
         .limit(100)
         .lean(),
@@ -86,6 +92,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         id: String(l._id),
         objectId: String(l.objectId),
         type: "link" as const,
+        isBundle: !!l.isBundle,
+        bundleName: l.bundleName ?? null,
+        itemCount: l.isBundle ? l.bundleItems?.length ?? 0 : null,
         createdBy: (l as { createdBy?: string }).createdBy ?? null,
         recipientCount: null as number | null,
         createdAt: (l as { createdAt?: Date }).createdAt ?? null,
