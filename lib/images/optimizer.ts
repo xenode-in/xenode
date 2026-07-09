@@ -42,16 +42,49 @@ function ext(filename: string): string {
   return filename.split(".").pop()?.toLowerCase() ?? "";
 }
 
-function makePreviewName(originalName: string): string {
-  return `${originalName.replace(/\.[^.]+$/, "")}_preview.webp`;
+function makePreviewName(originalName: string, ext: string): string {
+  return `${originalName.replace(/\.[^.]+$/, "")}_preview.${ext}`;
 }
 
-// ─── Canvas compressor ────────────────────────────────────────────────────────
+// ─── WASM image compressor ──────────────────────────────────────────────────
+//
+// We encode with the AVIF WASM codec (WebP WASM fallback) instead of
+// `canvas.convertToBlob("image/webp")`. The canvas path is unreliable on mobile
+// Safari — iOS silently ignores the WebP MIME type and returns a full-size PNG,
+// which is often larger than the original, so the "optimized" copy ends up being
+// discarded and the viewer falls back to the untouched original. WASM encodes
+// identically on every browser (iOS 16.4+, Android, desktop), and AVIF decodes
+// natively on all of them.
 
-const QUALITY_PHOTO = 0.82;
-const QUALITY_GRAPHIC = 0.88;
-const QUALITY_INTERMEDIATE = 0.85;
-const MAX_DIMENSION = 2048;
+// AVIF quality is 0-100 (higher = better); photos tolerate more compression than
+// text/graphics. speed is 0-10 (higher = faster encode) — 8 keeps mobile snappy.
+const QUALITY_PHOTO = 55;
+const QUALITY_GRAPHIC = 65;
+const QUALITY_INTERMEDIATE = 60;
+const AVIF_SPEED = 8;
+const WEBP_FALLBACK_QUALITY = 75;
+// 1600px longest edge covers phone + desktop fullscreen and keeps most previews
+// under ~250 KB. Zooming past this transparently fetches the encrypted original.
+const MAX_DIMENSION = 1600;
+
+async function encodeImageData(
+  imageData: ImageData,
+  quality: number,
+): Promise<{ blob: Blob; ext: string; mime: string }> {
+  try {
+    const encodeAvif = (await import("@jsquash/avif/encode")).default;
+    const buf = await encodeAvif(imageData, { quality, speed: AVIF_SPEED });
+    return { blob: new Blob([buf], { type: "image/avif" }), ext: "avif", mime: "image/avif" };
+  } catch (err) {
+    console.warn("[Preview] AVIF encode failed, falling back to WebP:", err);
+    const encodeWebp = (await import("@jsquash/webp/encode")).default;
+    const buf = await encodeWebp(imageData, {
+      quality: WEBP_FALLBACK_QUALITY,
+      method: 4,
+    });
+    return { blob: new Blob([buf], { type: "image/webp" }), ext: "webp", mime: "image/webp" };
+  }
+}
 
 async function compressWithCanvas(
   file: File,
@@ -81,25 +114,26 @@ async function compressWithCanvas(
     height = Math.round(height * ratio);
   }
 
+  // Preserve alpha (AVIF/WebP both support it) and downscale with high-quality
+  // resampling, then read back RGBA pixels for the WASM encoder.
   const canvas = new OffscreenCanvas(width, height);
-  const ctx = canvas.getContext("2d", { alpha: false })!;
-
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, width, height);
+  const ctx = canvas.getContext("2d")!;
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(bitmap, 0, 0, width, height);
   bitmap.close();
 
+  const imageData = ctx.getImageData(0, 0, width, height);
+
   onProgress?.({ stage: "optimizing", progress: 80 });
 
-  const blob = await canvas.convertToBlob({ type: "image/webp", quality });
+  const { blob, ext, mime } = await encodeImageData(imageData, quality);
 
   onProgress?.({ stage: "optimizing", progress: 100 });
 
   return {
-    file: new File([blob], makePreviewName(originalName), {
-      type: "image/webp",
+    file: new File([blob], makePreviewName(originalName, ext), {
+      type: mime,
       lastModified: Date.now(),
     }),
     aspectRatio,
