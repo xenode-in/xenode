@@ -1,7 +1,6 @@
 "use client";
 
-const NOOP = () => {};
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,23 +9,13 @@ import {
   Download,
   Lock,
   AlertCircle,
-  CheckCircle2,
   Loader2,
   Eye,
-  X,
   FileStack,
 } from "lucide-react";
 import { getFileIcon } from "@/lib/file-icons";
-import { DocViewerRenderers } from "@cyntler/react-doc-viewer";
-import dynamic from "next/dynamic";
-import { useVideoStream, VideoStreamOptions } from "@/hooks/useVideoStream";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
-import {
-  decryptWithShareKey,
-  decryptThumbnail,
-} from "@/lib/crypto/fileEncryption";
-import { cn } from "@/lib/utils";
-import Link from "next/link";
+import { decryptWithShareKey } from "@/lib/crypto/fileEncryption";
 import { useThumbnail } from "@/hooks/useThumbnail";
 import { Navbar } from "@/components/Navbar";
 import { LandingFooter } from "@/components/landing/LandingFooter";
@@ -48,6 +37,7 @@ interface ShareMeta {
   shareKeyIv?: string;
   shareEncryptedName?: string;
   shareEncryptedContentType?: string;
+  shareEncryptedThumbnail?: string;
   mediaCategory?: string;
   isBundle?: boolean;
   bundleName?: string;
@@ -66,6 +56,7 @@ interface ShareMetaItem {
   shareKeyIv?: string;
   shareEncryptedName?: string;
   shareEncryptedContentType?: string;
+  shareEncryptedThumbnail?: string;
   mediaCategory?: string;
 }
 
@@ -73,7 +64,11 @@ function BundleFileCard({
   item,
   displayName,
   displayType,
+  token,
+  password,
+  shareKey,
   shareKeyObj,
+  requiresPassword,
   downloading,
   onPreview,
   onDownload,
@@ -81,12 +76,29 @@ function BundleFileCard({
   item: ShareMetaItem;
   displayName: string;
   displayType: string;
+  token: string;
+  password: string;
+  shareKey: string;
   shareKeyObj: CryptoKey | null;
+  requiresPassword: boolean;
   downloading: boolean;
   onPreview: () => void;
   onDownload: () => void;
 }) {
-  const thumbnailUrl = useThumbnail(item.thumbnail, shareKeyObj);
+  const thumbnailKey =
+    item.shareEncryptedThumbnail && !shareKeyObj ? undefined : item.thumbnail;
+  const thumbnailUrl = useThumbnail(thumbnailKey, shareKeyObj);
+  const fallbackThumbnailUrl = useSharedImageThumbnailFallback({
+    enabled: !thumbnailUrl && !item.shareEncryptedThumbnail,
+    item,
+    token,
+    password,
+    shareKey,
+    displayName,
+    displayType,
+    requiresPassword,
+  });
+  const effectiveThumbnailUrl = thumbnailUrl || fallbackThumbnailUrl;
 
   return (
     <div className="group overflow-hidden rounded-xl border border-border bg-background/50 transition-colors hover:border-primary/40 hover:bg-secondary/20">
@@ -96,9 +108,9 @@ function BundleFileCard({
         className="block w-full text-left"
       >
         <div className="flex aspect-video items-center justify-center bg-secondary/30">
-          {thumbnailUrl ? (
+          {effectiveThumbnailUrl ? (
             <img
-              src={thumbnailUrl}
+              src={effectiveThumbnailUrl}
               alt={displayName}
               className="h-full w-full object-cover"
             />
@@ -212,14 +224,231 @@ async function fetchWithProgress(
   return combined.buffer;
 }
 
+type SharedFileTarget = {
+  id?: string;
+  name?: string;
+  fileName?: string;
+  size?: number;
+  contentType?: string;
+  isEncrypted?: boolean;
+  shareEncryptedDEK?: string;
+  shareKeyIv?: string;
+};
+
+type SharedFileEndpoint = "download" | "stream";
+
+async function fetchSharedFileBlob({
+  token,
+  password,
+  itemId,
+  target,
+  shareKey,
+  fileName,
+  contentType,
+  endpoint,
+  onProgress,
+}: {
+  token: string;
+  password?: string;
+  itemId?: string;
+  target: SharedFileTarget;
+  shareKey: string;
+  fileName?: string;
+  contentType?: string;
+  endpoint: SharedFileEndpoint;
+  onProgress?: (pct: number) => void;
+}): Promise<{ blob: Blob; fileName: string; contentType: string }> {
+  const res = await fetch(`/api/share/${token}/${endpoint}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      password: password || undefined,
+      itemId,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Failed to load stream info");
+
+  const resolvedContentType =
+    contentType || data.contentType || target.contentType || "application/octet-stream";
+  const resolvedFileName =
+    fileName || data.fileName || target.fileName || target.name || "download";
+  const shareEncryptedDEK = data.shareEncryptedDEK || target.shareEncryptedDEK;
+
+  if (data.isEncrypted && (!shareKey || !shareEncryptedDEK)) {
+    throw new Error("Missing decryption key.");
+  }
+
+  let blob: Blob;
+  if (data.isEncrypted && shareKey && shareEncryptedDEK) {
+    onProgress?.(0);
+    const skBytes = b64urlToBytes(shareKey);
+    const shareKeyObj = await crypto.subtle.importKey(
+      "raw",
+      bytesToArrayBuffer(skBytes),
+      { name: "AES-GCM" },
+      false,
+      ["unwrapKey"],
+    );
+    const encryptedDekBytes = b64ToBytes(shareEncryptedDEK);
+    const shareKeyIv = data.shareKeyIv || target.shareKeyIv;
+    if (!shareKeyIv) throw new Error("Missing file key metadata.");
+    const shareKeyIvBytes = b64ToBytes(shareKeyIv);
+
+    const dek = await crypto.subtle.unwrapKey(
+      "raw",
+      bytesToArrayBuffer(encryptedDekBytes),
+      shareKeyObj,
+      { name: "AES-GCM", iv: bytesToArrayBuffer(shareKeyIvBytes) },
+      { name: "AES-GCM" },
+      false,
+      ["decrypt"],
+    );
+
+    if (data.chunkUrls) {
+      const { decryptChunk } = await import("@/lib/crypto/fileEncryption");
+      const chunkIvsArr =
+        typeof data.chunkIvs === "string" ? JSON.parse(data.chunkIvs) : data.chunkIvs;
+      if (!Array.isArray(chunkIvsArr)) {
+        throw new Error("Missing chunk metadata.");
+      }
+      const plaintextChunks: ArrayBuffer[] = [];
+      for (let i = 0; i < data.chunkUrls.length; i++) {
+        const cr = await fetch(data.chunkUrls[i]);
+        if (!cr.ok) throw new Error("Failed to fetch file chunk");
+        const cb = await cr.arrayBuffer();
+        plaintextChunks.push(await decryptChunk(cb, dek, chunkIvsArr[i]));
+        onProgress?.(Math.round(((i + 1) / data.chunkUrls.length) * 100));
+      }
+      blob = new Blob(plaintextChunks, { type: resolvedContentType });
+    } else {
+      const fileUrl = data.downloadUrl || data.streamUrl;
+      if (!fileUrl) throw new Error("No download URL returned");
+      const raw = await fetchWithProgress(
+        fileUrl,
+        onProgress || (() => {}),
+        undefined,
+        target.size,
+      );
+      const ivBytes = b64ToBytes(data.iv);
+      const decrypted = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: bytesToArrayBuffer(ivBytes) },
+        dek,
+        raw,
+      );
+      blob = new Blob([decrypted], { type: resolvedContentType });
+    }
+  } else {
+    const fileUrl = data.downloadUrl || data.streamUrl;
+    if (!fileUrl) throw new Error("No download URL returned");
+    const raw = await fetchWithProgress(
+      fileUrl,
+      onProgress || (() => {}),
+      undefined,
+      target.size,
+    );
+    blob = new Blob([raw], { type: resolvedContentType });
+  }
+
+  return { blob, fileName: resolvedFileName, contentType: resolvedContentType };
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function useSharedImageThumbnailFallback({
+  enabled,
+  item,
+  token,
+  password,
+  shareKey,
+  displayName,
+  displayType,
+  requiresPassword,
+}: {
+  enabled: boolean;
+  item: ShareMetaItem;
+  token: string;
+  password: string;
+  shareKey: string;
+  displayName: string;
+  displayType: string;
+  requiresPassword: boolean;
+}) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (
+      !enabled ||
+      !displayType.startsWith("image/") ||
+      (requiresPassword && !password) ||
+      (item.isEncrypted && !shareKey)
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    async function loadFallbackThumbnail() {
+      try {
+        const { blob } = await fetchSharedFileBlob({
+          token,
+          password,
+          itemId: item.id,
+          target: item,
+          shareKey,
+          fileName: displayName,
+          contentType: displayType,
+          endpoint: "stream",
+        });
+        if (cancelled) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      } catch (err) {
+        if (!cancelled) {
+          console.warn("Shared image thumbnail fallback failed:", err);
+          setUrl(null);
+        }
+      }
+    }
+
+    loadFallbackThumbnail();
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [
+    enabled,
+    item,
+    token,
+    password,
+    shareKey,
+    displayName,
+    displayType,
+    requiresPassword,
+  ]);
+
+  return url;
+}
+
 export default function SharedFilePage() {
   const { token } = useParams<{ token: string }>();
   const [meta, setMeta] = useState<ShareMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [password, setPassword] = useState("");
   const [downloading, setDownloading] = useState(false);
+  const [downloadingAll, setDownloadingAll] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
-  const [downloadReceived, setDownloadReceived] = useState(0);
   const [done, setDone] = useState(false);
   const [decryptedName, setDecryptedName] = useState<string | null>(null);
   const [decryptedContentType, setDecryptedContentType] = useState<
@@ -235,7 +464,9 @@ export default function SharedFilePage() {
 
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewItem, setPreviewItem] = useState<ShareMetaItem | null>(null);
-  const decryptedThumbnailUrl = useThumbnail(meta?.thumbnail, shareKeyObj);
+  const singleThumbnailKey =
+    meta?.shareEncryptedThumbnail && !shareKeyObj ? undefined : meta?.thumbnail;
+  const decryptedThumbnailUrl = useThumbnail(singleThumbnailKey, shareKeyObj);
 
   // Sync shareKey from URL hash
   useEffect(() => {
@@ -322,7 +553,14 @@ export default function SharedFilePage() {
           if (
             shareKey &&
             (d.shareEncryptedName ||
-              d.items?.some((item: ShareMetaItem) => item.shareEncryptedName))
+              d.shareEncryptedDEK ||
+              d.shareEncryptedThumbnail ||
+              d.items?.some(
+                (item: ShareMetaItem) =>
+                  item.shareEncryptedName ||
+                  item.shareEncryptedDEK ||
+                  item.shareEncryptedThumbnail,
+              ))
           ) {
             try {
               const skBytes = b64urlToBytes(shareKey);
@@ -382,7 +620,7 @@ export default function SharedFilePage() {
             }
           }
         }
-      } catch (err) {
+      } catch {
         setError("Failed to load share info");
       }
     };
@@ -400,141 +638,98 @@ export default function SharedFilePage() {
     setIsPreviewOpen(true);
   }, []);
 
+  const getResolvedItemMeta = useCallback(
+    (item: ShareMetaItem) => {
+      const itemDecrypted = decryptedItems[item.id];
+      return {
+        name: itemDecrypted?.name || item.fileName || item.name || "Shared file",
+        contentType: itemDecrypted?.contentType || item.contentType,
+      };
+    },
+    [decryptedItems],
+  );
+
+  const fetchDownloadBlob = useCallback(
+    async (item?: ShareMetaItem) => {
+      if (!meta) throw new Error("Share metadata is not loaded.");
+      const target = item || meta;
+      const itemMeta = item ? getResolvedItemMeta(item) : undefined;
+
+      return fetchSharedFileBlob({
+        token,
+        password,
+        itemId: item?.id,
+        target,
+        shareKey,
+        fileName:
+          itemMeta?.name ||
+          decryptedName ||
+          target.fileName ||
+          target.name ||
+          "download",
+        contentType:
+          itemMeta?.contentType ||
+          decryptedContentType ||
+          target.contentType,
+        endpoint: "download",
+        onProgress: setDownloadProgress,
+      });
+    },
+    [
+      meta,
+      token,
+      password,
+      shareKey,
+      decryptedName,
+      decryptedContentType,
+      getResolvedItemMeta,
+    ],
+  );
+
   const handleDownload = useCallback(async (item?: ShareMetaItem) => {
-    if (!meta) return;
-    const target = item || meta;
-    const targetDecrypted = item ? decryptedItems[item.id] : undefined;
     setDownloading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/share/${token}/download`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          password: password || undefined,
-          itemId: item?.id,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to load stream info");
-
-      const shareEncryptedDEK =
-        data.shareEncryptedDEK || target.shareEncryptedDEK;
-
-      if (data.isEncrypted && (!shareKey || !shareEncryptedDEK)) {
-        throw new Error("Missing decryption key.");
-      }
-
-      let blob: Blob;
-      if (data.isEncrypted && shareKey && shareEncryptedDEK) {
-        setDownloadProgress(0);
-        const skBytes = b64urlToBytes(shareKey);
-        const shareKeyObj = await crypto.subtle.importKey(
-          "raw",
-          bytesToArrayBuffer(skBytes),
-          { name: "AES-GCM" },
-          false,
-          ["unwrapKey"],
-        );
-        const encryptedDekBytes = b64ToBytes(shareEncryptedDEK);
-        const shareKeyIvBytes = b64ToBytes(data.shareKeyIv || meta.shareKeyIv!);
-
-        const dek = await crypto.subtle.unwrapKey(
-          "raw",
-          bytesToArrayBuffer(encryptedDekBytes),
-          shareKeyObj,
-          { name: "AES-GCM", iv: bytesToArrayBuffer(shareKeyIvBytes) },
-          { name: "AES-GCM" },
-          false,
-          ["decrypt"],
-        );
-
-        if (data.chunkUrls) {
-          const { decryptChunk } = await import("@/lib/crypto/fileEncryption");
-          const chunkIvsArr = JSON.parse(data.chunkIvs);
-          const plaintextChunks = [];
-          for (let i = 0; i < data.chunkUrls.length; i++) {
-            const cr = await fetch(data.chunkUrls[i]);
-            const cb = await cr.arrayBuffer();
-            plaintextChunks.push(await decryptChunk(cb, dek, chunkIvsArr[i]));
-            setDownloadProgress(
-              Math.round(((i + 1) / data.chunkUrls.length) * 100),
-            );
-          }
-          blob = new Blob(plaintextChunks, {
-            type:
-              targetDecrypted?.contentType ||
-              decryptedContentType ||
-              data.contentType,
-          });
-        } else {
-          const fileUrl = data.downloadUrl || data.streamUrl;
-          if (!fileUrl) throw new Error("No download URL returned");
-          const raw = await fetchWithProgress(
-            fileUrl,
-            setDownloadProgress,
-            undefined,
-            target.size,
-          );
-          const ivBytes = b64ToBytes(data.iv);
-          const decrypted = await crypto.subtle.decrypt(
-            { name: "AES-GCM", iv: bytesToArrayBuffer(ivBytes) },
-            dek,
-            raw,
-          );
-          blob = new Blob([decrypted], {
-            type:
-              targetDecrypted?.contentType ||
-              decryptedContentType ||
-              data.contentType,
-          });
-        }
-      } else {
-        const fileUrl = data.downloadUrl || data.streamUrl;
-        if (!fileUrl) throw new Error("No download URL returned");
-        const raw = await fetchWithProgress(
-          fileUrl,
-          setDownloadProgress,
-          undefined,
-          target.size,
-        );
-        blob = new Blob([raw], {
-          type:
-            targetDecrypted?.contentType ||
-            decryptedContentType ||
-            data.contentType,
-        });
-      }
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download =
-        targetDecrypted?.name ||
-        decryptedName ||
-        data.fileName ||
-        target.fileName ||
-        target.name ||
-        "download";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      const { blob, fileName } = await fetchDownloadBlob(item);
+      downloadBlob(blob, fileName);
       setDone(true);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Download failed");
     } finally {
       setDownloading(false);
     }
-  }, [
-    meta,
-    token,
-    password,
-    shareKey,
-    decryptedName,
-    decryptedContentType,
-    decryptedItems,
-  ]);
+  }, [fetchDownloadBlob]);
+
+  const handleDownloadAll = useCallback(async () => {
+    if (!meta?.items?.length) return;
+    setDownloadingAll(true);
+    setError(null);
+    try {
+      const JSZip = (await import("jszip")).default;
+      const zip = new JSZip();
+      const usedNames = new Map<string, number>();
+
+      for (const item of meta.items) {
+        const { blob, fileName } = await fetchDownloadBlob(item);
+        const baseName = fileName || "download";
+        const count = usedNames.get(baseName) || 0;
+        usedNames.set(baseName, count + 1);
+        const zipName =
+          count === 0
+            ? baseName
+            : `${baseName.replace(/(\.[^.]*)?$/, "")}-${count + 1}${baseName.match(/(\.[^.]*)$/)?.[1] || ""}`;
+        zip.file(zipName, blob);
+      }
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      downloadBlob(zipBlob, `${displayName || "shared-files"}.zip`);
+      setDone(true);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Download all failed");
+    } finally {
+      setDownloadingAll(false);
+    }
+  }, [meta, fetchDownloadBlob, displayName]);
 
   const handleClosePreview = useCallback(() => {
     setIsPreviewOpen(false);
@@ -664,29 +859,43 @@ export default function SharedFilePage() {
               </div>
             )}
             {meta.isBundle && meta.items ? (
-              <div className="grid grid-cols-1 gap-3 pt-2 sm:grid-cols-2">
-                {meta.items.map((item) => {
-                  const itemName =
-                    decryptedItems[item.id]?.name ||
-                    item.fileName ||
-                    item.name ||
-                    "Shared file";
-                  const itemType =
-                    decryptedItems[item.id]?.contentType || item.contentType;
-                  return (
-                    <BundleFileCard
-                      key={item.id}
-                      item={item}
-                      displayName={itemName}
-                      displayType={itemType}
-                      shareKeyObj={shareKeyObj}
-                      downloading={downloading}
-                      onPreview={() => handlePreviewItem(item)}
-                      onDownload={() => void handleDownload(item)}
-                    />
-                  );
-                })}
-              </div>
+              <>
+                <Button
+                  className="h-10 w-full"
+                  onClick={() => void handleDownloadAll()}
+                  disabled={downloading || downloadingAll || meta.items.length === 0}
+                >
+                  {downloadingAll ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Download className="mr-2 h-4 w-4" />
+                  )}
+                  {downloadingAll
+                    ? `Preparing ${downloadProgress}%`
+                    : "Download all"}
+                </Button>
+                <div className="grid grid-cols-1 gap-3 pt-2 sm:grid-cols-2">
+                  {meta.items.map((item) => {
+                    const itemMeta = getResolvedItemMeta(item);
+                    return (
+                      <BundleFileCard
+                        key={item.id}
+                        item={item}
+                        displayName={itemMeta.name}
+                        displayType={itemMeta.contentType}
+                        token={token}
+                        password={password}
+                        shareKey={shareKey}
+                        shareKeyObj={shareKeyObj}
+                        requiresPassword={meta.isPasswordProtected}
+                        downloading={downloading || downloadingAll}
+                        onPreview={() => handlePreviewItem(item)}
+                        onDownload={() => void handleDownload(item)}
+                      />
+                    );
+                  })}
+                </div>
+              </>
             ) : (
               <div className="grid grid-cols-1 gap-3 pt-2">
                 <Button
