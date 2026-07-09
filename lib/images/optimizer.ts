@@ -30,8 +30,8 @@ const RAW_EXTENSIONS = new Set([
   "pef",
 ]);
 
-const SKIP_EXTENSIONS = new Set(["webp", "gif"]);
-const SKIP_MIME = new Set(["image/webp", "image/gif"]);
+const SKIP_EXTENSIONS = new Set(["gif"]);
+const SKIP_MIME = new Set(["image/gif"]);
 
 // Helpers
 
@@ -183,9 +183,11 @@ const QUALITY_GRAPHIC = 65;
 const QUALITY_INTERMEDIATE = 60;
 const AVIF_SPEED = 8;
 const WEBP_FALLBACK_QUALITY = 75;
-const JPEG_FALLBACK_QUALITIES = [0.72, 0.62, 0.52];
+const JPEG_FALLBACK_QUALITIES = [0.72, 0.62, 0.52, 0.44, 0.36];
+const JPEG_FALLBACK_SCALES = [1, 0.85, 0.7, 0.55, 0.4, 0.3, 0.22];
 const MAX_DIMENSION = 1600;
 const WASM_TIMEOUT_MS = 15_000;
+const TARGET_PREVIEW_BYTES = 500 * 1024;
 const MIN_COMPRESSION_RATIO = 0.75;
 const MAX_BYTES_PER_PIXEL = 0.85;
 
@@ -200,20 +202,20 @@ type RasterPreview = {
   canvas: CanvasLike;
   imageData: ImageData;
   aspectRatio: number;
+  width: number;
+  height: number;
   pixels: number;
   hasAlpha: boolean;
 };
 
-function isUsefulPreview(
-  candidate: Blob,
-  originalSize: number,
-  pixels: number,
-): boolean {
+function targetPreviewBytes(originalSize: number, pixels: number): number {
   const ratioCeiling = originalSize * MIN_COMPRESSION_RATIO;
   const pixelCeiling = pixels * MAX_BYTES_PER_PIXEL;
-  const maxUsefulSize = Math.min(ratioCeiling, pixelCeiling);
+  return Math.min(TARGET_PREVIEW_BYTES, ratioCeiling, pixelCeiling);
+}
 
-  return candidate.size > 0 && candidate.size <= maxUsefulSize;
+function isUsefulPreview(candidate: Blob, targetBytes: number): boolean {
+  return candidate.size > 0 && candidate.size <= targetBytes;
 }
 
 async function encodeAvif(
@@ -254,17 +256,40 @@ async function encodeWebp(imageData: ImageData): Promise<EncodedPreview> {
   };
 }
 
-async function encodeJpegFallback(canvas: CanvasLike): Promise<EncodedPreview[]> {
+function drawScaledCanvas(source: CanvasLike, width: number, height: number): CanvasLike {
+  const canvas = createCanvas(width, height);
+  const ctx = getCanvasContext(canvas);
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(source, 0, 0, width, height);
+  return canvas;
+}
+
+async function encodeJpegFallback(
+  canvas: CanvasLike,
+  width: number,
+  height: number,
+  targetBytes: number,
+): Promise<EncodedPreview[]> {
   const attempts: EncodedPreview[] = [];
 
-  for (const quality of JPEG_FALLBACK_QUALITIES) {
-    const blob = await canvasToBlob(canvas, "image/jpeg", quality);
-    attempts.push({
-      blob,
-      ext: "jpg",
-      mime: "image/jpeg",
-      label: `JPEG q${quality}`,
-    });
+  for (const scale of JPEG_FALLBACK_SCALES) {
+    const scaledWidth = Math.max(1, Math.round(width * scale));
+    const scaledHeight = Math.max(1, Math.round(height * scale));
+    const scaledCanvas =
+      scale === 1 ? canvas : drawScaledCanvas(canvas, scaledWidth, scaledHeight);
+
+    for (const quality of JPEG_FALLBACK_QUALITIES) {
+      const blob = await canvasToBlob(scaledCanvas, "image/jpeg", quality);
+      attempts.push({
+        blob,
+        ext: "jpg",
+        mime: "image/jpeg",
+        label: `JPEG ${scaledWidth}x${scaledHeight} q${quality}`,
+      });
+
+      if (isUsefulPreview(blob, targetBytes)) return attempts;
+    }
   }
 
   return attempts;
@@ -299,6 +324,8 @@ async function buildRasterPreview(file: File): Promise<RasterPreview> {
     canvas,
     imageData,
     aspectRatio,
+    width,
+    height,
     pixels: width * height,
     hasAlpha: hasTransparency(imageData),
   };
@@ -325,6 +352,7 @@ async function compressWithVerifiedEncoders(
   onProgress?.({ stage: "optimizing", progress: 10 });
 
   const raster = await buildRasterPreview(file);
+  const targetBytes = targetPreviewBytes(originalSize, raster.pixels);
   const attempts: EncodedPreview[] = [];
 
   onProgress?.({ stage: "optimizing", progress: 45 });
@@ -346,13 +374,20 @@ async function compressWithVerifiedEncoders(
   onProgress?.({ stage: "optimizing", progress: 85 });
 
   try {
-    attempts.push(...(await encodeJpegFallback(flattenAlphaForJpeg(raster))));
+    attempts.push(
+      ...(await encodeJpegFallback(
+        flattenAlphaForJpeg(raster),
+        raster.width,
+        raster.height,
+        targetBytes,
+      )),
+    );
   } catch (err) {
     console.warn("[Preview] JPEG fallback failed:", err);
   }
 
   const accepted = attempts
-    .filter((attempt) => isUsefulPreview(attempt.blob, originalSize, raster.pixels))
+    .filter((attempt) => isUsefulPreview(attempt.blob, targetBytes))
     .sort((a, b) => a.blob.size - b.blob.size)[0];
 
   onProgress?.({ stage: "optimizing", progress: 100 });
@@ -361,10 +396,21 @@ async function compressWithVerifiedEncoders(
     const bestAttempt = attempts.sort((a, b) => a.blob.size - b.blob.size)[0];
     console.warn("[Preview] No useful optimized image produced", {
       originalSize,
+      targetBytes,
       bestSize: bestAttempt?.blob.size,
       bestEncoder: bestAttempt?.label,
       pixels: raster.pixels,
     });
+
+    if (bestAttempt && bestAttempt.blob.size < originalSize) {
+      return {
+        file: new File([bestAttempt.blob], makePreviewName(originalName, bestAttempt.ext), {
+          type: bestAttempt.mime,
+          lastModified: Date.now(),
+        }),
+        aspectRatio: raster.aspectRatio,
+      };
+    }
 
     return { file: null, aspectRatio: raster.aspectRatio };
   }
