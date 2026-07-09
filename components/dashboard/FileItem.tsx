@@ -461,10 +461,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     }
 
     return (
-      <ContextMenu
-        open={mobileContextOpen}
-        onOpenChange={onMobileContextOpenChange}
-      >
+      <ContextMenu onOpenChange={onMobileContextOpenChange}>
         <ContextMenuTrigger asChild>{content}</ContextMenuTrigger>
         <ContextMenuContent className="w-64 bg-card border-border text-foreground">
           {isFolder ? (
@@ -869,10 +866,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
     if (isOverlay) return content;
 
     return (
-      <ContextMenu
-        open={mobileContextOpen}
-        onOpenChange={onMobileContextOpenChange}
-      >
+      <ContextMenu onOpenChange={onMobileContextOpenChange}>
         <ContextMenuTrigger asChild>{content}</ContextMenuTrigger>
         <ContextMenuContent className="w-64 bg-card border-border text-foreground">
           {isFolder ? (
@@ -1004,6 +998,36 @@ export const FileItemInner = memo(function FileItemInner(props: ItemProps) {
     };
   };
 
+  const openContextMenuAtEvent = (e: React.TouchEvent | React.MouseEvent) => {
+    const target = e.currentTarget;
+    if (!(target instanceof HTMLElement)) return;
+
+    let clientX: number;
+    let clientY: number;
+
+    if ("touches" in e && e.touches.length > 0) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else if ("changedTouches" in e && e.changedTouches.length > 0) {
+      clientX = e.changedTouches[0].clientX;
+      clientY = e.changedTouches[0].clientY;
+    } else if ("clientX" in e) {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    } else {
+      return;
+    }
+
+    target.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX,
+        clientY,
+      }),
+    );
+  };
+
   const onLongPress = (e: React.TouchEvent | React.MouseEvent) => {
     if (props.onSelect) {
       const mockEvent = {
@@ -1016,6 +1040,7 @@ export const FileItemInner = memo(function FileItemInner(props: ItemProps) {
       props.onSelect(props.item, mockEvent);
       if (isCoarsePointer || e.type.startsWith("touch")) {
         setMobileContextOpen(true);
+        openContextMenuAtEvent(e);
       }
 
       if (typeof navigator !== "undefined" && navigator.vibrate) {
