@@ -6,6 +6,7 @@ import dbConnect from "@/lib/mongodb";
 import PhotoAlbum from "@/models/PhotoAlbum";
 import StorageObject from "@/models/StorageObject";
 import { generateUniqueAlbumSlug } from "@/lib/albums/slug";
+import { ENCRYPTED_ALBUM_NAME_PLACEHOLDER } from "@/lib/albums/constants";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,8 @@ type AlbumDoc = {
   name: string;
   slug?: string;
   description?: string;
+  encryptedName?: string | null;
+  sourceRef?: string | null;
   objectIds?: Types.ObjectId[];
   coverObjectId?: Types.ObjectId;
   createdAt?: Date;
@@ -39,6 +42,10 @@ function normalizeName(value: unknown) {
   return typeof value === "string" ? value.trim().slice(0, 80) : "";
 }
 
+function normalizeEncryptedName(value: unknown) {
+  return typeof value === "string" ? value.trim().slice(0, 2048) : "";
+}
+
 function normalizeObjectIds(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return Array.from(
@@ -51,12 +58,13 @@ function normalizeObjectIds(value: unknown): string[] {
   );
 }
 
-async function verifiedImageIds(userId: string, objectIds: string[]) {
+// Albums hold photos AND videos; documents/audio/etc. stay excluded.
+async function verifiedMediaIds(userId: string, objectIds: string[]) {
   if (objectIds.length === 0) return [];
   const objects = await StorageObject.find({
     _id: { $in: objectIds.map((id) => new Types.ObjectId(id)) },
     userId,
-    mediaCategory: "image",
+    mediaCategory: { $in: ["image", "video"] },
     deletedAt: { $exists: false },
     isSidecar: { $ne: true },
   })
@@ -84,6 +92,8 @@ async function serializeAlbums(albums: AlbumDoc[]) {
     return {
       _id: String(album._id),
       name: album.name,
+      encryptedName: album.encryptedName ?? null,
+      sourceRef: album.sourceRef ?? null,
       slug: album.slug ?? String(album._id),
       description: album.description ?? "",
       objectIds: ids,
@@ -117,14 +127,19 @@ export async function POST(request: NextRequest) {
   try {
     const session = await requireAuth(request);
     const body = await request.json().catch(() => ({}));
-    const name = normalizeName(body.name);
+    const encryptedName = normalizeEncryptedName(body.encryptedName);
+    // E2EE clients send encryptedName and no meaningful plaintext name;
+    // the placeholder keeps `name` (required, shown by legacy clients) valid.
+    const name =
+      normalizeName(body.name) ||
+      (encryptedName ? ENCRYPTED_ALBUM_NAME_PLACEHOLDER : "");
     if (!name) {
       return NextResponse.json({ error: "Album name is required" }, { status: 400 });
     }
 
     await dbConnect();
 
-    const objectIds = await verifiedImageIds(
+    const objectIds = await verifiedMediaIds(
       session.user.id,
       normalizeObjectIds(body.objectIds),
     );
@@ -134,6 +149,7 @@ export async function POST(request: NextRequest) {
     const album = await PhotoAlbum.create({
       userId: session.user.id,
       name,
+      encryptedName: encryptedName || undefined,
       slug,
       description:
         typeof body.description === "string"

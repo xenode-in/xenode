@@ -28,8 +28,10 @@ import { useCrypto } from "@/contexts/CryptoContext";
 import {
   decryptMetadataString,
   decryptThumbnail,
+  encryptMetadataString,
   encryptWithShareKey,
 } from "@/lib/crypto/fileEncryption";
+import { ENCRYPTED_ALBUM_NAME_PLACEHOLDER } from "@/lib/albums/constants";
 import { fromB64, toB64 } from "@/lib/crypto/utils";
 import {
   bytesToBase64Url,
@@ -78,6 +80,8 @@ type AlbumRecord = {
   _id: string;
   slug: string;
   name: string;
+  encryptedName?: string | null;
+  sourceRef?: string | null;
   description?: string;
   objectIds: string[];
   objectCount: number;
@@ -166,6 +170,7 @@ const PhotoThumbnail = memo(function PhotoThumbnail({
   metadataKey,
   albums,
   activeAlbumId,
+  albumDisplayName,
   onAddToAlbum,
   onCreateAlbumForPhoto,
   onRemoveFromAlbum,
@@ -181,6 +186,7 @@ const PhotoThumbnail = memo(function PhotoThumbnail({
   metadataKey: CryptoKey | null;
   albums: AlbumRecord[];
   activeAlbumId?: string | null;
+  albumDisplayName: (album: AlbumRecord) => string;
   onAddToAlbum: (albumId: string, photoId: string) => void;
   onCreateAlbumForPhoto: (photo: GridObject) => void;
   onRemoveFromAlbum?: (albumId: string, photoId: string) => void;
@@ -348,7 +354,7 @@ const PhotoThumbnail = memo(function PhotoThumbnail({
                   >
                     {alreadyInAlbum && <Check className="mr-2 h-4 w-4" />}
                     <span className={alreadyInAlbum ? "" : "ml-6"}>
-                      {album.name}
+                      {albumDisplayName(album)}
                     </span>
                   </ContextMenuItem>
                 );
@@ -370,7 +376,7 @@ const PhotoThumbnail = memo(function PhotoThumbnail({
               className="text-destructive focus:text-destructive"
             >
               <X className="mr-2 h-4 w-4" />
-              Remove from {activeAlbum.name}
+              Remove from {albumDisplayName(activeAlbum)}
             </ContextMenuItem>
           </>
         )}
@@ -381,9 +387,11 @@ const PhotoThumbnail = memo(function PhotoThumbnail({
 
 const AlbumCover = memo(function AlbumCover({
   album,
+  displayName,
   metadataKey,
 }: {
   album: AlbumRecord;
+  displayName: string;
   metadataKey: CryptoKey | null;
 }) {
   const thumbUrl = useThumbnail(
@@ -397,7 +405,7 @@ const AlbumCover = memo(function AlbumCover({
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={thumbUrl}
-          alt={album.name}
+          alt={displayName}
           decoding="async"
           className="h-full w-full object-cover"
         />
@@ -454,6 +462,9 @@ export function PhotosGrid({
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>(
     {},
   );
+  const [decryptedAlbumNames, setDecryptedAlbumNames] = useState<
+    Record<string, string>
+  >({});
   const [albums, setAlbums] = useState<AlbumRecord[]>([]);
   const [albumsLoading, setAlbumsLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"photos" | "albums">(
@@ -495,6 +506,7 @@ export function PhotosGrid({
   const autoScrollFrameRef = useRef<number | null>(null);
   const dragMovedRef = useRef(false);
   const suppressNextClickRef = useRef(false);
+  const albumNameMigrationRanRef = useRef(false);
 
   useEffect(() => {
     selectedPhotoIdsRef.current = selectedPhotoIds;
@@ -602,6 +614,104 @@ export function PhotosGrid({
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allPhotos, isUnlocked, metadataKey]);
+
+  // ── Album name decryption (E2EE album names) ────────────────────────────────
+
+  useEffect(() => {
+    if (!isUnlocked || !metadataKey || !albums.length) {
+      setDecryptedAlbumNames((prev) => (Object.keys(prev).length ? {} : prev));
+      return;
+    }
+
+    const run = async () => {
+      const newNames: Record<string, string> = {};
+      for (const album of albums) {
+        if (album.encryptedName && !decryptedAlbumNames[album._id]) {
+          try {
+            newNames[album._id] = await decryptMetadataString(
+              album.encryptedName,
+              metadataKey,
+            );
+          } catch {
+            // leave placeholder name as-is
+          }
+        }
+      }
+      if (Object.keys(newNames).length > 0) {
+        setDecryptedAlbumNames((prev) => ({ ...prev, ...newNames }));
+      }
+    };
+
+    run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [albums, isUnlocked, metadataKey]);
+
+  const albumDisplayName = useCallback(
+    (album: AlbumRecord) =>
+      decryptedAlbumNames[album._id] ??
+      (album.name !== ENCRYPTED_ALBUM_NAME_PLACEHOLDER
+        ? album.name
+        : "Encrypted album"),
+    [decryptedAlbumNames],
+  );
+
+  // ── One-time migration: encrypt legacy plaintext album names ────────────────
+
+  useEffect(() => {
+    if (!isUnlocked || !metadataKey || albumsLoading || !albums.length) return;
+    if (albumNameMigrationRanRef.current) return;
+
+    const pending = albums.filter(
+      (album) =>
+        !album.encryptedName &&
+        album.name &&
+        album.name !== ENCRYPTED_ALBUM_NAME_PLACEHOLDER,
+    );
+    if (pending.length === 0) return;
+    albumNameMigrationRanRef.current = true;
+
+    const run = async () => {
+      // Sequential on purpose — gentle on the API, and failures are simply
+      // retried on the next page load.
+      for (const album of pending) {
+        try {
+          const encryptedName = await encryptMetadataString(
+            album.name,
+            metadataKey,
+          );
+          const res = await fetch(`/api/albums/${album._id}`, {
+            method: "PATCH",
+            credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ encryptedName }),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          setDecryptedAlbumNames((prev) => ({
+            ...prev,
+            [album._id]: album.name,
+          }));
+          setAlbums((prev) =>
+            prev.map((item) =>
+              item._id === album._id
+                ? {
+                    ...item,
+                    encryptedName,
+                    name: ENCRYPTED_ALBUM_NAME_PLACEHOLDER,
+                  }
+                : item,
+            ),
+          );
+        } catch (error) {
+          console.warn(
+            `Album name migration failed for album ${album._id}`,
+            error,
+          );
+        }
+      }
+    };
+
+    void run();
+  }, [albums, albumsLoading, isUnlocked, metadataKey]);
 
   // ── Search filter ────────────────────────────────────────────────────────────
 
@@ -1094,13 +1204,16 @@ export function PhotosGrid({
     setAlbumDialogOpen(true);
   }, []);
 
-  const openRenameAlbumDialog = useCallback((album: AlbumRecord) => {
-    setAlbumDialogMode("rename");
-    setPendingAlbumPhotos([]);
-    setEditingAlbumId(album._id);
-    setAlbumName(album.name);
-    setAlbumDialogOpen(true);
-  }, []);
+  const openRenameAlbumDialog = useCallback(
+    (album: AlbumRecord) => {
+      setAlbumDialogMode("rename");
+      setPendingAlbumPhotos([]);
+      setEditingAlbumId(album._id);
+      setAlbumName(albumDisplayName(album));
+      setAlbumDialogOpen(true);
+    },
+    [albumDisplayName],
+  );
 
   const syncAlbumShare = useCallback(
     async (
@@ -1290,20 +1403,35 @@ export function PhotosGrid({
       if (!trimmed) return;
 
       setSavingAlbum(true);
+      const canEncryptName = isUnlocked && !!metadataKey;
       try {
         if (albumDialogMode === "create") {
+          const createBody: Record<string, unknown> = {
+            objectIds: pendingAlbumPhotos.map((photo) => photo._id),
+          };
+          if (canEncryptName && metadataKey) {
+            createBody.encryptedName = await encryptMetadataString(
+              trimmed,
+              metadataKey,
+            );
+          } else {
+            createBody.name = trimmed;
+          }
           const res = await fetch("/api/albums", {
             method: "POST",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: trimmed,
-              objectIds: pendingAlbumPhotos.map((photo) => photo._id),
-            }),
+            body: JSON.stringify(createBody),
           });
           if (!res.ok) throw new Error("Failed to create album");
           const data = await res.json();
           setAlbums((prev) => [data.album, ...prev]);
+          if (canEncryptName) {
+            setDecryptedAlbumNames((prev) => ({
+              ...prev,
+              [data.album._id]: trimmed,
+            }));
+          }
           toast.success("Album created");
           if (pendingAlbumPhotos.length > 0) {
             setActiveAlbumId(data.album.slug);
@@ -1315,11 +1443,20 @@ export function PhotosGrid({
             router.push("/dashboard/albums");
           }
         } else if (editingAlbumId) {
+          const renameBody: Record<string, unknown> =
+            canEncryptName && metadataKey
+              ? {
+                  encryptedName: await encryptMetadataString(
+                    trimmed,
+                    metadataKey,
+                  ),
+                }
+              : { name: trimmed };
           const res = await fetch(`/api/albums/${editingAlbumId}`, {
             method: "PATCH",
             credentials: "include",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: trimmed }),
+            body: JSON.stringify(renameBody),
           });
           if (!res.ok) throw new Error("Failed to rename album");
           const data = await res.json();
@@ -1329,12 +1466,21 @@ export function PhotosGrid({
                 ? {
                     ...album,
                     name: data.album.name,
+                    encryptedName: data.album.encryptedName ?? album.encryptedName,
                     updatedAt: data.album.updatedAt,
                   }
                 : album,
             ),
           );
-          await syncAlbumShare(editingAlbumId, { albumName: data.album.name }).catch(
+          if (canEncryptName) {
+            setDecryptedAlbumNames((prev) => ({
+              ...prev,
+              [editingAlbumId]: trimmed,
+            }));
+          }
+          // The live share encrypts the name under its own share key, so it
+          // always receives the plaintext regardless of E2EE album names.
+          await syncAlbumShare(editingAlbumId, { albumName: trimmed }).catch(
             (syncError) => {
               toast.warning(
                 syncError instanceof Error
@@ -1359,6 +1505,8 @@ export function PhotosGrid({
       albumName,
       clearSelection,
       editingAlbumId,
+      isUnlocked,
+      metadataKey,
       pendingAlbumPhotos,
       router,
       syncAlbumShare,
@@ -1405,7 +1553,7 @@ export function PhotosGrid({
         );
         await syncAlbumShare(albumId, {
           addedPhotoIds: [photoId],
-          albumName: data.album.name,
+          albumName: decryptedAlbumNames[albumId] ?? data.album.name,
         }).catch((syncError) => {
           toast.warning(
             syncError instanceof Error
@@ -1420,7 +1568,7 @@ export function PhotosGrid({
         void loadAlbums();
       }
     },
-    [albums, loadAlbums, syncAlbumShare],
+    [albums, decryptedAlbumNames, loadAlbums, syncAlbumShare],
   );
 
   const handleAddSelectionToAlbum = useCallback(async () => {
@@ -1451,7 +1599,7 @@ export function PhotosGrid({
       );
       await syncAlbumShare(bulkTargetAlbumId, {
         addedPhotoIds: photoIds,
-        albumName: data.album.name,
+        albumName: decryptedAlbumNames[bulkTargetAlbumId] ?? data.album.name,
       }).catch((syncError) => {
         toast.warning(
           syncError instanceof Error
@@ -1477,6 +1625,7 @@ export function PhotosGrid({
   }, [
     bulkTargetAlbumId,
     clearSelection,
+    decryptedAlbumNames,
     loadAlbums,
     selectedPhotoIds,
     syncAlbumShare,
@@ -1585,7 +1734,11 @@ export function PhotosGrid({
     async (albumId: string) => {
       const album = albums.find((item) => item._id === albumId);
       if (!album) return;
-      if (!window.confirm(`Delete "${album.name}"? Photos stay in your vault.`)) {
+      if (
+        !window.confirm(
+          `Delete "${albumDisplayName(album)}"? Photos stay in your vault.`,
+        )
+      ) {
         return;
       }
 
@@ -1608,7 +1761,7 @@ export function PhotosGrid({
         );
       }
     },
-    [activeAlbum, albums, router],
+    [activeAlbum, albumDisplayName, albums, router],
   );
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -1622,7 +1775,7 @@ export function PhotosGrid({
   }
 
   const headerTitle = activeAlbum
-    ? activeAlbum.name
+    ? albumDisplayName(activeAlbum)
     : activeAlbumId
       ? "Album"
     : showingAlbumList
@@ -1948,10 +2101,14 @@ export function PhotosGrid({
                         }}
                         className="block w-full text-left"
                       >
-                        <AlbumCover album={album} metadataKey={metadataKey} />
+                        <AlbumCover
+                          album={album}
+                          displayName={albumDisplayName(album)}
+                          metadataKey={metadataKey}
+                        />
                         <div className="mt-2 min-w-0">
                           <p className="truncate text-sm font-medium text-foreground">
-                            {album.name}
+                            {albumDisplayName(album)}
                           </p>
                           <p className="text-xs text-muted-foreground">
                             {album.objectCount} image
@@ -2168,6 +2325,7 @@ export function PhotosGrid({
                               metadataKey={metadataKey}
                               albums={albums}
                               activeAlbumId={activeAlbumId}
+                              albumDisplayName={albumDisplayName}
                               onAddToAlbum={handleAddToAlbum}
                               onCreateAlbumForPhoto={openCreateAlbumDialog}
                               onRemoveFromAlbum={handleRemoveFromAlbum}
@@ -2314,7 +2472,9 @@ export function PhotosGrid({
                     : "border-border bg-background hover:bg-secondary",
                 )}
               >
-                <span className="truncate font-medium">{album.name}</span>
+                <span className="truncate font-medium">
+                  {albumDisplayName(album)}
+                </span>
                 <span className="ml-3 text-xs text-muted-foreground">
                   {album.objectCount}
                 </span>
@@ -2346,7 +2506,7 @@ export function PhotosGrid({
           open={shareDialogOpen}
           onOpenChange={setShareDialogOpen}
           albumId={activeAlbum.slug}
-          albumName={activeAlbum.name}
+          albumName={albumDisplayName(activeAlbum)}
           photos={allPhotos
             .filter((p) => activeAlbum.objectIds.includes(p._id))
             .map((p) => ({ objectId: p._id, thumbnail: p.thumbnail }))}

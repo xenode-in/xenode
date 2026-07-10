@@ -26,6 +26,7 @@ import {
   ChevronRight,
   Pencil,
   History,
+  Play,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +42,7 @@ import {
 import { fromB64 } from "@/lib/crypto/utils";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
 import { useVideoStream, VideoStreamOptions } from "@/hooks/useVideoStream";
+import { useThumbnail } from "@/hooks/useThumbnail";
 import {
   useAudioTrackSyncer,
   SidecarAudioTrack,
@@ -295,6 +297,7 @@ interface ObjectData {
   encryptedName?: string;
   name?: string;
   mediaCategory?: string;
+  thumbnail?: string;
   encryptedContentType?: string;
   url?: string;
   chunkUrls?: string[];
@@ -315,6 +318,79 @@ interface ObjectData {
   }[];
 }
 
+function TopPreviewLoader({ progress }: { progress: number | null }) {
+  const normalizedProgress =
+    typeof progress === "number" ? Math.max(0, Math.min(100, progress)) : null;
+
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-0 z-[70] h-0.5 overflow-hidden bg-white/10">
+      {normalizedProgress !== null && normalizedProgress > 0 ? (
+        <div
+          className="h-full bg-primary transition-[width] duration-200 ease-out"
+          style={{ width: `${normalizedProgress}%` }}
+        />
+      ) : (
+        <div className="h-full w-1/3 animate-[preview-loader_1.15s_ease-in-out_infinite] rounded-full bg-primary" />
+      )}
+      <style jsx>{`
+        @keyframes preview-loader {
+          0% {
+            transform: translateX(-120%);
+          }
+          100% {
+            transform: translateX(320%);
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function MediaLoadingPlaceholder({
+  thumbnailUrl,
+  isVideo,
+  progress,
+}: {
+  thumbnailUrl: string | null;
+  isVideo: boolean;
+  progress: number | null;
+}) {
+  return (
+    <div className="absolute inset-0 z-50 overflow-hidden bg-black">
+      {thumbnailUrl ? (
+        <>
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 bg-contain bg-center bg-no-repeat opacity-80 animate-pulse"
+            style={{ backgroundImage: `url(${thumbnailUrl})` }}
+          />
+          <div className="absolute inset-0 bg-black/45" />
+        </>
+      ) : (
+        <div className="absolute inset-0 grid place-items-center">
+          <div className="grid h-16 w-16 place-items-center rounded-full border border-white/10 bg-white/[0.07] animate-pulse">
+            {isVideo ? (
+              <Play className="h-7 w-7 fill-white/70 text-white/70" />
+            ) : (
+              <div className="relative h-7 w-9 overflow-hidden rounded border border-white/60">
+                <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-white/70" />
+                <span className="absolute -bottom-2 left-2 h-5 w-5 rotate-45 bg-white/50" />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {isVideo && thumbnailUrl && (
+        <div className="absolute inset-0 grid place-items-center">
+          <div className="grid h-16 w-16 place-items-center rounded-full border border-white/15 bg-black/35 backdrop-blur-sm">
+            <Play className="h-7 w-7 fill-white/85 text-white/85" />
+          </div>
+        </div>
+      )}
+      <TopPreviewLoader progress={progress} />
+    </div>
+  );
+}
 interface FilePreviewDialogProps {
   file: ObjectData | null;
   isOpen: boolean;
@@ -405,10 +481,14 @@ const ChunkedStreamPlayer = ({
         title="Encrypted Media"
         src={blobUrl || ""}
         onProviderSetup={(provider) => {
+          const mediaProvider = provider as {
+            video?: HTMLVideoElement;
+            audio?: HTMLAudioElement;
+          };
           if (provider.type === "video") {
-            setVideoElement((provider as any).video);
+            setVideoElement(mediaProvider.video ?? null);
           } else if (provider.type === "audio") {
-            setVideoElement((provider as any).audio);
+            setVideoElement(mediaProvider.audio ?? null);
           }
         }}
         onCanPlay={onReady}
@@ -748,6 +828,19 @@ export function FilePreviewDialog({
   const hdRequestedRef = useRef(false);
 
   const objectUrlRef = useRef<string | null>(null);
+  const previewContentType = decryptedContentType || file?.contentType || "";
+  const previewMediaCategory = fetchedData?.mediaCategory || file?.mediaCategory;
+  const isVisualPreview =
+    previewContentType.startsWith("image/") ||
+    previewContentType.startsWith("video/") ||
+    previewMediaCategory === "image" ||
+    previewMediaCategory === "video";
+  const isVideoPreview =
+    previewContentType.startsWith("video/") || previewMediaCategory === "video";
+  const placeholderThumbnailUrl = useThumbnail(
+    isVisualPreview ? file?.thumbnail || fetchedData?.thumbnail : undefined,
+    metadataKey ?? null,
+  );
 
   const isLockedOut =
     !sharedToken && !directShareId && file?.isEncrypted && !privateKey;
@@ -1655,7 +1748,13 @@ export function FilePreviewDialog({
 
     return (
       <div className="relative h-full w-full">
-        {showLoader && (
+        {showLoader && isVisualPreview ? (
+          <MediaLoadingPlaceholder
+            thumbnailUrl={placeholderThumbnailUrl}
+            isVideo={isVideoPreview}
+            progress={progress}
+          />
+        ) : showLoader ? (
           <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/95 backdrop-blur-sm">
             <div className="flex flex-col items-center w-full max-w-[200px] text-center">
               <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
@@ -1672,8 +1771,11 @@ export function FilePreviewDialog({
               )}
             </div>
           </div>
-        )}
+        ) : null}
 
+        {!showLoader && hdLoading && type.startsWith("image/") && (
+          <TopPreviewLoader progress={null} />
+        )}
         {error ? (
           <div className="grid h-full min-h-[40vh] place-items-center px-6 text-center">
             <div className="flex flex-col items-center">
@@ -1716,7 +1818,7 @@ export function FilePreviewDialog({
             "bg-card outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 flex flex-col overflow-hidden border",
             isMinimized
               ? "fixed bottom-4 right-4 z-150 w-80 sm:w-96 rounded-xl shadow-2xl data-[state=open]:slide-in-from-bottom-[20%]"
-              : "fixed inset-0 sm:top-[50%] sm:left-[50%] z-150 w-full max-w-full sm:max-w-5xl lg:max-w-6xl h-dvh sm:h-[calc(100dvh-2rem)] sm:max-h-[calc(100dvh-2rem)] sm:translate-x-[-50%] sm:translate-y-[-50%] rounded-none sm:rounded-xl shadow-lg data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
+              : "fixed inset-0 z-150 h-dvh w-screen max-w-none max-h-none rounded-none shadow-lg data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
           )}
         >
           {/* Top bar */}
