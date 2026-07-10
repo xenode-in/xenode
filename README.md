@@ -11,6 +11,8 @@ Xenode is an open-source storage platform for files, media, and shared albums wh
 [![Redis](https://img.shields.io/badge/Redis-black?logo=redis)](https://redis.io)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
+If Xenode is useful to you, please consider starring the repository. It helps more people discover the project and supports continued development.
+
 ## Overview
 
 Xenode is designed for private cloud storage without giving the server plaintext access to user files. Files are encrypted in the browser, uploaded in chunks, stored in object storage, and decrypted only on authorized client devices. The product includes file management, media handling, encrypted sharing, album workflows, realtime updates, and self-hostable infrastructure.
@@ -223,4 +225,9 @@ Contributions are welcome. Please open an issue for significant changes before s
 
 ## License
 
-Xenode is released under the [MIT License](./LICENSE).
+Xenode is released under the [MIT License](./LICENSE). You are free to use, modify, distribute, and use the project commercially under the terms of the license.
+
+If you use Xenode commercially, we would appreciate it if you let us know. This is an optional courtesy request and does not change the MIT license terms.
+
+
+
