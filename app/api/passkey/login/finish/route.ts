@@ -18,7 +18,7 @@ import {
 
 export async function POST(req: NextRequest) {
   try {
-    const { credential, nonce } = await req.json();
+    const { credential, nonce, rememberMe } = await req.json();
     if (!credential || !nonce) {
       return NextResponse.json(
         { error: "Missing required fields" },
@@ -145,6 +145,9 @@ export async function POST(req: NextRequest) {
       secure: sessionCookie.attributes.secure,
       path: sessionCookie.attributes.path,
       domain: sessionCookie.attributes.domain,
+      ...(rememberMe === true
+        ? { maxAge: ctx.sessionConfig.expiresIn }
+        : {}),
     });
 
     // 7. Cleanup challenge

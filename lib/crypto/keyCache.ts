@@ -3,13 +3,13 @@ const STORE_NAME = "keys";
 const PRIVATE_KEY_ID = "privateKey";
 const PUBLIC_KEY_ID = "publicKey";
 const METADATA_KEY_ID = "metadataKey";
-const PRIVATE_KEY_BUF_ID = "privateKeyBuf";
+const LEGACY_PRIVATE_KEY_BUF_ID = "privateKeyBuf";
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 2); // Upgrade version to 2
-    req.onupgradeneeded = (e: any) => {
-      const db = e.target.result;
+    const req = indexedDB.open(DB_NAME, 2);
+    req.onupgradeneeded = (event: IDBVersionChangeEvent) => {
+      const db = (event.target as IDBOpenDBRequest).result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME);
       }
@@ -19,12 +19,11 @@ function openDB(): Promise<IDBDatabase> {
   });
 }
 
-/** Persist the key pair so it survives page refreshes. */
+/** Persist non-extractable CryptoKeys so trusted devices survive refreshes. */
 export async function cacheKeys(
   privateKey: CryptoKey,
   publicKey: CryptoKey,
-  metadataKey?: CryptoKey, // Optional for backwards compatibility
-  privateKeyBuf?: ArrayBuffer, // Raw private key for passkey registration
+  metadataKey?: CryptoKey,
 ): Promise<void> {
   const db = await openDB();
   await new Promise<void>((resolve, reject) => {
@@ -35,20 +34,17 @@ export async function cacheKeys(
     if (metadataKey) {
       store.put(metadataKey, METADATA_KEY_ID);
     }
-    if (privateKeyBuf) {
-      store.put(privateKeyBuf, PRIVATE_KEY_BUF_ID);
-    }
+    store.delete(LEGACY_PRIVATE_KEY_BUF_ID);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 }
 
-/** Load a previously cached key pair. Returns null if nothing is stored. */
+/** Load previously cached CryptoKeys. Returns null if nothing is stored. */
 export async function loadCachedKeys(): Promise<{
   privateKey: CryptoKey;
   publicKey: CryptoKey;
   metadataKey?: CryptoKey;
-  privateKeyBuf?: ArrayBuffer;
 } | null> {
   try {
     const db = await openDB();
@@ -58,20 +54,21 @@ export async function loadCachedKeys(): Promise<{
       const privReq = store.get(PRIVATE_KEY_ID);
       const pubReq = store.get(PUBLIC_KEY_ID);
       const metaReq = store.get(METADATA_KEY_ID);
-      const privBufReq = store.get(PRIVATE_KEY_BUF_ID);
-      
+
       tx.oncomplete = () => {
         const priv = privReq.result as CryptoKey | undefined;
         const pub = pubReq.result as CryptoKey | undefined;
         const meta = metaReq.result as CryptoKey | undefined;
-        const privBuf = privBufReq.result as ArrayBuffer | undefined;
-        if (priv && pub) resolve({ privateKey: priv, publicKey: pub, metadataKey: meta, privateKeyBuf: privBuf });
-        else resolve(null);
+        if (priv && pub) {
+          resolve({ privateKey: priv, publicKey: pub, metadataKey: meta });
+        } else {
+          resolve(null);
+        }
       };
       tx.onerror = () => reject(tx.error);
     });
   } catch {
-    return null; // IDB unavailable (private browsing on some browsers)
+    return null;
   }
 }
 

@@ -249,7 +249,9 @@ export async function registerPasskeyWithPRF(
   return { ok: true }
 }
 
-export async function signInWithPasskeyPRF(): Promise<
+export async function signInWithPasskeyPRF(options?: {
+  rememberMe?: boolean;
+}): Promise<
   | {
       ok: true;
       privateKey: CryptoKey;
@@ -261,11 +263,11 @@ export async function signInWithPasskeyPRF(): Promise<
 > {
   const optRes = await fetch("/api/passkey/login/start", { method: "POST" })
   if (!optRes.ok) return { ok: false, reason: "server_error" }
-  const options = await optRes.json()
+  const loginOptions = await optRes.json()
 
   let assertion: unknown
   try {
-    assertion = await startAuthentication({ optionsJSON: withPrfEval(options) })
+    assertion = await startAuthentication({ optionsJSON: withPrfEval(loginOptions) })
   } catch (err: unknown) {
     if (isNotAllowedError(err) && err.name === "NotAllowedError") {
       return { ok: false, reason: "cancelled" }
@@ -282,7 +284,11 @@ export async function signInWithPasskeyPRF(): Promise<
   const finishRes = await fetch("/api/passkey/login/finish", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ credential: assertion, nonce: options.nonce }),
+    body: JSON.stringify({
+      credential: assertion,
+      nonce: loginOptions.nonce,
+      rememberMe: options?.rememberMe === true,
+    }),
   })
   if (!finishRes.ok) return { ok: false, reason: "server_error" }
 
@@ -306,7 +312,6 @@ export async function signInWithPasskeyPRF(): Promise<
     keys.privateKey,
     keys.publicKey,
     keys.metadataKey,
-    keys.privateKeyBuf,
   )
 
   return { ok: true, ...keys }

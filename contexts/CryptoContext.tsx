@@ -1,13 +1,22 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback, useEffect } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
 import {
-  setupUserKeyVault, unlockVault, regenerateVault,
-  recoverAndResetVault, updateVaultPassword,
+  recoverAndResetVault,
+  regenerateVault,
+  setupUserKeyVault,
+  unlockVault,
+  updateVaultPassword,
 } from "@/lib/crypto/keySetup";
-import { cacheKeys, loadCachedKeys, clearCachedKeys } from "@/lib/crypto/keyCache";
+import { cacheKeys, clearCachedKeys, loadCachedKeys } from "@/lib/crypto/keyCache";
 import { clearLocalDb } from "@/lib/db/local";
-import { useSession } from "@/lib/auth/client";
+import { signOut, useSession } from "@/lib/auth/client";
 
 interface CryptoContextType {
   isInitializing: boolean;
@@ -16,22 +25,40 @@ interface CryptoContextType {
   privateKey: CryptoKey | null;
   publicKey: CryptoKey | null;
   metadataKey: CryptoKey | null;
-  /** Raw private key buffer — only in memory, used for passkey registration */
+  /** Raw private key buffer - only in memory, used for passkey registration */
   privateKeyBuf: ArrayBuffer | null;
   setup: (masterPassword: string, recoveryWords: string) => Promise<void>;
   unlock: (masterPassword: string) => Promise<void>;
-  regenerate: (newMasterPassword: string, newRecoveryWords: string) => Promise<void>;
-  updatePassword: (currentPassword: string, newMasterPassword: string) => Promise<void>;
+  regenerate: (
+    newMasterPassword: string,
+    newRecoveryWords: string,
+  ) => Promise<void>;
+  updatePassword: (
+    currentPassword: string,
+    newMasterPassword: string,
+  ) => Promise<void>;
   recover: (recoveryWords: string, newMasterPassword: string) => Promise<void>;
   /** Lock vault in memory only (session continues) */
   lock: () => Promise<void>;
-  /** Full logout — wipes local DB + clears keys */
+  /** Full logout - wipes local DB + clears keys */
   logout: () => Promise<void>;
   isModalOpen: boolean;
   setModalOpen: (open: boolean) => void;
 }
 
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
+
+interface SyncedCryptoKeys {
+  privateKey: CryptoKey;
+  publicKey: CryptoKey;
+  metadataKey?: CryptoKey;
+}
+
+function getLoginRedirect(reason: string) {
+  if (typeof window === "undefined") return `/login?reason=${reason}`;
+  const next = `${window.location.pathname}${window.location.search}`;
+  return `/login?next=${encodeURIComponent(next)}&reason=${reason}`;
+}
 
 export function CryptoProvider({
   children,
@@ -52,14 +79,38 @@ export function CryptoProvider({
   const [privateKeyBuf, setPrivateKeyBuf] = useState<ArrayBuffer | null>(null);
   const [isModalOpen, setModalOpen] = useState(false);
 
-  useEffect(() => {
-    if (isPending && !initialUserId) return;
-
+  const clearKeyState = useCallback(() => {
     setPrivateKey(null);
     setPublicKey(null);
     setMetadataKey(null);
     setPrivateKeyBuf(null);
     setIsUnlocked(false);
+  }, []);
+
+  const signOutStaleVaultSession = useCallback(
+    async (reason: string) => {
+      clearKeyState();
+      setNeedsSetup(false);
+      setIsInitializing(false);
+      sessionStorage.removeItem("xenode-vault-pw");
+      await clearCachedKeys();
+      if (userId) await clearLocalDb(userId);
+      try {
+        await signOut();
+      } catch {
+        /* session may already be invalid server-side */
+      }
+      if (typeof window !== "undefined") {
+        window.location.replace(getLoginRedirect(reason));
+      }
+    },
+    [clearKeyState, userId],
+  );
+
+  useEffect(() => {
+    if (isPending && !initialUserId) return;
+
+    clearKeyState();
     setNeedsSetup(false);
 
     if (!userId) {
@@ -75,39 +126,46 @@ export function CryptoProvider({
           setPrivateKey(cached.privateKey);
           setPublicKey(cached.publicKey);
           setMetadataKey(cached.metadataKey || null);
-          setPrivateKeyBuf(cached.privateKeyBuf || null);
+          setPrivateKeyBuf(null);
           setIsUnlocked(true);
           return;
         }
 
-        // --- SUBDOMAIN SYNC LOGIC ---
-        const hostname = typeof window !== "undefined" ? window.location.hostname : "";
-        const isSubdomain = hostname.startsWith("docs.") || hostname.startsWith("admin.");
-        
+        const hostname =
+          typeof window !== "undefined" ? window.location.hostname : "";
+        const isSubdomain =
+          hostname.startsWith("docs.") || hostname.startsWith("admin.");
+
         if (isSubdomain) {
-          console.log("[CryptoProvider] Attempting cross-subdomain key sync...");
-          const mainUrl = process.env.NEXT_PUBLIC_APP_URL || (hostname.includes("localhost") ? "http://localhost:3000" : "https://xenode.in");
-          
+          const mainUrl =
+            process.env.NEXT_PUBLIC_APP_URL ||
+            (hostname.includes("localhost")
+              ? "http://localhost:3000"
+              : "https://xenode.in");
+
           const iframe = document.createElement("iframe");
           iframe.src = `${mainUrl}/sync`;
           iframe.style.display = "none";
           document.body.appendChild(iframe);
 
-          const syncPromise = new Promise<any>((resolve) => {
+          const syncPromise = new Promise<SyncedCryptoKeys | null>((resolve) => {
             const timeout = setTimeout(() => resolve(null), 5000);
-            
+
             const handleSync = async (event: MessageEvent) => {
               if (event.origin !== new URL(mainUrl).origin) return;
-              
+
               if (event.data?.type === "XENODE_SYNC_READY") {
-                iframe.contentWindow?.postMessage({ type: "XENODE_GET_KEYS" }, mainUrl);
+                iframe.contentWindow?.postMessage(
+                  { type: "XENODE_GET_KEYS" },
+                  mainUrl,
+                );
               }
-              
+
               if (event.data?.type === "XENODE_KEYS_RELAY") {
                 clearTimeout(timeout);
                 window.removeEventListener("message", handleSync);
                 document.body.removeChild(iframe);
-                resolve(event.data.keys);
+                resolve(event.data.keys as SyncedCryptoKeys);
               }
 
               if (event.data?.type === "XENODE_KEYS_NOT_FOUND") {
@@ -122,16 +180,19 @@ export function CryptoProvider({
 
           const syncedKeys = await syncPromise;
           if (syncedKeys) {
-            console.log("[CryptoProvider] Successfully synced keys from main domain");
             setPrivateKey(syncedKeys.privateKey);
             setPublicKey(syncedKeys.publicKey);
-            setMetadataKey(syncedKeys.metadataKey);
+            setMetadataKey(syncedKeys.metadataKey || null);
+            setPrivateKeyBuf(null);
             setIsUnlocked(true);
-            await cacheKeys(syncedKeys.privateKey, syncedKeys.publicKey, syncedKeys.metadataKey);
+            await cacheKeys(
+              syncedKeys.privateKey,
+              syncedKeys.publicKey,
+              syncedKeys.metadataKey,
+            );
             return;
           }
         }
-        // --- END SYNC LOGIC ---
 
         const storedPw = sessionStorage.getItem("xenode-vault-pw");
         if (storedPw) {
@@ -143,91 +204,138 @@ export function CryptoProvider({
             setMetadataKey(keys.metadataKey || null);
             setPrivateKeyBuf(keys.privateKeyBuf);
             setIsUnlocked(true);
-            await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey, keys.privateKeyBuf);
+            await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
             return;
-          } catch (e: any) {
-            if (e.message === "NO_VAULT") {
+          } catch (e: unknown) {
+            if (e instanceof Error && e.message === "NO_VAULT") {
               setNeedsSetup(true);
-              setIsInitializing(false);
               return;
             }
+            await signOutStaleVaultSession("vault_unlock_failed");
+            return;
           }
         }
 
-        const res = await fetch("/api/keys/vault");
-        if (res.status === 404) setNeedsSetup(true);
+        const res = await fetch("/api/keys/vault", { credentials: "include" });
+        if (res.status === 404) {
+          setNeedsSetup(true);
+          return;
+        }
+        if (res.status === 401) {
+          await signOutStaleVaultSession("session_expired");
+          return;
+        }
+        if (res.ok) {
+          await signOutStaleVaultSession("vault_locked");
+        }
       } catch {
         /* network error */
       } finally {
         setIsInitializing(false);
       }
     }
-    init();
-  }, [userId, isPending]);
 
-  const setup = useCallback(async (masterPassword: string, recoveryWords: string) => {
-    const keys = await setupUserKeyVault(masterPassword, recoveryWords);
-    setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
-    setMetadataKey(keys.metadataKey || null); setPrivateKeyBuf(keys.privateKeyBuf);
-    setIsUnlocked(true); setNeedsSetup(false);
-    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey, keys.privateKeyBuf);
-  }, []);
+    void init();
+  }, [clearKeyState, initialUserId, isPending, signOutStaleVaultSession, userId]);
+
+  const setup = useCallback(
+    async (masterPassword: string, recoveryWords: string) => {
+      const keys = await setupUserKeyVault(masterPassword, recoveryWords);
+      setPrivateKey(keys.privateKey);
+      setPublicKey(keys.publicKey);
+      setMetadataKey(keys.metadataKey || null);
+      setPrivateKeyBuf(keys.privateKeyBuf);
+      setIsUnlocked(true);
+      setNeedsSetup(false);
+      await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
+    },
+    [],
+  );
 
   const unlock = useCallback(async (masterPassword: string) => {
     const keys = await unlockVault(masterPassword);
-    setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
-    setMetadataKey(keys.metadataKey || null); setPrivateKeyBuf(keys.privateKeyBuf);
+    setPrivateKey(keys.privateKey);
+    setPublicKey(keys.publicKey);
+    setMetadataKey(keys.metadataKey || null);
+    setPrivateKeyBuf(keys.privateKeyBuf);
     setIsUnlocked(true);
-    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey, keys.privateKeyBuf);
+    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
   }, []);
 
-  const regenerate = useCallback(async (newMasterPassword: string, newRecoveryWords: string) => {
-    const keys = await regenerateVault(newMasterPassword, newRecoveryWords);
-    setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
-    setMetadataKey(keys.metadataKey || null); setPrivateKeyBuf(keys.privateKeyBuf);
-    setIsUnlocked(true); setNeedsSetup(false);
-    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey, keys.privateKeyBuf);
-  }, []);
+  const regenerate = useCallback(
+    async (newMasterPassword: string, newRecoveryWords: string) => {
+      const keys = await regenerateVault(newMasterPassword, newRecoveryWords);
+      setPrivateKey(keys.privateKey);
+      setPublicKey(keys.publicKey);
+      setMetadataKey(keys.metadataKey || null);
+      setPrivateKeyBuf(keys.privateKeyBuf);
+      setIsUnlocked(true);
+      setNeedsSetup(false);
+      await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
+    },
+    [],
+  );
 
-  const updatePassword = useCallback(async (currentPassword: string, newMasterPassword: string) => {
-    const keys = await updateVaultPassword(currentPassword, newMasterPassword);
-    setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
-    setMetadataKey(keys.metadataKey || null); setPrivateKeyBuf(keys.privateKeyBuf);
-    setIsUnlocked(true); setNeedsSetup(false);
-    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey, keys.privateKeyBuf);
-  }, []);
+  const updatePassword = useCallback(
+    async (currentPassword: string, newMasterPassword: string) => {
+      const keys = await updateVaultPassword(currentPassword, newMasterPassword);
+      setPrivateKey(keys.privateKey);
+      setPublicKey(keys.publicKey);
+      setMetadataKey(keys.metadataKey || null);
+      setPrivateKeyBuf(keys.privateKeyBuf);
+      setIsUnlocked(true);
+      setNeedsSetup(false);
+      await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
+    },
+    [],
+  );
 
-  const recover = useCallback(async (recoveryWords: string, newMasterPassword: string) => {
-    const keys = await recoverAndResetVault(recoveryWords, newMasterPassword);
-    setPrivateKey(keys.privateKey); setPublicKey(keys.publicKey);
-    setMetadataKey(keys.metadataKey || null); setPrivateKeyBuf(keys.privateKeyBuf);
-    setIsUnlocked(true); setNeedsSetup(false);
-    await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey, keys.privateKeyBuf);
-  }, []);
+  const recover = useCallback(
+    async (recoveryWords: string, newMasterPassword: string) => {
+      const keys = await recoverAndResetVault(recoveryWords, newMasterPassword);
+      setPrivateKey(keys.privateKey);
+      setPublicKey(keys.publicKey);
+      setMetadataKey(keys.metadataKey || null);
+      setPrivateKeyBuf(keys.privateKeyBuf);
+      setIsUnlocked(true);
+      setNeedsSetup(false);
+      await cacheKeys(keys.privateKey, keys.publicKey, keys.metadataKey);
+    },
+    [],
+  );
 
-  // Lock: wipe keys from memory only, DB stays (re-login re-decrypts into RAM)
   const lock = useCallback(async () => {
-    setPrivateKey(null); setPublicKey(null); setMetadataKey(null); setPrivateKeyBuf(null);
-    setIsUnlocked(false);
+    clearKeyState();
     await clearCachedKeys();
-  }, []);
+  }, [clearKeyState]);
 
-  // Logout: wipe keys AND the entire local DB
   const logout = useCallback(async () => {
-    setPrivateKey(null); setPublicKey(null); setMetadataKey(null); setPrivateKeyBuf(null);
-    setIsUnlocked(false);
+    clearKeyState();
     await clearCachedKeys();
-    if (userId) await clearLocalDb(userId); // drops IndexedDB + clears lastSync
-  }, [userId]);
+    if (userId) await clearLocalDb(userId);
+  }, [clearKeyState, userId]);
 
   return (
-    <CryptoContext.Provider value={{
-      isInitializing, isUnlocked, needsSetup,
-      privateKey, publicKey, metadataKey, privateKeyBuf,
-      setup, unlock, regenerate, updatePassword, recover,
-      lock, logout,
-      isModalOpen, setModalOpen,
-    }}>
+    <CryptoContext.Provider
+      value={{
+        isInitializing,
+        isUnlocked,
+        needsSetup,
+        privateKey,
+        publicKey,
+        metadataKey,
+        privateKeyBuf,
+        setup,
+        unlock,
+        regenerate,
+        updatePassword,
+        recover,
+        lock,
+        logout,
+        isModalOpen,
+        setModalOpen,
+      }}
+    >
       {children}
     </CryptoContext.Provider>
   );

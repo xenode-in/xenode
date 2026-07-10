@@ -248,7 +248,7 @@ function createAuth() {
       },
     },
     session: {
-      expiresIn: 60 * 60 * 24 * 7,
+      expiresIn: 60 * 60 * 24 * 90,
       updateAge: 60 * 60 * 24,
       cookieCache: {
         enabled: false,
