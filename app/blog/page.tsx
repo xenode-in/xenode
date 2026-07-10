@@ -114,7 +114,7 @@ export default async function BlogPage() {
 
       {/* Grain overlay */}
       <div
-        className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat"
+        className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat opacity-30 dark:opacity-75"
         style={{ backgroundImage: "url('/grain.png')" }}
       />
 
@@ -192,7 +192,7 @@ export default async function BlogPage() {
                   <Link
                     key={post.slug}
                     href={`/blog/${post.slug}`}
-                    className="group block border border-border rounded-lg overflow-hidden hover:border-border/60 transition-all duration-300 hover:shadow-xl"
+                    className="group block border border-border bg-card rounded-lg overflow-hidden hover:border-border/60 transition-all duration-300 hover:shadow-xl"
                   >
                     {/* Image */}
                     {post.image ? (

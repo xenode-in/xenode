@@ -31,10 +31,10 @@ export function FAQSection() {
   const [open, setOpen] = useState<number | null>(null);
 
   return (
-    <section className="relative z-10 border-b  flex justify-center px-6 md:px-8">
+    <section className="relative z-10 border-b border-border flex justify-center px-6 md:px-8">
       <div className="w-full max-w-[1200px] py-24 px-6 flex justify-center">
         <div className="w-full max-w-2xl">
-          <p className="text-xs uppercase tracking-widest opacity-50 mb-3">
+          <p className="text-xs uppercase tracking-widest text-muted-foreground mb-3">
             FAQ
           </p>
           <h2 className="text-3xl md:text-4xl font-medium leading-tight tracking-tight mb-12">
@@ -43,18 +43,18 @@ export function FAQSection() {
 
           <div className="flex flex-col">
             {faqs.map((faq, i) => (
-              <div key={i} className="border-b ">
+              <div key={i} className="border-b border-border">
                 <button
                   className="w-full flex items-center justify-between gap-4 py-5 text-left group"
                   onClick={() => setOpen(open === i ? null : i)}
                 >
-                  <span className="text-sm font-medium opacity-90 group-hover:opacity-100 transition-opacity">
+                  <span className="text-sm font-medium text-foreground transition-colors">
                     {faq.q}
                   </span>
                   {open === i ? (
-                    <Minus className="w-4 h-4 shrink-0 opacity-50" />
+                    <Minus className="w-4 h-4 shrink-0 text-muted-foreground" />
                   ) : (
-                    <Plus className="w-4 h-4 shrink-0 opacity-50" />
+                    <Plus className="w-4 h-4 shrink-0 text-muted-foreground" />
                   )}
                 </button>
 
@@ -71,7 +71,7 @@ export function FAQSection() {
                       transition={{ duration: 0.3, ease: "easeInOut" }}
                       className="overflow-hidden"
                     >
-                      <p className="text-sm opacity-60 leading-relaxed pb-5">
+                      <p className="text-sm text-muted-foreground leading-relaxed pb-5">
                         {faq.a}
                       </p>
                     </motion.div>

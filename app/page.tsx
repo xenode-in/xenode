@@ -21,7 +21,7 @@ export default function Home() {
 
         {/* Grain overlay */}
         <div
-          className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat opacity-75"
+          className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat opacity-30 dark:opacity-75"
           style={{ backgroundImage: "url('/grain.png')" }}
         />
 

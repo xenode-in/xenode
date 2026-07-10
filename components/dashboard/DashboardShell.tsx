@@ -38,6 +38,7 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { SignOutDialog } from "@/components/dashboard/SignOutDialog";
+import { MinimalThemeSelector } from "@/components/settings/minimal-theme-selector";
 import { useState, useEffect } from "react";
 
 interface DashboardShellProps {
@@ -249,7 +250,8 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
             
 
             {/* User dropdown */}
-            <div className="ml-auto flex items-center shrink-0">
+            <div className="ml-auto flex items-center gap-2 shrink-0">
+              <MinimalThemeSelector />
               {mounted ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>

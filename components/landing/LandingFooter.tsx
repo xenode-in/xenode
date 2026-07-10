@@ -17,14 +17,14 @@ const legal = [
 
 export function LandingFooter() {
   return (
-    <footer className="relative z-10 border-t  flex justify-center px-6 md:px-8">
+    <footer className="relative z-10 border-t border-border flex justify-center px-6 md:px-8">
       <div className="w-full max-w-[1200px] py-12 flex flex-col gap-10 px-6">
         {/* Top row */}
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-8">
           {/* Brand */}
           <div className="flex flex-col gap-1">
             <span className="text-xl font-brand italic">Xenode</span>
-            <span className="text-xs opacity-40">
+            <span className="text-xs text-muted-foreground">
               End-to-end encrypted cloud storage.
             </span>
           </div>
@@ -35,7 +35,7 @@ export function LandingFooter() {
               <AnimatedLink
                 key={l.label}
                 href={l.href}
-                className="text-sm opacity-50 font-medium"
+                className="text-sm text-muted-foreground hover:text-foreground font-medium"
               >
                 {l.label}
               </AnimatedLink>
@@ -48,7 +48,7 @@ export function LandingFooter() {
               href="https://github.com/xenode-in/xenode"
               target="_blank"
               rel="noopener noreferrer"
-              className="opacity-50 hover:opacity-90 transition-opacity"
+              className="text-muted-foreground hover:text-foreground transition-colors"
               aria-label="GitHub"
             >
               <Github className="w-5 h-5" />
@@ -57,7 +57,7 @@ export function LandingFooter() {
               href="https://twitter.com"
               target="_blank"
               rel="noopener noreferrer"
-              className="opacity-50 hover:opacity-90 transition-opacity"
+              className="text-muted-foreground hover:text-foreground transition-colors"
               aria-label="Twitter"
             >
               <Twitter className="w-5 h-5" />
@@ -66,7 +66,7 @@ export function LandingFooter() {
               href="https://www.linkedin.com/company/xenode-in/"
               target="_blank"
               rel="noopener noreferrer"
-              className="opacity-50 hover:opacity-90 transition-opacity"
+              className="text-muted-foreground hover:text-foreground transition-colors"
               aria-label="LinkedIn"
             >
               <Linkedin className="w-5 h-5" />
@@ -75,10 +75,10 @@ export function LandingFooter() {
         </div>
 
         {/* Divider */}
-        <div className="border-t " />
+        <div className="border-t border-border" />
 
         {/* Bottom row */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-xs opacity-40">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-muted-foreground">
           <p>
             © 2026 <span className="font-brand italic">Xenode</span>. All rights
             reserved.
@@ -88,7 +88,7 @@ export function LandingFooter() {
               <AnimatedLink
                 key={l.label}
                 href={l.href}
-                className="font-medium opacity-50"
+                className="font-medium text-muted-foreground hover:text-foreground"
               >
                 {l.label}
               </AnimatedLink>

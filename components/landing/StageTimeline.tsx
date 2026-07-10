@@ -23,31 +23,31 @@ const stages = [
 
 export function StageTimeline() {
   return (
-    <section className="relative z-10 border-b  flex justify-center px-6 md:px-8">
+    <section className="relative z-10 border-b border-border flex justify-center px-6 md:px-8">
       <div className="w-full max-w-[1200px] py-16 px-6">
-        <p className="text-xs uppercase tracking-widest opacity-50 mb-8 text-center">
+        <p className="text-xs uppercase tracking-widest text-muted-foreground mb-8 text-center">
           EVERY STAGE OF YOUR JOURNEY
         </p>
 
         {/* Timeline strip */}
-        <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-white/10 border  rounded-xl overflow-hidden">
+        <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border border border-border rounded-xl overflow-hidden">
           {stages.map((stage, i) => (
             <div
               key={stage.name}
               className={`flex-1 px-6 py-6 flex flex-col gap-1.5 ${
                 i === 0
-                  ? "bg-white/10"
-                  : "bg-white/[0.03] hover:bg-white/[0.06]"
+                  ? "bg-accent"
+                  : "bg-card/70 hover:bg-accent/60"
               } transition-colors duration-150`}
             >
-              <span className="text-xs uppercase tracking-widest opacity-50 font-mono">
+              <span className="text-xs uppercase tracking-widest text-muted-foreground font-mono">
                 {i === 0 ? "▶ " : ""}
                 {stage.name}
               </span>
               <span className="text-sm font-medium leading-snug">
                 {stage.tagline}
               </span>
-              <span className="text-xs opacity-40 mt-1">{stage.note}</span>
+              <span className="text-xs text-muted-foreground mt-1">{stage.note}</span>
             </div>
           ))}
         </div>

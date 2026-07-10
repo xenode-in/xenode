@@ -131,7 +131,7 @@ export default async function BlogSlugPage({ params }: PageProps) {
         <div className="relative min-h-screen flex flex-col font-sans bg-background text-foreground transition-colors duration-300">
           <ThemeGradientBackground />
           <div
-            className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat"
+            className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat opacity-30 dark:opacity-75"
             style={{ backgroundImage: "url('/grain.png')" }}
           />
           <Navbar />
@@ -340,7 +340,7 @@ export default async function BlogSlugPage({ params }: PageProps) {
       />
 
       <div
-        className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat"
+        className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat opacity-30 dark:opacity-75"
         style={{ backgroundImage: "url('/grain.png')" }}
       />
 
