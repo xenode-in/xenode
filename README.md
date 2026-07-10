@@ -11,7 +11,7 @@ Xenode is an open-source storage platform for files, media, and shared albums wh
 [![Redis](https://img.shields.io/badge/Redis-black?logo=redis)](https://redis.io)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-If Xenode is useful to you, please consider starring the repository. It helps more people discover the project and supports continued development.
+If Xenode is useful to you, please consider starring the repository ⭐. It helps more people discover the project and supports continued development.
 
 ## Overview
 
@@ -69,18 +69,18 @@ These features should be designed so raw file contents, derived embeddings, and 
 
 ## Architecture
 
-| Layer | Technology |
-| --- | --- |
-| Application | Next.js 16, React 19, App Router |
-| Styling | Tailwind CSS v4, Shadcn UI, Framer Motion |
-| Authentication | Better Auth |
-| Database | MongoDB, Mongoose |
-| Realtime | Socket.IO, Redis |
-| Storage | Backblaze B2 / S3-compatible object storage |
-| Uploads | Uppy, multipart upload |
-| Media | FFmpeg WASM, Vidstack |
-| Encryption | Web Crypto API |
-| Testing | Vitest |
+| Layer          | Technology                                  |
+| -------------- | ------------------------------------------- |
+| Application    | Next.js 16, React 19, App Router            |
+| Styling        | Tailwind CSS v4, Shadcn UI, Framer Motion   |
+| Authentication | Better Auth                                 |
+| Database       | MongoDB, Mongoose                           |
+| Realtime       | Socket.IO, Redis                            |
+| Storage        | Backblaze B2 / S3-compatible object storage |
+| Uploads        | Uppy, multipart upload                      |
+| Media          | FFmpeg WASM, Vidstack                       |
+| Encryption     | Web Crypto API                              |
+| Testing        | Vitest                                      |
 
 ## Encryption Model
 
@@ -228,6 +228,3 @@ Contributions are welcome. Please open an issue for significant changes before s
 Xenode is released under the [MIT License](./LICENSE). You are free to use, modify, distribute, and use the project commercially under the terms of the license.
 
 If you use Xenode commercially, we would appreciate it if you let us know. This is an optional courtesy request and does not change the MIT license terms.
-
-
-
