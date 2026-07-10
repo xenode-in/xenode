@@ -72,7 +72,11 @@ describe("Android Authentication & Vault parity", () => {
     expect(login).toContain('router.push("/(auth)/recover"');
     expect(recovery).toContain("bootstrapRecovery(email)");
     expect(recovery).toContain("completeRecovery(newPassword");
-    expect(profile).toContain("Lock Vault");
-    expect(profile).toContain("await unlock(unlockPassword)");
+    // Explicit vault-lock action remains reachable from the profile screen.
+    // (Post-streaming-refactor the profile no longer hosts an in-place
+    // re-unlock form — unlock now lives in the dedicated unlock/recovery
+    // flow covered by the recover.tsx assertions above.)
+    expect(profile).toContain("useCrypto");
+    expect(profile).toContain("await lock()");
   });
 });

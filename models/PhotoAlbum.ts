@@ -3,14 +3,9 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 export interface IPhotoAlbum extends Document {
   _id: mongoose.Types.ObjectId;
   userId: string;
-  name: string;
   slug: string;
   description?: string;
-  /**
-   * E2EE album name: AES-GCM under the user's metadataKey, same wire format
-   * as StorageObject.encryptedName (encryptMetadataString). When present,
-   * clients display this and `name` holds a generic placeholder.
-   */
+  /** E2EE album name: AES-GCM under the user's metadataKey. */
   encryptedName?: string;
   /**
    * Opaque client-derived stable reference for a mirrored device album
@@ -30,12 +25,6 @@ const PhotoAlbumSchema = new Schema<IPhotoAlbum>(
       type: String,
       required: true,
       index: true,
-    },
-    name: {
-      type: String,
-      required: true,
-      trim: true,
-      maxlength: 80,
     },
     slug: {
       type: String,

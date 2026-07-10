@@ -6,16 +6,11 @@ import PhotoAlbum from "@/models/PhotoAlbum";
 import AlbumShareLink from "@/models/AlbumShareLink";
 import { albumIdentifierFilter } from "@/lib/albums/slug";
 import { deleteAlbumShareThumbnails } from "@/lib/albums/cleanup";
-import { ENCRYPTED_ALBUM_NAME_PLACEHOLDER } from "@/lib/albums/constants";
 
 export const dynamic = "force-dynamic";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
-}
-
-function normalizeName(value: unknown) {
-  return typeof value === "string" ? value.trim().slice(0, 80) : "";
 }
 
 function normalizeEncryptedName(value: unknown) {
@@ -39,12 +34,12 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const session = await requireAuth(request);
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
-    const name = normalizeName(body.name);
     const encryptedName = normalizeEncryptedName(body.encryptedName);
     const sourceRef = normalizeSourceRef(body.sourceRef);
-    if (!name && !encryptedName && !sourceRef) {
+    const hasDescription = typeof body.description === "string";
+    if (!encryptedName && !sourceRef && !hasDescription) {
       return NextResponse.json(
-        { error: "Album name is required" },
+        { error: "No album updates were provided" },
         { status: 400 },
       );
     }
@@ -52,16 +47,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     await dbConnect();
 
     const update: Record<string, unknown> = {};
-    if (encryptedName) {
-      update.encryptedName = encryptedName;
-      // E2EE rename: keep the required plaintext field on a placeholder
-      // unless the client also sent an explicit plaintext name.
-      update.name = name || ENCRYPTED_ALBUM_NAME_PLACEHOLDER;
-    } else if (name) {
-      update.name = name;
-    }
+    if (encryptedName) update.encryptedName = encryptedName;
     if (sourceRef) update.sourceRef = sourceRef;
-    if (typeof body.description === "string") {
+    if (hasDescription) {
       update.description = body.description.trim().slice(0, 500);
     }
 
@@ -75,8 +63,6 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       ).lean();
     } catch (error) {
       if (isDuplicateKeyError(error) && sourceRef) {
-        // Another album already owns this sourceRef — tell the client which
-        // one so it can converge instead of retrying forever.
         const conflict = await PhotoAlbum.findOne({
           userId: session.user.id,
           sourceRef,

@@ -31,7 +31,6 @@ import {
   encryptMetadataString,
   encryptWithShareKey,
 } from "@/lib/crypto/fileEncryption";
-import { ENCRYPTED_ALBUM_NAME_PLACEHOLDER } from "@/lib/albums/constants";
 import { fromB64, toB64 } from "@/lib/crypto/utils";
 import {
   bytesToBase64Url,
@@ -79,7 +78,6 @@ type GridMode = "default" | "grid";
 type AlbumRecord = {
   _id: string;
   slug: string;
-  name: string;
   encryptedName?: string | null;
   sourceRef?: string | null;
   description?: string;
@@ -506,7 +504,6 @@ export function PhotosGrid({
   const autoScrollFrameRef = useRef<number | null>(null);
   const dragMovedRef = useRef(false);
   const suppressNextClickRef = useRef(false);
-  const albumNameMigrationRanRef = useRef(false);
 
   useEffect(() => {
     selectedPhotoIdsRef.current = selectedPhotoIds;
@@ -647,73 +644,10 @@ export function PhotosGrid({
   }, [albums, isUnlocked, metadataKey]);
 
   const albumDisplayName = useCallback(
-    (album: AlbumRecord) =>
-      decryptedAlbumNames[album._id] ??
-      (album.name !== ENCRYPTED_ALBUM_NAME_PLACEHOLDER
-        ? album.name
-        : "Encrypted album"),
+    (album: AlbumRecord) => decryptedAlbumNames[album._id] ?? "Encrypted album",
     [decryptedAlbumNames],
   );
-
-  // ── One-time migration: encrypt legacy plaintext album names ────────────────
-
-  useEffect(() => {
-    if (!isUnlocked || !metadataKey || albumsLoading || !albums.length) return;
-    if (albumNameMigrationRanRef.current) return;
-
-    const pending = albums.filter(
-      (album) =>
-        !album.encryptedName &&
-        album.name &&
-        album.name !== ENCRYPTED_ALBUM_NAME_PLACEHOLDER,
-    );
-    if (pending.length === 0) return;
-    albumNameMigrationRanRef.current = true;
-
-    const run = async () => {
-      // Sequential on purpose — gentle on the API, and failures are simply
-      // retried on the next page load.
-      for (const album of pending) {
-        try {
-          const encryptedName = await encryptMetadataString(
-            album.name,
-            metadataKey,
-          );
-          const res = await fetch(`/api/albums/${album._id}`, {
-            method: "PATCH",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ encryptedName }),
-          });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          setDecryptedAlbumNames((prev) => ({
-            ...prev,
-            [album._id]: album.name,
-          }));
-          setAlbums((prev) =>
-            prev.map((item) =>
-              item._id === album._id
-                ? {
-                    ...item,
-                    encryptedName,
-                    name: ENCRYPTED_ALBUM_NAME_PLACEHOLDER,
-                  }
-                : item,
-            ),
-          );
-        } catch (error) {
-          console.warn(
-            `Album name migration failed for album ${album._id}`,
-            error,
-          );
-        }
-      }
-    };
-
-    void run();
-  }, [albums, albumsLoading, isUnlocked, metadataKey]);
-
-  // ── Search filter ────────────────────────────────────────────────────────────
+  // -- Search filter ------------------------------------------------------------
 
   const filteredPhotos = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -754,7 +688,6 @@ export function PhotosGrid({
   const grouped = useMemo(() => groupByDate(filteredPhotos), [filteredPhotos]);
   const groupEntries = useMemo(() => Object.entries(grouped), [grouped]);
   const scrubberItems = filteredPhotos;
-
   // ── Scrubber state ────────────────────────────────────────────────────────────
 
   // ── Scrubber & Virtualization State ─────────────────────────────────────────
@@ -1409,14 +1342,13 @@ export function PhotosGrid({
           const createBody: Record<string, unknown> = {
             objectIds: pendingAlbumPhotos.map((photo) => photo._id),
           };
-          if (canEncryptName && metadataKey) {
-            createBody.encryptedName = await encryptMetadataString(
-              trimmed,
-              metadataKey,
-            );
-          } else {
-            createBody.name = trimmed;
+          if (!canEncryptName || !metadataKey) {
+            throw new Error("Unlock your vault to save album names");
           }
+          createBody.encryptedName = await encryptMetadataString(
+            trimmed,
+            metadataKey,
+          );
           const res = await fetch("/api/albums", {
             method: "POST",
             credentials: "include",
@@ -1434,24 +1366,21 @@ export function PhotosGrid({
           }
           toast.success("Album created");
           if (pendingAlbumPhotos.length > 0) {
-            setActiveAlbumId(data.album.slug);
+            setActiveAlbumId(data.album._id);
             setViewMode("photos");
-            router.push(`/dashboard/albums/${data.album.slug}`);
+            router.push(`/dashboard/albums/${data.album._id}`);
             clearSelection();
           } else {
             setViewMode("albums");
             router.push("/dashboard/albums");
           }
         } else if (editingAlbumId) {
-          const renameBody: Record<string, unknown> =
-            canEncryptName && metadataKey
-              ? {
-                  encryptedName: await encryptMetadataString(
-                    trimmed,
-                    metadataKey,
-                  ),
-                }
-              : { name: trimmed };
+          if (!canEncryptName || !metadataKey) {
+            throw new Error("Unlock your vault to save album names");
+          }
+          const renameBody: Record<string, unknown> = {
+            encryptedName: await encryptMetadataString(trimmed, metadataKey),
+          };
           const res = await fetch(`/api/albums/${editingAlbumId}`, {
             method: "PATCH",
             credentials: "include",
@@ -1465,7 +1394,6 @@ export function PhotosGrid({
               album._id === editingAlbumId
                 ? {
                     ...album,
-                    name: data.album.name,
                     encryptedName: data.album.encryptedName ?? album.encryptedName,
                     updatedAt: data.album.updatedAt,
                   }
@@ -1553,7 +1481,7 @@ export function PhotosGrid({
         );
         await syncAlbumShare(albumId, {
           addedPhotoIds: [photoId],
-          albumName: decryptedAlbumNames[albumId] ?? data.album.name,
+          albumName: decryptedAlbumNames[albumId] ?? "Encrypted album",
         }).catch((syncError) => {
           toast.warning(
             syncError instanceof Error
@@ -1599,7 +1527,7 @@ export function PhotosGrid({
       );
       await syncAlbumShare(bulkTargetAlbumId, {
         addedPhotoIds: photoIds,
-        albumName: decryptedAlbumNames[bulkTargetAlbumId] ?? data.album.name,
+        albumName: decryptedAlbumNames[bulkTargetAlbumId] ?? "Encrypted album",
       }).catch((syncError) => {
         toast.warning(
           syncError instanceof Error
@@ -2376,6 +2304,7 @@ export function PhotosGrid({
                         isSelected={selectedPhotoIdSet.has(photo._id)}
                         onSelectPhoto={selectPhoto}
                         onTileMount={registerPhotoTile}
+                        albumDisplayName={albumDisplayName}
                       />
                     ))}
                   </div>

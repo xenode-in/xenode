@@ -5,8 +5,6 @@ import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import PhotoAlbum from "@/models/PhotoAlbum";
 import StorageObject from "@/models/StorageObject";
-import { generateUniqueAlbumSlug } from "@/lib/albums/slug";
-import { ENCRYPTED_ALBUM_NAME_PLACEHOLDER } from "@/lib/albums/constants";
 
 export const dynamic = "force-dynamic";
 
@@ -15,7 +13,6 @@ const COVER_PROJECTION =
 
 type AlbumDoc = {
   _id: Types.ObjectId;
-  name: string;
   slug?: string;
   description?: string;
   encryptedName?: string | null;
@@ -37,10 +34,6 @@ type CoverDoc = {
   encryptedDisplayName?: string | null;
   createdAt?: Date;
 };
-
-function normalizeName(value: unknown) {
-  return typeof value === "string" ? value.trim().slice(0, 80) : "";
-}
 
 function normalizeEncryptedName(value: unknown) {
   return typeof value === "string" ? value.trim().slice(0, 2048) : "";
@@ -91,7 +84,6 @@ async function serializeAlbums(albums: AlbumDoc[]) {
     const cover = coverById.get(coverId);
     return {
       _id: String(album._id),
-      name: album.name,
       encryptedName: album.encryptedName ?? null,
       sourceRef: album.sourceRef ?? null,
       slug: album.slug ?? String(album._id),
@@ -128,13 +120,11 @@ export async function POST(request: NextRequest) {
     const session = await requireAuth(request);
     const body = await request.json().catch(() => ({}));
     const encryptedName = normalizeEncryptedName(body.encryptedName);
-    // E2EE clients send encryptedName and no meaningful plaintext name;
-    // the placeholder keeps `name` (required, shown by legacy clients) valid.
-    const name =
-      normalizeName(body.name) ||
-      (encryptedName ? ENCRYPTED_ALBUM_NAME_PLACEHOLDER : "");
-    if (!name) {
-      return NextResponse.json({ error: "Album name is required" }, { status: 400 });
+    if (!encryptedName) {
+      return NextResponse.json(
+        { error: "encryptedName is required" },
+        { status: 400 },
+      );
     }
 
     await dbConnect();
@@ -143,14 +133,13 @@ export async function POST(request: NextRequest) {
       session.user.id,
       normalizeObjectIds(body.objectIds),
     );
-
-    const slug = await generateUniqueAlbumSlug(session.user.id, name);
+    const albumId = new Types.ObjectId();
 
     const album = await PhotoAlbum.create({
+      _id: albumId,
       userId: session.user.id,
-      name,
-      encryptedName: encryptedName || undefined,
-      slug,
+      encryptedName,
+      slug: String(albumId),
       description:
         typeof body.description === "string"
           ? body.description.trim().slice(0, 500)
