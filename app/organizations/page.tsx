@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { OrganizationWorkspaceShell } from "@/components/organizations/OrganizationWorkspaceShell";
 import { OrganizationsClient } from "@/components/organizations/OrganizationsClient";
 import { getServerSession } from "@/lib/auth/session";
 
@@ -9,13 +8,5 @@ export default async function OrganizationsPage() {
     redirect("/login");
   }
 
-  return (
-    <OrganizationWorkspaceShell
-      user={session.user}
-      title="Team workspaces"
-      description="Create organizations, switch collaboration scope, and manage secure access."
-    >
-      <OrganizationsClient />
-    </OrganizationWorkspaceShell>
-  );
+  return <OrganizationsClient user={session.user} />;
 }

@@ -6,11 +6,15 @@ import {
   isAuthzError,
   toJsonResponse,
 } from "@/lib/authz";
+import { assertScopeAction } from "@/lib/authz/policy";
 import dbConnect from "@/lib/mongodb";
 import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
 import { getUploadUrl, uploadObject, deleteObjects } from "@/lib/b2/objects";
 import { updateBucketStats, adjustStorageBytes } from "@/lib/metering/usage";
+import { adjustOrgStorage } from "@/lib/orgs/billing/orgUsage";
+import { resolveWorkspace } from "@/lib/workspace/resolve";
+import { parseBaseRevision, revisionFilter, REVISION_HEADER } from "@/lib/storage/revisions";
 import {
   snapshotCurrentAsVersion,
   newObjectKey,
@@ -41,7 +45,19 @@ export async function POST(
 ) {
   try {
     const ctx = await requireAccessContext(request);
+    assertScopeAction(ctx, "write");
     const userId = ctx.userId;
+    const adjustWorkspaceStorage = (delta: number) =>
+      ctx.scope.type === "personal"
+        ? adjustStorageBytes(userId, delta)
+        : adjustOrgStorage(ctx.scope.orgId, delta);
+    const baseRevision = parseBaseRevision(request.headers.get(REVISION_HEADER));
+    if (Number.isNaN(baseRevision)) {
+      return NextResponse.json(
+        { error: "Invalid base revision", code: "invalid_base_revision" },
+        { status: 400 },
+      );
+    }
     const { id } = await params;
     const contentType = request.headers.get("content-type") || "";
     const isJsonRequest = contentType.includes("application/json");
@@ -62,6 +78,12 @@ export async function POST(
     const object = await StorageObject.findOne(objectFilter(ctx, id));
     if (!object) {
       return NextResponse.json({ error: "Object not found" }, { status: 404 });
+    }
+    if (baseRevision !== null && (object.revision ?? 0) !== baseRevision) {
+      return NextResponse.json(
+        { error: "The object changed since it was opened", code: "revision_conflict", revision: object.revision ?? 0 },
+        { status: 409 },
+      );
     }
 
     const bucket = await Bucket.findOne({
@@ -96,11 +118,11 @@ export async function POST(
       //    also occupies space, so the net delta is +newSize − evictedBytes.
       const netDelta = newSize - evictedBytes;
       if (netDelta !== 0) {
-        await adjustStorageBytes(userId, netDelta); // throws QUOTA_EXCEEDED
+        await adjustWorkspaceStorage(netDelta); // throws QUOTA_EXCEEDED
       }
 
       // 3. Upload NEW content to a fresh key. Roll back the reservation on fail.
-      const newKey = newObjectKey(userId);
+      const newKey = newObjectKey(userId, resolveWorkspace(ctx).keyPrefix);
       let uploadResult;
       try {
         uploadResult = await uploadObject(
@@ -112,20 +134,40 @@ export async function POST(
         );
       } catch (uploadErr) {
         if (netDelta !== 0) {
-          await adjustStorageBytes(userId, -netDelta).catch(() => {});
+          await adjustWorkspaceStorage(-netDelta).catch(() => {});
         }
         throw uploadErr;
       }
 
-      // 4. Point the object at the new content; persist evicted-trimmed history.
-      object.key = newKey;
-      object.b2FileId = uploadResult.b2FileId;
-      object.size = newSize;
-      object.iv = iv;
-      if (dek) object.encryptedDEK = dek;
-      object.versions = kept;
-      object.updatedAt = new Date();
-      await object.save();
+      // 4. Atomically point the object at the new ciphertext. A second editor
+      // may have saved while this upload was in flight, so the revision guard
+      // must be part of the database write rather than only a preflight check.
+      const expectedRevision = baseRevision ?? (object.revision ?? 0);
+      const update = await StorageObject.updateOne(
+        { _id: object._id, ...revisionFilter(expectedRevision) },
+        {
+          $set: {
+            key: newKey,
+            b2FileId: uploadResult.b2FileId,
+            size: newSize,
+            iv,
+            ...(dek ? { encryptedDEK: dek } : {}),
+            versions: kept,
+            updatedAt: new Date(),
+          },
+          $inc: { revision: 1 },
+        },
+      );
+      if (update.matchedCount !== 1) {
+        await deleteObjects(bucket.b2BucketId, [newKey]).catch(() => {});
+        if (netDelta !== 0) await adjustWorkspaceStorage(-netDelta).catch(() => {});
+        const latest = await StorageObject.findById(object._id).select("revision").lean();
+        return NextResponse.json(
+          { error: "The object changed since it was opened", code: "revision_conflict", revision: latest?.revision ?? expectedRevision },
+          { status: 409 },
+        );
+      }
+      const updatedObject = await StorageObject.findById(object._id);
 
       // 5. Best-effort: drop evicted version blobs + reconcile bucket stats.
       if (evicted.length > 0) {
@@ -138,7 +180,7 @@ export async function POST(
         await updateBucketStats(object.bucketId.toString(), 0, netDelta);
       }
 
-      return NextResponse.json({ success: true, object });
+      return NextResponse.json({ success: true, object: updatedObject, revision: updatedObject?.revision ?? expectedRevision + 1 });
     }
 
     // Legacy presigned-url flow. Deprecated and NOT versioned — the docs editor

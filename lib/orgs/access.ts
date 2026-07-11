@@ -16,6 +16,10 @@ export interface OrganizationRecord {
   emailBranding?: string | null;
   domainJoinPolicy?: "off" | "suggest" | "auto";
   autoJoinRequiresApproval?: boolean;
+  /** Optional organization profile metadata collected at creation. */
+  orgType?: string | null;
+  teamSize?: string | null;
+  website?: string | null;
   /** Soft-deletion marker. Set → org is scheduled for purge and inaccessible. */
   deletedAt?: Date | null;
   scheduledPurgeAt?: Date | null;

@@ -16,6 +16,22 @@ import { systemWorkspaceBucketName } from "@/lib/storage/workspaceBucket";
  */
 export type Action = "read" | "write" | "delete" | "share" | "manage";
 
+/** Enforce the role attached to an already authenticated tenancy scope. */
+export function assertScopeAction(ctx: AccessContext, action: Action): void {
+  if (ctx.scope.type === "personal" || action === "read") return;
+  const role = ctx.scope.role;
+  const mayWrite =
+    role === "owner" ||
+    role === "admin" ||
+    role === "manager" ||
+    role === "member";
+  const mayManage = role === "owner" || role === "admin" || role === "manager";
+  if ((action === "write" && mayWrite) || (action !== "write" && mayManage)) {
+    return;
+  }
+  throw new AuthzError(403, "workspace_role_required", "Forbidden");
+}
+
 function assertPersonalStorageScope(ctx: AccessContext): void {
   if (ctx.scope.type === "personal") return;
   throw new AuthzError(
@@ -105,7 +121,7 @@ export async function assertObjectAccess(
   action: Action = "read",
   opts: { lean?: boolean } = {},
 ): Promise<IStorageObject> {
-  void action;
+  assertScopeAction(ctx, action);
   await dbConnect();
   const query = StorageObject.findOne(objectFilter(ctx, objectId));
   const object = opts.lean

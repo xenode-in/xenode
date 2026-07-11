@@ -42,6 +42,18 @@ function newPluginId(prefix: string): string {
   return `${prefix}_${randomBytes(12).toString("hex")}`;
 }
 
+const ORG_TYPES = [
+  "company",
+  "startup",
+  "agency",
+  "nonprofit",
+  "education",
+  "government",
+  "personal",
+  "other",
+] as const;
+const TEAM_SIZES = ["1-10", "11-50", "51-200", "201-500", "500+"] as const;
+
 function serializeOrg(
   org: OrganizationRecord,
   member: MemberRecord,
@@ -52,6 +64,9 @@ function serializeOrg(
     name: org.name,
     slug: org.slug ?? null,
     logo: org.logo ?? null,
+    orgType: org.orgType ?? null,
+    teamSize: org.teamSize ?? null,
+    website: org.website ?? null,
     role: member.role ?? "member",
     isActive: activeOrgId === org.id,
     createdAt: org.createdAt ?? null,
@@ -61,6 +76,44 @@ function serializeOrg(
 
 function normalizeName(value: unknown): string {
   return typeof value === "string" ? value.trim().slice(0, 80) : "";
+}
+
+function normalizeEnum<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+): T | null {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : null;
+}
+
+/** Accepts an http(s) URL only (used for uploaded logo URLs); returns it or null. */
+function normalizeHttpUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const raw = value.trim().slice(0, 500);
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+/** Accepts a bare domain or full URL; returns a normalized https URL or null. */
+function normalizeWebsite(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const raw = value.trim().slice(0, 200);
+  if (!raw) return null;
+  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+  try {
+    const url = new URL(withScheme);
+    if (!url.hostname.includes(".")) return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
 function normalizeSlug(value: unknown, fallback: string): string {
@@ -102,6 +155,38 @@ export async function POST(request: NextRequest) {
     }
 
     const slug = normalizeSlug(body.slug, name);
+    const orgType = normalizeEnum(body.orgType, ORG_TYPES);
+    if (!orgType) {
+      return NextResponse.json(
+        { error: "Organization type is required" },
+        { status: 400 },
+      );
+    }
+    const teamSize = normalizeEnum(body.teamSize, TEAM_SIZES);
+    if (!teamSize) {
+      return NextResponse.json(
+        { error: "Team size is required" },
+        { status: 400 },
+      );
+    }
+    const website = normalizeWebsite(body.website);
+    const logo = normalizeHttpUrl(body.logo);
+    if (typeof body.logo === "string" && body.logo.trim() && !logo) {
+      return NextResponse.json(
+        { error: "Logo must be a valid URL" },
+        { status: 400 },
+      );
+    }
+    if (
+      typeof body.website === "string" &&
+      body.website.trim() &&
+      !website
+    ) {
+      return NextResponse.json(
+        { error: "Website must be a valid URL" },
+        { status: 400 },
+      );
+    }
     const ownerWrappedSpaceKey =
       typeof body.ownerWrappedSpaceKey === "string"
         ? body.ownerWrappedSpaceKey.trim()
@@ -136,7 +221,10 @@ export async function POST(request: NextRequest) {
       id: newPluginId("org"),
       name,
       slug,
-      logo: null,
+      logo,
+      orgType,
+      teamSize,
+      website,
       createdAt: now,
       updatedAt: now,
     };

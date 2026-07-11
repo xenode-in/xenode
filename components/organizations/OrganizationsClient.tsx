@@ -1,29 +1,44 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  ArrowLeft,
+  ArrowRight,
   Building2,
   Check,
   Files,
+  ImagePlus,
   KeyRound,
   Loader2,
+  Lock,
   Mail,
   Plus,
   RefreshCw,
   Send,
   Settings,
   ShieldCheck,
+  Sparkles,
   Trash2,
+  Upload,
   UserPlus,
+  Users,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { useSession } from "@/lib/auth/client";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -34,11 +49,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs";
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import {
   generateOrgSpaceKey,
   unwrapSpaceKeyGrant,
@@ -49,6 +65,13 @@ import { cn, formatDate } from "@/lib/utils";
 
 type OrgRole = "owner" | "admin" | "manager" | "member" | "guest";
 type InviteRole = "admin" | "manager" | "member" | "guest";
+
+interface SessionUser {
+  id: string;
+  name?: string | null;
+  email?: string | null;
+  image?: string | null;
+}
 
 interface Organization {
   id: string;
@@ -122,15 +145,80 @@ function roleLabel(role: string) {
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
-function EmptyState({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="rounded-lg border border-dashed border-border p-6 text-sm text-muted-foreground">
-      {children}
-    </div>
-  );
+function initialsOf(source: string | null | undefined) {
+  const value = (source || "?").trim();
+  return value
+    .split(/\s+/)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
 }
 
-export function OrganizationsClient() {
+const LOGO_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Downscales/re-encodes a raster image entirely in the browser until it fits
+ * under `maxBytes`. SVGs (vector) and already-small files pass through
+ * untouched. Returns a WebP File when re-encoding was needed.
+ */
+async function compressImageToLimit(
+  file: File,
+  maxBytes: number,
+): Promise<File> {
+  if (file.type === "image/svg+xml" || file.size <= maxBytes) {
+    return file;
+  }
+
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("Failed to read image"));
+    reader.readAsDataURL(file);
+  });
+
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const image = new window.Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Failed to load image"));
+    image.src = dataUrl;
+  });
+
+  let maxDim = 1024;
+  let quality = 0.9;
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const width = Math.max(1, Math.round(img.width * scale));
+    const height = Math.max(1, Math.round(img.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return file;
+    ctx.drawImage(img, 0, 0, width, height);
+
+    const blob = await new Promise<Blob | null>((resolve) =>
+      canvas.toBlob((result) => resolve(result), "image/webp", quality),
+    );
+
+    if (blob && blob.size <= maxBytes) {
+      const baseName = file.name.replace(/\.[^.]+$/, "") || "logo";
+      return new File([blob], `${baseName}.webp`, { type: "image/webp" });
+    }
+
+    // Tighten quality first, then dimensions, and retry.
+    if (quality > 0.5) {
+      quality -= 0.15;
+    } else {
+      maxDim = Math.round(maxDim * 0.8);
+    }
+  }
+
+  return file;
+}
+
+export function OrganizationsClient({ user }: { user: SessionUser }) {
   const router = useRouter();
   const { data: session } = useSession();
   const { isUnlocked, publicKey, privateKey, setModalOpen } = useCrypto();
@@ -138,34 +226,41 @@ export function OrganizationsClient() {
   const [members, setMembers] = useState<Member[]>([]);
   const [orgInvites, setOrgInvites] = useState<Invitation[]>([]);
   const [myInvites, setMyInvites] = useState<Invitation[]>([]);
-  const [selectedOrgId, setSelectedOrgId] = useState<string>("");
+  const [manageOrgId, setManageOrgId] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
+
+  // Creation wizard state
+  const [createOpen, setCreateOpen] = useState(false);
+  const [invitesOpen, setInvitesOpen] = useState(false);
+  const [createStep, setCreateStep] = useState(0);
   const [orgName, setOrgName] = useState("");
+  const [orgType, setOrgType] = useState<string>("");
+  const [teamSize, setTeamSize] = useState<string>("");
+  const [website, setWebsite] = useState("");
+  const [logo, setLogo] = useState<string>("");
+  const [logoUploading, setLogoUploading] = useState(false);
+
+  // Invite state
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<InviteRole>("member");
 
-  const selectedOrg = useMemo(
-    () => orgs.find((org) => org.id === selectedOrgId) ?? orgs[0] ?? null,
-    [orgs, selectedOrgId],
+  const manageOrg = useMemo(
+    () => orgs.find((org) => org.id === manageOrgId) ?? null,
+    [orgs, manageOrgId],
   );
-  const canAdminSelectedOrg =
-    !!selectedOrg && ADMIN_ROLES.includes(selectedOrg.role);
-  const currentUserId = session?.user?.id ?? "";
+  const canAdminManageOrg = !!manageOrg && ADMIN_ROLES.includes(manageOrg.role);
+  const currentUserId = session?.user?.id ?? user.id;
+  const pendingInvites = useMemo(
+    () => myInvites.filter((invite) => invite.status === "pending"),
+    [myInvites],
+  );
 
   const loadOrgs = useCallback(async () => {
     const data = await readJson<{ organizations: Organization[] }>(
       await fetch("/api/orgs"),
     );
     setOrgs(data.organizations);
-    setSelectedOrgId((current) => {
-      if (current && data.organizations.some((org) => org.id === current)) {
-        return current;
-      }
-      return data.organizations.find((org) => org.isActive)?.id ||
-        data.organizations[0]?.id ||
-        "";
-    });
   }, []);
 
   const loadMyInvites = useCallback(async () => {
@@ -175,7 +270,7 @@ export function OrganizationsClient() {
     setMyInvites(data.invitations);
   }, []);
 
-  const loadSelectedOrg = useCallback(async (orgId: string) => {
+  const loadManagedOrg = useCallback(async (orgId: string) => {
     if (!orgId) {
       setMembers([]);
       setOrgInvites([]);
@@ -212,13 +307,43 @@ export function OrganizationsClient() {
   }, [refresh]);
 
   useEffect(() => {
-    void loadSelectedOrg(selectedOrg?.id ?? "");
-  }, [loadSelectedOrg, selectedOrg?.id]);
+    void loadManagedOrg(manageOrgId);
+  }, [loadManagedOrg, manageOrgId]);
+
+  const openCreate = () => {
+    setOrgName("");
+    setOrgType("");
+    setTeamSize("");
+    setWebsite("");
+    setLogo("");
+    setCreateStep(0);
+    setCreateOpen(true);
+  };
+
+  const uploadLogo = async (file: File) => {
+    setLogoUploading(true);
+    try {
+      const prepared = await compressImageToLimit(file, LOGO_MAX_BYTES);
+      const form = new FormData();
+      form.append("file", prepared);
+      const data = await readJson<{ url: string }>(
+        await fetch("/api/orgs/logo", { method: "POST", body: form }),
+      );
+      setLogo(data.url);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to upload logo",
+      );
+    } finally {
+      setLogoUploading(false);
+    }
+  };
 
   const createOrganization = async () => {
     const name = orgName.trim();
     if (!name) {
       toast.error("Organization name is required");
+      setCreateStep(0);
       return;
     }
     if (!isUnlocked || !publicKey) {
@@ -240,16 +365,26 @@ export function OrganizationsClient() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name,
+            orgType: orgType || undefined,
+            teamSize: teamSize || undefined,
+            website: website.trim() || undefined,
+            logo: logo || undefined,
             ownerWrappedSpaceKey,
             keyVersion: 1,
           }),
         }),
       );
 
-      setOrgName("");
       toast.success("Organization created");
+      setCreateOpen(false);
+      setOrgName("");
+      setOrgType("");
+      setTeamSize("");
+      setWebsite("");
+      setLogo("");
+      setCreateStep(0);
       await refresh();
-      setSelectedOrgId(data.organization.id);
+      setManageOrgId(data.organization.id);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to create organization",
@@ -302,7 +437,7 @@ export function OrganizationsClient() {
   };
 
   const inviteMember = async () => {
-    if (!selectedOrg) return;
+    if (!manageOrg) return;
     const email = inviteEmail.trim().toLowerCase();
     if (!email) {
       toast.error("Email is required");
@@ -333,7 +468,7 @@ export function OrganizationsClient() {
         }
 
         recipient = lookup.recipients[0];
-        const rawSpaceKey = await loadRawSpaceKey(selectedOrg.id);
+        const rawSpaceKey = await loadRawSpaceKey(manageOrg.id);
         wrappedSpaceKey = await wrapSpaceKeyForPublicKey({
           rawSpaceKey,
           recipientPublicKey: recipient.publicKey,
@@ -342,7 +477,7 @@ export function OrganizationsClient() {
       }
 
       await readJson<{ invitation: Invitation }>(
-        await fetch(`/api/orgs/${selectedOrg.id}/invitations`, {
+        await fetch(`/api/orgs/${manageOrg.id}/invitations`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -357,7 +492,7 @@ export function OrganizationsClient() {
 
       setInviteEmail("");
       toast.success("Invitation sent");
-      await loadSelectedOrg(selectedOrg.id);
+      await loadManagedOrg(manageOrg.id);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to send invitation",
@@ -368,14 +503,14 @@ export function OrganizationsClient() {
   };
 
   const removeMember = async (member: Member) => {
-    if (!selectedOrg) return;
+    if (!manageOrg) return;
     if (member.userId === currentUserId) {
       toast.error("Self-removal is not available here");
       return;
     }
 
     const label = member.user?.email || member.user?.name || member.userId;
-    if (!window.confirm(`Remove ${label} from ${selectedOrg.name}?`)) {
+    if (!window.confirm(`Remove ${label} from ${manageOrg.name}?`)) {
       return;
     }
 
@@ -394,7 +529,7 @@ export function OrganizationsClient() {
         }
 
         const keyData = await readJson<{ grants: SpaceKeyGrant[] }>(
-          await fetch(`/api/orgs/${selectedOrg.id}/keys`),
+          await fetch(`/api/orgs/${manageOrg.id}/keys`),
         );
         const nextKeyVersion = (keyData.grants[0]?.keyVersion ?? 0) + 1;
         const nextSpaceKey = generateOrgSpaceKey();
@@ -472,7 +607,7 @@ export function OrganizationsClient() {
       }
 
       await readJson<{ removedMemberUserId: string }>(
-        await fetch(`/api/orgs/${selectedOrg.id}/members/${member.userId}`, {
+        await fetch(`/api/orgs/${manageOrg.id}/members/${member.userId}`, {
           method: "DELETE",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ rotationGrants }),
@@ -480,7 +615,7 @@ export function OrganizationsClient() {
       );
 
       toast.success("Member removed");
-      await loadSelectedOrg(selectedOrg.id);
+      await loadManagedOrg(manageOrg.id);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to remove member",
@@ -503,7 +638,9 @@ export function OrganizationsClient() {
           body: JSON.stringify({ action }),
         }),
       );
-      toast.success(action === "accept" ? "Invitation accepted" : "Invitation rejected");
+      toast.success(
+        action === "accept" ? "Invitation accepted" : "Invitation rejected",
+      );
       await refresh();
       router.refresh();
     } catch (error) {
@@ -515,396 +652,917 @@ export function OrganizationsClient() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex min-h-[320px] items-center justify-center">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  const activeOrg = orgs.find((org) => org.isActive) ?? null;
+  const pendingOrgInvites = orgInvites.filter(
+    (invite) => invite.status === "pending",
+  );
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-xl border border-border bg-card p-6">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div className="min-h-screen bg-background">
+      {/* Top bar */}
+      <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-xl">
+        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
+          <div className="flex items-center gap-3">
+            <Link
+              href="/dashboard"
+              className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              aria-label="Back to personal dashboard"
+            >
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
+            <Link href="/organizations" className="flex items-center gap-2">
+              <span className="font-brand text-lg italic text-foreground">
+                Xenode
+              </span>
+              <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                Teams
+              </span>
+            </Link>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setInvitesOpen(true)}
+              className="relative text-muted-foreground hover:text-foreground"
+            >
+              <Mail className="h-4 w-4" />
+              <span className="hidden sm:inline">Invitations</span>
+              {pendingInvites.length > 0 && (
+                <span className="ml-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1.5 text-xs font-medium text-primary-foreground">
+                  {pendingInvites.length}
+                </span>
+              )}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={refresh}
+              disabled={busy !== null}
+              className="text-muted-foreground hover:text-foreground"
+              aria-label="Refresh"
+            >
+              <RefreshCw
+                className={cn("h-4 w-4", loading && "animate-spin")}
+              />
+            </Button>
+            <Avatar className="h-8 w-8">
+              <AvatarImage src={user.image || undefined} />
+              <AvatarFallback className="bg-primary/15 text-xs text-primary">
+                {initialsOf(user.name || user.email)}
+              </AvatarFallback>
+            </Avatar>
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+        {/* Page heading */}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <div className="mb-2 flex items-center gap-2">
-              <Badge variant="secondary">Collaboration</Badge>
-              <Badge variant="outline">Encrypted space keys</Badge>
-            </div>
-            <h2 className="text-2xl font-semibold text-foreground">
-              Organization workspaces
-            </h2>
-            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Create a team space, switch your active collaboration scope, and keep files under organization-owned routes and storage.
+            <h1 className="text-3xl font-semibold tracking-tight text-foreground">
+              Organizations
+            </h1>
+            <p className="mt-1.5 max-w-xl text-sm text-muted-foreground">
+              Encrypted team spaces. Switch your active scope, manage members,
+              and keep files under organization-owned storage.
             </p>
           </div>
-          <Button variant="outline" onClick={refresh} disabled={busy !== null}>
-            <RefreshCw className="h-4 w-4" />
-            Refresh
+          <Button onClick={openCreate} className="shrink-0">
+            <Plus className="h-4 w-4" />
+            New organization
           </Button>
         </div>
-      </div>
 
-      <Tabs defaultValue="spaces" className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="spaces">
-            <Building2 className="h-4 w-4" />
-            Spaces
-          </TabsTrigger>
-          <TabsTrigger value="invitations">
-            <Mail className="h-4 w-4" />
-            Invitations
-          </TabsTrigger>
-        </TabsList>
+        {/* Pending invitations prompt */}
+        {pendingInvites.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setInvitesOpen(true)}
+            className="mt-8 flex w-full items-center justify-between gap-3 rounded-xl border border-primary/40 bg-primary/5 p-4 text-left transition-colors hover:bg-primary/10"
+          >
+            <span className="flex items-center gap-3">
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/15">
+                <Mail className="h-4 w-4 text-primary" />
+              </span>
+              <span className="text-sm font-medium text-foreground">
+                You have {pendingInvites.length} pending invitation
+                {pendingInvites.length > 1 ? "s" : ""}
+              </span>
+            </span>
+            <span className="text-sm font-medium text-primary">Review</span>
+          </button>
+        )}
 
-        <TabsContent value="spaces" className="space-y-6">
-          <section className="rounded-xl border border-border bg-card p-6">
-            <div className="mb-4 flex items-center gap-2">
-              <Plus className="h-4 w-4 text-primary" />
-              <h2 className="text-sm font-medium">Create organization</h2>
+        {/* Workspaces grid */}
+        <section className="mt-8">
+          <div className="mb-3 flex items-center gap-2 text-sm font-medium text-foreground">
+            <Building2 className="h-4 w-4 text-primary" />
+            Your workspaces
+          </div>
+
+          {loading ? (
+            <div className="flex items-center justify-center rounded-2xl border border-dashed border-border py-20">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
             </div>
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <div className="flex-1 space-y-2">
-                <Label htmlFor="org-name">Name</Label>
-                <Input
-                  id="org-name"
-                  value={orgName}
-                  onChange={(event) => setOrgName(event.target.value)}
-                  placeholder="Acme Labs"
-                  maxLength={80}
-                />
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {/* Personal space */}
+              <div className="flex flex-col justify-between rounded-2xl border border-border bg-card p-5">
+                <div className="flex items-start justify-between">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-secondary">
+                    <Lock className="h-5 w-5 text-muted-foreground" />
+                  </div>
+                  {!activeOrg && <Badge>Active</Badge>}
+                </div>
+                <div className="mt-4">
+                  <p className="font-medium text-foreground">Personal space</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Your private Xenode drive
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-4 w-full"
+                  onClick={() => switchScope(null)}
+                  disabled={busy !== null || !activeOrg}
+                >
+                  {busy === "personal" ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : !activeOrg ? (
+                    <Check className="h-4 w-4" />
+                  ) : null}
+                  {!activeOrg ? "Current scope" : "Switch here"}
+                </Button>
               </div>
-              <Button
-                className="sm:self-end"
-                onClick={createOrganization}
-                disabled={busy !== null}
+
+              {/* Organizations */}
+              {orgs.map((org) => (
+                <div
+                  key={org.id}
+                  className={cn(
+                    "flex flex-col justify-between rounded-2xl border bg-card p-5 transition-colors",
+                    org.isActive
+                      ? "border-primary/50 ring-1 ring-primary/20"
+                      : "border-border",
+                  )}
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-primary/10 text-sm font-semibold text-primary">
+                      {org.logo ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={org.logo}
+                          alt=""
+                          className="h-full w-full object-cover"
+                        />
+                      ) : (
+                        initialsOf(org.name)
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {org.isActive && <Badge>Active</Badge>}
+                      <Badge variant="outline">{roleLabel(org.role)}</Badge>
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <p className="truncate font-medium text-foreground">
+                      {org.name}
+                    </p>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                      {org.slug || org.id}
+                    </p>
+                  </div>
+                  <div className="mt-4 flex items-center gap-1.5">
+                    <Button
+                      size="sm"
+                      variant={org.isActive ? "secondary" : "default"}
+                      className="flex-1"
+                      onClick={() => switchScope(org.id)}
+                      disabled={busy !== null || org.isActive}
+                    >
+                      {busy === org.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <ShieldCheck className="h-4 w-4" />
+                      )}
+                      {org.isActive ? "Selected" : "Select"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setManageOrgId(org.id)}
+                      disabled={busy !== null}
+                      aria-label="Manage members"
+                    >
+                      <Users className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      asChild
+                      size="sm"
+                      variant="outline"
+                      aria-label="Organization files"
+                    >
+                      <Link href={`/organizations/${org.id}/files`}>
+                        <Files className="h-4 w-4" />
+                      </Link>
+                    </Button>
+                  </div>
+                </div>
+              ))}
+
+              {/* Create tile */}
+              <button
+                type="button"
+                onClick={openCreate}
+                className="flex min-h-[184px] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border p-5 text-muted-foreground transition-colors hover:border-primary/50 hover:bg-accent/40 hover:text-foreground"
               >
-                {busy === "create" ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <KeyRound className="h-4 w-4" />
-                )}
-                Create
-              </Button>
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-secondary">
+                  <Plus className="h-5 w-5" />
+                </div>
+                <span className="text-sm font-medium">New organization</span>
+              </button>
             </div>
-            <p className="mt-3 text-xs text-muted-foreground">
-              A shared workspace bucket is provisioned automatically when the organization is created.
-            </p>
-          </section>
+          )}
+        </section>
+      </main>
 
-          <section className="rounded-xl border border-border bg-card p-6">
-            <div className="mb-4 flex items-center gap-2">
-              <Building2 className="h-4 w-4 text-primary" />
-              <h2 className="text-sm font-medium">Your organizations</h2>
-            </div>
+      {/* Creation wizard */}
+      <CreateOrgWizard
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        step={createStep}
+        setStep={setCreateStep}
+        orgName={orgName}
+        setOrgName={setOrgName}
+        orgType={orgType}
+        setOrgType={setOrgType}
+        teamSize={teamSize}
+        setTeamSize={setTeamSize}
+        website={website}
+        setWebsite={setWebsite}
+        logo={logo}
+        setLogo={setLogo}
+        onUploadLogo={uploadLogo}
+        logoUploading={logoUploading}
+        onCreate={createOrganization}
+        busy={busy === "create"}
+        vaultUnlocked={isUnlocked}
+      />
 
-            {orgs.length === 0 ? (
-              <EmptyState>No organizations yet.</EmptyState>
+      {/* Invitations slide-over */}
+      <Sheet open={invitesOpen} onOpenChange={setInvitesOpen}>
+        <SheetContent className="w-full overflow-y-auto sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <Mail className="h-4 w-4 text-primary" />
+              Invitations
+            </SheetTitle>
+            <SheetDescription>
+              Organizations that have invited you to collaborate.
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="space-y-2.5 px-4 pb-8">
+            {pendingInvites.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl border border-border bg-secondary/40">
+                  <Mail className="h-6 w-6 text-muted-foreground/50" />
+                </div>
+                <p className="text-sm font-medium text-foreground/70">
+                  No pending invitations
+                </p>
+                <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+                  When someone invites you to an organization, it will show up
+                  here.
+                </p>
+              </div>
             ) : (
-              <div className="space-y-3">
-                <div className="rounded-lg border border-border p-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-sm font-medium">Personal space</p>
-                      <p className="text-xs text-muted-foreground">
-                        Your private Xenode drive
+              pendingInvites.map((invite) => (
+                <div
+                  key={invite.id}
+                  className="rounded-xl border border-border bg-card p-4"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                      <Building2 className="h-5 w-5 text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate font-medium text-foreground">
+                          {invite.organization?.name || invite.organizationId}
+                        </p>
+                        <Badge variant="outline">{roleLabel(invite.role)}</Badge>
+                        {invite.spaceKeyReady && (
+                          <Badge variant="secondary">Key ready</Badge>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        Expires {formatDate(invite.expiresAt)}
                       </p>
                     </div>
+                  </div>
+                  <div className="mt-3 flex gap-2">
                     <Button
-                      variant="outline"
                       size="sm"
-                      onClick={() => switchScope(null)}
-                      disabled={busy !== null || orgs.every((org) => !org.isActive)}
+                      className="flex-1"
+                      onClick={() => actOnInvitation(invite.id, "accept")}
+                      disabled={busy !== null}
                     >
-                      {busy === "personal" ? (
+                      {busy === `accept-${invite.id}` ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
                       ) : (
                         <Check className="h-4 w-4" />
                       )}
-                      Use personal
+                      Accept
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => actOnInvitation(invite.id, "reject")}
+                      disabled={busy !== null}
+                    >
+                      {busy === `reject-${invite.id}` ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <X className="h-4 w-4" />
+                      )}
+                      Reject
                     </Button>
                   </div>
                 </div>
+              ))
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
 
-                {orgs.map((org) => (
-                  <div
-                    key={org.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => setSelectedOrgId(org.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        setSelectedOrgId(org.id);
-                      }
-                    }}
-                    className={cn(
-                      "w-full rounded-lg border p-4 text-left transition-colors",
-                      selectedOrg?.id === org.id
-                        ? "border-primary/60 bg-primary/5"
-                        : "border-border hover:bg-accent/50",
-                    )}
-                  >
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="font-medium">{org.name}</p>
-                          <Badge variant="outline">{roleLabel(org.role)}</Badge>
-                          {org.isActive && <Badge>Active</Badge>}
-                        </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {org.slug || org.id}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Button asChild variant="outline" size="sm">
-                          <Link
-                            href={`/organizations/${org.id}/files`}
-                            onClick={(event) => event.stopPropagation()}
-                          >
-                            <Files className="h-4 w-4" />
-                            Files
-                          </Link>
-                        </Button>
-                        <Button asChild variant="outline" size="sm">
-                          <Link
-                            href={`/organizations/${org.id}/settings`}
-                            onClick={(event) => event.stopPropagation()}
-                          >
-                            <Settings className="h-4 w-4" />
-                            Settings
-                          </Link>
-                        </Button>
-                        <Button
-                          variant={org.isActive ? "secondary" : "outline"}
-                          size="sm"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            void switchScope(org.id);
-                          }}
-                          disabled={busy !== null || org.isActive}
-                        >
-                          {busy === org.id ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <ShieldCheck className="h-4 w-4" />
-                          )}
-                          {org.isActive ? "Selected" : "Select"}
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+      {/* Manage members slide-over */}
+      <Sheet
+        open={!!manageOrgId}
+        onOpenChange={(open) => {
+          if (!open) setManageOrgId("");
+        }}
+      >
+        <SheetContent className="w-full overflow-y-auto sm:max-w-md">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <Users className="h-4 w-4 text-primary" />
+              {manageOrg?.name || "Members"}
+            </SheetTitle>
+            <SheetDescription>
+              Manage who can access this encrypted workspace.
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="space-y-6 px-4 pb-8">
+            {manageOrg && (
+              <div className="flex flex-wrap gap-2">
+                <Button asChild variant="outline" size="sm">
+                  <Link href={`/organizations/${manageOrg.id}/files`}>
+                    <Files className="h-4 w-4" />
+                    Files
+                  </Link>
+                </Button>
+                <Button asChild variant="outline" size="sm">
+                  <Link href={`/organizations/${manageOrg.id}/settings`}>
+                    <Settings className="h-4 w-4" />
+                    Settings
+                  </Link>
+                </Button>
               </div>
             )}
-          </section>
 
-          {selectedOrg && (
-            <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
-              <section className="rounded-xl border border-border bg-card p-6">
-                <div className="mb-4 flex items-center gap-2">
+            {/* Invite */}
+            {canAdminManageOrg && (
+              <div className="rounded-xl border border-border bg-card p-4">
+                <div className="mb-3 flex items-center gap-2 text-sm font-medium">
                   <UserPlus className="h-4 w-4 text-primary" />
-                  <h2 className="text-sm font-medium">Members</h2>
+                  Invite member
                 </div>
-                {members.length === 0 ? (
-                  <EmptyState>No visible members.</EmptyState>
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="invite-email">Email</Label>
+                    <Input
+                      id="invite-email"
+                      type="email"
+                      value={inviteEmail}
+                      onChange={(event) => setInviteEmail(event.target.value)}
+                      placeholder="teammate@example.com"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Role</Label>
+                    <Select
+                      value={inviteRole}
+                      onValueChange={(value) =>
+                        setInviteRole(value as InviteRole)
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {INVITE_ROLES.map((role) => (
+                          <SelectItem key={role} value={role}>
+                            {roleLabel(role)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <Button
+                    className="w-full"
+                    onClick={inviteMember}
+                    disabled={busy !== null}
+                  >
+                    {busy === "invite" ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
+                    Send invite
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Members */}
+            <div>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Members
+              </p>
+              {members.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
+                  No visible members.
+                </p>
+              ) : (
+                <div className="space-y-1.5">
+                  {members.map((member) => (
+                    <div
+                      key={member.userId}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"
+                    >
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        <Avatar className="h-8 w-8">
+                          <AvatarImage src={member.user?.image || undefined} />
+                          <AvatarFallback className="bg-secondary text-xs">
+                            {initialsOf(member.user?.name || member.user?.email)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium">
+                            {member.user?.name ||
+                              member.user?.email ||
+                              member.userId}
+                          </p>
+                          <p className="truncate text-xs text-muted-foreground">
+                            {roleLabel(member.role)}
+                          </p>
+                        </div>
+                      </div>
+                      {canAdminManageOrg &&
+                        member.userId !== currentUserId && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => removeMember(member)}
+                            disabled={busy !== null}
+                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                            aria-label="Remove member"
+                          >
+                            {busy === `remove-${member.userId}` ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                          </Button>
+                        )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Pending invites */}
+            {canAdminManageOrg && (
+              <div>
+                <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  Pending invitations
+                </p>
+                {pendingOrgInvites.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No pending invitations.
+                  </p>
                 ) : (
-                  <div className="divide-y divide-border rounded-lg border border-border">
-                    {members.map((member) => (
+                  <div className="space-y-1.5">
+                    {pendingOrgInvites.map((invite) => (
                       <div
-                        key={member.userId}
-                        className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between"
+                        key={invite.id}
+                        className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"
                       >
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium">
-                            {member.user?.name || member.user?.email || member.userId}
+                            {invite.email}
                           </p>
-                          <p className="truncate text-xs text-muted-foreground">
-                            {member.user?.email || member.userId}
+                          <p className="text-xs text-muted-foreground">
+                            {roleLabel(invite.role)} · expires{" "}
+                            {formatDate(invite.expiresAt)}
                           </p>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline">{roleLabel(member.role)}</Badge>
-                          {canAdminSelectedOrg && member.userId !== currentUserId && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => removeMember(member)}
-                              disabled={busy !== null}
-                              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                            >
-                              {busy === `remove-${member.userId}` ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                <Trash2 className="h-4 w-4" />
-                              )}
-                              Remove
-                            </Button>
-                          )}
-                        </div>
+                        <Badge
+                          variant={
+                            invite.spaceKeyReady ? "secondary" : "outline"
+                          }
+                        >
+                          {invite.spaceKeyReady ? "Key ready" : "Guest"}
+                        </Badge>
                       </div>
                     ))}
                   </div>
                 )}
-              </section>
-
-              <section className="rounded-xl border border-border bg-card p-6">
-                <div className="mb-4 flex items-center gap-2">
-                  <Send className="h-4 w-4 text-primary" />
-                  <h2 className="text-sm font-medium">Invite member</h2>
-                </div>
-                {!canAdminSelectedOrg ? (
-                  <EmptyState>Only owners and admins can invite members.</EmptyState>
-                ) : (
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="invite-email">Email</Label>
-                      <Input
-                        id="invite-email"
-                        type="email"
-                        value={inviteEmail}
-                        onChange={(event) => setInviteEmail(event.target.value)}
-                        placeholder="teammate@example.com"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Role</Label>
-                      <Select
-                        value={inviteRole}
-                        onValueChange={(value) => setInviteRole(value as InviteRole)}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {INVITE_ROLES.map((role) => (
-                            <SelectItem key={role} value={role}>
-                              {roleLabel(role)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <Button
-                      className="w-full"
-                      onClick={inviteMember}
-                      disabled={busy !== null}
-                    >
-                      {busy === "invite" ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Send className="h-4 w-4" />
-                      )}
-                      Send invite
-                    </Button>
-                  </div>
-                )}
-
-                <div className="mt-6 space-y-3">
-                  <p className="text-xs font-medium uppercase text-muted-foreground">
-                    Pending
-                  </p>
-                  {orgInvites.filter((invite) => invite.status === "pending")
-                    .length === 0 ? (
-                    <p className="text-sm text-muted-foreground">
-                      No pending invitations.
-                    </p>
-                  ) : (
-                    orgInvites
-                      .filter((invite) => invite.status === "pending")
-                      .map((invite) => (
-                        <div
-                          key={invite.id}
-                          className="rounded-lg border border-border p-3"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium">
-                                {invite.email}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {roleLabel(invite.role)} - expires{" "}
-                                {formatDate(invite.expiresAt)}
-                              </p>
-                            </div>
-                            <Badge
-                              variant={invite.spaceKeyReady ? "secondary" : "outline"}
-                            >
-                              {invite.spaceKeyReady ? "Key ready" : "Guest"}
-                            </Badge>
-                          </div>
-                        </div>
-                      ))
-                  )}
-                </div>
-              </section>
-            </div>
-          )}
-        </TabsContent>
-
-        <TabsContent value="invitations" className="space-y-4">
-          <section className="rounded-xl border border-border bg-card p-6">
-            <div className="mb-4 flex items-center gap-2">
-              <Mail className="h-4 w-4 text-primary" />
-              <h2 className="text-sm font-medium">Incoming invitations</h2>
-            </div>
-            {myInvites.length === 0 ? (
-              <EmptyState>No pending invitations.</EmptyState>
-            ) : (
-              <div className="space-y-3">
-                {myInvites.map((invite) => (
-                  <div key={invite.id} className="rounded-lg border border-border p-4">
-                    <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="font-medium">
-                            {invite.organization?.name || invite.organizationId}
-                          </p>
-                          <Badge variant="outline">{roleLabel(invite.role)}</Badge>
-                          {invite.spaceKeyReady && (
-                            <Badge variant="secondary">Key ready</Badge>
-                          )}
-                        </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          Expires {formatDate(invite.expiresAt)}
-                        </p>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          onClick={() => actOnInvitation(invite.id, "accept")}
-                          disabled={busy !== null}
-                        >
-                          {busy === `accept-${invite.id}` ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Check className="h-4 w-4" />
-                          )}
-                          Accept
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => actOnInvitation(invite.id, "reject")}
-                          disabled={busy !== null}
-                        >
-                          {busy === `reject-${invite.id}` ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <X className="h-4 w-4" />
-                          )}
-                          Reject
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
               </div>
             )}
-          </section>
-        </TabsContent>
-      </Tabs>
+          </div>
+        </SheetContent>
+      </Sheet>
+    </div>
+  );
+}
+
+const ORG_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: "company", label: "Company" },
+  { value: "startup", label: "Startup" },
+  { value: "agency", label: "Agency" },
+  { value: "nonprofit", label: "Non-profit" },
+  { value: "education", label: "Education" },
+  { value: "government", label: "Government" },
+  { value: "personal", label: "Personal / Family" },
+  { value: "other", label: "Other" },
+];
+
+const TEAM_SIZE_OPTIONS: { value: string; label: string }[] = [
+  { value: "1-10", label: "1–10 people" },
+  { value: "11-50", label: "11–50 people" },
+  { value: "51-200", label: "51–200 people" },
+  { value: "201-500", label: "201–500 people" },
+  { value: "500+", label: "500+ people" },
+];
+
+const WIZARD_STEPS = ["Details", "Team", "Review"];
+
+function optionLabel(
+  options: { value: string; label: string }[],
+  value: string,
+) {
+  return options.find((option) => option.value === value)?.label ?? "—";
+}
+
+function CreateOrgWizard({
+  open,
+  onOpenChange,
+  step,
+  setStep,
+  orgName,
+  setOrgName,
+  orgType,
+  setOrgType,
+  teamSize,
+  setTeamSize,
+  website,
+  setWebsite,
+  logo,
+  setLogo,
+  onUploadLogo,
+  logoUploading,
+  onCreate,
+  busy,
+  vaultUnlocked,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  step: number;
+  setStep: (step: number) => void;
+  orgName: string;
+  setOrgName: (name: string) => void;
+  orgType: string;
+  setOrgType: (value: string) => void;
+  teamSize: string;
+  setTeamSize: (value: string) => void;
+  website: string;
+  setWebsite: (value: string) => void;
+  logo: string;
+  setLogo: (value: string) => void;
+  onUploadLogo: (file: File) => void;
+  logoUploading: boolean;
+  onCreate: () => void;
+  busy: boolean;
+  vaultUnlocked: boolean;
+}) {
+  const trimmed = orgName.trim();
+  const logoInputRef = useRef<HTMLInputElement>(null);
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (busy) return;
+        onOpenChange(next);
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Sparkles className="h-4 w-4 text-primary" />
+            New organization
+          </DialogTitle>
+          <DialogDescription>
+            Tell us a little about your team, then we&apos;ll set up an encrypted
+            workspace.
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Stepper */}
+        <div className="flex items-center gap-2">
+          {WIZARD_STEPS.map((label, index) => (
+            <div key={label} className="flex flex-1 items-center gap-2">
+              <div
+                className={cn(
+                  "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-medium transition-colors",
+                  index < step
+                    ? "bg-primary text-primary-foreground"
+                    : index === step
+                      ? "bg-primary/15 text-primary ring-1 ring-primary/40"
+                      : "bg-secondary text-muted-foreground",
+                )}
+              >
+                {index < step ? <Check className="h-3.5 w-3.5" /> : index + 1}
+              </div>
+              <span
+                className={cn(
+                  "hidden text-xs font-medium sm:inline",
+                  index === step ? "text-foreground" : "text-muted-foreground",
+                )}
+              >
+                {label}
+              </span>
+              {index < WIZARD_STEPS.length - 1 && (
+                <div className="h-px flex-1 bg-border" />
+              )}
+            </div>
+          ))}
+        </div>
+
+        {step === 0 && (
+          <div className="space-y-4 py-1">
+            {/* Logo */}
+            <div className="flex items-center gap-4">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-border bg-secondary">
+                {logo ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={logo}
+                    alt="Organization logo"
+                    className="h-full w-full object-cover"
+                  />
+                ) : trimmed ? (
+                  <span className="text-lg font-semibold text-muted-foreground">
+                    {initialsOf(trimmed)}
+                  </span>
+                ) : (
+                  <ImagePlus className="h-6 w-6 text-muted-foreground/50" />
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={logoInputRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      if (file) onUploadLogo(file);
+                      event.target.value = "";
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => logoInputRef.current?.click()}
+                    disabled={logoUploading}
+                  >
+                    {logoUploading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Upload className="h-4 w-4" />
+                    )}
+                    {logo ? "Change logo" : "Upload logo"}
+                  </Button>
+                  {logo && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setLogo("")}
+                      disabled={logoUploading}
+                      className="text-muted-foreground"
+                    >
+                      Remove
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  PNG, JPEG, WebP or SVG. Optional — large images are optimized
+                  automatically.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="wizard-org-name">
+                Organization name <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="wizard-org-name"
+                value={orgName}
+                autoFocus
+                onChange={(event) => setOrgName(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && trimmed && orgType) setStep(1);
+                }}
+                placeholder="Acme Labs"
+                maxLength={80}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>
+                What kind of organization?{" "}
+                <span className="text-destructive">*</span>
+              </Label>
+              <Select value={orgType} onValueChange={setOrgType}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select a type" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ORG_TYPE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="wizard-org-website">
+                Website{" "}
+                <span className="text-xs font-normal text-muted-foreground">
+                  (optional)
+                </span>
+              </Label>
+              <Input
+                id="wizard-org-website"
+                value={website}
+                onChange={(event) => setWebsite(event.target.value)}
+                placeholder="acme.com"
+                maxLength={200}
+              />
+            </div>
+          </div>
+        )}
+
+        {step === 1 && (
+          <div className="space-y-4 py-1">
+            <div className="space-y-2">
+              <Label>
+                How many people work there?{" "}
+                <span className="text-destructive">*</span>
+              </Label>
+              <div className="grid grid-cols-1 gap-2">
+                {TEAM_SIZE_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setTeamSize(option.value)}
+                    className={cn(
+                      "flex items-center justify-between rounded-lg border px-4 py-2.5 text-sm font-medium transition-colors",
+                      teamSize === option.value
+                        ? "border-primary/60 bg-primary/5 text-foreground"
+                        : "border-border text-muted-foreground hover:bg-accent/50 hover:text-foreground",
+                    )}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Users className="h-4 w-4" />
+                      {option.label}
+                    </span>
+                    {teamSize === option.value && (
+                      <Check className="h-4 w-4 text-primary" />
+                    )}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                This helps us tailor storage and collaboration defaults.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="space-y-3 py-1">
+            <div className="grid grid-cols-2 gap-2">
+              <ReviewCell label="Name" value={trimmed} full />
+              <ReviewCell
+                label="Type"
+                value={orgType ? optionLabel(ORG_TYPE_OPTIONS, orgType) : "—"}
+              />
+              <ReviewCell
+                label="Team size"
+                value={teamSize ? optionLabel(TEAM_SIZE_OPTIONS, teamSize) : "—"}
+              />
+              <ReviewCell label="Website" value={website.trim() || "—"} full />
+            </div>
+            <ul className="space-y-2 pt-1 text-sm text-muted-foreground">
+              <li className="flex items-start gap-2">
+                <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                An encrypted space key is generated in your browser and wrapped
+                to your vault.
+              </li>
+              <li className="flex items-start gap-2">
+                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                A shared workspace bucket is provisioned automatically.
+              </li>
+            </ul>
+            {!vaultUnlocked && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs text-amber-600 dark:text-amber-400">
+                <Lock className="mt-0.5 h-4 w-4 shrink-0" />
+                Your vault is locked. You&apos;ll be prompted to unlock it to
+                finish.
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex items-center justify-between gap-2">
+          <Button
+            variant="ghost"
+            onClick={() =>
+              step === 0 ? onOpenChange(false) : setStep(step - 1)
+            }
+            disabled={busy}
+          >
+            {step === 0 ? "Cancel" : "Back"}
+          </Button>
+          {step < 2 ? (
+            <Button
+              onClick={() => setStep(step + 1)}
+              disabled={
+                (step === 0 && (!trimmed || !orgType)) ||
+                (step === 1 && !teamSize)
+              }
+            >
+              Continue
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          ) : (
+            <Button onClick={onCreate} disabled={busy}>
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <KeyRound className="h-4 w-4" />
+              )}
+              Create organization
+            </Button>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function ReviewCell({
+  label,
+  value,
+  full,
+}: {
+  label: string;
+  value: string;
+  full?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-lg border border-border bg-card p-3",
+        full && "col-span-2",
+      )}
+    >
+      <p className="text-xs uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-0.5 truncate font-medium text-foreground">{value}</p>
     </div>
   );
 }

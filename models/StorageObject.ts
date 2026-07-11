@@ -81,6 +81,8 @@ export interface IStorageObject extends Document {
    * the model is correct for org-shared files where teammates edit.
    */
   versions?: IStorageObjectVersion[];
+  /** Monotonic opaque-content revision used for optimistic concurrency. */
+  revision: number;
 }
 
 export interface IStorageObjectVersion {
@@ -365,6 +367,12 @@ const StorageObjectSchema = new Schema<IStorageObject>(
         ),
       ],
       required: false,
+    },
+    revision: {
+      type: Number,
+      default: 0,
+      min: 0,
+      required: true,
     },
   },
   {

@@ -14,8 +14,9 @@ export function newVersionId(): string {
 }
 
 /** Fresh opaque B2 object key for new content (never derived from a filename). */
-export function newObjectKey(ownerId: string): string {
-  return `users/${ownerId}/${randomBytes(16).toString("hex")}`;
+export function newObjectKey(ownerId: string, prefix = `users/${ownerId}/`): string {
+  const normalizedPrefix = prefix.endsWith("/") ? prefix : `${prefix}/`;
+  return `${normalizedPrefix}${randomBytes(16).toString("hex")}`;
 }
 
 /**

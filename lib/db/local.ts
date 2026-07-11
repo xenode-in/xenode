@@ -106,11 +106,31 @@ export interface LocalFile {
   optimizedSize?: number;
   aspectRatio?: number;
 }
+export interface SpreadsheetDraftRecord {
+  id: string;
+  objectId: string;
+  workspaceId: string;
+  ciphertext: Blob;
+  iv: string;
+  baseRevision: number;
+  updatedAt: number;
+  schemaVersion: number;
+}
+export interface SpreadsheetRecentRecord {
+  id: string;
+  userId: string;
+  objectId: string;
+  workspaceId: string;
+  organizationId?: string;
+  lastOpenedAt: number;
+}
 export class XenodeDatabase extends Dexie {
   files!: Table<LocalFile, string>;
   metadataCache!: Table<MetadataCache, string>;
   thumbnailCache!: Table<ThumbnailCache, string>;
   uploads!: Table<UploadRecord, string>;
+  spreadsheetDrafts!: Table<SpreadsheetDraftRecord, string>;
+  spreadsheetRecents!: Table<SpreadsheetRecentRecord, string>;
 
   constructor(userId: string) {
     super(`XenodeDB-${userId}`); // scoped per user
@@ -124,6 +144,10 @@ export class XenodeDatabase extends Dexie {
     // only the new table is declared here.
     this.version(2).stores({
       uploads: "id, status, createdAt",
+    });
+    this.version(3).stores({
+      spreadsheetDrafts: "id, objectId, workspaceId, updatedAt",
+      spreadsheetRecents: "id, userId, objectId, workspaceId, organizationId, lastOpenedAt",
     });
   }
 }
