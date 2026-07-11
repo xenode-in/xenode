@@ -61,13 +61,13 @@ describe("organization album route adoption", () => {
     mockSession("user_1");
     await PhotoAlbum.create({
       userId: "user_1",
-      name: "Mine",
+      encryptedName: "Mine",
       slug: "mine",
       objectIds: [],
     });
     await PhotoAlbum.create({
       userId: "user_2",
-      name: "Theirs",
+      encryptedName: "Theirs",
       slug: "theirs",
       objectIds: [],
     });
@@ -77,7 +77,7 @@ describe("organization album route adoption", () => {
 
     expect(response.status).toBe(200);
     expect(body.albums).toHaveLength(1);
-    expect(body.albums[0].name).toBe("Mine");
+    expect(body.albums[0].encryptedName).toBe("Mine");
   });
 
   it("creates albums only with personally owned images", async () => {
@@ -89,7 +89,7 @@ describe("organization album route adoption", () => {
       new NextRequest("http://localhost/api/albums", {
         method: "POST",
         body: JSON.stringify({
-          name: "Camera",
+          encryptedName: "Camera",
           objectIds: [String(ownImage._id), String(foreignImage._id)],
         }),
         headers: { "content-type": "application/json" },
@@ -98,7 +98,7 @@ describe("organization album route adoption", () => {
     const body = await response.json();
 
     expect(response.status).toBe(201);
-    expect(body.album.name).toBe("Camera");
+    expect(body.album.encryptedName).toBe("Camera");
     expect(body.album.objectIds).toEqual([String(ownImage._id)]);
   });
 

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // returns whatever blobs "exist" under a prefix; `deleteObjects` records what
 // the cron tried to delete.
 const { deleteObjects, listObjects } = vi.hoisted(() => ({
-  deleteObjects: vi.fn(async () => {}),
+  deleteObjects: vi.fn(async (_bucket: string, _keys: string[]) => {}),
   listObjects: vi.fn(async (_bucket: string, prefix?: string) => ({
     objects: prefix ? [{ key: prefix, size: 10 }] : [],
     isTruncated: false as const,
