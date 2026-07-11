@@ -82,12 +82,20 @@ export async function GET(req: NextRequest) {
         processedIds.push(s._id);
         const b2 = b2ByBucket.get(s.bucketId.toString());
 
-        // Safety: if the upload actually completed (a live StorageObject owns
-        // this logical key), never delete its blobs — just retire the stale row.
+        // Safety: if the upload actually completed, never delete its blobs —
+        // just retire the stale row. This matches not only a live StorageObject
+        // that OWNS this logical key, but also one that merely REFERENCES it as
+        // its thumbnail / optimized preview. The latter guards legacy thumbnail
+        // sessions (created before thumbnails attached to their parent's
+        // session) whose blob is still in active use by a live file.
         const live = await StorageObject.findOne({
           bucketId: s.bucketId,
-          key: s.fileId,
           deletedAt: { $exists: false },
+          $or: [
+            { key: s.fileId },
+            { thumbnail: s.fileId },
+            { optimizedKey: s.fileId },
+          ],
         })
           .select("_id")
           .lean();

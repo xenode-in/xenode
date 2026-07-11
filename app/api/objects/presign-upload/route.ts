@@ -7,7 +7,7 @@ import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
-import { recordUploadSession } from "@/lib/uploads/session";
+import { recordUploadSession, attachToUploadSession } from "@/lib/uploads/session";
 
 export const dynamic = "force-dynamic";
 
@@ -116,23 +116,29 @@ export async function POST(request: NextRequest) {
     });
 
     // Ledger the in-flight upload so the cleanup-orphans cron can reclaim its
-    // blobs if it never finishes. `sessionFileId` lets a secondary blob (the
-    // optimized preview / thumbnail of a main upload) attach to that main
-    // upload's session instead of spawning its own; otherwise this key owns a
-    // fresh session and pre-registers its derived `-thumb` key.
-    const ownsSession =
-      typeof sessionFileId !== "string" ||
-      !sessionFileId.startsWith(`users/${userId}/`);
-    const sessionKey = ownsSession ? opaqueKey : sessionFileId;
-    const sessionKeys = ownsSession
-      ? [opaqueKey, `${opaqueKey}-thumb`]
-      : [opaqueKey];
-    const sessionId = await recordUploadSession({
-      userId,
-      bucketId: bucket._id,
-      fileId: sessionKey,
-      keys: sessionKeys,
-    });
+    // blobs if it never finishes. When `sessionFileId` names a parent upload
+    // (optimized preview / thumbnail of a main file), attach this blob's key to
+    // that parent's session so it is protected by the parent's completion and
+    // reclaimed with it — but only if the parent session actually exists and is
+    // owned by this user. Otherwise this key owns a fresh session and
+    // pre-registers its own derived `-thumb` key.
+    let sessionId: string | undefined;
+    if (typeof sessionFileId === "string" && sessionFileId) {
+      sessionId = await attachToUploadSession({
+        userId,
+        bucketId: bucket._id,
+        parentFileId: sessionFileId,
+        key: opaqueKey,
+      });
+    }
+    if (!sessionId) {
+      sessionId = await recordUploadSession({
+        userId,
+        bucketId: bucket._id,
+        fileId: opaqueKey,
+        keys: [opaqueKey, `${opaqueKey}-thumb`],
+      });
+    }
 
     return NextResponse.json({
       uploadUrl: presignedUrl,

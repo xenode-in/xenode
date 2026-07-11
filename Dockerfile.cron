@@ -1,0 +1,9 @@
+FROM alpine:3.20
+
+RUN apk add --no-cache curl
+
+COPY cron-entrypoint.sh /usr/local/bin/cron-entrypoint
+RUN chmod +x /usr/local/bin/cron-entrypoint
+
+ENTRYPOINT ["/usr/local/bin/cron-entrypoint"]
+

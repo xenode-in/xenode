@@ -591,6 +591,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             prefix: fileStorageKey.includes("/")
               ? fileStorageKey.substring(0, fileStorageKey.lastIndexOf("/") + 1)
               : `users/${sessionRef.current?.user?.id}/`,
+            // Attach this thumbnail to the parent file's cleanup session so it
+            // is protected by the parent's completion (and reclaimed with it if
+            // the upload is abandoned). Without this the thumbnail spawns its
+            // own session that never flips to `completed`, and cleanup-orphans
+            // deletes the live thumbnail ~24h later.
+            sessionFileId: fileStorageKey,
           }),
         });
         const { uploadUrl } = await presign.json();

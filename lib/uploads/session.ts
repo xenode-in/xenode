@@ -39,6 +39,41 @@ export async function recordUploadSession(params: {
 }
 
 /**
+ * Attach a secondary blob (thumbnail / optimized preview) to its PARENT upload's
+ * existing ledger row, so it is protected by the parent's completion and
+ * reclaimed together with it if the upload is abandoned. Only attaches when a
+ * session for `parentFileId` already exists AND belongs to `userId` — this both
+ * prevents piggybacking onto another user's session in a shared bucket and works
+ * for any key prefix (personal `users/…` or org `workspaces/…`). Returns the
+ * parent session id on success, or undefined when there is no such owned session
+ * (the caller should then record its own). Best-effort — never throws.
+ */
+export async function attachToUploadSession(params: {
+  userId: string;
+  bucketId: Types.ObjectId | string;
+  parentFileId: string;
+  key: string;
+}): Promise<string | undefined> {
+  try {
+    // No upsert: match only an existing session owned by this user. Status is
+    // left untouched so a parent already flipped to `completed` stays completed.
+    const doc = await UploadSession.findOneAndUpdate(
+      {
+        bucketId: params.bucketId,
+        fileId: params.parentFileId,
+        userId: params.userId,
+      },
+      { $addToSet: { keys: params.key } },
+      { new: true },
+    );
+    return doc?._id?.toString();
+  } catch (err) {
+    console.warn("[uploads] attachToUploadSession failed (non-fatal):", err);
+    return undefined;
+  }
+}
+
+/**
  * Flip the ledger row to `completed` once the StorageObject is persisted, so the
  * cleanup cron never touches a finished upload's blobs. Best-effort.
  */
