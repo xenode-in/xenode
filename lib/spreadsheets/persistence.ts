@@ -50,6 +50,13 @@ export class XenodeSpreadsheetPersistenceAdapter implements SpreadsheetPersisten
     const name = meta.encryptedName ? await decryptMetadataString(meta.encryptedName, metadataKey) : "Encrypted spreadsheet.xlsx";
     const contentType = meta.encryptedContentType ? await decryptMetadataString(meta.encryptedContentType, metadataKey) : meta.contentType;
     if (!isSupportedSpreadsheet(name, contentType)) throw new Error("unsupported_spreadsheet_type");
+    if (meta.canWrite) {
+      const baselineResponse = await this.options.fetch(
+        "/api/objects/" + objectId + "/versions/baseline",
+        { method: "POST", signal },
+      );
+      if (!baselineResponse.ok) throw new Error("original_protection_failed");
+    }
     const ciphertextResponse = await this.options.fetch(`/api/objects/${objectId}/content`, { signal });
     if (!ciphertextResponse.ok) throw new Error("spreadsheet_download_failed");
     const dek = await this.unwrap(meta);

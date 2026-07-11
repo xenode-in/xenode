@@ -15,11 +15,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FilePreviewDialog } from "@/components/dashboard/FilePreviewDialog";
 import { useCrypto } from "@/contexts/CryptoContext";
-import {
-  decryptChunk,
-  decryptWithShareKey,
-} from "@/lib/crypto/fileEncryption";
-import { fromB64 } from "@/lib/crypto/utils";
+import { decryptWithShareKey } from "@/lib/crypto/fileEncryption";
+import { buildShareKey, fetchShareBlob } from "@/lib/crypto/directShare";
 import { formatBytes } from "@/lib/utils";
 
 interface ShareDetail {
@@ -43,55 +40,9 @@ interface ShareDetail {
   shareEncryptedContentType?: string;
   recipient?: {
     wrappedShareKey: string;
-    accessType: "view" | "download";
+    accessType: string;
   };
   createdAt: string;
-}
-
-interface BlobResponse {
-  streamUrl?: string;
-  downloadUrl?: string;
-  chunkUrls?: string[];
-  isEncrypted: boolean;
-  iv?: string;
-  contentType: string;
-  chunkIvs?: string;
-  error?: string;
-}
-
-async function buildShareKey(wrappedShareKey: string, privateKey: CryptoKey) {
-  const rawShareKey = await crypto.subtle.decrypt(
-    { name: "RSA-OAEP" },
-    privateKey,
-    fromB64(wrappedShareKey).buffer as ArrayBuffer,
-  );
-
-  return crypto.subtle.importKey(
-    "raw",
-    rawShareKey,
-    { name: "AES-GCM" },
-    false,
-    ["decrypt", "unwrapKey"],
-  );
-}
-
-async function buildDek(
-  shareKey: CryptoKey,
-  shareEncryptedDEK: string,
-  shareKeyIv: string,
-) {
-  return crypto.subtle.unwrapKey(
-    "raw",
-    fromB64(shareEncryptedDEK).buffer as ArrayBuffer,
-    shareKey,
-    {
-      name: "AES-GCM",
-      iv: fromB64(shareKeyIv).buffer as ArrayBuffer,
-    },
-    { name: "AES-GCM" },
-    false,
-    ["decrypt"],
-  );
 }
 
 export default function SharedWithMeDetailPage() {
@@ -196,60 +147,15 @@ export default function SharedWithMeDetailPage() {
 
   const fetchBlob = async (mode: "stream" | "download") => {
     if (!share) throw new Error("Share is not loaded");
-
-    const res = await fetch(`/api/direct-shares/${shareId}/${mode}`, {
-      method: "POST",
-    });
-    const data = (await res.json()) as BlobResponse;
-    if (!res.ok) throw new Error(data.error || `Failed to ${mode} file`);
-
-    if (!data.isEncrypted) {
-      const sourceUrl = data.streamUrl || data.downloadUrl;
-      if (!sourceUrl) throw new Error("Missing file URL");
-      const blob = await fetch(sourceUrl).then((response) => response.blob());
-      return new Blob([blob], { type: resolvedContentType || data.contentType });
-    }
-
-    if (
-      !privateKey ||
-      !share.recipient?.wrappedShareKey ||
-      !share.shareEncryptedDEK ||
-      !share.shareKeyIv
-    ) {
-      throw new Error("Unlock your vault to open this encrypted share");
-    }
-
-    const shareKey = await buildShareKey(share.recipient.wrappedShareKey, privateKey);
-    const dek = await buildDek(shareKey, share.shareEncryptedDEK, share.shareKeyIv);
-
-    if (data.chunkUrls?.length) {
-      const chunkIvs = JSON.parse(data.chunkIvs || "[]");
-      const plaintextChunks = [];
-      for (let i = 0; i < data.chunkUrls.length; i += 1) {
-        const chunkBuffer = await fetch(data.chunkUrls[i]).then((response) =>
-          response.arrayBuffer(),
-        );
-        plaintextChunks.push(await decryptChunk(chunkBuffer, dek, chunkIvs[i]));
-      }
-      return new Blob(plaintextChunks, {
-        type: resolvedContentType || data.contentType,
-      });
-    }
-
-    const sourceUrl = data.streamUrl || data.downloadUrl;
-    if (!sourceUrl || !data.iv) throw new Error("Missing encrypted file URL");
-
-    const cipherBuffer = await fetch(sourceUrl).then((response) =>
-      response.arrayBuffer(),
-    );
-    const plainBuffer = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: fromB64(data.iv).buffer as ArrayBuffer },
-      dek,
-      cipherBuffer,
-    );
-
-    return new Blob([plainBuffer], {
-      type: resolvedContentType || data.contentType,
+    return fetchShareBlob({
+      shareId,
+      mode,
+      isEncrypted: share.objectId.isEncrypted,
+      wrappedShareKey: share.recipient?.wrappedShareKey,
+      shareEncryptedDEK: share.shareEncryptedDEK,
+      shareKeyIv: share.shareKeyIv,
+      privateKey,
+      contentType: resolvedContentType,
     });
   };
 

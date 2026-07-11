@@ -6,9 +6,13 @@ import {
 } from "@/app/api/orgs/[orgId]/invitations/route";
 import { GET as myInvitationsGET } from "@/app/api/orgs/invitations/route";
 import { POST as invitationActionPOST } from "@/app/api/orgs/invitations/[invitationId]/route";
+import { PATCH as invitationGrantPATCH } from "@/app/api/orgs/[orgId]/invitations/[invitationId]/route";
+import { POST as invitationClaimPOST } from "@/app/api/orgs/invitations/[invitationId]/claim/route";
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
+import OrgMembershipHistory from "@/models/OrgMembershipHistory";
+import UserKeyVault from "@/models/UserKeyVault";
 
 const mockedGetServerSession = vi.mocked(getServerSession);
 
@@ -99,6 +103,41 @@ function orgParams(orgId = "org_1") {
 
 function invitationParams(invitationId = "inv_1") {
   return { params: Promise.resolve({ invitationId }) };
+}
+
+function orgInvitationParams(orgId = "org_1", invitationId = "inv_1") {
+  return { params: Promise.resolve({ orgId, invitationId }) };
+}
+
+function patchGrant(body: unknown) {
+  return new NextRequest(
+    "http://localhost/api/orgs/org_1/invitations/inv_1",
+    {
+      method: "PATCH",
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json" },
+    },
+  );
+}
+
+function postClaim() {
+  return new NextRequest(
+    "http://localhost/api/orgs/invitations/inv_1/claim",
+    { method: "POST" },
+  );
+}
+
+async function addVault(userId: string, publicKey = `pub-${userId}`) {
+  await UserKeyVault.create({
+    userId,
+    publicKey,
+    encryptedPrivateKey: "x",
+    pbkdf2Salt: "x",
+    iv: "x",
+    encryptedRecoveryWords: "x",
+    recoveryIv: "x",
+    recoverySalt: "x",
+  });
 }
 
 function postOrgInvite(body: unknown) {
@@ -384,5 +423,185 @@ describe("organization invitations", () => {
     expect(response.status).toBe(200);
     expect(body.invitation.status).toBe("rejected");
     expect(await Bucket.db.collection("member").countDocuments()).toBe(0);
+  });
+
+  it("creates a deferred invitation for an email with no account", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("owner_1", "owner@example.com");
+    await createOrg();
+    await addMember("owner_1", "owner");
+    // No user exists for newhire@example.com.
+
+    const response = await orgInvitationsPOST(
+      postOrgInvite({ email: "newhire@example.com", role: "member" }),
+      orgParams(),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body.invitation.recipientUserId).toBeNull();
+    expect(body.invitation.spaceKeyReady).toBe(false);
+    expect(body.invitation.awaitingRecipientKey).toBe(true);
+    expect(body.invitation.previouslyMember).toBe(false);
+  });
+
+  it("flags a re-invite of a previously removed email", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("owner_1", "owner@example.com");
+    await createOrg();
+    await addMember("owner_1", "owner");
+    await OrgMembershipHistory.create({
+      orgId: "org_1",
+      userId: "old_1",
+      email: "reused@example.com",
+      role: "member",
+      removedAt: new Date("2026-01-01T00:00:00Z"),
+      removedBy: "owner_1",
+      reason: "removed",
+    });
+
+    const response = await orgInvitationsPOST(
+      postOrgInvite({ email: "reused@example.com", role: "guest" }),
+      orgParams(),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body.invitation.previouslyMember).toBe(true);
+    expect(body.invitation.lastRemovedAt).toBeTruthy();
+  });
+
+  it("grants the deferred space key to a ready invitee", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("owner_1", "owner@example.com");
+    await createOrg();
+    await addMember("owner_1", "owner");
+    await OrgKeyGrant.create({
+      orgId: "org_1",
+      teamId: null,
+      memberUserId: "owner_1",
+      wrappedSpaceKey: "owner-key",
+      keyVersion: 1,
+      wrappedByUserId: "owner_1",
+      createdBy: "owner_1",
+      rotationReason: "initial",
+    });
+    await addInvitation({
+      email: "newhire@example.com",
+      role: "member",
+      recipientUserId: "nh_1",
+      wrappedSpaceKey: null,
+      keyVersion: null,
+    });
+
+    const response = await invitationGrantPATCH(
+      patchGrant({ wrappedSpaceKey: "wrapped-for-nh", keyVersion: 1 }),
+      orgInvitationParams(),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.spaceKeyReady).toBe(true);
+    const invitation = await Bucket.db
+      .collection("invitation")
+      .findOne({ id: "inv_1" });
+    expect(invitation?.wrappedSpaceKey).toBe("wrapped-for-nh");
+    expect(invitation?.keyVersion).toBe(1);
+  });
+
+  it("rejects granting a stale key version", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("owner_1", "owner@example.com");
+    await createOrg();
+    await addMember("owner_1", "owner");
+    await OrgKeyGrant.create({
+      orgId: "org_1",
+      teamId: null,
+      memberUserId: "owner_1",
+      wrappedSpaceKey: "owner-key",
+      keyVersion: 2,
+      wrappedByUserId: "owner_1",
+      createdBy: "owner_1",
+      rotationReason: "initial",
+    });
+    await addInvitation({
+      email: "newhire@example.com",
+      role: "member",
+      recipientUserId: "nh_1",
+    });
+
+    const response = await invitationGrantPATCH(
+      patchGrant({ wrappedSpaceKey: "wrapped", keyVersion: 1 }),
+      orgInvitationParams(),
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      code: "stale_key_version",
+    });
+  });
+
+  it("marks the invitee ready on claim when their vault exists", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("nh_1", "newhire@example.com");
+    await createOrg();
+    await addMember("owner_1", "owner");
+    await addVault("nh_1");
+    await addInvitation({
+      email: "newhire@example.com",
+      role: "member",
+      recipientUserId: null,
+      wrappedSpaceKey: null,
+      keyVersion: null,
+    });
+
+    const response = await invitationClaimPOST(postClaim(), invitationParams());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.awaitingGrant).toBe(true);
+    const invitation = await Bucket.db
+      .collection("invitation")
+      .findOne({ id: "inv_1" });
+    expect(invitation?.recipientUserId).toBe("nh_1");
+    expect(invitation?.recipientReadyAt).toBeTruthy();
+  });
+
+  it("reports needsVault on claim when the invitee has no vault", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("nh_1", "newhire@example.com");
+    await createOrg();
+    await addInvitation({
+      email: "newhire@example.com",
+      role: "member",
+      recipientUserId: null,
+      wrappedSpaceKey: null,
+      keyVersion: null,
+    });
+
+    const response = await invitationClaimPOST(postClaim(), invitationParams());
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.needsVault).toBe(true);
+    const invitation = await Bucket.db
+      .collection("invitation")
+      .findOne({ id: "inv_1" });
+    expect(invitation?.recipientReadyAt ?? null).toBeNull();
+  });
+
+  it("rejects a claim from a mismatched email", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("intruder_1", "intruder@example.com");
+    await createOrg();
+    await addInvitation({
+      email: "newhire@example.com",
+      role: "member",
+      recipientUserId: null,
+    });
+
+    const response = await invitationClaimPOST(postClaim(), invitationParams());
+
+    expect(response.status).toBe(403);
   });
 });

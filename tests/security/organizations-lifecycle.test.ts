@@ -109,6 +109,8 @@ describe("organization lifecycle API", () => {
     const response = await orgsPOST(
       orgPost({
         name: "Acme Labs",
+        orgType: "company",
+        teamSize: "1-10",
         ownerWrappedSpaceKey: "wrapped-for-owner",
         keyVersion: 1,
       }),
@@ -149,7 +151,9 @@ describe("organization lifecycle API", () => {
     mockSession("owner_1");
     await insertOrg({ id: "org_existing", name: "Acme Labs", slug: "acme-labs" });
 
-    const response = await orgsPOST(orgPost({ name: "Acme Labs" }));
+    const response = await orgsPOST(
+      orgPost({ name: "Acme Labs", orgType: "company", teamSize: "1-10" }),
+    );
     const body = await response.json();
 
     expect(response.status).toBe(409);

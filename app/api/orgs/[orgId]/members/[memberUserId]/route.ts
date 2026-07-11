@@ -15,6 +15,7 @@ import {
 } from "@/lib/orgs/access";
 import { syncSeatsUsed } from "@/lib/orgs/billing/seats";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
+import { recordMembershipDeparture } from "@/lib/orgs/membershipHistory";
 import { emitNotification } from "@/lib/notifications/emit";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
 
@@ -318,6 +319,17 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       actorUserId: ctx.userId,
       target: { type: "member", id: memberUserId },
       metadata: { role: targetRole, rotated: !!nextKeyVersion },
+    });
+
+    // Tombstone the departure so a future re-invite of the same email is
+    // flagged (fire-and-forget — never blocks removal).
+    await recordMembershipDeparture({
+      orgId,
+      userId: memberUserId,
+      role: targetRole,
+      joinedAt: targetMember.createdAt ?? null,
+      removedBy: ctx.userId,
+      reason: "removed",
     });
 
     return NextResponse.json({

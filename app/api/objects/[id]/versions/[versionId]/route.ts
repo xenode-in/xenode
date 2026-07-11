@@ -10,6 +10,7 @@ import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import { deleteObjects } from "@/lib/b2/objects";
 import { adjustStorageBytes, updateBucketStats } from "@/lib/metering/usage";
+import { adjustOrgStorage } from "@/lib/orgs/billing/orgUsage";
 import {
   collectVersionB2Keys,
   versionsTotalBytes,
@@ -38,6 +39,12 @@ export async function DELETE(
     if (!target) {
       return NextResponse.json({ error: "Version not found" }, { status: 404 });
     }
+    if (target.isOriginal) {
+      return NextResponse.json(
+        { error: "The protected original cannot be deleted", code: "original_version_protected" },
+        { status: 409 },
+      );
+    }
 
     await dbConnect();
     const bucket = await Bucket.findOne({
@@ -50,15 +57,29 @@ export async function DELETE(
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
 
-    const freedBytes = versionsTotalBytes([target]);
+    const remainingVersions = versions.filter((v) => v.versionId !== versionId);
+    const protectedKeys = new Set([
+      object.key,
+      ...(object.chunks ?? []).map((chunk) => chunk.key),
+      ...remainingVersions.flatMap(collectVersionB2Keys),
+    ]);
+    const keysToDelete = collectVersionB2Keys(target).filter(
+      (key) => !protectedKeys.has(key),
+    );
+    const freedBytes =
+      keysToDelete.length > 0 ? versionsTotalBytes([target]) : 0;
 
-    object.versions = versions.filter((v) => v.versionId !== versionId);
+    object.versions = remainingVersions;
     await object.save();
 
-    // Best-effort blob removal, then free the quota.
-    await deleteObjects(bucket.b2BucketId, collectVersionB2Keys(target));
+    // Remove only blobs that are not still referenced by current/original data.
+    await deleteObjects(bucket.b2BucketId, keysToDelete);
     if (freedBytes > 0) {
-      await adjustStorageBytes(ctx.userId, -freedBytes);
+      if (ctx.scope.type === "personal") {
+        await adjustStorageBytes(ctx.userId, -freedBytes);
+      } else {
+        await adjustOrgStorage(ctx.scope.orgId, -freedBytes);
+      }
       await updateBucketStats(object.bucketId.toString(), 0, -freedBytes);
     }
 

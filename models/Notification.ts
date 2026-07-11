@@ -9,6 +9,7 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 export type NotificationType =
   | "invite_received"
   | "invite_accepted"
+  | "invite_ready"
   | "role_changed"
   | "access_request"
   | "access_request_decided"

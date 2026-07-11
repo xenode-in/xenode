@@ -108,6 +108,10 @@ interface Invitation {
   createdAt: string;
   recipientUserId: string | null;
   spaceKeyReady: boolean;
+  awaitingRecipientKey?: boolean;
+  recipientReadyAt?: string | null;
+  previouslyMember?: boolean;
+  lastRemovedAt?: string | null;
   organization?: {
     id: string;
     name: string;
@@ -417,7 +421,9 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
     }
   };
 
-  const loadRawSpaceKey = async (orgId: string): Promise<Uint8Array> => {
+  const loadRawSpaceKey = async (
+    orgId: string,
+  ): Promise<{ rawSpaceKey: Uint8Array; keyVersion: number }> => {
     if (!privateKey) {
       setModalOpen(true);
       throw new Error("Unlock your vault before inviting encrypted members");
@@ -430,10 +436,11 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
     if (!grant) {
       throw new Error("Your organization space key is not available");
     }
-    return unwrapSpaceKeyGrant({
+    const rawSpaceKey = await unwrapSpaceKeyGrant({
       wrappedSpaceKey: grant.wrappedSpaceKey,
       privateKey,
     });
+    return { rawSpaceKey, keyVersion: grant.keyVersion };
   };
 
   const inviteMember = async () => {
@@ -446,9 +453,10 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
 
     setBusy("invite");
     try {
-      let recipient: RecipientLookup | null = null;
       let wrappedSpaceKey = "";
       let recipientUserId: string | null = null;
+      let keyVersion = 1;
+      let deferred = false;
 
       if (inviteRole !== "guest") {
         const lookup = await readJson<{
@@ -461,19 +469,28 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
             body: JSON.stringify({ emails: [email] }),
           }),
         );
-        if (lookup.unavailable.length > 0 || lookup.recipients.length === 0) {
-          throw new Error(
-            lookup.unavailable[0]?.reason || "Recipient is not available",
-          );
-        }
 
-        recipient = lookup.recipients[0];
-        const rawSpaceKey = await loadRawSpaceKey(manageOrg.id);
-        wrappedSpaceKey = await wrapSpaceKeyForPublicKey({
-          rawSpaceKey,
-          recipientPublicKey: recipient.publicKey,
-        });
-        recipientUserId = recipient.userId;
+        const recipient = lookup.recipients[0];
+        if (recipient) {
+          // Recipient already has a vault → wrap the key now (immediate access).
+          const key = await loadRawSpaceKey(manageOrg.id);
+          keyVersion = key.keyVersion;
+          wrappedSpaceKey = await wrapSpaceKeyForPublicKey({
+            rawSpaceKey: key.rawSpaceKey,
+            recipientPublicKey: recipient.publicKey,
+          });
+          recipientUserId = recipient.userId;
+        } else {
+          // No account / no vault yet → deferred invite. The key is granted once
+          // they sign up and set up their vault. Other reasons (e.g. inviting
+          // yourself) still error.
+          const reason = lookup.unavailable[0]?.reason || "";
+          const deferrable = /no xenode account|encryption vault/i.test(reason);
+          if (!deferrable) {
+            throw new Error(reason || "Recipient is not available");
+          }
+          deferred = true;
+        }
       }
 
       await readJson<{ invitation: Invitation }>(
@@ -485,17 +502,77 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
             role: inviteRole,
             recipientUserId,
             wrappedSpaceKey,
-            keyVersion: 1,
+            keyVersion,
           }),
         }),
       );
 
       setInviteEmail("");
-      toast.success("Invitation sent");
+      toast.success(
+        deferred
+          ? "Invitation emailed — they'll get access after signing up"
+          : "Invitation sent",
+      );
       await loadManagedOrg(manageOrg.id);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "Failed to send invitation",
+      );
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Grant the deferred space key to an invitee who has now set up their vault.
+  const grantAccess = async (invite: Invitation) => {
+    if (!manageOrg) return;
+    setBusy(`grant-${invite.id}`);
+    try {
+      if (!privateKey) {
+        setModalOpen(true);
+        throw new Error("Unlock your vault to grant encrypted access");
+      }
+
+      const lookup = await readJson<{
+        recipients: RecipientLookup[];
+        unavailable: Array<{ email: string; reason: string }>;
+      }>(
+        await fetch("/api/orgs/recipients", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ emails: [invite.email] }),
+        }),
+      );
+      const recipient = lookup.recipients[0];
+      if (!recipient) {
+        throw new Error(
+          lookup.unavailable[0]?.reason ||
+            "The invitee hasn't finished setting up their vault yet",
+        );
+      }
+
+      const { rawSpaceKey, keyVersion } = await loadRawSpaceKey(manageOrg.id);
+      const wrappedSpaceKey = await wrapSpaceKeyForPublicKey({
+        rawSpaceKey,
+        recipientPublicKey: recipient.publicKey,
+      });
+
+      await readJson(
+        await fetch(
+          `/api/orgs/${manageOrg.id}/invitations/${invite.id}`,
+          {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ wrappedSpaceKey, keyVersion }),
+          },
+        ),
+      );
+
+      toast.success("Access granted — they can now join");
+      await loadManagedOrg(manageOrg.id);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to grant access",
       );
     } finally {
       setBusy(null);
@@ -1158,29 +1235,75 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
                   </p>
                 ) : (
                   <div className="space-y-1.5">
-                    {pendingOrgInvites.map((invite) => (
-                      <div
-                        key={invite.id}
-                        className="flex items-center justify-between gap-3 rounded-lg border border-border p-3"
-                      >
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium">
-                            {invite.email}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {roleLabel(invite.role)} · expires{" "}
-                            {formatDate(invite.expiresAt)}
-                          </p>
-                        </div>
-                        <Badge
-                          variant={
-                            invite.spaceKeyReady ? "secondary" : "outline"
-                          }
+                    {pendingOrgInvites.map((invite) => {
+                      const readyToGrant =
+                        invite.awaitingRecipientKey && !!invite.recipientReadyAt;
+                      return (
+                        <div
+                          key={invite.id}
+                          className="rounded-lg border border-border p-3"
                         >
-                          {invite.spaceKeyReady ? "Key ready" : "Guest"}
-                        </Badge>
-                      </div>
-                    ))}
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium">
+                                {invite.email}
+                              </p>
+                              <p className="text-xs text-muted-foreground">
+                                {roleLabel(invite.role)} · expires{" "}
+                                {formatDate(invite.expiresAt)}
+                              </p>
+                            </div>
+                            <Badge
+                              variant={
+                                invite.role === "guest"
+                                  ? "outline"
+                                  : invite.spaceKeyReady
+                                    ? "secondary"
+                                    : readyToGrant
+                                      ? "default"
+                                      : "outline"
+                              }
+                            >
+                              {invite.role === "guest"
+                                ? "Guest"
+                                : invite.spaceKeyReady
+                                  ? "Key ready"
+                                  : readyToGrant
+                                    ? "Ready"
+                                    : "Awaiting signup"}
+                            </Badge>
+                          </div>
+
+                          {invite.previouslyMember && (
+                            <p className="mt-2 flex items-start gap-1.5 rounded-md bg-amber-500/5 px-2 py-1.5 text-xs text-amber-600 dark:text-amber-400">
+                              <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                              Was a member
+                              {invite.lastRemovedAt
+                                ? ` until ${formatDate(invite.lastRemovedAt)}`
+                                : ""}{" "}
+                              and was removed — re-inviting starts a fresh
+                              membership.
+                            </p>
+                          )}
+
+                          {readyToGrant && (
+                            <Button
+                              size="sm"
+                              className="mt-2 w-full"
+                              onClick={() => grantAccess(invite)}
+                              disabled={busy !== null}
+                            >
+                              {busy === `grant-${invite.id}` ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <KeyRound className="h-4 w-4" />
+                              )}
+                              Grant access
+                            </Button>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET as browseGET } from "@/app/api/orgs/[orgId]/objects/browse/route";
 import { PATCH as objectPATCH } from "@/app/api/orgs/[orgId]/objects/[objectId]/route";
 import { GET as sharesGET } from "@/app/api/orgs/[orgId]/shares/route";
+import { POST as commentsPOST } from "@/app/api/direct-shares/[id]/comments/route";
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
@@ -123,8 +124,11 @@ describe("org collaboration browse + star", () => {
     expect(res.status).toBe(200); // guests may view what's shared with them
     expect(body.shares).toHaveLength(1);
     expect(body.shares[0].type).toBe("direct");
-    expect(body.shares[0].accessType).toBe("view");
-    expect(JSON.stringify(body)).not.toContain("wrappedShareKey");
+    // Legacy "view" normalizes to the "viewer" role.
+    expect(body.shares[0].role).toBe("viewer");
+    // The recipient gets their OWN wrapped share key (RSA-encrypted to them) so
+    // the client can decrypt the file — same contract as /api/direct-shares/[id].
+    expect(body.shares[0].wrappedShareKey).toBe("k");
   });
 
   it("blocks guests from the org-wide shared list", async () => {
@@ -135,5 +139,59 @@ describe("org collaboration browse + star", () => {
 
     const res = await sharesGET(new NextRequest("http://localhost/x?scope=shared"), p());
     expect(res.status).toBe(403);
+  });
+
+  it("normalizes the recipient role in shared-with-me", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("member_1");
+    await createOrg();
+    await addMember("member_1", "member");
+    const obj = await makeObject();
+    await DirectShare.create({
+      objectId: obj._id,
+      bucketId: obj.bucketId,
+      createdBy: "owner_1",
+      recipients: [
+        { recipientUserId: "member_1", recipientEmail: "member_1@e.com", wrappedShareKey: "k", accessType: "editor", downloadCount: 0 },
+      ],
+      isRevoked: false,
+    });
+
+    const res = await sharesGET(new NextRequest("http://localhost/x?scope=with-me"), p());
+    const body = await res.json();
+    expect(body.shares[0].role).toBe("editor");
+  });
+
+  it("gates comment posting on the commenter role", async () => {
+    const obj = await makeObject();
+    const share = await DirectShare.create({
+      objectId: obj._id,
+      bucketId: obj.bucketId,
+      createdBy: "owner_1",
+      recipients: [
+        { recipientUserId: "viewer_1", recipientEmail: "viewer_1@e.com", wrappedShareKey: "k", accessType: "viewer", downloadCount: 0 },
+      ],
+      isRevoked: false,
+    });
+    const cp = { params: Promise.resolve({ id: String(share._id) }) };
+    const makeReq = () =>
+      new NextRequest("http://localhost/c", {
+        method: "POST",
+        body: JSON.stringify({ ciphertext: "cipher" }),
+        headers: { "content-type": "application/json" },
+      });
+
+    // Viewer cannot comment.
+    mockSession("viewer_1");
+    const denied = await commentsPOST(makeReq(), cp);
+    expect(denied.status).toBe(403);
+
+    // Promote to commenter → allowed.
+    await DirectShare.updateOne(
+      { _id: share._id },
+      { $set: { "recipients.0.accessType": "commenter" } },
+    );
+    const ok = await commentsPOST(makeReq(), cp);
+    expect(ok.status).toBe(200);
   });
 });

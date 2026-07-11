@@ -7,6 +7,7 @@ import {
 } from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import DirectShare from "@/models/DirectShare";
+import { normalizeShareRole } from "@/lib/orgs/shareRoles";
 import { captureEvent, countBucket } from "@/lib/posthog";
 
 export const dynamic = "force-dynamic";
@@ -52,8 +53,7 @@ export async function POST(request: NextRequest) {
             recipientUserId: String(recipient.recipientUserId),
             recipientEmail: String(recipient.recipientEmail).toLowerCase(),
             wrappedShareKey: String(recipient.wrappedShareKey),
-            accessType:
-              recipient.accessType === "view" ? "view" : "download",
+            accessType: normalizeShareRole(recipient.accessType),
           },
         ]),
       ).values(),

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import * as XLSX from "xlsx";
-import { SPREADSHEET_SCHEMA_VERSION, type NormalizedCell, type NormalizedCellStyle, type NormalizedWorkbook, type NormalizedWorksheet } from "./types";
+import { SPREADSHEET_SCHEMA_VERSION, type NormalizedCell, type NormalizedCellStyle, type NormalizedWorkbook, type NormalizedWorksheet, type SpreadsheetExportFormat } from "./types";
 
 type StyledCell = XLSX.CellObject & { s?: Record<string, any> };
 type ExtendedSheet = XLSX.WorkSheet & { "!rows"?: Array<{ hpx?: number; hpt?: number; hidden?: boolean }>; "!cols"?: Array<{ wpx?: number; width?: number; hidden?: boolean }>; "!freeze"?: { xSplit?: number; ySplit?: number } };
@@ -73,7 +73,7 @@ function xlsxCell(cell: NormalizedCell): StyledCell {
   return output;
 }
 
-export function normalizedToXlsx(workbook: NormalizedWorkbook): ArrayBuffer {
+export function normalizedToSpreadsheetFile(workbook: NormalizedWorkbook, format: SpreadsheetExportFormat = "xlsx"): ArrayBuffer {
   const target = XLSX.utils.book_new();
   target.Props = { Title: workbook.properties.title, Subject: workbook.properties.subject, Author: workbook.properties.author, Company: workbook.properties.company };
   for (const sheet of [...workbook.sheets].sort((a, b) => a.order - b.order)) {
@@ -87,7 +87,17 @@ export function normalizedToXlsx(workbook: NormalizedWorkbook): ArrayBuffer {
     XLSX.utils.book_append_sheet(target, ws, sheet.name.slice(0, 31));
   }
   target.Workbook ??= {}; target.Workbook.Sheets = workbook.sheets.map((sheet) => ({ Hidden: sheet.hidden ? 1 : 0 }));
-  return XLSX.write(target, { type: "array", bookType: "xlsx", cellStyles: true }) as ArrayBuffer;
+  const bookType = format === "tsv" ? "csv" : format;
+  return XLSX.write(target, {
+    type: "array",
+    bookType,
+    cellStyles: true,
+    ...(format === "tsv" ? { FS: "	" } : {}),
+  }) as ArrayBuffer;
+}
+
+export function normalizedToXlsx(workbook: NormalizedWorkbook): ArrayBuffer {
+  return normalizedToSpreadsheetFile(workbook, "xlsx");
 }
 
 export function createBlankWorkbook(): NormalizedWorkbook {

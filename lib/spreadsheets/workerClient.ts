@@ -1,4 +1,4 @@
-import type { CompatibilityReport, NormalizedWorkbook } from "./types";
+import type { CompatibilityReport, NormalizedWorkbook, SpreadsheetExportFormat } from "./types";
 
 const DEFAULT_MAX_BYTES = Number(process.env.NEXT_PUBLIC_SHEETS_MAX_BYTES || 100 * 1024 * 1024);
 const DEFAULT_MAX_CELLS = Number(process.env.NEXT_PUBLIC_SHEETS_MAX_CELLS || 2_000_000);
@@ -32,7 +32,7 @@ export class SpreadsheetWorkerClient {
     if (cells > DEFAULT_MAX_CELLS) throw new SpreadsheetLimitError("Workbook dimensions exceed the initial editor safety limit.");
     return result;
   }
-  async export(workbook: NormalizedWorkbook, signal?: AbortSignal): Promise<ArrayBuffer> { return (await this.request<{ buffer: ArrayBuffer }>({ type: "export", workbook }, undefined, signal)).buffer; }
+  async export(workbook: NormalizedWorkbook, signal?: AbortSignal, format: SpreadsheetExportFormat = "xlsx"): Promise<ArrayBuffer> { return (await this.request<{ buffer: ArrayBuffer }>({ type: "export", workbook, format }, undefined, signal)).buffer; }
   dispose() { this.worker.terminate(); for (const pending of this.pending.values()) pending.reject(new DOMException("Disposed", "AbortError")); this.pending.clear(); }
 }
 

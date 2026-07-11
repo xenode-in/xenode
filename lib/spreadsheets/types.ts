@@ -7,6 +7,8 @@ export const SPREADSHEET_MIME_TYPES = new Set([
 ]);
 export const SPREADSHEET_EXTENSIONS = new Set(["xlsx", "xls", "csv"]);
 
+export type SpreadsheetExportFormat = "xlsx" | "xls" | "csv" | "tsv" | "ods";
+
 export type SpreadsheetWorkspace =
   | { type: "personal"; workspaceId: string }
   | { type: "organization"; workspaceId: string; organizationId: string }

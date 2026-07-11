@@ -79,7 +79,7 @@ function ticketUrl(ticketId: string, isAdmin = false): string {
 }
 
 function organizationInvitationUrl(invitationId: string): string {
-  return `${APP_URL}/dashboard/organizations/invitations/${invitationId}`;
+  return `${APP_URL}/invite/${invitationId}`;
 }
 
 export function organizationInvitationEmail(args: {

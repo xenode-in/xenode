@@ -22,6 +22,7 @@ import {
 } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
 import { encryptShareKeyForOwner } from "@/lib/crypto/shareKey";
+import { type ShareRole } from "@/lib/orgs/shareRoles";
 import {
   Dialog,
   DialogContent,
@@ -114,6 +115,7 @@ export function ShareDialog({
   const [pass, setPass] = useState("");
   const [bundleName, setBundleName] = useState("");
   const [sharedWithInput, setSharedWithInput] = useState("");
+  const [shareRole, setShareRole] = useState<ShareRole>("viewer");
   const [orgMembers, setOrgMembers] = useState<OrgMemberSuggestion[]>([]);
   const [orgMembersLoading, setOrgMembersLoading] = useState(false);
 
@@ -485,7 +487,7 @@ export function ShareDialog({
                 recipientUserId: recipient.userId,
                 recipientEmail: recipient.email,
                 wrappedShareKey,
-                accessType: "download",
+                accessType: shareRole,
               };
             },
           ),
@@ -771,6 +773,40 @@ export function ShareDialog({
                   : "Adding emails creates an authenticated direct share. Leave this empty to generate a public link instead."}
               </p>
             </div>
+
+            {sharedWithInput.trim() && !isBundle && (
+              <div className="space-y-1.5">
+                <Label className="flex items-center gap-1.5 text-sm font-medium">
+                  <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                  Permission
+                </Label>
+                <Select
+                  value={shareRole}
+                  onValueChange={(value) => setShareRole(value as ShareRole)}
+                >
+                  <SelectTrigger className="h-9 bg-secondary/50 border-border">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent
+                    position="popper"
+                    className="z-[200] border-border bg-card"
+                  >
+                    <SelectItem value="viewer">
+                      Viewer — preview &amp; download
+                    </SelectItem>
+                    <SelectItem value="commenter">
+                      Commenter — + add comments
+                    </SelectItem>
+                    <SelectItem value="editor">
+                      Editor — + rename &amp; edit
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-[10px] text-muted-foreground">
+                  Applies to everyone you add to this share.
+                </p>
+              </div>
+            )}
 
             <div className="space-y-1.5">
               <Label className="flex items-center gap-1.5 text-sm font-medium">

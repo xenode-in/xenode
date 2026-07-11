@@ -26,9 +26,12 @@ export function newObjectKey(ownerId: string, prefix = `users/${ownerId}/`): str
 export function snapshotCurrentAsVersion(
   object: IStorageObject,
   actorUserId: string,
+  options: { isOriginal?: boolean; sharesCurrentContent?: boolean } = {},
 ): IStorageObjectVersion {
   return {
     versionId: newVersionId(),
+    isOriginal: options.isOriginal ?? false,
+    sharesCurrentContent: options.sharesCurrentContent ?? false,
     key: object.key,
     b2FileId: object.b2FileId,
     size: object.size,
@@ -71,15 +74,28 @@ export function evictOverflow(versions: IStorageObjectVersion[]): {
   if (versions.length <= MAX_VERSIONS_PER_OBJECT) {
     return { kept: versions, evicted: [] };
   }
+
+  // The immutable original is part of the ten retained entries but is never
+  // evicted. The other nine slots remain newest-first rolling history.
+  const original = versions.find((version) => version.isOriginal);
+  if (!original) {
+    return {
+      kept: versions.slice(0, MAX_VERSIONS_PER_OBJECT),
+      evicted: versions.slice(MAX_VERSIONS_PER_OBJECT),
+    };
+  }
+  const rolling = versions.filter((version) => version !== original);
+  const rollingLimit = MAX_VERSIONS_PER_OBJECT - 1;
   return {
-    kept: versions.slice(0, MAX_VERSIONS_PER_OBJECT),
-    evicted: versions.slice(MAX_VERSIONS_PER_OBJECT),
+    kept: [...rolling.slice(0, rollingLimit), original],
+    evicted: rolling.slice(rollingLimit),
   };
 }
 
 /** Sum of bytes a set of versions occupy (main + chunks). */
 export function versionsTotalBytes(versions: IStorageObjectVersion[]): number {
   return versions.reduce((sum, v) => {
+    if (v.sharesCurrentContent) return sum;
     const chunkBytes = (v.chunks ?? []).reduce((s, c) => s + (c.size || 0), 0);
     // For chunked versions `size` is plaintext total; the bytes actually stored
     // are the chunk blobs. For non-chunked, `size` is the stored blob size.

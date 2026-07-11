@@ -105,12 +105,37 @@ export async function POST(
         );
       }
 
-      // 1. Snapshot the current content as a version (before mutating fields).
-      const snapshot = snapshotCurrentAsVersion(object, userId);
-      const { kept, evicted } = evictOverflow([
-        snapshot,
-        ...(object.versions || []),
-      ]);
+      // 1. Snapshot the current content before mutating fields. Spreadsheet
+      // originals are pinned and never duplicated when the current pointer is
+      // already referencing that immutable source ciphertext.
+      const existingVersions = [...(object.versions || [])];
+      let versionCandidates: typeof existingVersions;
+      if (object.mediaCategory === "excel") {
+        let original = existingVersions.find((version) => version.isOriginal);
+        if (!original && existingVersions.length > 0) {
+          original = existingVersions[existingVersions.length - 1];
+          original.isOriginal = true;
+          original.sharesCurrentContent = original.key === object.key;
+        }
+        if (!original) {
+          original = snapshotCurrentAsVersion(object, userId, {
+            isOriginal: true,
+            sharesCurrentContent: true,
+          });
+          existingVersions.push(original);
+        }
+        const currentIsPinnedOriginal = original.key === object.key;
+        if (currentIsPinnedOriginal) original.sharesCurrentContent = false;
+        versionCandidates = currentIsPinnedOriginal
+          ? existingVersions
+          : [snapshotCurrentAsVersion(object, userId), ...existingVersions];
+      } else {
+        versionCandidates = [
+          snapshotCurrentAsVersion(object, userId),
+          ...existingVersions,
+        ];
+      }
+      const { kept, evicted } = evictOverflow(versionCandidates);
       const evictedBytes = versionsTotalBytes(evicted);
       const newSize = buffer.byteLength;
 

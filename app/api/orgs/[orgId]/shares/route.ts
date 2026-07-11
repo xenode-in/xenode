@@ -1,4 +1,4 @@
-import type { Types } from "mongoose";
+import mongoose, { type Types } from "mongoose";
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthzError, requireAccessContext, toJsonResponse } from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
@@ -7,6 +7,8 @@ import { orgObjectClause, requireOrgStorageMembership } from "@/lib/orgs/storage
 import StorageObject from "@/models/StorageObject";
 import DirectShare from "@/models/DirectShare";
 import ShareLink from "@/models/ShareLink";
+import { User } from "@/models/User";
+import { normalizeShareRole } from "@/lib/orgs/shareRoles";
 
 export const dynamic = "force-dynamic";
 
@@ -21,8 +23,11 @@ interface RouteParams {
  *  - `shared`  (non-guest): org files that have an active public link or direct
  *    share — "what's shared out of the org".
  *  - `with-me` (any member, incl. guests): direct shares where the caller is a
- *    recipient — the guest's primary surface.
- * Metadata only (ids/counts/access type) — no plaintext names or keys.
+ *    recipient — the guest's primary surface. Returns the caller's OWN encrypted
+ *    key package (`wrappedShareKey` is RSA-encrypted to them; name/DEK are AES
+ *    ciphertext) so the client can decrypt and preview. No plaintext, and never
+ *    another recipient's key.
+ * The `shared` scope stays metadata-only (ids/counts/type).
  */
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
@@ -51,20 +56,73 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         isRevoked: false,
         "recipients.recipientUserId": ctx.userId,
       })
+        .populate(
+          "objectId",
+          "key size contentType isEncrypted mediaCategory",
+        )
         .sort({ createdAt: -1 })
         .limit(100)
         .lean();
 
+      // createdBy may be a better-auth `id` string or an `_id` ObjectId — match
+      // both, and never cast a non-ObjectId string (which would throw).
+      const ownerIds = Array.from(new Set(direct.map((d) => d.createdBy)));
+      const objectIdOwners = ownerIds
+        .filter((x) => mongoose.Types.ObjectId.isValid(x))
+        .map((x) => new mongoose.Types.ObjectId(x));
+      const owners = await User.find({
+        $or: [
+          { id: { $in: ownerIds } },
+          ...(objectIdOwners.length ? [{ _id: { $in: objectIdOwners } }] : []),
+        ],
+      })
+        .select("_id id name email")
+        .lean();
+      const ownerById = new Map<string, (typeof owners)[number]>();
+      for (const o of owners) {
+        const idField = (o as { id?: string }).id;
+        if (idField) ownerById.set(String(idField), o);
+        ownerById.set(String(o._id), o);
+      }
+
       return NextResponse.json({
         shares: direct.map((d) => {
-          const mine = d.recipients.find((r) => r.recipientUserId === ctx.userId);
+          const mine = d.recipients.find(
+            (r) => r.recipientUserId === ctx.userId,
+          );
+          const object = d.objectId as unknown as {
+            _id: unknown;
+            key?: string;
+            size?: number;
+            contentType?: string;
+            isEncrypted?: boolean;
+            mediaCategory?: string;
+          } | null;
+          const owner = ownerById.get(String(d.createdBy));
           return {
             id: String(d._id),
-            objectId: String(d.objectId),
             type: "direct" as const,
-            createdBy: d.createdBy,
-            accessType: mine?.accessType ?? "view",
+            role: normalizeShareRole(mine?.accessType),
             createdAt: d.createdAt,
+            owner: owner
+              ? { name: owner.name ?? null, email: owner.email ?? null }
+              : null,
+            // Encrypted key package + object metadata for client-side decrypt.
+            wrappedShareKey: mine?.wrappedShareKey ?? null,
+            shareEncryptedName: d.shareEncryptedName ?? null,
+            shareEncryptedContentType: d.shareEncryptedContentType ?? null,
+            shareEncryptedDEK: d.shareEncryptedDEK ?? null,
+            shareKeyIv: d.shareKeyIv ?? null,
+            object: object
+              ? {
+                  id: String(object._id),
+                  key: object.key ?? "",
+                  size: object.size ?? 0,
+                  contentType: object.contentType ?? "application/octet-stream",
+                  isEncrypted: !!object.isEncrypted,
+                  mediaCategory: object.mediaCategory ?? null,
+                }
+              : null,
           };
         }),
       });

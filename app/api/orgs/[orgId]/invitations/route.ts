@@ -16,6 +16,7 @@ import {
   type UserRecord,
 } from "@/lib/orgs/access";
 import { assertSeatHeadroomForInvite } from "@/lib/orgs/billing/seats";
+import { findLastDeparture } from "@/lib/orgs/membershipHistory";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { emitNotification } from "@/lib/notifications/emit";
 import { enforceRateLimit } from "@/lib/ratelimit/limiter";
@@ -41,6 +42,9 @@ interface InvitationRecord {
   recipientUserId?: string | null;
   wrappedSpaceKey?: string | null;
   keyVersion?: number | null;
+  recipientReadyAt?: Date | null;
+  previouslyMember?: boolean;
+  lastRemovedAt?: Date | null;
 }
 
 const INVITABLE_ROLES: InvitationRole[] = ["admin", "manager", "member", "guest"];
@@ -89,6 +93,11 @@ function serializeInvitation(invitation: InvitationRecord) {
     updatedAt: invitation.updatedAt ?? null,
     recipientUserId: invitation.recipientUserId ?? null,
     spaceKeyReady: !!invitation.wrappedSpaceKey,
+    awaitingRecipientKey:
+      invitation.role !== "guest" && !invitation.wrappedSpaceKey,
+    recipientReadyAt: invitation.recipientReadyAt ?? null,
+    previouslyMember: !!invitation.previouslyMember,
+    lastRemovedAt: invitation.lastRemovedAt ?? null,
   };
 }
 
@@ -140,11 +149,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         { status: 400 },
       );
     }
-    if (role !== "guest" && (!wrappedSpaceKey || !Number.isInteger(keyVersion) || keyVersion < 1)) {
+    // A wrapped space key may be supplied when the recipient already has a vault
+    // (immediate encrypted access). When it is absent for a non-guest role, this
+    // is a DEFERRED invite: the recipient has no public key yet (no account or no
+    // vault), so the key is granted later once they onboard. Guests never carry a
+    // key. Only validate keyVersion when a wrapped key is actually present.
+    if (wrappedSpaceKey && (!Number.isInteger(keyVersion) || keyVersion < 1)) {
       return NextResponse.json(
         {
-          error:
-            "wrappedSpaceKey and positive integer keyVersion are required for encrypted organization members",
+          error: "A positive integer keyVersion is required with a wrapped space key",
           code: "space_key_grant_required",
         },
         { status: 400 },
@@ -197,11 +210,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (!organization) {
       throw new AuthzError(404, "organization_not_found", "Organization not found");
     }
-    if (role !== "guest" && !resolvedRecipientUserId) {
+    // A wrapped key must have a resolvable recipient to grant it to. Deferred
+    // invites (no wrapped key) are allowed with a null recipient — the account
+    // may not exist yet.
+    if (wrappedSpaceKey && !resolvedRecipientUserId) {
       return NextResponse.json(
         {
           error:
-            "Encrypted organization members must be invited as existing users with a wrapped space key",
+            "A wrapped space key requires an existing recipient account",
           code: "recipient_user_required",
         },
         { status: 400 },
@@ -226,6 +242,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    const priorDeparture = await findLastDeparture(orgId, email);
+
     const now = new Date();
     const invitation: InvitationRecord = {
       id: newPluginId("inv"),
@@ -240,6 +258,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       recipientUserId: resolvedRecipientUserId,
       wrappedSpaceKey,
       keyVersion: wrappedSpaceKey ? keyVersion : null,
+      recipientReadyAt: null,
+      previouslyMember: !!priorDeparture,
+      lastRemovedAt: priorDeparture?.removedAt ?? null,
     };
 
     await mongoose.connection

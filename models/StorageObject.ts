@@ -87,6 +87,10 @@ export interface IStorageObject extends Document {
 
 export interface IStorageObjectVersion {
   versionId: string;
+  /** Immutable source ciphertext pinned when editing first begins. */
+  isOriginal?: boolean;
+  /** True only while original and current point at the same physical blob. */
+  sharesCurrentContent?: boolean;
   key: string;
   b2FileId: string;
   size: number;
@@ -328,6 +332,8 @@ const StorageObjectSchema = new Schema<IStorageObject>(
         new Schema<IStorageObjectVersion>(
           {
             versionId: { type: String, required: true },
+            isOriginal: { type: Boolean, default: false },
+            sharesCurrentContent: { type: Boolean, default: false },
             key: { type: String, required: true },
             b2FileId: { type: String, default: "" },
             size: { type: Number, required: true, min: 0 },

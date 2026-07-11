@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { FileVersionsDialog } from "@/components/dashboard/FileVersionsDialog";
 import { deleteSpreadsheetDraft, saveEncryptedSpreadsheetDraft } from "@/lib/spreadsheets/recovery";
 import { SpreadsheetConflictError, XenodeSpreadsheetPersistenceAdapter } from "@/lib/spreadsheets/persistence";
-import type { LoadedWorkbook, NormalizedWorkbook } from "@/lib/spreadsheets/types";
+import type { LoadedWorkbook, NormalizedWorkbook, SpreadsheetExportFormat } from "@/lib/spreadsheets/types";
 import { normalizedToUniver, univerToNormalized, type UniverWorkbookData } from "@/lib/spreadsheets/univerAdapter";
 import { SpreadsheetWorkerClient } from "@/lib/spreadsheets/workerClient";
 import { SpreadsheetCompatibilityDialog } from "./SpreadsheetCompatibilityDialog";
@@ -79,15 +79,52 @@ export function SpreadsheetEditor({ loaded, persistence, userId, recoveryKey, on
     const key = (event: KeyboardEvent) => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") { event.preventDefault(); save(); } };
     window.addEventListener("keydown", key); return () => window.removeEventListener("keydown", key);
   }, [save]);
-  const downloadLocal = useCallback(async (saveCopy: boolean) => {
+  const createExportFile = useCallback(async (format: SpreadsheetExportFormat) => {
     const worker = new SpreadsheetWorkerClient();
     try {
-      const buffer = await worker.export(snapshot()); const file = new File([buffer], loaded.name.replace(/\.(xls|csv)$/i, ".xlsx"), { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-      if (saveCopy && onSaveCopy) onSaveCopy(file); else { const url = URL.createObjectURL(file); const a = document.createElement("a"); a.href = url; a.download = file.name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 0); }
-    } finally { worker.dispose(); }
-  }, [loaded.name, onSaveCopy, snapshot]);
+      const buffer = await worker.export(snapshot(), undefined, format);
+      const baseName = loaded.name.replace(/\.(xlsx|xls|csv|tsv|ods)$/i, "");
+      const mimeTypes: Record<SpreadsheetExportFormat, string> = {
+        xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        xls: "application/vnd.ms-excel",
+        csv: "text/csv;charset=utf-8",
+        tsv: "text/tab-separated-values;charset=utf-8",
+        ods: "application/vnd.oasis.opendocument.spreadsheet",
+      };
+      return new File([buffer], baseName + "." + format, {
+        type: mimeTypes[format],
+      });
+    } finally {
+      worker.dispose();
+    }
+  }, [loaded.name, snapshot]);
 
-  return <div className="flex h-full min-h-0 flex-col"><SpreadsheetHeader name={loaded.name} workspace={loaded.workspace.type === "personal" ? "Personal workspace" : "Organization workspace"} state={state} onSave={save} onUndo={() => void apiRef.current?.undo()} onRedo={() => void apiRef.current?.redo()} onVersions={() => setVersionsOpen(true)} onBack={onBack}/><div className="relative min-h-0 flex-1">{!ready && <div className="absolute inset-0 z-10 bg-background"><SpreadsheetLoadingState label="Starting spreadsheet editor"/></div>}<div ref={containerRef} className="h-full w-full"/></div>
+  const downloadFile = useCallback((file: File) => {
+    const url = URL.createObjectURL(file);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = file.name;
+    anchor.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }, []);
+
+  const exportFile = useCallback(async (format: SpreadsheetExportFormat) => {
+    const file = await createExportFile(format);
+    downloadFile(file);
+    if (format === "csv" || format === "tsv") {
+      toast.info("CSV and TSV exports contain the first worksheet only.");
+    } else {
+      toast.success("Exported " + file.name);
+    }
+  }, [createExportFile, downloadFile]);
+
+  const downloadLocal = useCallback(async (saveCopy: boolean) => {
+    const file = await createExportFile("xlsx");
+    if (saveCopy && onSaveCopy) onSaveCopy(file);
+    else downloadFile(file);
+  }, [createExportFile, downloadFile, onSaveCopy]);
+
+  return <div className="flex h-full min-h-0 flex-col"><SpreadsheetHeader name={loaded.name} workspace={loaded.workspace.type === "personal" ? "Personal workspace" : "Organization workspace"} state={state} onSave={save} onExport={(format) => void exportFile(format)} onUndo={() => void apiRef.current?.undo()} onRedo={() => void apiRef.current?.redo()} onVersions={() => setVersionsOpen(true)} onBack={onBack}/><div className="relative min-h-0 flex-1">{!ready && <div className="absolute inset-0 z-10 bg-background"><SpreadsheetLoadingState label="Starting spreadsheet editor"/></div>}<div ref={containerRef} className="h-full w-full"/></div>
     <SpreadsheetCompatibilityDialog open={compatibilityOpen} report={loaded.compatibility} onCancel={() => { setCompatibilityOpen(false); setState("dirty"); }} onContinue={() => { setCompatibilityOpen(false); void performSave(); }}/>
     <SpreadsheetConflictDialog open={conflictOpen} onCancel={() => setConflictOpen(false)} onReload={() => { setConflictOpen(false); onReload(); }} onDownload={() => void downloadLocal(false)} onSaveCopy={() => void downloadLocal(true)}/>
     <FileVersionsDialog fileId={loaded.objectId} fileName={loaded.name} isOpen={versionsOpen} onClose={() => setVersionsOpen(false)} onRestored={() => { setVersionsOpen(false); if (state === "dirty" && !confirm("Restoring will discard unsaved local edits. Continue?")) return; onReload(); }}/>

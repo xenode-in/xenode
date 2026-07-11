@@ -7,6 +7,7 @@ import {
 import dbConnect from "@/lib/mongodb";
 import DirectShare from "@/models/DirectShare";
 import type { IDirectShareRecipient } from "@/models/DirectShare";
+import { normalizeShareRole } from "@/lib/orgs/shareRoles";
 import { User } from "@/models/User";
 
 export const dynamic = "force-dynamic";
@@ -114,7 +115,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
           recipientUserId: String(recipient.recipientUserId),
           recipientEmail: String(recipient.recipientEmail).toLowerCase(),
           wrappedShareKey: String(recipient.wrappedShareKey),
-          accessType: recipient.accessType === "view" ? "view" : "download",
+          accessType: normalizeShareRole(recipient.accessType),
           downloadCount: Number(recipient.downloadCount || 0),
           lastAccessedAt: recipient.lastAccessedAt
             ? new Date(String(recipient.lastAccessedAt))

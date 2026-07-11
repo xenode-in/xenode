@@ -300,6 +300,7 @@ interface ObjectData {
   encryptedName?: string;
   name?: string;
   mediaCategory?: string;
+  bucketId?: string;
   thumbnail?: string;
   encryptedContentType?: string;
   url?: string;
@@ -1708,6 +1709,20 @@ export function FilePreviewDialog({
     }
   };
 
+  const openInXenodeSheets = () => {
+    if (!file || sharedToken || albumShareToken || directShareId) return;
+    const params = new URLSearchParams({ id: file.id });
+    const scope = workspace?.driveScope;
+    if (scope?.type === "organization" || scope?.type === "team") {
+      params.set("orgId", scope.orgId);
+    }
+    if (scope?.type === "team") params.set("teamId", scope.teamId);
+    if (file.bucketId) params.set("bucketId", file.bucketId);
+    const slash = file.key.lastIndexOf("/");
+    if (slash >= 0) params.set("prefix", file.key.slice(0, slash + 1));
+    onClose();
+    window.location.assign("/sheets/editor?" + params.toString());
+  };
   const renderContent = () => {
     let innerContent = null;
 
@@ -1772,10 +1787,34 @@ export function FilePreviewDialog({
         } else if (
           type.includes("excel") ||
           type.includes("spreadsheet") ||
+          type.includes("text/csv")
+        ) {
+          const isSharePreview = !!(sharedToken || albumShareToken || directShareId);
+          innerContent = (
+            <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+              <AlertCircle className="mb-3 h-10 w-10 text-emerald-500" />
+              <p className="text-sm font-medium">
+                {isSharePreview ? "Spreadsheet preview unavailable for shared links" : "Open with Xenode Sheets"}
+              </p>
+              <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+                {isSharePreview
+                  ? "Download this encrypted spreadsheet to view it locally. Xenode never sends it to Microsoft Office viewers."
+                  : "This spreadsheet is edited locally in your browser with end-to-end encryption."}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-4"
+                onClick={isSharePreview ? handleDownload : openInXenodeSheets}
+              >
+                {isSharePreview ? "Download spreadsheet" : "Open in Xenode Sheets"}
+              </Button>
+            </div>
+          );
+        } else if (
           type.includes("presentation") ||
           type.includes("powerpoint") ||
-          type.includes("text/plain") ||
-          type.includes("text/csv")
+          type.includes("text/plain")
         ) {
           innerContent = (
             <div className="h-full w-full doc-viewer-wrapper">
