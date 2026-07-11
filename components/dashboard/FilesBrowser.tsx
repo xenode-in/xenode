@@ -64,7 +64,7 @@ import { SkeletonRow } from "@/components/dashboard/SkeletonRow";
 import { SkeletonCard } from "@/components/dashboard/SkeletonCard";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { useSession } from "@/lib/auth/client";
-import { useFileSync } from "@/hooks/useFileSync";
+import { useFileSync, type FileSyncError } from "@/hooks/useFileSync";
 import { useCryptoWorker } from "@/hooks/useCryptoWorker";
 import { getDb } from "@/lib/db/local";
 import {
@@ -663,12 +663,28 @@ export function FilesBrowser() {
     workspace.driveScope.role === "manager";
   const { startDownload } = useDownload();
   const { openPreview, closePreview } = usePreview();
-  const { data: session } = useSession();
+  const { data: session, isPending: sessionPending } = useSession();
   const userId = session?.user?.id || null;
 
   const typeFilter = searchParams.get("type") || "all";
 
-  const { refetch } = useFileSync({
+  const redirectToLogin = useCallback(() => {
+    const next =
+      typeof window !== "undefined"
+        ? `${window.location.pathname}${window.location.search}`
+        : "/dashboard/files";
+    router.replace(`/login?next=${encodeURIComponent(next)}`);
+  }, [router]);
+
+  useEffect(() => {
+    if (!sessionPending && !userId) redirectToLogin();
+  }, [redirectToLogin, sessionPending, userId]);
+
+  const {
+    refetch,
+    isFetched: filesFetched,
+    error: syncError,
+  } = useFileSync({
     bucketId,
     userId,
     fetchAll: true,
@@ -677,16 +693,16 @@ export function FilesBrowser() {
     excludeMobileBackup: true,
   });
 
-  const localFiles =
-    useLiveQuery(() => {
-      if (!userId || !bucketId) return [];
-      const db = getDb(userId);
-      return db.files.where("bucketId").equals(bucketId).toArray();
-    }, [userId, bucketId]) || [];
+  const localFiles = useLiveQuery(() => {
+    if (!userId || !bucketId) return [];
+    const db = getDb(userId);
+    return db.files.where("bucketId").equals(bucketId).toArray();
+  }, [userId, bucketId]);
+  const localFilesReady = !userId || !bucketId || localFiles !== undefined;
 
   // Temporarily map Dexie models to the expected ObjectData array to minimize disruptions
   const objects = useMemo(() => {
-    return localFiles
+    return (localFiles ?? [])
       .map((f) => ({
         ...f,
         _id: f.id,
@@ -705,8 +721,12 @@ export function FilesBrowser() {
     if (!bucketId) return;
     try {
       const res = await workspace.scopedFetch(`/api/buckets/${bucketId}`);
+      if (res.status === 401) {
+        redirectToLogin();
+        return;
+      }
       if (!res.ok) {
-        const data = await res.json();
+        const data = await res.json().catch(() => ({}));
         setError(data.error || "Bucket not found");
         return;
       }
@@ -717,12 +737,23 @@ export function FilesBrowser() {
     } finally {
       setInitialLoading(false);
     }
-  }, [bucketId, workspace]);
+  }, [bucketId, workspace, redirectToLogin]);
 
   useEffect(() => {
-    workspace.scopedFetch("/api/drive/config")
-      .then((r) => r.json())
-      .then((data) => {
+    let cancelled = false;
+
+    async function fetchConfig() {
+      setLoading(true);
+      try {
+        const res = await workspace.scopedFetch("/api/drive/config");
+        if (res.status === 401) {
+          redirectToLogin();
+          return;
+        }
+        if (!res.ok) throw new Error("drive config failed");
+        const data = await res.json();
+        if (cancelled) return;
+
         if (data.bucket) {
           setBucketId(data.bucket._id);
           if (data.rootPrefix) {
@@ -735,9 +766,24 @@ export function FilesBrowser() {
         } else {
           setError("Failed to initialize drive storage");
         }
-      })
-      .catch(() => setError("Failed to connect to storage"));
-  }, [searchParams, workspace]);
+      } catch {
+        if (!cancelled) setError("Failed to connect to storage");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    void fetchConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, [redirectToLogin, searchParams, workspace]);
+
+  useEffect(() => {
+    if ((syncError as FileSyncError | null)?.status === 401) {
+      redirectToLogin();
+    }
+  }, [redirectToLogin, syncError]);
 
   useEffect(() => {
     if (!activeMetadataKey || !objects.length) return;
@@ -1772,7 +1818,13 @@ export function FilesBrowser() {
 
   // ── Loading / error states ─────────────────────────────────────────────────
 
-  if (loading && initialLoading)
+  const waitingForInitialFiles = Boolean(
+    bucketId &&
+      userId &&
+      (!localFilesReady || (!filesFetched && !syncError)),
+  );
+
+  if (sessionPending || loading || initialLoading || waitingForInitialFiles)
     return (
       <div className="flex items-center justify-center py-20">
         <Loader2 className="w-5 h-5 animate-spin text-primary" />

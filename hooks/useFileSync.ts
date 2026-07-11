@@ -17,6 +17,16 @@ interface FetchObjectsParams {
   excludeMobileBackup?: boolean;
 }
 
+export interface FileSyncError extends Error {
+  status?: number;
+}
+
+function createFileSyncError(status: number): FileSyncError {
+  const error = new Error("Failed to fetch objects") as FileSyncError;
+  error.status = status;
+  return error;
+}
+
 export function useFileSync({
   bucketId,
   userId,
@@ -63,13 +73,12 @@ export function useFileSync({
       }
 
       const res = workspace?.scopedFetch
-        ? await workspace.scopedFetch(url)
-        : await fetch(url);
-      if (!res.ok) throw new Error("Failed to fetch objects");
+        ? await workspace.scopedFetch(url, { credentials: "include" })
+        : await fetch(url, { credentials: "include" });
+      if (!res.ok) throw createFileSyncError(res.status);
 
       const data = await res.json();
 
-      // Upsert into Dexie
       if (data.objects && data.objects.length > 0) {
         const db = getDb(userId);
         const mappedFiles = (data.objects as ServerObject[]).map((o) =>

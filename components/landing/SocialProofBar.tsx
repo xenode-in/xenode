@@ -26,14 +26,14 @@ const trustBadges = [
 
 export function SocialProofBar() {
   return (
-    <section className="relative z-10 border-y  bg-white/[0.02] flex justify-center px-6 md:px-8">
+    <section className="relative z-10 border-y border-border bg-card/35 flex justify-center px-6 md:px-8">
       <div className="w-full max-w-[1200px] py-16 px-6 flex flex-col gap-10">
         {/* Trust badges */}
         <div className="flex flex-wrap items-center justify-center gap-3">
           {trustBadges.map((badge) => (
             <span
               key={badge}
-              className="px-4 py-1.5 rounded-full border border-white/15 text-xs uppercase tracking-widest opacity-60 bg-white/5"
+              className="px-4 py-1.5 rounded-full border border-border bg-muted/70 text-muted-foreground text-xs uppercase tracking-widest"
             >
               {badge}
             </span>
@@ -45,20 +45,20 @@ export function SocialProofBar() {
           {quotes.map((q) => (
             <div
               key={q.author}
-              className="rounded-xl border  bg-white/5 p-6 flex flex-col gap-4"
+              className="rounded-xl border border-border bg-card/85 p-6 flex flex-col gap-4"
             >
-              <p className="text-sm leading-relaxed opacity-80">
+              <p className="text-sm leading-relaxed text-muted-foreground">
                 &ldquo;{q.text}&rdquo;
               </p>
               <div className="mt-auto">
                 <p className="text-sm font-semibold">{q.author}</p>
-                <p className="text-xs opacity-40">{q.role}</p>
+                <p className="text-xs text-muted-foreground">{q.role}</p>
               </div>
             </div>
           ))}
         </div>
 
-        <p className="text-center text-sm opacity-40">
+        <p className="text-center text-sm text-muted-foreground">
           Trusted by early users across 12+ countries.
         </p>
       </div>

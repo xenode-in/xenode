@@ -53,37 +53,37 @@
   --radius: 0.625rem;
   /* Plyr Video Player Customization */
   --plyr-color-main: var(--primary);
-  /* Premium Light Theme - soft blue tint */
-  --background: #f0f4ff; /* Very bright pale blue */
-  --foreground: #001031; /* Deep brand blue text */
+  /* Premium light theme */
+  --background: #f7f9ff;
+  --foreground: #06183a;
   --card: #ffffff;
-  --card-foreground: #001031;
+  --card-foreground: #06183a;
   --popover: #ffffff;
-  --popover-foreground: #001031;
-  --primary: #00297a; /* Brand blue */
+  --popover-foreground: #06183a;
+  --primary: #003fba;
   --primary-foreground: #ffffff;
-  --secondary: #e0eaff;
-  --secondary-foreground: #00297a;
-  --muted: #e0eaff;
-  --muted-foreground: #5e7ba8;
-  --accent: #e0eaff;
-  --accent-foreground: #00297a;
+  --secondary: #e8efff;
+  --secondary-foreground: #062b75;
+  --muted: #edf2fb;
+  --muted-foreground: #51617d;
+  --accent: #e3ecff;
+  --accent-foreground: #062b75;
   --destructive: oklch(0.577 0.245 27.325);
-  --border: #ccdfff;
-  --input: #ccdfff;
+  --border: #d6e0f2;
+  --input: #c5d2e8;
   --ring: #0043c8;
-  --chart-1: #00297a;
+  --chart-1: #003fba;
   --chart-2: #1664ff;
   --chart-3: #6498ff;
-  --chart-4: #001031;
+  --chart-4: #06183a;
   --chart-5: #0043c8;
   --sidebar: #ffffff;
-  --sidebar-foreground: #001031;
-  --sidebar-primary: #00297a;
+  --sidebar-foreground: #06183a;
+  --sidebar-primary: #003fba;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #f0f4ff;
-  --sidebar-accent-foreground: #001031;
-  --sidebar-border: #e0eaff;
+  --sidebar-accent: #edf2fb;
+  --sidebar-accent-foreground: #06183a;
+  --sidebar-border: #d6e0f2;
   --sidebar-ring: #0043c8;
 }
 
@@ -165,7 +165,10 @@
 
 @layer components {
   .theme-gradient-background {
-    background: linear-gradient(268deg, #f8fafc 4.2%, #e2e8f0 98.63%);
+    background:
+      radial-gradient(circle at 18% -10%, rgba(80, 130, 255, 0.18), transparent 34%),
+      radial-gradient(circle at 84% 8%, rgba(124, 182, 134, 0.14), transparent 30%),
+      linear-gradient(180deg, #ffffff 0%, #f1f5ff 100%);
   }
 
   :is(.dark, .force-dark) .theme-gradient-background {

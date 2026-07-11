@@ -70,17 +70,17 @@ function ScenarioCard({
     <div
       ref={ref}
       id={`scenario-${index}`}
-      className="rounded-xl border  bg-white/5 p-8 backdrop-blur-sm transition-all duration-500 min-h-[350px] flex flex-col justify-center"
+      className="rounded-xl border border-border bg-card/85 p-8 backdrop-blur-sm transition-all duration-500 min-h-[350px] flex flex-col justify-center"
       style={{
         opacity: isInView ? 1 : 0.3,
         transform: isInView ? "scale(1)" : "scale(0.95)",
       }}
     >
       <div className="flex items-center gap-3 mb-6">
-        <span className="text-xs uppercase tracking-widest opacity-50 border border-white/15 rounded-full px-3 py-1">
+        <span className="text-xs uppercase tracking-widest text-muted-foreground border border-border bg-muted/60 rounded-full px-3 py-1">
           {scenario.tag}
         </span>
-        <Icon className="w-4 h-4 opacity-40" />
+        <Icon className="w-4 h-4 text-muted-foreground" />
       </div>
 
       <h3 className="text-xl font-semibold mb-6">{scenario.title}</h3>
@@ -88,10 +88,10 @@ function ScenarioCard({
       <ul className="flex flex-col gap-4">
         {scenario.steps.map((step, i) => (
           <li key={i} className="flex items-start gap-4">
-            <span className="shrink-0 w-6 h-6 rounded-full border border-white/20 flex items-center justify-center text-xs font-mono opacity-60">
+            <span className="shrink-0 w-6 h-6 rounded-full border border-border bg-muted/60 flex items-center justify-center text-xs font-mono text-muted-foreground">
               {i + 1}
             </span>
-            <span className="opacity-80 text-sm leading-relaxed pt-0.5">
+            <span className="text-muted-foreground text-sm leading-relaxed pt-0.5">
               {step}
             </span>
           </li>
@@ -115,21 +115,21 @@ export function InActionSection() {
   return (
     <section
       id="how-it-works"
-      className="relative z-10 border-b  flex justify-center px-6 md:px-8"
+      className="relative z-10 border-b border-border flex justify-center px-6 md:px-8"
     >
       <div className="w-full max-w-[1200px] py-20 px-0 md:px-6 flex flex-col md:flex-row gap-12 relative items-start">
         {/* Left Sidebar (Sticky) */}
         <div className="w-full px-6 md:px-0 md:w-5/12 shrink-0 md:sticky md:top-32 min-w-0">
           <div className="flex flex-col gap-6 w-full">
             <div>
-              <p className="text-xs uppercase tracking-widest opacity-50 mb-3">
+              <p className="text-xs uppercase tracking-widest text-muted-foreground mb-3">
                 XENODE IN ACTION
               </p>
               <h2 className="text-3xl md:text-5xl font-medium leading-tight tracking-tight mb-4">
                 Three situations where{" "}
                 <span className="font-brand italic">Xenode</span> helps
               </h2>
-              <p className="opacity-60 mb-8 text-sm max-w-sm">
+              <p className="text-muted-foreground mb-8 text-sm max-w-sm">
                 Common real-world scenarios. Don&apos;t see yours? There are many
                 more.
               </p>
@@ -142,8 +142,8 @@ export function InActionSection() {
                   onClick={() => scrollTo(i)}
                   className={`shrink-0 snap-start flex items-center gap-3 text-left px-4 py-3 rounded-lg transition-all duration-300 text-sm whitespace-nowrap md:whitespace-normal ${
                     active === i
-                      ? "bg-white/10 border border-white/20 font-medium scale-[1.02] origin-left"
-                      : "opacity-50 hover:opacity-80"
+                      ? "bg-accent border border-border text-accent-foreground font-medium scale-[1.02] origin-left"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent/60"
                   }`}
                 >
                   <span className="font-mono text-xs opacity-60">{s.num}</span>

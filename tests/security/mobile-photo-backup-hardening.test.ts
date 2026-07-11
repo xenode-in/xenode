@@ -402,7 +402,10 @@ describe("Android photo backup production hardening", () => {
 
     expect(cache).toContain("thumbnails_v2");
     expect(cache).toContain("isEncrypted && !decryptionKey");
-    expect(photos).toContain("isScrolling={isFastScrolling}");
+    // Scroll-time load-shedding no longer unmounts cells into placeholders
+    // (that caused a remount storm on every fling). Live thumbnail updates now
+    // flow through a subscription store so scrolling never rebuilds the list.
+    expect(photos).toContain("thumbStore");
     expect(photos).toContain("drawDistance={SH}");
     expect(photos).toContain("foregroundPerformance.beginPhotosInteraction");
   });

@@ -8,12 +8,21 @@ import { ThemeGradientBackground } from "@/components/ThemeGradientBackground";
 
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
-export const revalidate = 60;
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export const metadata: Metadata = {
-  title: "Blog",
+  title: "Blog | Xenode",
   description:
-    "Insights, security deep-dives, and product updates from the Xenode team.",
+    "Insights, security deep-dives, and product updates from the Xenode team. Learn about encrypted cloud storage, privacy, and security.",
+  keywords: [
+    "xenode blog",
+    "encrypted cloud storage blog",
+    "privacy security articles",
+    "e2ee storage news",
+    "cloud storage updates",
+    "xenode announcements",
+  ],
   alternates: {
     canonical: `${BASE_URL}/blog`,
   },
@@ -23,6 +32,7 @@ export const metadata: Metadata = {
     title: "Blog | Xenode",
     description:
       "Insights, security deep-dives, and product updates from the Xenode team.",
+    siteName: "Xenode",
     images: [
       {
         url: `${BASE_URL}/og-image.png`,
@@ -104,7 +114,7 @@ export default async function BlogPage() {
 
       {/* Grain overlay */}
       <div
-        className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat"
+        className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat opacity-30 dark:opacity-75"
         style={{ backgroundImage: "url('/grain.png')" }}
       />
 
@@ -182,7 +192,7 @@ export default async function BlogPage() {
                   <Link
                     key={post.slug}
                     href={`/blog/${post.slug}`}
-                    className="group block border border-border rounded-lg overflow-hidden hover:border-border/60 transition-all duration-300 hover:shadow-xl"
+                    className="group block border border-border bg-card rounded-lg overflow-hidden hover:border-border/60 transition-all duration-300 hover:shadow-xl"
                   >
                     {/* Image */}
                     {post.image ? (

@@ -109,15 +109,19 @@ export async function removeObjectsFromAlbums(
   // 2. Repoint covers that pointed at a removed object to the first survivor
   //    (null when the album is now empty). Pipeline update so we can read the
   //    freshly-pulled objectIds array.
-  await PhotoAlbum.updateMany({ userId, coverObjectId: { $in: ids } }, [
-    {
-      $set: {
-        coverObjectId: {
-          $ifNull: [{ $arrayElemAt: ["$objectIds", 0] }, null],
+  await PhotoAlbum.updateMany(
+    { userId, coverObjectId: { $in: ids } },
+    [
+      {
+        $set: {
+          coverObjectId: {
+            $ifNull: [{ $arrayElemAt: ["$objectIds", 0] }, null],
+          },
         },
       },
-    },
-  ], { updatePipeline: true });
+    ],
+    { updatePipeline: true },
+  );
 
   // 3. Drop the matching items from any active album share links.
   await AlbumShareLink.updateMany(

@@ -68,9 +68,12 @@ describe("Android core drive parity", () => {
     expect(search).toContain("saveRecentSearch(userId");
     expect(files).toContain("useLocalSearchParams");
     expect(files).toContain("This moves the item to the Bin.");
-    expect(files).toContain("async function uploadTemporaryFile");
+    // Manual drive upload now routes through the shared streaming engine hook
+    // (useManualUpload) instead of the old in-file uploadTemporaryFile helper;
+    // temp-file cleanup is still guaranteed via finally + deleteAsync.
+    expect(files).toContain("useManualUpload");
     expect(files).toContain("finally {");
-    expect(files).toContain("FileSystem.deleteAsync(uri");
+    expect(files).toContain("deleteAsync");
     expect(onboarding).toContain("formatRecoveryKitDownload(kit.words)");
     expect(onboarding).toContain("Download Kit");
     expect(bin).toContain("useFocusEffect(");

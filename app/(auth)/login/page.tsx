@@ -7,6 +7,7 @@ import { signIn, signUp, authClient } from "@/lib/auth/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { GradualSpacing } from "@/components/ui/gradual-spacing";
 import { PasskeySignInButton } from "@/components/auth/PasskeySignInButton";
@@ -26,6 +27,7 @@ function LoginForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [trustDevice, setTrustDevice] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -76,6 +78,7 @@ function LoginForm() {
         const result = await signIn.email({
           email: formData.email,
           password: formData.password,
+          rememberMe: trustDevice,
         });
 
         if (result.error) {
@@ -119,7 +122,6 @@ function LoginForm() {
           return;
         }
       }
-
       sessionStorage.setItem("xenode-vault-pw", formData.password);
 
       // If logging in, check if verified. Otherwise, newly signed up users go to verify-email
@@ -319,6 +321,26 @@ function LoginForm() {
               </div>
             )}
 
+            {isLogin && (
+              <label
+                htmlFor="trustDeviceSession"
+                className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-secondary/20 px-3 py-3"
+              >
+                <Checkbox
+                  id="trustDeviceSession"
+                  checked={trustDevice}
+                  onCheckedChange={(checked) =>
+                    setTrustDevice(checked === true)
+                  }
+                  className="mt-0.5"
+                />
+                <span className="space-y-1">
+                  <span className="block text-sm font-medium leading-none text-foreground">
+                    Trust this device
+                  </span>
+                </span>
+              </label>
+            )}
             {error && (
               <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg px-4 py-3 font-medium">
                 {error}
@@ -346,7 +368,7 @@ function LoginForm() {
                     </span>
                   </div>
                 </div>
-                <PasskeySignInButton />
+                <PasskeySignInButton trustDevice={trustDevice} />
               </>
             )}
           </form>

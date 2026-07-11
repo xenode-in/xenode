@@ -10,15 +10,28 @@ import {
   Loader2,
   ChevronUp,
   ChevronDown,
+  PauseCircle,
+  RotateCw,
+  WifiOff,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 export function UploadProgress() {
-  const { tasks, removeTask, cancelTask, clearCompleted } = useUpload();
+  const {
+    tasks,
+    isPaused,
+    removeTask,
+    cancelTask,
+    clearCompleted,
+    retryTask,
+  } = useUpload();
   const [isExpanded, setIsExpanded] = useState(true);
 
   const activeTasks = tasks.filter(
-    (t) => t.status === "uploading" || t.status === "pending",
+    (t) =>
+      t.status === "uploading" ||
+      t.status === "pending" ||
+      t.status === "paused",
   );
   const completedTasks = tasks.filter((t) => t.status === "completed");
   const failedTasks = tasks.filter((t) => t.status === "failed");
@@ -42,7 +55,11 @@ export function UploadProgress() {
         >
           <div className="flex items-center gap-3">
             {activeTasks.length > 0 ? (
-              <Loader2 className="w-4 h-4 text-primary animate-spin" />
+              isPaused ? (
+                <PauseCircle className="w-4 h-4 text-amber-500" />
+              ) : (
+                <Loader2 className="w-4 h-4 text-primary animate-spin" />
+              )
             ) : (
               <CheckCircle2 className="w-4 h-4 text-green-500" />
             )}
@@ -84,6 +101,17 @@ export function UploadProgress() {
           </div>
         </div>
 
+        {/* Paused banner */}
+        {isExpanded && isPaused && activeTasks.length > 0 && (
+          <div className="flex items-center gap-2 px-4 py-2 border-b border-white/5 bg-amber-500/10">
+            <WifiOff className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+            <span className="text-xs text-amber-500">
+              Paused — will resume automatically when back online / in the
+              foreground.
+            </span>
+          </div>
+        )}
+
         {/* Overall Progress */}
         {isExpanded && activeTasks.length > 0 && (
           <div className="px-4 py-3 border-b border-white/5 bg-white/5">
@@ -116,6 +144,9 @@ export function UploadProgress() {
                     {task.status === "pending" && (
                       <div className="w-4 h-4 rounded-full border-2 border-primary/20" />
                     )}
+                    {task.status === "paused" && (
+                      <PauseCircle className="w-4 h-4 text-amber-500" />
+                    )}
                     {task.status === "completed" && (
                       <CheckCircle2 className="w-4 h-4 text-green-500" />
                     )}
@@ -139,15 +170,25 @@ export function UploadProgress() {
                     </div>
 
                     {/* Status text for current step */}
-                    {task.statusText && (task.status === "uploading" || task.status === "pending") && (
-                      <p className="text-xs text-primary/80 mt-1 animate-pulse">
-                        {task.statusText}
-                      </p>
-                    )}
+                    {task.statusText &&
+                      (task.status === "uploading" ||
+                        task.status === "pending" ||
+                        task.status === "paused") && (
+                        <p
+                          className={`text-xs mt-1 ${
+                            task.status === "paused"
+                              ? "text-amber-500"
+                              : "text-primary/80 animate-pulse"
+                          }`}
+                        >
+                          {task.statusText}
+                        </p>
+                      )}
 
                     {/* Progress Bar */}
                     {(task.status === "uploading" ||
-                      task.status === "pending") && (
+                      task.status === "pending" ||
+                      task.status === "paused") && (
                       <div className="mt-2">
                         <Progress value={task.progress} className="h-1" />
                       </div>
@@ -156,7 +197,8 @@ export function UploadProgress() {
 
                   {/* Action Buttons */}
                   {(task.status === "uploading" ||
-                    task.status === "pending") && (
+                    task.status === "pending" ||
+                    task.status === "paused") && (
                     <Button
                       variant="ghost"
                       size="icon"
@@ -164,6 +206,17 @@ export function UploadProgress() {
                       className="h-6 w-6 text-muted-foreground hover:text-card-foreground"
                     >
                       <X className="w-3 h-3" />
+                    </Button>
+                  )}
+                  {task.status === "failed" && !task.interrupted && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => retryTask(task.id)}
+                      className="h-6 w-6 text-muted-foreground hover:text-primary"
+                      title="Retry"
+                    >
+                      <RotateCw className="w-3 h-3" />
                     </Button>
                   )}
                   {(task.status === "completed" ||

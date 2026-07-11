@@ -21,7 +21,7 @@ import {
 } from "@/lib/crypto/fileEncryption";
 import { failClosedOnEncryptionError } from "@/lib/crypto/encryptionPolicy";
 import { extractMetadata } from "@/lib/metadata/extractor";
-import { toB64 } from "@/lib/crypto/utils";
+import type { FileMetadata } from "@/lib/metadata/types";
 import { optimizeVideoForStreaming } from "@/lib/video/faststart";
 import { generatePreview } from "@/lib/images/optimizer";
 import { upsertLocalObject } from "@/lib/db/object-cache";
@@ -29,60 +29,233 @@ import { extractSubtitleToVTT } from "@/lib/video/demuxer";
 import { extractAudioTrack } from "@/lib/video/audio-extractor";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
+import type { UploadRecord } from "@/lib/db/local";
+import {
+  saveUploadRecord,
+  markChunkComplete,
+  listUploadRecords,
+  deleteUploadRecord,
+  requestPersistentStorage,
+} from "@/lib/uploads/persistence";
 
 export interface UploadTask {
   id: string;
   file: File;
   bucketId: string;
   prefix: string;
-  status: "pending" | "uploading" | "completed" | "failed";
+  status: "pending" | "uploading" | "paused" | "completed" | "failed";
   progress: number;
   error?: string;
   statusText?: string;
+  /** True once a persisted record exists whose bytes can no longer be recovered
+   * (e.g. rehydrated after a reload but the file was over the resume cap). */
+  interrupted?: boolean;
 }
 
 interface UploadContextType {
   tasks: UploadTask[];
+  isPaused: boolean;
   addTasks: (files: File[], bucketId: string, prefix: string) => void;
   removeTask: (id: string) => void;
   cancelTask: (id: string) => void;
   clearCompleted: () => void;
+  pauseAll: () => void;
+  resumeAll: () => void;
+  retryTask: (id: string) => void;
 }
 
 const UploadContext = createContext<UploadContextType | undefined>(undefined);
 
 const MAX_CONCURRENT_UPLOADS = 5;
 
-// Helper to resize image and get base64
+// Persist encrypted bytes for resume-after-reload only up to this size. Larger
+// files stay resumable while the tab is open (pause/resume) but are not written
+// to IndexedDB — storing e.g. a 1 GB video risks blowing the (tight, on iOS)
+// origin storage quota and triggering eviction.
+const RESUME_BYTE_CAP = 250 * 1024 * 1024;
+
+// Per-chunk (and single-PUT) network retry policy.
+const MAX_PUT_ATTEMPTS = 5;
+const RETRY_BASE_MS = 800;
+const RETRY_MAX_MS = 15_000;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Exponential backoff with jitter.
+function backoffDelay(attempt: number): number {
+  const base = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** (attempt - 1));
+  return Math.round(base / 2 + Math.random() * (base / 2));
+}
+
+type PutErrorKind = "http" | "network" | "abort";
+class PutError extends Error {
+  kind: PutErrorKind;
+  status?: number;
+  constructor(kind: PutErrorKind, status?: number) {
+    super(`PUT ${kind}${status ? ` ${status}` : ""}`);
+    this.name = "PutError";
+    this.kind = kind;
+    this.status = status;
+  }
+}
+
+function isTransientStatus(status?: number): boolean {
+  return status === 408 || status === 429 || (status !== undefined && status >= 500);
+}
+
+/** One XHR PUT of a blob to a presigned URL. Registers itself so it can be
+ * aborted on pause/cancel. Rejects with a typed {@link PutError}. */
+function putBlobXHR(
+  url: string,
+  body: Blob,
+  contentType: string,
+  opts: {
+    onProgress?: (loaded: number) => void;
+    xhrSet: Set<XMLHttpRequest>;
+  },
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    opts.xhrSet.add(xhr);
+    const done = () => opts.xhrSet.delete(xhr);
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable) opts.onProgress?.(e.loaded);
+    });
+    xhr.addEventListener("load", () => {
+      done();
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
+      else reject(new PutError("http", xhr.status));
+    });
+    xhr.addEventListener("error", () => {
+      done();
+      reject(new PutError("network"));
+    });
+    xhr.addEventListener("abort", () => {
+      done();
+      reject(new PutError("abort"));
+    });
+    xhr.open("PUT", url);
+    xhr.setRequestHeader("Content-Type", contentType);
+    xhr.send(body);
+  });
+}
+
+/** PUT with pause-awareness, backoff retry, and lazy URL refresh on expiry. */
+async function putWithRetry(
+  body: Blob,
+  contentType: string,
+  h: {
+    getUrl: () => string;
+    onProgress?: (loaded: number) => void;
+    xhrSet: Set<XMLHttpRequest>;
+    isCancelled: () => boolean;
+    isPaused: () => boolean;
+    waitWhilePaused: () => Promise<void>;
+    refreshUrl?: () => Promise<void>;
+  },
+): Promise<void> {
+  let attempt = 0;
+  for (;;) {
+    if (h.isCancelled()) throw new PutError("abort");
+    await h.waitWhilePaused();
+    if (h.isCancelled()) throw new PutError("abort");
+
+    try {
+      await putBlobXHR(h.getUrl(), body, contentType, {
+        onProgress: h.onProgress,
+        xhrSet: h.xhrSet,
+      });
+      return;
+    } catch (err) {
+      if (h.isCancelled()) throw err;
+      const pe = err instanceof PutError ? err : new PutError("network");
+
+      // Aborted purely because we paused — loop back and wait, no attempt spent.
+      if (pe.kind === "abort" && h.isPaused()) continue;
+
+      // Expired presigned URL → refresh once and retry (counts as an attempt).
+      if (pe.kind === "http" && pe.status === 403 && h.refreshUrl) {
+        await h.refreshUrl().catch(() => {});
+      }
+
+      const retryable =
+        pe.kind === "network" ||
+        pe.kind === "abort" ||
+        (pe.kind === "http" && (pe.status === 403 || isTransientStatus(pe.status)));
+
+      attempt++;
+      if (!retryable || attempt >= MAX_PUT_ATTEMPTS) throw pe;
+      await sleep(backoffDelay(attempt));
+    }
+  }
+}
+
+// Helper to resize media and get base64
 const THUMB_TIMEOUT_MS = 8_000;
+const THUMB_MAX_SIZE = 320;
+const VIDEO_FRAME_TIMEOUT_MS = 350;
+
+const IMAGE_EXTENSIONS = new Set([
+  "avif",
+  "bmp",
+  "gif",
+  "heic",
+  "heif",
+  "jpeg",
+  "jpg",
+  "png",
+  "webp",
+]);
+
+const VIDEO_EXTENSIONS = new Set([
+  "3gp",
+  "avi",
+  "m4v",
+  "mkv",
+  "mov",
+  "mp4",
+  "mpeg",
+  "mpg",
+  "webm",
+]);
+
+const fileExtension = (file: File): string =>
+  file.name.split(".").pop()?.toLowerCase() ?? "";
+
+const isImageFile = (file: File): boolean =>
+  file.type.startsWith("image/") || IMAGE_EXTENSIONS.has(fileExtension(file));
+
+const isVideoFile = (file: File): boolean =>
+  file.type.startsWith("video/") || VIDEO_EXTENSIONS.has(fileExtension(file));
+
+type ThumbnailResult = { thumbnail: string; aspectRatio: number };
 
 const generateThumbnail = (
   file: File,
-): Promise<{ thumbnail: string; aspectRatio: number } | undefined> => {
+): Promise<ThumbnailResult | undefined> => {
   const work = new Promise<
     { thumbnail: string; aspectRatio: number } | undefined
   >((resolve) => {
     // Handle images (existing logic)
-    if (file.type.startsWith("image/")) {
+    if (isImageFile(file)) {
       const reader = new FileReader();
       reader.onload = (e) => {
         const img = new Image();
         img.onload = () => {
           const canvas = document.createElement("canvas");
           const aspectRatio = img.width / img.height;
-          const MAX_SIZE = 320;
           let width = img.width;
           let height = img.height;
 
           if (width > height) {
-            if (width > MAX_SIZE) {
-              height *= MAX_SIZE / width;
-              width = MAX_SIZE;
+            if (width > THUMB_MAX_SIZE) {
+              height *= THUMB_MAX_SIZE / width;
+              width = THUMB_MAX_SIZE;
             }
           } else {
-            if (height > MAX_SIZE) {
-              width *= MAX_SIZE / height;
-              height = MAX_SIZE;
+            if (height > THUMB_MAX_SIZE) {
+              width *= THUMB_MAX_SIZE / height;
+              height = THUMB_MAX_SIZE;
             }
           }
 
@@ -110,10 +283,11 @@ const generateThumbnail = (
     }
 
     // Handle videos
-    if (file.type.startsWith("video/")) {
+    if (isVideoFile(file)) {
       const video = document.createElement("video");
       const url = URL.createObjectURL(file);
       let settled = false;
+      let drawAttempts = 0;
 
       const finish = (
         result: { thumbnail: string; aspectRatio: number } | undefined,
@@ -127,55 +301,82 @@ const generateThumbnail = (
       };
 
       const drawFrame = () => {
-        const canvas = document.createElement("canvas");
-        const MAX_SIZE = 320;
-        let width = video.videoWidth;
-        let height = video.videoHeight;
+        if (settled) return;
+        try {
+          const sourceWidth = video.videoWidth;
+          const sourceHeight = video.videoHeight;
 
-        if (!width || !height) {
-          finish(undefined);
-          return;
-        }
-
-        if (width > height) {
-          if (width > MAX_SIZE) {
-            height *= MAX_SIZE / width;
-            width = MAX_SIZE;
+          if (!sourceWidth || !sourceHeight || video.readyState < 2) {
+            drawAttempts += 1;
+            if (drawAttempts < 12) {
+              requestAnimationFrame(drawFrame);
+            } else {
+              finish(undefined);
+            }
+            return;
           }
-        } else if (height > MAX_SIZE) {
-          width *= MAX_SIZE / height;
-          height = MAX_SIZE;
+
+          const canvas = document.createElement("canvas");
+          let width = sourceWidth;
+          let height = sourceHeight;
+
+          if (width > height) {
+            if (width > THUMB_MAX_SIZE) {
+              height *= THUMB_MAX_SIZE / width;
+              width = THUMB_MAX_SIZE;
+            }
+          } else if (height > THUMB_MAX_SIZE) {
+            width *= THUMB_MAX_SIZE / height;
+            height = THUMB_MAX_SIZE;
+          }
+
+          canvas.width = Math.max(1, Math.round(width));
+          canvas.height = Math.max(1, Math.round(height));
+          const ctx = canvas.getContext("2d");
+
+          if (!ctx) {
+            finish(undefined);
+            return;
+          }
+
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          finish({
+            thumbnail: canvas.toDataURL("image/jpeg", 0.8),
+            aspectRatio: sourceWidth / sourceHeight,
+          });
+        } catch {
+          drawAttempts += 1;
+          if (drawAttempts < 12) {
+            requestAnimationFrame(drawFrame);
+          } else {
+            finish(undefined);
+          }
         }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-
-        if (!ctx) {
-          finish(undefined);
-          return;
-        }
-
-        ctx.drawImage(video, 0, 0, width, height);
-        finish({
-          thumbnail: canvas.toDataURL("image/jpeg", 0.8),
-          aspectRatio: video.videoWidth / video.videoHeight,
-        });
       };
 
       const scheduleDraw = () => {
         if (typeof video.requestVideoFrameCallback === "function") {
-          video.requestVideoFrameCallback(() => drawFrame());
+          let frameSettled = false;
+          const fallbackId = setTimeout(() => {
+            if (frameSettled) return;
+            frameSettled = true;
+            requestAnimationFrame(() => drawFrame());
+          }, VIDEO_FRAME_TIMEOUT_MS);
+
+          video.requestVideoFrameCallback(() => {
+            if (frameSettled) return;
+            frameSettled = true;
+            clearTimeout(fallbackId);
+            drawFrame();
+          });
         } else {
           requestAnimationFrame(() => drawFrame());
         }
       };
 
-      video.src = url;
       video.muted = true;
       video.playsInline = true;
       video.preload = "auto";
-      video.load();
 
       video.addEventListener("loadedmetadata", () => {
         // Seek to 10% of duration or 1s, whichever is smaller.
@@ -194,6 +395,14 @@ const generateThumbnail = (
         }, 1500);
       });
 
+      video.addEventListener("loadeddata", () => {
+        scheduleDraw();
+      });
+
+      video.addEventListener("canplay", () => {
+        scheduleDraw();
+      });
+
       video.addEventListener("seeked", () => {
         scheduleDraw();
       });
@@ -208,6 +417,9 @@ const generateThumbnail = (
           finish(undefined);
         }
       }, THUMB_TIMEOUT_MS);
+
+      video.src = url;
+      video.load();
 
       return;
     }
@@ -286,8 +498,72 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
   const [tasks, setTasks] = useState<UploadTask[]>([]);
   const [activeUploads, setActiveUploads] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
   const uploadingIds = useRef(new Set<string>());
-  const uploadXHRs = useRef<Map<string, XMLHttpRequest>>(new Map());
+  // All in-flight XHRs, grouped by task, so pause/cancel can abort every
+  // request a task owns (both the single-PUT and chunked paths register here).
+  const xhrsByTask = useRef<Map<string, Set<XMLHttpRequest>>>(new Map());
+
+  // ── Pause controller ────────────────────────────────────────────────────────
+  // `pausedRef` is the synchronous source of truth read by upload loops;
+  // `isPaused` mirrors it for the UI. Loops park on a promise that resolves when
+  // resumed. Cancelled tasks are tracked so an abort can be told apart from a
+  // pause-abort (re-queued) or a real failure.
+  const pausedRef = useRef(false);
+  const resumeWaitersRef = useRef<Array<() => void>>([]);
+  const cancelledIds = useRef(new Set<string>());
+
+  const waitWhilePaused = useCallback((): Promise<void> => {
+    if (!pausedRef.current) return Promise.resolve();
+    return new Promise<void>((resolve) => resumeWaitersRef.current.push(resolve));
+  }, []);
+
+  const xhrSetFor = useCallback((taskId: string): Set<XMLHttpRequest> => {
+    let set = xhrsByTask.current.get(taskId);
+    if (!set) {
+      set = new Set();
+      xhrsByTask.current.set(taskId, set);
+    }
+    return set;
+  }, []);
+
+  const abortTaskXhrs = useCallback((taskId: string) => {
+    const set = xhrsByTask.current.get(taskId);
+    if (!set) return;
+    for (const xhr of set) {
+      try {
+        xhr.abort();
+      } catch {
+        /* noop */
+      }
+    }
+  }, []);
+
+  const pauseAll = useCallback(() => {
+    if (pausedRef.current) return;
+    pausedRef.current = true;
+    setIsPaused(true);
+    // Abort every in-flight request; the retry loops re-queue on pause-abort.
+    for (const taskId of xhrsByTask.current.keys()) abortTaskXhrs(taskId);
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.status === "uploading" ? { ...t, status: "paused" } : t,
+      ),
+    );
+  }, [abortTaskXhrs]);
+
+  const resumeAll = useCallback(() => {
+    if (!pausedRef.current) return;
+    pausedRef.current = false;
+    setIsPaused(false);
+    const waiters = resumeWaitersRef.current;
+    resumeWaitersRef.current = [];
+    waiters.forEach((w) => w());
+    setTasks((prev) =>
+      prev.map((t) => (t.status === "paused" ? { ...t, status: "uploading" } : t)),
+    );
+  }, []);
+
   const { publicKey: cryptoPublicKey, metadataKey: cryptoMetadataKey } =
     useCrypto();
   const workspace = useWorkspace();
@@ -338,6 +614,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             prefix: fileStorageKey.includes("/")
               ? fileStorageKey.substring(0, fileStorageKey.lastIndexOf("/") + 1)
               : `users/${sessionRef.current?.user?.id}/`,
+            // Attach this thumbnail to the parent file's cleanup session so it
+            // is protected by the parent's completion (and reclaimed with it if
+            // the upload is abandoned). Without this the thumbnail spawns its
+            // own session that never flips to `completed`, and cleanup-orphans
+            // deletes the live thumbnail ~24h later.
+            sessionFileId: fileStorageKey,
           }),
         });
         const { uploadUrl } = await presign.json();
@@ -410,6 +692,45 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     };
   }, [tasks]);
 
+  // Pause uploads when the tab is backgrounded / device locked / network drops,
+  // and resume when it returns. On iOS, locking the phone suspends Safari (it
+  // does NOT reload the page), so the in-memory queue survives — we just need to
+  // stop firing requests that would fail and re-launch them on wake.
+  useEffect(() => {
+    const onHidden = () => {
+      if (document.visibilityState === "hidden") pauseAll();
+      else resumeAll();
+    };
+    const onOffline = () => pauseAll();
+    const onOnline = () => {
+      // Only auto-resume if the tab is actually foregrounded.
+      if (document.visibilityState !== "hidden") resumeAll();
+    };
+    const onPageHide = () => pauseAll();
+    const onPageShow = () => {
+      if (navigator.onLine && document.visibilityState !== "hidden") resumeAll();
+    };
+
+    document.addEventListener("visibilitychange", onHidden);
+    window.addEventListener("offline", onOffline);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("pageshow", onPageShow);
+
+    // Reflect the current state on mount (e.g. loaded while offline).
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      pauseAll();
+    }
+
+    return () => {
+      document.removeEventListener("visibilitychange", onHidden);
+      window.removeEventListener("offline", onOffline);
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pageshow", onPageShow);
+    };
+  }, [pauseAll, resumeAll]);
+
   const uploadChunkedMediaDirectly = useCallback(
     async (task: UploadTask) => {
       uploadingIds.current.add(task.id);
@@ -422,9 +743,21 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
       try {
         let uploadFile = task.file;
+        let thumbResultPromise: Promise<ThumbnailResult | undefined> | undefined;
+
+        if (isVideoFile(task.file)) {
+          setTasks((prev) =>
+            prev.map((t) =>
+              t.id === task.id ? { ...t, statusText: "Generating preview…" } : t,
+            ),
+          );
+          thumbResultPromise = generateThumbnail(task.file).catch(
+            () => undefined,
+          );
+        }
 
         // Step 1: Optimize video for streaming (Faststart)
-        if (task.file.type.startsWith("video/")) {
+        if (isVideoFile(task.file)) {
           setTasks((prev) =>
             prev.map((t) =>
               t.id === task.id
@@ -447,9 +780,17 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             t.id === task.id ? { ...t, statusText: "Generating preview…" } : t,
           ),
         );
-        const thumbResult = await generateThumbnail(uploadFile).catch(
-          () => undefined,
-        );
+        let thumbResult = thumbResultPromise
+          ? await thumbResultPromise
+          : await generateThumbnail(uploadFile).catch(() => undefined);
+        if (!thumbResult?.thumbnail && uploadFile !== task.file && isVideoFile(uploadFile)) {
+          console.warn(
+            `[Upload] Thumbnail generation failed for original video, retrying optimized video (${task.file.name})`,
+          );
+          thumbResult = await generateThumbnail(uploadFile).catch(
+            () => undefined,
+          );
+        }
         const rawThumbnail = thumbResult?.thumbnail;
         const aspectRatio = thumbResult?.aspectRatio;
         console.log(`[Upload] ✅ Thumbnail step done (${task.file.name}, generated: ${!!rawThumbnail}, aspectRatio: ${aspectRatio ?? "n/a"})`);
@@ -477,7 +818,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         let chunkIvs: string | undefined;
 
         let encryptedMetadata: string | undefined;
-        let metadata: any = null;
+        let metadata: FileMetadata | null = null;
 
         if (shouldEncryptNow()) {
           try {
@@ -728,36 +1069,42 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           ),
         );
 
-        const presignResponse = await scopedFetchRef.current(
-          "/api/objects/presign-upload-multipart",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              fileName: shouldEncryptNow()
-                ? crypto.randomUUID()
-                : task.file.name,
-              fileSize: uploadBody.size,
-              fileType: uploadContentType,
-              bucketId: task.bucketId,
-              prefix: task.prefix,
-              chunkCount,
-              chunkSize,
-            }),
-          },
-        );
+        // Stable presign filename — reused if we have to re-presign (URL expiry
+        // during a long pause) so the same B2 chunk keys are hit.
+        const presignFileName = shouldEncryptNow()
+          ? crypto.randomUUID()
+          : task.file.name;
 
-        if (!presignResponse.ok) {
-          const error = await presignResponse.json();
-          throw new Error(error.error || "Failed to get multipart upload URLs");
-        }
+        const presignMultipart = async () => {
+          const res = await scopedFetchRef.current(
+            "/api/objects/presign-upload-multipart",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                fileName: presignFileName,
+                fileSize: uploadBody.size,
+                fileType: uploadContentType,
+                bucketId: task.bucketId,
+                prefix: task.prefix,
+                chunkCount,
+                chunkSize,
+              }),
+            },
+          );
+          if (!res.ok) {
+            const error = await res.json().catch(() => ({}));
+            throw new Error(error.error || "Failed to get multipart upload URLs");
+          }
+          return res.json();
+        };
 
-        const {
-          fileId,
-          urls,
-          bucketId: returnedBucketId,
-          chunkSize: serverChunkSize,
-        } = await presignResponse.json();
+        let presign = await presignMultipart();
+        const fileId: string = presign.fileId;
+        let urls: { index: number; key: string; url: string }[] = presign.urls;
+        const returnedBucketId: string = presign.bucketId;
+        const serverChunkSize: number = presign.chunkSize;
+        const sessionId: string | undefined = presign.sessionId;
 
         // Handle thumbnail upload to B2
         let thumbnailKey: string | undefined;
@@ -769,78 +1116,115 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           );
         }
 
-        const chunkUploads: { index: number; key: string; size: number }[] = [];
-        const loadedBytes = new Array(urls.length).fill(0);
         const totalSize = uploadBody.size;
+        const userId = sessionRef.current?.user?.id;
+        const encryptedContentTypeVal =
+          shouldEncryptNow() && currentMetadataKey()
+            ? await encryptMetadataString(
+                uploadFile.type,
+                currentMetadataKey()!,
+              )
+            : undefined;
 
-        // Limit concurrency
-        const concurrency = 4; // Bump concurrency to 4
-        let urlIndex = 0;
+        // Deterministic per-chunk metadata (ciphertext slice sizes) — matches
+        // what we PUT and is resume-safe (independent of upload order).
+        const allChunks = Array.from({ length: chunkCount }, (_, i) => {
+          const start = i * cipherChunkSize;
+          const end = Math.min(start + cipherChunkSize, totalSize);
+          return { index: i, key: urls[i].key, size: end - start };
+        });
 
+        // Journal the upload so a reload can resume it (bytes only under the cap).
+        if (userId) {
+          await saveUploadRecord(userId, {
+            id: task.id,
+            userId,
+            status: "uploading",
+            createdAt: Date.now(),
+            fileName: task.file.name,
+            size: task.file.size,
+            type: uploadFile.type,
+            mediaCategory: getMediaCategory(uploadFile.type),
+            bucketId: returnedBucketId,
+            prefix: task.prefix,
+            aspectRatio,
+            isChunked: true,
+            isEncrypted: !!encryptedDEK,
+            fileId,
+            sessionId,
+            uploadContentType,
+            encryptedDEK,
+            chunkSize: serverChunkSize,
+            cipherChunkSize,
+            chunkCount,
+            chunkIvs,
+            completedChunks: [],
+            encryptedName,
+            encryptedContentType: encryptedContentTypeVal,
+            encryptedMetadata,
+            thumbnail: thumbnailKey || thumbnail,
+            thumbnailKey,
+            bytesPersisted: totalSize <= RESUME_BYTE_CAP,
+            mainBytes: totalSize <= RESUME_BYTE_CAP ? uploadBody : undefined,
+          }).catch(() => {});
+        }
+
+        // Completed indices live in this closure, so they survive pause/resume
+        // (the worker parks rather than restarting). Fresh live upload → empty.
+        const completed = new Set<number>();
+        const loaded = new Array(chunkCount).fill(0);
+        for (const i of completed) {
+          const start = i * cipherChunkSize;
+          loaded[i] = Math.min(cipherChunkSize, totalSize - start);
+        }
+        const xhrSet = xhrSetFor(task.id);
+        const updateProgress = () => {
+          const totalLoaded = loaded.reduce((a, b) => a + b, 0);
+          const progress = Math.round((totalLoaded / totalSize) * 100);
+          setTasks((prev) =>
+            prev.map((t) => (t.id === task.id ? { ...t, progress } : t)),
+          );
+        };
+        const refreshUrls = async () => {
+          presign = await presignMultipart();
+          urls = presign.urls;
+        };
+
+        let nextIndex = 0;
         const uploadWorker = async () => {
-          while (urlIndex < urls.length) {
-            const currentIndex = urlIndex++;
-            const urlObj = urls[currentIndex];
-            const start = currentIndex * cipherChunkSize;
+          while (true) {
+            const i = nextIndex++;
+            if (i >= chunkCount) break;
+            if (completed.has(i)) continue;
+            const start = i * cipherChunkSize;
             const end = Math.min(start + cipherChunkSize, totalSize);
             const chunkBlob = uploadBody.slice(start, end);
 
-            await new Promise<void>((resolve, reject) => {
-              const xhr = new XMLHttpRequest();
-
-              xhr.upload.addEventListener("progress", (e) => {
-                if (e.lengthComputable) {
-                  loadedBytes[currentIndex] = e.loaded;
-                  const totalLoaded = loadedBytes.reduce((a, b) => a + b, 0);
-                  const progress = Math.round((totalLoaded / totalSize) * 100);
-                  setTasks((prev) =>
-                    prev.map((t) =>
-                      t.id === task.id ? { ...t, progress } : t,
-                    ),
-                  );
-                }
-              });
-
-              xhr.addEventListener("load", () => {
-                if (xhr.status >= 200 && xhr.status < 300) {
-                  loadedBytes[currentIndex] = chunkBlob.size;
-                  chunkUploads.push({
-                    index: currentIndex,
-                    key: urlObj.key,
-                    size: chunkBlob.size,
-                  });
-                  resolve();
-                } else {
-                  reject(
-                    new Error(
-                      `Chunk upload failed: ${xhr.status} - ${xhr.statusText}`,
-                    ),
-                  );
-                }
-              });
-
-              xhr.addEventListener("error", () =>
-                reject(new Error("Network error during chunk upload")),
-              );
-              xhr.addEventListener("abort", () =>
-                reject(new Error("Upload aborted")),
-              );
-
-              xhr.open("PUT", urlObj.url);
-              xhr.setRequestHeader("Content-Type", uploadContentType);
-              xhr.send(chunkBlob);
+            await putWithRetry(chunkBlob as Blob, uploadContentType, {
+              getUrl: () => urls[i].url,
+              onProgress: (l) => {
+                loaded[i] = l;
+                updateProgress();
+              },
+              xhrSet,
+              isCancelled: () => cancelledIds.current.has(task.id),
+              isPaused: () => pausedRef.current,
+              waitWhilePaused,
+              refreshUrl: refreshUrls,
             });
+
+            loaded[i] = chunkBlob.size;
+            completed.add(i);
+            if (userId) markChunkComplete(userId, task.id, i).catch(() => {});
+            updateProgress();
           }
         };
 
         const workers = Array.from(
-          { length: Math.min(concurrency, urls.length) },
+          { length: Math.min(4, chunkCount) },
           () => uploadWorker(),
         );
         await Promise.all(workers);
-
-        // Sort chunkUploads by index just in case
-        chunkUploads.sort((a, b) => a.index - b.index);
 
         const completeResponse = await scopedFetchRef.current("/api/objects/complete-upload", {
           method: "POST",
@@ -852,13 +1236,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             contentType: uploadFile.type || "application/octet-stream",
             originalContentType: uploadFile.type,
             mediaCategory: getMediaCategory(uploadFile.type),
-            encryptedContentType:
-              shouldEncryptNow() && currentMetadataKey()
-                ? await encryptMetadataString(
-                    uploadFile.type,
-                    currentMetadataKey()!,
-                  )
-                : undefined,
+            encryptedContentType: encryptedContentTypeVal,
             thumbnail: thumbnailKey || thumbnail, // Use thumbnailKey if available, otherwise original thumbnail
             isEncrypted: !!encryptedDEK,
             encryptedDEK,
@@ -866,10 +1244,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             ...currentSpaceFields(),
             encryptedName,
             chunkSize: serverChunkSize,
-            chunkCount: urls.length,
+            chunkCount,
             chunkIvs,
             isChunked: true,
-            chunks: chunkUploads,
+            chunks: allChunks,
             encryptedMetadata,
             aspectRatio,
           }),
@@ -881,12 +1259,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         }
 
         const completeData = await completeResponse.json();
-        const mainObjectId = completeData.object?._id;
         await upsertLocalObject(
           sessionRef.current?.user?.id,
           completeData.object,
           returnedBucketId,
         );
+        if (userId) await deleteUploadRecord(userId, task.id).catch(() => {});
 
         /*
         // Patch sidecar objects (audio and subtitles) with parentObjectId now that we have the main object's ID
@@ -918,7 +1296,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           ),
         );
       } catch (error) {
-        console.error("Upload error:", error);
+        const cancelled = cancelledIds.current.has(task.id);
+        if (cancelled) {
+          const uid = sessionRef.current?.user?.id;
+          if (uid) await deleteUploadRecord(uid, task.id).catch(() => {});
+        } else {
+          console.error("Upload error:", error);
+        }
         setTasks((prev) =>
           prev.map((t) =>
             t.id === task.id
@@ -926,18 +1310,23 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                   ...t,
                   status: "failed",
                   statusText: undefined,
-                  error:
-                    error instanceof Error ? error.message : "Upload failed",
+                  error: cancelled
+                    ? "Upload cancelled"
+                    : error instanceof Error
+                      ? error.message
+                      : "Upload failed",
                 }
               : t,
           ),
         );
       } finally {
         uploadingIds.current.delete(task.id);
+        xhrsByTask.current.delete(task.id);
+        cancelledIds.current.delete(task.id);
         setActiveUploads((prev) => prev - 1);
       }
     },
-    [uploadEncryptedThumbnail],
+    [uploadEncryptedThumbnail, waitWhilePaused, xhrSetFor],
   );
 
   const uploadFileDirectly = useCallback(async (task: UploadTask) => {
@@ -979,32 +1368,37 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         thumbnail = rawThumbnail;
       }
 
-      // Step 1: Get presigned URL from server
-      const presignResponse = await scopedFetchRef.current("/api/objects/presign-upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          // For encrypted uploads, use a UUID key so the real name is hidden
-          fileName: shouldEncryptNow() ? crypto.randomUUID() : task.file.name,
-          fileSize: task.file.size,
-          fileType: shouldEncryptNow()
-            ? "application/octet-stream"
-            : task.file.type,
-          bucketId: task.bucketId,
-          prefix: task.prefix,
-        }),
-      });
+      // Step 1: Get presigned URL from server. Stable filename so a re-presign
+      // (URL expiry during a long pause) reuses the same B2 key.
+      const mainFileName = shouldEncryptNow()
+        ? crypto.randomUUID()
+        : task.file.name;
+      const presignMain = async () => {
+        const res = await scopedFetchRef.current("/api/objects/presign-upload", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileName: mainFileName,
+            fileSize: task.file.size,
+            fileType: shouldEncryptNow()
+              ? "application/octet-stream"
+              : task.file.type,
+            bucketId: task.bucketId,
+            prefix: task.prefix,
+          }),
+        });
+        if (!res.ok) {
+          const error = await res.json().catch(() => ({}));
+          throw new Error(error.error || "Failed to get upload URL");
+        }
+        return res.json();
+      };
 
-      if (!presignResponse.ok) {
-        const error = await presignResponse.json();
-        throw new Error(error.error || "Failed to get upload URL");
-      }
-
-      const {
-        uploadUrl,
-        objectKey,
-        bucketId: returnedBucketId,
-      } = await presignResponse.json();
+      const mainPresign = await presignMain();
+      const objectKey: string = mainPresign.objectKey;
+      const returnedBucketId: string = mainPresign.bucketId;
+      let uploadUrl: string = mainPresign.uploadUrl;
+      const mainSessionId: string | undefined = mainPresign.sessionId;
 
       // Step 2: Generate preview for images
       let optimizedFile: File | null = null;
@@ -1052,6 +1446,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                   : optimizedFile.type,
                 bucketId: task.bucketId,
                 prefix: task.prefix,
+                // Attach this blob to the main upload's cleanup session.
+                sessionFileId: objectKey,
               }),
             });
 
@@ -1159,16 +1555,16 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         );
       }
 
-      // Step 5: Encrypt and Upload optimized version if exists
+      // Step 5: Encrypt the optimized version (if any) so we can journal + PUT it.
       let optimizedIV: string | undefined;
       let optimizedSize: number | undefined;
       let optimizedEncryptedDEK: string | undefined;
       let optimizedSpaceKeyWrapIv: string | undefined;
+      let optBody: Blob | undefined;
 
       if (optimizedFile && optimizedUploadUrl && optimizedObjectKey) {
-        let optBody: Blob = optimizedFile;
+        optBody = optimizedFile;
         optimizedSize = optimizedFile.size;
-
         if (shouldEncryptNow()) {
           const enc = isWorkspaceEncryptedRef.current
             ? await encryptFileForSpace(
@@ -1181,55 +1577,103 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           optimizedEncryptedDEK = enc.encryptedDEK;
           optimizedSpaceKeyWrapIv = enc.spaceKeyWrapIv;
         }
-
-        await fetch(optimizedUploadUrl, {
-          method: "PUT",
-          headers: {
-            "Content-Type": shouldEncryptNow()
-              ? "application/octet-stream"
-              : optimizedFile.type,
-          },
-          body: optBody,
-        });
       }
 
-      // Step 6: Upload main file to B2 with XHR for progress tracking
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        uploadXHRs.current.set(task.id, xhr);
+      const userId = sessionRef.current?.user?.id;
+      const mainSize =
+        uploadBody instanceof Blob ? uploadBody.size : task.file.size;
+      const withinCap = mainSize <= RESUME_BYTE_CAP;
+      const encryptedContentTypeVal =
+        shouldEncryptNow() && currentMetadataKey()
+          ? await encryptMetadataString(
+              task.file.type,
+              currentMetadataKey()!,
+            )
+          : undefined;
+      const optContentType = shouldEncryptNow()
+        ? "application/octet-stream"
+        : optimizedFile?.type || "application/octet-stream";
 
-        xhr.upload.addEventListener("progress", (e) => {
-          if (e.lengthComputable) {
-            const progress = Math.round((e.loaded / e.total) * 100);
-            setTasks((prev) =>
-              prev.map((t) => (t.id === task.id ? { ...t, progress } : t)),
-            );
-          }
-        });
+      // Journal for reload-resume (persist bytes only under the cap).
+      if (userId) {
+        await saveUploadRecord(userId, {
+          id: task.id,
+          userId,
+          status: "uploading",
+          createdAt: Date.now(),
+          fileName: task.file.name,
+          size: task.file.size,
+          type: task.file.type,
+          mediaCategory: getMediaCategory(task.file.type),
+          bucketId: returnedBucketId,
+          prefix: task.prefix,
+          aspectRatio,
+          isChunked: false,
+          isEncrypted: !!encryptedDEK,
+          fileId: objectKey,
+          sessionId: mainSessionId,
+          uploadContentType,
+          encryptedDEK,
+          iv: encryptedIV,
+          completedChunks: [],
+          encryptedName,
+          encryptedContentType: encryptedContentTypeVal,
+          encryptedMetadata,
+          thumbnail: thumbnailKey || thumbnail,
+          thumbnailKey,
+          optimizedKey: optimizedObjectKey,
+          optimizedIV,
+          optimizedEncryptedDEK,
+          optimizedSize,
+          optimizedContentType: optimizedFile?.type,
+          bytesPersisted: withinCap,
+          mainBytes: withinCap ? (uploadBody as Blob) : undefined,
+          optimizedBytes: withinCap ? optBody : undefined,
+        }).catch(() => {});
+      }
 
-        xhr.addEventListener("load", () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve();
-          } else {
-            reject(
-              new Error(
-                `Upload to B2 failed: ${xhr.status} - ${xhr.statusText}`,
-              ),
-            );
-          }
-        });
+      const xhrSet = xhrSetFor(task.id);
+      const isCancelled = () => cancelledIds.current.has(task.id);
+      const isPausedNow = () => pausedRef.current;
 
-        xhr.addEventListener("error", () => {
-          reject(new Error("Network error during upload"));
-        });
+      // Step 5b: Upload optimized version (best-effort — a failure here must not
+      // kill the main upload; we just drop the preview reference).
+      if (optBody && optimizedUploadUrl && optimizedObjectKey) {
+        try {
+          await putWithRetry(optBody, optContentType, {
+            getUrl: () => optimizedUploadUrl!,
+            xhrSet,
+            isCancelled,
+            isPaused: isPausedNow,
+            waitWhilePaused,
+          });
+        } catch (e) {
+          if (isCancelled()) throw e;
+          console.warn("[Upload] optimized upload failed, continuing without it", e);
+          optimizedObjectKey = undefined;
+          optimizedIV = undefined;
+          optimizedEncryptedDEK = undefined;
+          optimizedSize = undefined;
+        }
+      }
 
-        xhr.addEventListener("abort", () => {
-          reject(new Error("Upload aborted"));
-        });
-
-        xhr.open("PUT", uploadUrl);
-        xhr.setRequestHeader("Content-Type", uploadContentType);
-        xhr.send(uploadBody);
+      // Step 6: Upload the main file (retryable, pause-aware, progress-tracked).
+      await putWithRetry(uploadBody as Blob, uploadContentType, {
+        getUrl: () => uploadUrl,
+        onProgress: (loaded) => {
+          const progress = Math.round((loaded / mainSize) * 100);
+          setTasks((prev) =>
+            prev.map((t) => (t.id === task.id ? { ...t, progress } : t)),
+          );
+        },
+        xhrSet,
+        isCancelled,
+        isPaused: isPausedNow,
+        waitWhilePaused,
+        refreshUrl: async () => {
+          const p = await presignMain();
+          uploadUrl = p.uploadUrl;
+        },
       });
 
       // Step 4: Notify server of completion
@@ -1245,13 +1689,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             : task.file.type,
           originalContentType: task.file.type,
           mediaCategory: getMediaCategory(task.file.type),
-          encryptedContentType:
-            shouldEncryptNow() && currentMetadataKey()
-              ? await encryptMetadataString(
-                  task.file.type,
-                  currentMetadataKey()!,
-                )
-              : undefined,
+          encryptedContentType: encryptedContentTypeVal,
           thumbnail: thumbnailKey || thumbnail, // Use thumbnailKey if available, otherwise original thumbnail
           isEncrypted: !!encryptedDEK,
           encryptedDEK,
@@ -1284,6 +1722,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         completeData.object,
         returnedBucketId,
       );
+      if (userId) await deleteUploadRecord(userId, task.id).catch(() => {});
 
       // Mark as completed
       setTasks((prev) =>
@@ -1292,24 +1731,345 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         ),
       );
     } catch (error) {
-      console.error("Upload error:", error);
+      const wasCancelled = cancelledIds.current.has(task.id);
+      if (wasCancelled) {
+        const uid = sessionRef.current?.user?.id;
+        if (uid) await deleteUploadRecord(uid, task.id).catch(() => {});
+      } else {
+        console.error("Upload error:", error);
+      }
       setTasks((prev) =>
         prev.map((t) =>
           t.id === task.id
             ? {
                 ...t,
                 status: "failed",
-                error: error instanceof Error ? error.message : "Upload failed",
+                error: wasCancelled
+                  ? "Upload cancelled"
+                  : error instanceof Error
+                    ? error.message
+                    : "Upload failed",
               }
             : t,
         ),
       );
     } finally {
       uploadingIds.current.delete(task.id);
-      uploadXHRs.current.delete(task.id);
+      xhrsByTask.current.delete(task.id);
+      cancelledIds.current.delete(task.id);
       setActiveUploads((prev) => prev - 1);
     }
-  }, []);
+  }, [
+    uploadChunkedMediaDirectly,
+    uploadEncryptedThumbnail,
+    waitWhilePaused,
+    xhrSetFor,
+  ]);
+
+  // Records eligible for auto-resume after a reload, kept so retryTask can
+  // re-drive them. Populated by the rehydrate effect below.
+  const resumeRecordsRef = useRef<Map<string, UploadRecord>>(new Map());
+  const rehydratedRef = useRef(false);
+
+  /**
+   * Resume an upload from its persisted, encrypted bytes after a reload. Skips
+   * pieces already in B2 (via /api/objects/upload-status), re-PUTs the rest to
+   * the SAME keys, then finalizes. Works for both the chunked and single paths.
+   */
+  const resumeRecord = useCallback(
+    async (rec: UploadRecord) => {
+      const userId = rec.userId || sessionRef.current?.user?.id;
+      if (!userId) return;
+      if (uploadingIds.current.has(rec.id)) return;
+      uploadingIds.current.add(rec.id);
+
+      const xhrSet = xhrSetFor(rec.id);
+      const isCancelled = () => cancelledIds.current.has(rec.id);
+      const isPausedNow = () => pausedRef.current;
+      const setTask = (patch: Partial<UploadTask>) =>
+        setTasks((prev) =>
+          prev.map((t) => (t.id === rec.id ? { ...t, ...patch } : t)),
+        );
+      const fileNameFor = (key: string) =>
+        key.startsWith(rec.prefix)
+          ? key.slice(rec.prefix.length)
+          : (key.split("/").pop() ?? key);
+
+      setTask({
+        status: pausedRef.current ? "paused" : "uploading",
+        statusText: "Resuming…",
+        interrupted: false,
+        error: undefined,
+      });
+
+      try {
+        if (!rec.mainBytes) throw new Error("Upload bytes unavailable");
+
+        // What's already in B2?
+        let mainExists = false;
+        const serverDone = new Set<number>(rec.completedChunks ?? []);
+        try {
+          const st = await fetch(
+            `/api/objects/upload-status?bucketId=${encodeURIComponent(
+              rec.bucketId,
+            )}&fileId=${encodeURIComponent(rec.fileId)}`,
+          );
+          if (st.ok) {
+            const j = await st.json();
+            mainExists = !!j.mainExists;
+            if (Array.isArray(j.completedChunks))
+              for (const i of j.completedChunks) serverDone.add(i);
+          }
+        } catch {
+          /* fall back to the persisted completedChunks */
+        }
+
+        if (rec.isChunked) {
+          const cipherChunkSize = rec.cipherChunkSize ?? 0;
+          const chunkCount = rec.chunkCount ?? 0;
+          if (!cipherChunkSize || !chunkCount)
+            throw new Error("Missing chunk metadata");
+          const total = rec.mainBytes.size;
+          const presignBody = {
+            fileName: fileNameFor(rec.fileId),
+            fileSize: total,
+            fileType: rec.uploadContentType,
+            bucketId: rec.bucketId,
+            prefix: rec.prefix,
+            chunkCount,
+            chunkSize: rec.chunkSize,
+          };
+          const presignMultipart = async () => {
+            const res = await fetch("/api/objects/presign-upload-multipart", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(presignBody),
+            });
+            if (!res.ok) throw new Error("Failed to re-presign chunks");
+            return res.json();
+          };
+          let presign = await presignMultipart();
+          let urls = presign.urls as { index: number; key: string; url: string }[];
+
+          const loaded = new Array(chunkCount).fill(0);
+          for (const i of serverDone)
+            loaded[i] = Math.min(cipherChunkSize, total - i * cipherChunkSize);
+          const update = () => {
+            const tl = loaded.reduce((a, b) => a + b, 0);
+            setTask({ progress: Math.round((tl / total) * 100), statusText: undefined });
+          };
+          update();
+
+          let next = 0;
+          const worker = async () => {
+            while (true) {
+              const i = next++;
+              if (i >= chunkCount) break;
+              if (serverDone.has(i)) continue;
+              const start = i * cipherChunkSize;
+              const end = Math.min(start + cipherChunkSize, total);
+              const blob = rec.mainBytes!.slice(start, end);
+              await putWithRetry(blob, rec.uploadContentType, {
+                getUrl: () => urls[i].url,
+                onProgress: (l) => {
+                  loaded[i] = l;
+                  update();
+                },
+                xhrSet,
+                isCancelled,
+                isPaused: isPausedNow,
+                waitWhilePaused,
+                refreshUrl: async () => {
+                  presign = await presignMultipart();
+                  urls = presign.urls;
+                },
+              });
+              loaded[i] = blob.size;
+              serverDone.add(i);
+              markChunkComplete(userId, rec.id, i).catch(() => {});
+              update();
+            }
+          };
+          await Promise.all(
+            Array.from({ length: Math.min(4, chunkCount) }, () => worker()),
+          );
+
+          const allChunks = Array.from({ length: chunkCount }, (_, i) => {
+            const start = i * cipherChunkSize;
+            const end = Math.min(start + cipherChunkSize, total);
+            return { index: i, key: urls[i].key, size: end - start };
+          });
+          let thumbKey = rec.thumbnailKey;
+          if (!thumbKey && rec.thumbnail?.startsWith("enc:"))
+            thumbKey = await uploadEncryptedThumbnail(
+              rec.thumbnail,
+              rec.bucketId,
+              rec.fileId,
+            );
+
+          const comp = await fetch("/api/objects/complete-upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              objectKey: rec.fileId,
+              bucketId: rec.bucketId,
+              size: total,
+              contentType: rec.type || "application/octet-stream",
+              originalContentType: rec.type,
+              mediaCategory: rec.mediaCategory,
+              encryptedContentType: rec.encryptedContentType,
+              thumbnail: thumbKey || rec.thumbnail,
+              isEncrypted: rec.isEncrypted,
+              encryptedDEK: rec.encryptedDEK,
+              encryptedName: rec.encryptedName,
+              chunkSize: rec.chunkSize,
+              chunkCount,
+              chunkIvs: rec.chunkIvs,
+              isChunked: true,
+              chunks: allChunks,
+              encryptedMetadata: rec.encryptedMetadata,
+              aspectRatio: rec.aspectRatio,
+            }),
+          });
+          if (!comp.ok) {
+            const e = await comp.json().catch(() => ({}));
+            throw new Error(e.error || "Failed to finalize upload");
+          }
+          const cd = await comp.json();
+          await upsertLocalObject(userId, cd.object, rec.bucketId);
+        } else {
+          const total = rec.mainBytes.size;
+          // Optimized preview (best-effort).
+          if (rec.optimizedBytes && rec.optimizedKey) {
+            try {
+              const op = await (
+                await fetch("/api/objects/presign-upload", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    fileName: fileNameFor(rec.optimizedKey),
+                    fileSize: rec.optimizedBytes.size,
+                    fileType: rec.isEncrypted
+                      ? "application/octet-stream"
+                      : rec.optimizedContentType,
+                    bucketId: rec.bucketId,
+                    prefix: rec.prefix,
+                    sessionFileId: rec.fileId,
+                  }),
+                })
+              ).json();
+              await putWithRetry(
+                rec.optimizedBytes,
+                rec.isEncrypted
+                  ? "application/octet-stream"
+                  : rec.optimizedContentType || "application/octet-stream",
+                {
+                  getUrl: () => op.uploadUrl,
+                  xhrSet,
+                  isCancelled,
+                  isPaused: isPausedNow,
+                  waitWhilePaused,
+                },
+              );
+            } catch (e) {
+              if (isCancelled()) throw e;
+              console.warn("[Resume] optimized upload failed, skipping", e);
+            }
+          }
+          if (!mainExists) {
+            const p = await (
+              await fetch("/api/objects/presign-upload", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  fileName: fileNameFor(rec.fileId),
+                  fileSize: total,
+                  fileType: rec.uploadContentType,
+                  bucketId: rec.bucketId,
+                  prefix: rec.prefix,
+                }),
+              })
+            ).json();
+            await putWithRetry(rec.mainBytes, rec.uploadContentType, {
+              getUrl: () => p.uploadUrl,
+              onProgress: (l) =>
+                setTask({ progress: Math.round((l / total) * 100), statusText: undefined }),
+              xhrSet,
+              isCancelled,
+              isPaused: isPausedNow,
+              waitWhilePaused,
+            });
+          }
+          let thumbKey = rec.thumbnailKey;
+          if (!thumbKey && rec.thumbnail?.startsWith("enc:"))
+            thumbKey = await uploadEncryptedThumbnail(
+              rec.thumbnail,
+              rec.bucketId,
+              rec.fileId,
+            );
+          const comp = await fetch("/api/objects/complete-upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              objectKey: rec.fileId,
+              bucketId: rec.bucketId,
+              size: total,
+              contentType: rec.isEncrypted
+                ? "application/octet-stream"
+                : rec.type,
+              originalContentType: rec.type,
+              mediaCategory: rec.mediaCategory,
+              encryptedContentType: rec.encryptedContentType,
+              thumbnail: thumbKey || rec.thumbnail,
+              isEncrypted: rec.isEncrypted,
+              encryptedDEK: rec.encryptedDEK,
+              iv: rec.iv,
+              encryptedName: rec.encryptedName,
+              encryptedMetadata: rec.encryptedMetadata,
+              optimizedKey: rec.optimizedKey,
+              optimizedSize: rec.optimizedSize,
+              optimizedContentType: rec.optimizedContentType,
+              optimizedIV: rec.optimizedIV,
+              optimizedEncryptedDEK: rec.optimizedEncryptedDEK,
+              aspectRatio: rec.aspectRatio,
+            }),
+          });
+          if (!comp.ok) {
+            const e = await comp.json().catch(() => ({}));
+            throw new Error(e.error || "Failed to finalize upload");
+          }
+          const cd = await comp.json();
+          await upsertLocalObject(userId, cd.object, rec.bucketId);
+        }
+
+        await deleteUploadRecord(userId, rec.id).catch(() => {});
+        resumeRecordsRef.current.delete(rec.id);
+        setTask({ status: "completed", progress: 100, statusText: undefined });
+      } catch (error) {
+        const cancelled = isCancelled();
+        if (cancelled) {
+          await deleteUploadRecord(userId, rec.id).catch(() => {});
+          resumeRecordsRef.current.delete(rec.id);
+        } else {
+          console.error("[Resume] error:", error);
+        }
+        setTask({
+          status: "failed",
+          statusText: undefined,
+          error: cancelled
+            ? "Upload cancelled"
+            : error instanceof Error
+              ? error.message
+              : "Resume failed",
+        });
+      } finally {
+        uploadingIds.current.delete(rec.id);
+        xhrsByTask.current.delete(rec.id);
+        cancelledIds.current.delete(rec.id);
+      }
+    },
+    [waitWhilePaused, xhrSetFor, uploadEncryptedThumbnail],
+  );
 
   const processQueue = useCallback(() => {
     setTasks((currentTasks) => {
@@ -1339,6 +2099,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         progress: 0,
       }));
 
+      // Best-effort: keep our IndexedDB from being evicted mid-upload (iOS).
+      void requestPersistentStorage();
+
       setTasks((prev) => [...prev, ...newTasks]);
 
       // Process queue after state update
@@ -1348,24 +2111,108 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   );
 
   const removeTask = useCallback((id: string) => {
+    resumeRecordsRef.current.delete(id);
+    const uid = sessionRef.current?.user?.id;
+    if (uid) deleteUploadRecord(uid, id).catch(() => {});
     setTasks((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const cancelTask = useCallback((id: string) => {
-    const xhr = uploadXHRs.current.get(id);
-    if (xhr) {
-      xhr.abort();
-    }
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === id ? { ...t, status: "failed", error: "Upload cancelled" } : t,
-      ),
-    );
-  }, []);
+  const cancelTask = useCallback(
+    (id: string) => {
+      cancelledIds.current.add(id);
+      abortTaskXhrs(id);
+      resumeRecordsRef.current.delete(id);
+      const uid = sessionRef.current?.user?.id;
+      if (uid) deleteUploadRecord(uid, id).catch(() => {});
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === id
+            ? { ...t, status: "failed", error: "Upload cancelled" }
+            : t,
+        ),
+      );
+    },
+    [abortTaskXhrs],
+  );
+
+  const retryTask = useCallback(
+    (id: string) => {
+      cancelledIds.current.delete(id);
+      const rec = resumeRecordsRef.current.get(id);
+      if (rec) {
+        void resumeRecord(rec);
+        return;
+      }
+      // Live task whose File is still in memory — re-queue from scratch.
+      setTasks((prev) =>
+        prev.map((t) =>
+          t.id === id && t.status === "failed" && !t.interrupted
+            ? { ...t, status: "pending", progress: 0, error: undefined }
+            : t,
+        ),
+      );
+      setTimeout(processQueue, 0);
+    },
+    [resumeRecord, processQueue],
+  );
 
   const clearCompleted = useCallback(() => {
     setTasks((prev) => prev.filter((t) => t.status !== "completed"));
   }, []);
+
+  // Rehydrate interrupted uploads after a reload. Records with persisted bytes
+  // auto-resume; bytes-less records (over the resume cap) surface as a failed,
+  // "interrupted" task and their B2 orphans are reclaimed by the cleanup cron.
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId || rehydratedRef.current) return;
+    rehydratedRef.current = true;
+    (async () => {
+      const records = await listUploadRecords(userId).catch(() => []);
+      if (!records.length) return;
+      const resumable = records.filter((r) => r.bytesPersisted && r.mainBytes);
+      const stale = records.filter((r) => !r.bytesPersisted || !r.mainBytes);
+
+      setTasks((prev) => {
+        const existing = new Set(prev.map((t) => t.id));
+        const add: UploadTask[] = [];
+        for (const r of resumable) {
+          if (existing.has(r.id)) continue;
+          add.push({
+            id: r.id,
+            file: new File([], r.fileName, { type: r.type }),
+            bucketId: r.bucketId,
+            prefix: r.prefix,
+            status: "paused",
+            progress: 0,
+            statusText: "Waiting to resume…",
+          });
+        }
+        for (const r of stale) {
+          if (existing.has(r.id)) continue;
+          add.push({
+            id: r.id,
+            file: new File([], r.fileName, { type: r.type }),
+            bucketId: r.bucketId,
+            prefix: r.prefix,
+            status: "failed",
+            progress: 0,
+            interrupted: true,
+            error:
+              "Upload interrupted — too large to resume automatically. Please re-upload.",
+          });
+        }
+        return add.length ? [...prev, ...add] : prev;
+      });
+
+      for (const r of resumable) resumeRecordsRef.current.set(r.id, r);
+      // Bytes-less records can't be resumed client-side; drop them (the cron
+      // cleans their B2 blobs via the still-pending UploadSession).
+      for (const r of stale) deleteUploadRecord(userId, r.id).catch(() => {});
+      // Auto-resume. resumeRecord parks itself while paused (offline/hidden).
+      for (const r of resumable) void resumeRecord(r);
+    })();
+  }, [session?.user?.id, resumeRecord]);
 
   // Auto-process queue when active uploads decrease
   React.useEffect(() => {
@@ -1376,7 +2223,17 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <UploadContext.Provider
-      value={{ tasks, addTasks, removeTask, cancelTask, clearCompleted }}
+      value={{
+        tasks,
+        isPaused,
+        addTasks,
+        removeTask,
+        cancelTask,
+        clearCompleted,
+        pauseAll,
+        resumeAll,
+        retryTask,
+      }}
     >
       {children}
     </UploadContext.Provider>

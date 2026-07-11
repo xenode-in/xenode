@@ -12,6 +12,7 @@
     "test:coverage": "vitest run --coverage",
     "cron:expire": "node scripts/cron-trigger.mjs expire-plans",
     "cron:purge-bin": "node scripts/cron-trigger.mjs purge-bin",
+    "cron:cleanup-orphans": "node scripts/cron-trigger.mjs cleanup-orphans",
     "cron:charge": "node scripts/cron-trigger.mjs charge-recurring",
     "dev:worker": "tsx watch worker/index.ts",
     "postinstall": "mkdir -p public/ffmpeg && cp node_modules/@ffmpeg/core/dist/umd/ffmpeg-core.* public/ffmpeg/"

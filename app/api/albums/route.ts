@@ -12,7 +12,6 @@ import {
 import dbConnect from "@/lib/mongodb";
 import PhotoAlbum from "@/models/PhotoAlbum";
 import StorageObject from "@/models/StorageObject";
-import { generateUniqueAlbumSlug } from "@/lib/albums/slug";
 
 export const dynamic = "force-dynamic";
 
@@ -21,9 +20,10 @@ const COVER_PROJECTION =
 
 type AlbumDoc = {
   _id: Types.ObjectId;
-  name: string;
   slug?: string;
   description?: string;
+  encryptedName?: string | null;
+  sourceRef?: string | null;
   objectIds?: Types.ObjectId[];
   coverObjectId?: Types.ObjectId;
   createdAt?: Date;
@@ -42,8 +42,8 @@ type CoverDoc = {
   createdAt?: Date;
 };
 
-function normalizeName(value: unknown) {
-  return typeof value === "string" ? value.trim().slice(0, 80) : "";
+function normalizeEncryptedName(value: unknown) {
+  return typeof value === "string" ? value.trim().slice(0, 2048) : "";
 }
 
 function normalizeObjectIds(value: unknown): string[] {
@@ -58,12 +58,13 @@ function normalizeObjectIds(value: unknown): string[] {
   );
 }
 
-async function verifiedImageIds(ctx: AccessContext, objectIds: string[]) {
+// Albums hold photos AND videos; documents/audio/etc. stay excluded.
+async function verifiedMediaIds(ctx: AccessContext, objectIds: string[]) {
   if (objectIds.length === 0) return [];
   const objects = await StorageObject.find({
     _id: { $in: objectIds.map((id) => new Types.ObjectId(id)) },
     ...objectOwnershipClause(ctx),
-    mediaCategory: "image",
+    mediaCategory: { $in: ["image", "video"] },
     deletedAt: { $exists: false },
     isSidecar: { $ne: true },
   })
@@ -93,7 +94,8 @@ async function serializeAlbums(ctx: AccessContext, albums: AlbumDoc[]) {
     const cover = coverById.get(coverId);
     return {
       _id: String(album._id),
-      name: album.name,
+      encryptedName: album.encryptedName ?? null,
+      sourceRef: album.sourceRef ?? null,
       slug: album.slug ?? String(album._id),
       description: album.description ?? "",
       objectIds: ids,
@@ -130,24 +132,27 @@ export async function POST(request: NextRequest) {
   try {
     const ctx = await requireAccessContext(request);
     const body = await request.json().catch(() => ({}));
-    const name = normalizeName(body.name);
-    if (!name) {
-      return NextResponse.json({ error: "Album name is required" }, { status: 400 });
+    const encryptedName = normalizeEncryptedName(body.encryptedName);
+    if (!encryptedName) {
+      return NextResponse.json(
+        { error: "encryptedName is required" },
+        { status: 400 },
+      );
     }
 
     await dbConnect();
 
-    const objectIds = await verifiedImageIds(
+    const objectIds = await verifiedMediaIds(
       ctx,
       normalizeObjectIds(body.objectIds),
     );
-
-    const slug = await generateUniqueAlbumSlug(ctx.userId, name);
+    const albumId = new Types.ObjectId();
 
     const album = await PhotoAlbum.create({
+      _id: albumId,
       userId: ctx.userId,
-      name,
-      slug,
+      encryptedName,
+      slug: String(albumId),
       description:
         typeof body.description === "string"
           ? body.description.trim().slice(0, 500)

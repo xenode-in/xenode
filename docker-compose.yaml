@@ -140,6 +140,7 @@ services:
           '# ── Production jobs ───────────────────────────────────────────────────' \
           '0  0  * * *  curl -sf -X GET  http://app:3000/api/cron/expire-plans             -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
           '0  3  * * *  curl -sf -X GET  http://app:3000/api/cron/purge-bin                -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
+          '0  */6 * * * curl -sf -X GET  http://app:3000/api/cron/cleanup-orphans          -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
           '30 9  * * *  curl -sf -X POST http://app:3000/api/payment/payu/charge-recurring -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
           > /etc/crontabs/root
         echo "=== Cron sidecar ready. Jobs ==="

@@ -29,10 +29,10 @@ const cases = [
 
 export function UseCasesSection() {
   return (
-    <section className="relative z-10 border-b  flex justify-center px-6 md:px-8">
+    <section className="relative z-10 border-b border-border flex justify-center px-6 md:px-8">
       <div className="w-full max-w-[1200px] py-24 px-6">
         {/* Header */}
-        <p className="text-xs uppercase tracking-widest opacity-50 mb-3">
+        <p className="text-xs uppercase tracking-widest text-muted-foreground mb-3">
           XENODE SOLUTIONS
         </p>
         <h2 className="text-3xl md:text-5xl font-medium leading-tight tracking-tight mb-16">
@@ -46,27 +46,27 @@ export function UseCasesSection() {
             return (
               <div
                 key={c.title}
-                className="rounded-xl border  bg-white/5 p-8 backdrop-blur-sm flex flex-col gap-5 hover:border-white/20 transition-colors duration-200"
+                className="rounded-xl border border-border bg-card/85 p-8 backdrop-blur-sm flex flex-col gap-5 hover:border-primary/30 hover:shadow-sm transition-colors duration-200"
               >
                 <div className="flex items-start justify-between">
-                  <span className="text-xs uppercase tracking-widest opacity-50 border border-white/15 rounded-full px-3 py-1">
+                  <span className="text-xs uppercase tracking-widest text-muted-foreground border border-border bg-muted/60 rounded-full px-3 py-1">
                     {c.tag}
                   </span>
-                  <Icon className="w-5 h-5 opacity-40" />
+                  <Icon className="w-5 h-5 text-muted-foreground" />
                 </div>
 
                 <div>
                   <h3 className="text-xl font-semibold mb-2">{c.title}</h3>
-                  <p className="opacity-60 text-sm leading-relaxed">{c.body}</p>
+                  <p className="text-muted-foreground text-sm leading-relaxed">{c.body}</p>
                 </div>
 
                 <ul className="flex flex-col gap-2 mt-auto">
                   {c.bullets.map((b) => (
                     <li
                       key={b}
-                      className="flex items-start gap-2 text-sm opacity-70"
+                      className="flex items-start gap-2 text-sm text-muted-foreground"
                     >
-                      <span className="mt-1 w-1.5 h-1.5 rounded-full bg-[#7cb686] flex-shrink-0" />
+                      <span className="mt-1 w-1.5 h-1.5 rounded-full bg-primary flex-shrink-0" />
                       {b}
                     </li>
                   ))}

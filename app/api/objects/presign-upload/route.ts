@@ -13,6 +13,7 @@ import Bucket from "@/models/Bucket";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
 import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
+import { recordUploadSession, attachToUploadSession } from "@/lib/uploads/session";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +38,7 @@ export async function POST(request: NextRequest) {
 
     const keyId = S3_KEY_ID.trim();
     const appKey = S3_APPLICATION_KEY.trim();
-    const { fileSize, fileType, bucketId, prefix, fileName } =
+    const { fileSize, fileType, bucketId, prefix, fileName, sessionFileId } =
       await request.json();
 
     if (!bucketId) {
@@ -132,10 +133,36 @@ export async function POST(request: NextRequest) {
       expiresIn: 3600,
     });
 
+    // Ledger the in-flight upload so the cleanup-orphans cron can reclaim its
+    // blobs if it never finishes. When `sessionFileId` names a parent upload
+    // (optimized preview / thumbnail of a main file), attach this blob's key to
+    // that parent's session so it is protected by the parent's completion and
+    // reclaimed with it — but only if the parent session actually exists and is
+    // owned by this user. Otherwise this key owns a fresh session and
+    // pre-registers its own derived `-thumb` key.
+    let sessionId: string | undefined;
+    if (typeof sessionFileId === "string" && sessionFileId) {
+      sessionId = await attachToUploadSession({
+        userId,
+        bucketId: bucket._id,
+        parentFileId: sessionFileId,
+        key: opaqueKey,
+      });
+    }
+    if (!sessionId) {
+      sessionId = await recordUploadSession({
+        userId,
+        bucketId: bucket._id,
+        fileId: opaqueKey,
+        keys: [opaqueKey, `${opaqueKey}-thumb`],
+      });
+    }
+
     return NextResponse.json({
       uploadUrl: presignedUrl,
       objectKey: opaqueKey,
       bucketId: bucket._id.toString(),
+      sessionId,
     });
   } catch (error) {
     if (isAuthzError(error)) {

@@ -18,8 +18,20 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-function normalizeName(value: unknown) {
-  return typeof value === "string" ? value.trim().slice(0, 80) : "";
+function normalizeEncryptedName(value: unknown) {
+  return typeof value === "string" ? value.trim().slice(0, 2048) : "";
+}
+
+function normalizeSourceRef(value: unknown) {
+  return typeof value === "string" ? value.trim().slice(0, 128) : "";
+}
+
+function isDuplicateKeyError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: number }).code === 11000
+  );
 }
 
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
@@ -28,25 +40,51 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     ownerClause(ctx);
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
-    const name = normalizeName(body.name);
-    if (!name) {
-      return NextResponse.json({ error: "Album name is required" }, { status: 400 });
+    const encryptedName = normalizeEncryptedName(body.encryptedName);
+    const sourceRef = normalizeSourceRef(body.sourceRef);
+    const hasDescription = typeof body.description === "string";
+    if (!encryptedName && !sourceRef && !hasDescription) {
+      return NextResponse.json(
+        { error: "No album updates were provided" },
+        { status: 400 },
+      );
     }
 
     await dbConnect();
 
+    const update: Record<string, unknown> = {};
+    if (encryptedName) update.encryptedName = encryptedName;
+    if (sourceRef) update.sourceRef = sourceRef;
+    if (hasDescription) {
+      update.description = body.description.trim().slice(0, 500);
+    }
+
     // Slug stays stable across renames so existing album URLs keep resolving.
-    const album = await PhotoAlbum.findOneAndUpdate(
-      albumIdentifierFilter(ctx.userId, id),
-      {
-        name,
-        description:
-          typeof body.description === "string"
-            ? body.description.trim().slice(0, 500)
-            : undefined,
-      },
-      { new: true },
-    ).lean();
+    let album;
+    try {
+      album = await PhotoAlbum.findOneAndUpdate(
+        albumIdentifierFilter(ctx.userId, id),
+        update,
+        { new: true },
+      ).lean();
+    } catch (error) {
+      if (isDuplicateKeyError(error) && sourceRef) {
+        const conflict = await PhotoAlbum.findOne({
+          userId: ctx.userId,
+          sourceRef,
+        })
+          .select("_id")
+          .lean();
+        return NextResponse.json(
+          {
+            error: "sourceRef already in use",
+            conflictAlbumId: conflict ? String(conflict._id) : null,
+          },
+          { status: 409 },
+        );
+      }
+      throw error;
+    }
 
     if (!album) {
       return NextResponse.json({ error: "Album not found" }, { status: 404 });
@@ -57,6 +95,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
         ...album,
         _id: String(album._id),
         slug: album.slug ?? String(album._id),
+        encryptedName: album.encryptedName ?? null,
+        sourceRef: album.sourceRef ?? null,
         objectIds: (album.objectIds ?? []).map(String),
         objectCount: album.objectIds?.length ?? 0,
       },

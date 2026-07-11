@@ -31,6 +31,7 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { SignOutDialog } from "@/components/dashboard/SignOutDialog";
+import { MinimalThemeSelector } from "@/components/settings/minimal-theme-selector";
 import { useState, useEffect } from "react";
 
 interface DashboardShellProps {
@@ -52,9 +53,11 @@ interface DashboardShellProps {
 function SidebarNav({
   items,
   pathname,
+  onNavigate,
 }: {
   items: NavItem[];
   pathname: string;
+  onNavigate?: () => void;
 }) {
   return (
     <nav className="flex flex-col gap-1 px-3">
@@ -68,6 +71,7 @@ function SidebarNav({
           <Link
             key={item.href}
             href={item.href}
+            onClick={onNavigate}
             className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 group ${
               isActive
                 ? "bg-sidebar-accent text-sidebar-accent-foreground"
@@ -118,6 +122,11 @@ export function DashboardShell({
     }
     return () => clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setMobileOpen(false), 0);
+    return () => clearTimeout(timer);
+  }, [pathname]);
 
   const initials = user.name
     ? user.name
@@ -222,7 +231,11 @@ export function DashboardShell({
                     </div>
                   )}
                   <div className="py-4">
-                    <SidebarNav items={navItems} pathname={pathname} />
+                    <SidebarNav
+                      items={navItems}
+                      pathname={pathname}
+                      onNavigate={() => setMobileOpen(false)}
+                    />
                   </div>
                 </SheetContent>
               </Sheet>
@@ -241,8 +254,9 @@ export function DashboardShell({
             </div>
             
 
-            {/* Notifications + user dropdown */}
+            {/* Notifications + theme + user dropdown */}
             <div className="ml-auto flex items-center gap-1 shrink-0">
+              <MinimalThemeSelector />
               {mounted && <NotificationBell />}
               {mounted ? (
                 <DropdownMenu>

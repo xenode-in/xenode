@@ -15,6 +15,7 @@ import StorageObject from "@/models/StorageObject";
 import AlbumShareLink from "@/models/AlbumShareLink";
 import { albumIdentifierFilter } from "@/lib/albums/slug";
 import { deleteAlbumShareThumbnails } from "@/lib/albums/cleanup";
+import { ALBUM_OBJECTS_MAX_BATCH } from "@/lib/albums/constants";
 
 export const dynamic = "force-dynamic";
 
@@ -41,12 +42,13 @@ function normalizeObjectIds(value: unknown): string[] {
   );
 }
 
-async function verifiedImageIds(ctx: AccessContext, objectIds: string[]) {
+// Albums hold photos AND videos; documents/audio/etc. stay excluded.
+async function verifiedMediaIds(ctx: AccessContext, objectIds: string[]) {
   if (objectIds.length === 0) return [];
   const objects = await StorageObject.find({
     _id: { $in: objectIds.map((id) => new Types.ObjectId(id)) },
     ...objectOwnershipClause(ctx),
-    mediaCategory: "image",
+    mediaCategory: { $in: ["image", "video"] },
     deletedAt: { $exists: false },
     isSidecar: { $ne: true },
   })
@@ -73,13 +75,25 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     ownerClause(ctx);
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
+    const requestedIds = normalizeObjectIds(body.objectIds);
+
+    if (requestedIds.length === 0) {
+      return NextResponse.json({ error: "No valid images were provided" }, { status: 400 });
+    }
+    if (requestedIds.length > ALBUM_OBJECTS_MAX_BATCH) {
+      return NextResponse.json(
+        { error: `At most ${ALBUM_OBJECTS_MAX_BATCH} objects per request` },
+        { status: 400 },
+      );
+    }
 
     await dbConnect();
 
-    const verifiedIds = await verifiedImageIds(
-      ctx,
-      normalizeObjectIds(body.objectIds),
-    );
+    const verifiedIds = await verifiedMediaIds(ctx, requestedIds);
+    const verifiedSet = new Set(verifiedIds.map(String));
+    // Ids that were filtered out (deleted, foreign, sidecar, non-media).
+    // Clients use this to settle those memberships instead of retrying.
+    const invalidIds = requestedIds.filter((value) => !verifiedSet.has(value));
 
     if (verifiedIds.length === 0) {
       return NextResponse.json({ error: "No valid images were provided" }, { status: 400 });
@@ -103,7 +117,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       await album.save();
     }
 
-    return NextResponse.json({ album: serializeAlbum(album.toObject()) });
+    return NextResponse.json({
+      album: serializeAlbum(album.toObject()),
+      addedCount: verifiedIds.length,
+      invalidIds,
+    });
   } catch (error: unknown) {
     if (isAuthzError(error)) {
       return toJsonResponse(error);

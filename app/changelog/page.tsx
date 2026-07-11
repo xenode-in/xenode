@@ -20,12 +20,12 @@ interface ChangelogGroup {
 }
 
 const TAG_COLORS: Record<string, { bg: string; text: string }> = {
-  Feature: { bg: "rgba(124, 182, 134, 0.15)", text: "#7cb686" },
-  Release: { bg: "rgba(130, 170, 255, 0.15)", text: "#82aaff" },
-  Infrastructure: { bg: "rgba(255, 179, 71, 0.15)", text: "#ffb347" },
-  Announcement: { bg: "rgba(200, 160, 255, 0.15)", text: "#c8a0ff" },
-  Improvement: { bg: "rgba(100, 220, 200, 0.15)", text: "#64dcc8" },
-  Update: { bg: "rgba(180, 180, 180, 0.15)", text: "#b4b4b4" },
+  Feature: { bg: "rgba(20, 108, 56, 0.12)", text: "#146c38" },
+  Release: { bg: "rgba(0, 63, 186, 0.12)", text: "#003fba" },
+  Infrastructure: { bg: "rgba(161, 86, 0, 0.13)", text: "#9a5200" },
+  Announcement: { bg: "rgba(109, 40, 217, 0.12)", text: "#5b21b6" },
+  Improvement: { bg: "rgba(15, 118, 110, 0.12)", text: "#0f766e" },
+  Update: { bg: "rgba(81, 97, 125, 0.14)", text: "#34435e" },
 };
 
 function ChangelogEntry({
@@ -88,8 +88,8 @@ function ChangelogEntry({
         <div
           className={`w-[9px] h-[9px] rounded-full border-2 transition-colors duration-300 ${
             isFirst
-              ? "bg-[#7cb686] border-[#7cb686] shadow-[0_0_8px_rgba(124,182,134,0.5)]"
-              : "bg-transparent border-[#e8e4d9]/30 group-hover:border-[#7cb686] group-hover:bg-[#7cb686]/50"
+              ? "bg-primary border-primary shadow-[0_0_8px_rgba(0,63,186,0.35)]"
+              : "bg-transparent border-border group-hover:border-primary group-hover:bg-primary/50"
           }`}
         />
       </div>
@@ -137,7 +137,7 @@ function ChangelogEntry({
         {/* Expand/Collapse button */}
         <button
           onClick={handleExpand}
-          className="flex items-center gap-1.5 text-[13px] font-medium text-[#7cb686]/80 hover:text-[#7cb686] transition-colors cursor-pointer group/btn"
+          className="flex items-center gap-1.5 text-[13px] font-medium text-primary/80 hover:text-primary transition-colors cursor-pointer group/btn"
         >
           {isExpanded ? (
             <>
@@ -159,13 +159,13 @@ function ChangelogEntry({
           }`}
         >
           {isLoading ? (
-            <div className="flex items-center gap-2 text-[#e8e4d9]/40 text-sm py-4">
-              <div className="w-4 h-4 border-2 border-[#7cb686]/30 border-t-[#7cb686] rounded-full animate-spin" />
+            <div className="flex items-center gap-2 text-muted-foreground text-sm py-4">
+              <div className="w-4 h-4 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
               Loading...
             </div>
           ) : content ? (
             <div
-              className="changelog-content prose prose-invert max-w-none text-[#e8e4d9]/75 text-[15px] leading-relaxed"
+              className="changelog-content prose max-w-none text-foreground text-[15px] leading-relaxed"
               dangerouslySetInnerHTML={{ __html: content }}
             />
           ) : null}
@@ -200,7 +200,7 @@ export default function ChangelogPage() {
 
       {/* Grain overlay */}
       <div
-        className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat"
+        className="fixed inset-0 pointer-events-none z-20 contrast-200 bg-center bg-contain bg-fixed bg-repeat opacity-30 dark:opacity-75"
         style={{
           backgroundImage: "url('/grain.png')",
         }}
@@ -244,20 +244,20 @@ export default function ChangelogPage() {
             <div className="space-y-12">
               {[1, 2, 3].map((i) => (
                 <div key={i} className="animate-pulse">
-                  <div className="h-4 w-32 bg-[#e8e4d9]/10 rounded mb-6" />
+                  <div className="h-4 w-32 bg-muted rounded mb-6" />
                   <div className="space-y-8">
                     <div>
-                      <div className="h-3 w-20 bg-[#e8e4d9]/5 rounded mb-2" />
-                      <div className="h-6 w-64 bg-[#e8e4d9]/10 rounded mb-2" />
-                      <div className="h-4 w-full bg-[#e8e4d9]/5 rounded" />
+                      <div className="h-3 w-20 bg-muted/60 rounded mb-2" />
+                      <div className="h-6 w-64 bg-muted rounded mb-2" />
+                      <div className="h-4 w-full bg-muted/60 rounded" />
                     </div>
                   </div>
                 </div>
               ))}
             </div>
           ) : totalEntries === 0 ? (
-            <div className="text-center py-20 bg-white/5 rounded-2xl border ">
-              <p className="text-lg text-[#e8e4d9]/50">
+            <div className="text-center py-20 bg-card rounded-2xl border border-border">
+              <p className="text-lg text-muted-foreground">
                 No changelog entries yet. Check back soon!
               </p>
             </div>
@@ -267,16 +267,16 @@ export default function ChangelogPage() {
                 <section key={group.label}>
                   {/* Month header */}
                   <div className="flex items-center gap-4 mb-8">
-                    <h2 className="text-sm font-semibold uppercase tracking-[0.15em] text-[#e8e4d9]/40 shrink-0">
+                    <h2 className="text-sm font-semibold uppercase tracking-[0.15em] text-muted-foreground shrink-0">
                       {group.label}
                     </h2>
-                    <div className="h-px flex-1 bg-[#e8e4d9]/10" />
+                    <div className="h-px flex-1 bg-muted" />
                   </div>
 
                   {/* Entries with timeline */}
                   <div className="relative">
                     {/* Vertical timeline line */}
-                    <div className="absolute left-[4px] top-[6px] bottom-4 w-px bg-[#e8e4d9]/10 hidden md:block" />
+                    <div className="absolute left-[4px] top-[6px] bottom-4 w-px bg-muted hidden md:block" />
 
                     <div className="space-y-10">
                       {group.entries.map((entry, idx) => (
@@ -308,25 +308,27 @@ export default function ChangelogPage() {
         .changelog-content h2 {
           font-size: 1.15rem;
           font-weight: 600;
-          color: rgba(232, 228, 217, 0.9);
+          color: var(--foreground);
           margin-top: 1.25rem;
           margin-bottom: 0.5rem;
         }
         .changelog-content h3 {
           font-size: 1.05rem;
           font-weight: 600;
-          color: rgba(232, 228, 217, 0.85);
+          color: var(--foreground);
           margin-top: 1rem;
           margin-bottom: 0.4rem;
         }
         .changelog-content p {
           margin-bottom: 0.75rem;
           line-height: 1.7;
+          color: var(--muted-foreground);
         }
         .changelog-content ul,
         .changelog-content ol {
           margin: 0.5rem 0 1rem 0;
           padding-left: 1.25rem;
+          color: var(--muted-foreground);
         }
         .changelog-content ul {
           list-style-type: disc;
@@ -339,20 +341,20 @@ export default function ChangelogPage() {
           line-height: 1.6;
         }
         .changelog-content li strong {
-          color: rgba(232, 228, 217, 0.85);
+          color: var(--foreground);
         }
         .changelog-content code {
-          background: rgba(0, 0, 0, 0.3);
+          background: var(--muted);
           padding: 0.15rem 0.4rem;
           border-radius: 4px;
           font-size: 0.85em;
           font-family:
             ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-          color: #7cb686;
+          color: var(--primary);
         }
         .changelog-content pre {
-          background: rgba(0, 0, 0, 0.4);
-          border: 1px solid rgba(255, 255, 255, 0.08);
+          background: var(--muted);
+          border: 1px solid var(--border);
           border-radius: 0.75rem;
           padding: 1rem 1.25rem;
           overflow-x: auto;
@@ -361,7 +363,7 @@ export default function ChangelogPage() {
         .changelog-content pre code {
           background: none;
           padding: 0;
-          color: rgba(232, 228, 217, 0.7);
+          color: var(--foreground);
           font-size: 0.85em;
           line-height: 1.6;
         }
@@ -374,8 +376,8 @@ export default function ChangelogPage() {
         .changelog-content th {
           text-align: left;
           padding: 0.5rem 1rem;
-          border-bottom: 1px solid rgba(232, 228, 217, 0.15);
-          color: rgba(232, 228, 217, 0.6);
+          border-bottom: 1px solid var(--border);
+          color: var(--muted-foreground);
           font-weight: 600;
           font-size: 0.85em;
           text-transform: uppercase;
@@ -383,27 +385,27 @@ export default function ChangelogPage() {
         }
         .changelog-content td {
           padding: 0.4rem 1rem;
-          border-bottom: 1px solid rgba(232, 228, 217, 0.06);
+          border-bottom: 1px solid var(--border);
         }
         .changelog-content a {
-          color: #7cb686;
+          color: var(--primary);
           text-decoration: underline;
           text-underline-offset: 2px;
           transition: color 0.2s;
         }
         .changelog-content a:hover {
-          color: #a5d4ad;
+          color: var(--ring);
         }
         .changelog-content blockquote {
-          border-left: 3px solid #7cb686;
+          border-left: 3px solid var(--primary);
           padding-left: 1rem;
           margin: 0.75rem 0;
-          color: rgba(232, 228, 217, 0.55);
+          color: var(--muted-foreground);
           font-style: italic;
         }
         .changelog-content hr {
           border: none;
-          border-top: 1px solid rgba(232, 228, 217, 0.1);
+          border-top: 1px solid var(--border);
           margin: 1.5rem 0;
         }
       `}</style>

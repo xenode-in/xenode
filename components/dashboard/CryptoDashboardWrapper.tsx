@@ -15,12 +15,9 @@ export function CryptoDashboardWrapper({ children }: { children: React.ReactNode
   // Non-blocking — user can dismiss the banner and use the dashboard without encryption
   const showSetupBanner = !isInitializing && needsSetup && !bannerDismissed;
 
-  // Unlock modal: shown when vault exists but keys aren't in IDB cache
+  // Unlock modal: only opens from explicit recovery/unlock actions.
   const showUnlockModal =
-    !isInitializing &&
-    !needsSetup &&
-    !isUnlocked &&
-    (isModalOpen || !unlockDismissed);
+    !isInitializing && !needsSetup && !isUnlocked && isModalOpen && !unlockDismissed;
 
   return (
     <>
@@ -33,7 +30,7 @@ export function CryptoDashboardWrapper({ children }: { children: React.ReactNode
             </div>
             <div>
               <p className="text-sm font-medium text-foreground">
-                Your files aren't protected yet
+                Your files aren&apos;t protected yet
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Set up encryption to keep your files private. Takes 30 seconds.
