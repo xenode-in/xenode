@@ -23,7 +23,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     await dbConnect();
 
     const share = await DirectShare.findOne({ _id: id, isRevoked: false })
-      .populate("objectId", "key size contentType isEncrypted encryptedName thumbnail mediaCategory")
+      .populate(
+        "objectId",
+        "key size contentType isEncrypted encryptedName thumbnail mediaCategory iv revision",
+      )
       .lean();
 
     if (!share) {
@@ -53,6 +56,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       shareEncryptedContentType: share.shareEncryptedContentType,
       shareEncryptedThumbnail: share.shareEncryptedThumbnail,
       recipient,
+      role: normalizeShareRole(recipient.accessType),
       createdAt: share.createdAt,
     });
   } catch (error: unknown) {
@@ -129,6 +133,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       update.shareKeyIv = body.shareKeyIv;
       update.shareEncryptedName = body.shareEncryptedName;
       update.shareEncryptedContentType = body.shareEncryptedContentType;
+      if ("shareEncryptedThumbnail" in body) {
+        update.shareEncryptedThumbnail = body.shareEncryptedThumbnail;
+      }
     }
 
     const share = await DirectShare.findOneAndUpdate(

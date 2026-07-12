@@ -73,12 +73,15 @@ export interface LoadedWorkbook {
   workbook: NormalizedWorkbook;
   compatibility: CompatibilityReport;
   dek: CryptoKey;
+  /** Present when the workbook was opened through a DirectShare (recipient mode). */
+  share?: { shareId: string; role: import("@/lib/orgs/shareRoles").ShareRole };
 }
 export interface SaveWorkbookInput { loaded: LoadedWorkbook; workbook: NormalizedWorkbook; signal?: AbortSignal }
 export interface SaveWorkbookResult { revision: number; savedAt: string }
 export interface SpreadsheetPersistenceAdapter {
   load(objectId: string, signal?: AbortSignal): Promise<LoadedWorkbook>;
   save(input: SaveWorkbookInput): Promise<SaveWorkbookResult>;
+  dispose?(): void;
 }
 export interface CollaborationContext { objectId: string; workspace: SpreadsheetWorkspace }
 export interface SpreadsheetCollaborationAdapter {

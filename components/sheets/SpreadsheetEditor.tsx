@@ -4,8 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { FileVersionsDialog } from "@/components/dashboard/FileVersionsDialog";
 import { deleteSpreadsheetDraft, saveEncryptedSpreadsheetDraft } from "@/lib/spreadsheets/recovery";
-import { SpreadsheetConflictError, XenodeSpreadsheetPersistenceAdapter } from "@/lib/spreadsheets/persistence";
-import type { LoadedWorkbook, NormalizedWorkbook, SpreadsheetExportFormat } from "@/lib/spreadsheets/types";
+import { SpreadsheetConflictError } from "@/lib/spreadsheets/persistence";
+import type { LoadedWorkbook, NormalizedWorkbook, SpreadsheetExportFormat, SpreadsheetPersistenceAdapter } from "@/lib/spreadsheets/types";
+import { Badge } from "@/components/ui/badge";
+import { ShareAccessRequestButton } from "@/components/ShareAccessRequestButton";
 import { normalizedToUniver, univerToNormalized, type UniverWorkbookData } from "@/lib/spreadsheets/univerAdapter";
 import { SpreadsheetWorkerClient } from "@/lib/spreadsheets/workerClient";
 import { SpreadsheetCompatibilityDialog } from "./SpreadsheetCompatibilityDialog";
@@ -13,7 +15,7 @@ import { SpreadsheetConflictDialog } from "./SpreadsheetConflictDialog";
 import { SpreadsheetHeader, type SpreadsheetSaveState } from "./SpreadsheetHeader";
 import { SpreadsheetLoadingState } from "./SpreadsheetLoadingState";
 
-export function SpreadsheetEditor({ loaded, persistence, userId, recoveryKey, onReload, onSaveCopy, onBack }: { loaded: LoadedWorkbook; persistence: XenodeSpreadsheetPersistenceAdapter; userId: string; recoveryKey: CryptoKey; onReload: () => void; onSaveCopy?: (file: File) => void; onBack: () => void }) {
+export function SpreadsheetEditor({ loaded, persistence, userId, recoveryKey, onReload, onSaveCopy, onBack }: { loaded: LoadedWorkbook; persistence: SpreadsheetPersistenceAdapter; userId: string; recoveryKey: CryptoKey; onReload: () => void; onSaveCopy?: (file: File) => void; onBack: () => void }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const apiRef = useRef<any>(null);
   const currentRef = useRef<NormalizedWorkbook>(loaded.workbook);
@@ -48,6 +50,16 @@ export function SpreadsheetEditor({ loaded, persistence, userId, recoveryKey, on
       const created = createUniver({ locale: LocaleType.EN_US, locales: { [LocaleType.EN_US]: mergeLocales(enUS) }, presets: [UniverSheetsCorePreset({ container: containerRef.current, header: true, toolbar: true, formulaBar: true, footer: { sheetBar: true, statisticBar: true } })] });
       univer = created.univer; apiRef.current = created.univerAPI;
       created.univerAPI.createWorkbook(normalizedToUniver(loaded.workbook) as any);
+      if (loaded.readOnly) {
+        // Truly lock the workbook — the save path being blocked is not enough,
+        // a viewer must not be able to type into cells at all.
+        const fWorkbook = created.univerAPI.getActiveWorkbook?.();
+        try {
+          fWorkbook?.setEditable(false);
+        } catch {
+          await fWorkbook?.getWorkbookPermission?.()?.setReadOnly?.().catch(() => {});
+        }
+      }
       commandSubscription = created.univerAPI.addEvent(created.univerAPI.Event.CommandExecuted, (event: { id?: string }) => {
         const id = event.id ?? "";
         if (!id.includes("command") || /activate|selection|scroll/i.test(id)) return;
@@ -124,10 +136,10 @@ export function SpreadsheetEditor({ loaded, persistence, userId, recoveryKey, on
     else downloadFile(file);
   }, [createExportFile, downloadFile, onSaveCopy]);
 
-  return <div className="flex h-full min-h-0 flex-col"><SpreadsheetHeader name={loaded.name} workspace={loaded.workspace.type === "personal" ? "Personal workspace" : "Organization workspace"} state={state} onSave={save} onExport={(format) => void exportFile(format)} onUndo={() => void apiRef.current?.undo()} onRedo={() => void apiRef.current?.redo()} onVersions={() => setVersionsOpen(true)} onBack={onBack}/><div className="relative min-h-0 flex-1">{!ready && <div className="absolute inset-0 z-10 bg-background"><SpreadsheetLoadingState label="Starting spreadsheet editor"/></div>}<div ref={containerRef} className="h-full w-full"/></div>
+  return <div className="flex h-full min-h-0 flex-col"><SpreadsheetHeader name={loaded.name} workspace={loaded.share ? "Shared with you" : loaded.workspace.type === "personal" ? "Personal workspace" : "Organization workspace"} state={state} onSave={save} onExport={(format) => void exportFile(format)} onUndo={() => void apiRef.current?.undo()} onRedo={() => void apiRef.current?.redo()} onVersions={loaded.share ? undefined : () => setVersionsOpen(true)} onBack={onBack} accessSlot={loaded.share && loaded.readOnly ? <div className="mr-1 flex items-center gap-1.5"><Badge variant="secondary">View only</Badge><ShareAccessRequestButton shareId={loaded.share.shareId} currentRole={loaded.share.role}/></div> : undefined}/><div className="relative min-h-0 flex-1">{!ready && <div className="absolute inset-0 z-10 bg-background"><SpreadsheetLoadingState label="Starting spreadsheet editor"/></div>}<div ref={containerRef} className="h-full w-full"/></div>
     <SpreadsheetCompatibilityDialog open={compatibilityOpen} report={loaded.compatibility} onCancel={() => { setCompatibilityOpen(false); setState("dirty"); }} onContinue={() => { setCompatibilityOpen(false); void performSave(); }}/>
     <SpreadsheetConflictDialog open={conflictOpen} onCancel={() => setConflictOpen(false)} onReload={() => { setConflictOpen(false); onReload(); }} onDownload={() => void downloadLocal(false)} onSaveCopy={() => void downloadLocal(true)}/>
-    <FileVersionsDialog fileId={loaded.objectId} fileName={loaded.name} isOpen={versionsOpen} onClose={() => setVersionsOpen(false)} onRestored={() => { setVersionsOpen(false); if (state === "dirty" && !confirm("Restoring will discard unsaved local edits. Continue?")) return; onReload(); }}/>
+    {!loaded.share && <FileVersionsDialog fileId={loaded.objectId} fileName={loaded.name} isOpen={versionsOpen} onClose={() => setVersionsOpen(false)} onRestored={() => { setVersionsOpen(false); if (state === "dirty" && !confirm("Restoring will discard unsaved local edits. Continue?")) return; onReload(); }}/>}
   </div>;
 }
 

@@ -38,6 +38,33 @@ export async function POST(request: NextRequest) {
 
     const object = await assertObjectAccess(ctx, objectId, "share", { lean: true });
 
+    const existing = await DirectShare.findOne({
+      objectId: object._id,
+      createdBy: userId,
+      isRevoked: false,
+    })
+      .sort({ createdAt: -1 })
+      .select("_id recipients")
+      .lean();
+
+    if (existing) {
+      return NextResponse.json(
+        {
+          error: "This file is already shared. Update the existing share instead.",
+          code: "share_exists",
+          directShareId: String(existing._id),
+          recipients: (existing.recipients || []).map((recipient) => ({
+            recipientUserId: recipient.recipientUserId,
+            recipientEmail: recipient.recipientEmail,
+            accessType: normalizeShareRole(recipient.accessType),
+            downloadCount: recipient.downloadCount ?? 0,
+            lastAccessedAt: recipient.lastAccessedAt ?? null,
+          })),
+        },
+        { status: 409 },
+      );
+    }
+
     if (object.isEncrypted && (!shareEncryptedDEK || !shareKeyIv)) {
       return NextResponse.json(
         { error: "Encrypted direct-share key package is required for E2EE files" },
@@ -102,10 +129,20 @@ export async function GET(request: NextRequest) {
     const ctx = await requireAccessContext(request);
     await dbConnect();
 
-    const directShares = await DirectShare.find({
+    const filter: Record<string, unknown> = {
       createdBy: ctx.userId,
       isRevoked: false,
-    })
+    };
+
+    const objectIdParam = request.nextUrl.searchParams.get("objectId");
+    if (objectIdParam !== null) {
+      if (!/^[a-f\d]{24}$/i.test(objectIdParam)) {
+        return NextResponse.json({ error: "Invalid objectId" }, { status: 400 });
+      }
+      filter.objectId = objectIdParam;
+    }
+
+    const directShares = await DirectShare.find(filter)
       .populate(
         "objectId",
         "key size contentType isEncrypted encryptedName encryptedContentType mediaCategory",

@@ -22,7 +22,7 @@ import {
 } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
 import { encryptShareKeyForOwner } from "@/lib/crypto/shareKey";
-import { type ShareRole } from "@/lib/orgs/shareRoles";
+import { normalizeShareRole, type ShareRole } from "@/lib/orgs/shareRoles";
 import {
   Dialog,
   DialogContent,
@@ -429,99 +429,185 @@ export function ShareDialog({
       }
 
       if (recipientEmails.length > 0) {
-        const lookupRes = workspace?.scopedFetch
-          ? await workspace.scopedFetch("/api/direct-shares/recipients", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ emails: recipientEmails }),
-            })
-          : await fetch("/api/direct-shares/recipients", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ emails: recipientEmails }),
-            });
-        const lookupData = await lookupRes.json();
-        if (!lookupRes.ok) throw new Error(lookupData.error);
+        const scopedOrPlainFetch = (input: string, init?: RequestInit) =>
+          workspace?.scopedFetch
+            ? workspace.scopedFetch(input, init)
+            : fetch(input, init);
 
-        if (lookupData.unavailable?.length) {
-          throw new Error(
-            lookupData.unavailable
-              .map(
-                (item: { email: string; reason: string }) =>
-                  `${item.email}: ${item.reason}`,
-              )
-              .join(" | "),
+        async function lookupRecipients(emails: string[]) {
+          const lookupRes = await scopedOrPlainFetch(
+            "/api/direct-shares/recipients",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ emails }),
+            },
           );
+          const lookupData = await lookupRes.json();
+          if (!lookupRes.ok) throw new Error(lookupData.error);
+
+          if (lookupData.unavailable?.length) {
+            throw new Error(
+              lookupData.unavailable
+                .map(
+                  (item: { email: string; reason: string }) =>
+                    `${item.email}: ${item.reason}`,
+                )
+                .join(" | "),
+            );
+          }
+
+          return lookupData.recipients as RecipientLookup[];
         }
 
-        const recipients = await Promise.all(
-          (lookupData.recipients as RecipientLookup[]).map(
-            async (recipient) => {
-              let wrappedShareKey = "";
+        async function wrapShareKeyForRecipient(recipient: RecipientLookup) {
+          if (!primaryFile.isEncrypted) return "";
+          if (!shareKeyRaw) {
+            throw new Error("Missing encrypted share key package");
+          }
 
-              if (primaryFile.isEncrypted) {
-                if (!shareKeyRaw) {
-                  throw new Error("Missing encrypted share key package");
-                }
+          const recipientPublicKey = await crypto.subtle.importKey(
+            "spki",
+            fromB64(recipient.publicKey).buffer as ArrayBuffer,
+            { name: "RSA-OAEP", hash: "SHA-256" },
+            false,
+            ["encrypt"],
+          );
 
-                const recipientPublicKey = await crypto.subtle.importKey(
-                  "spki",
-                  fromB64(recipient.publicKey).buffer as ArrayBuffer,
-                  { name: "RSA-OAEP", hash: "SHA-256" },
-                  false,
-                  ["encrypt"],
-                );
+          const wrapped = await crypto.subtle.encrypt(
+            { name: "RSA-OAEP" },
+            recipientPublicKey,
+            shareKeyRaw.buffer.slice(
+              shareKeyRaw.byteOffset,
+              shareKeyRaw.byteOffset + shareKeyRaw.byteLength,
+            ) as ArrayBuffer,
+          );
+          return bytesToB64(wrapped);
+        }
 
-                const wrapped = await crypto.subtle.encrypt(
-                  { name: "RSA-OAEP" },
-                  recipientPublicKey,
-                  shareKeyRaw.buffer.slice(
-                    shareKeyRaw.byteOffset,
-                    shareKeyRaw.byteOffset + shareKeyRaw.byteLength,
-                  ) as ArrayBuffer,
-                );
-                wrappedShareKey = bytesToB64(wrapped);
-              }
+        interface ExistingShareRecipient {
+          recipientUserId: string;
+          recipientEmail: string;
+          accessType?: string;
+          downloadCount?: number;
+          lastAccessedAt?: string | null;
+        }
 
+        // Drive-style merge: re-sharing updates the existing share instead of
+        // creating a duplicate. Rotates the key package (same DEK) for the
+        // union of old + new recipients.
+        async function mergeIntoExistingShare(existing: {
+          id: string;
+          recipients: ExistingShareRecipient[];
+        }) {
+          const emailRoles = new Map<string, string>();
+          const carryOver = new Map<string, ExistingShareRecipient>();
+          for (const prior of existing.recipients) {
+            const email = String(prior.recipientEmail).toLowerCase();
+            emailRoles.set(email, normalizeShareRole(prior.accessType));
+            carryOver.set(email, prior);
+          }
+          for (const email of recipientEmails) {
+            emailRoles.set(email.toLowerCase(), shareRole);
+          }
+
+          const lookups = await lookupRecipients([...emailRoles.keys()]);
+          const recipients = await Promise.all(
+            lookups.map(async (recipient) => {
+              const email = recipient.email.toLowerCase();
+              const prior = carryOver.get(email);
               return {
                 recipientUserId: recipient.userId,
                 recipientEmail: recipient.email,
-                wrappedShareKey,
-                accessType: shareRole,
+                wrappedShareKey: await wrapShareKeyForRecipient(recipient),
+                accessType: emailRoles.get(email) ?? shareRole,
+                downloadCount: prior?.downloadCount ?? 0,
+                lastAccessedAt: prior?.lastAccessedAt ?? undefined,
               };
+            }),
+          );
+
+          const patchBody: Record<string, unknown> = { recipients };
+          if (primaryFile.isEncrypted) {
+            patchBody.shareEncryptedDEK = shareEncryptedDEK;
+            patchBody.shareKeyIv = shareKeyIv;
+            patchBody.shareEncryptedName = shareEncryptedName;
+            patchBody.shareEncryptedContentType = shareEncryptedContentType;
+            patchBody.shareEncryptedThumbnail = shareEncryptedThumbnail;
+          }
+
+          const patchRes = await scopedOrPlainFetch(
+            `/api/direct-shares/${existing.id}`,
+            {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(patchBody),
             },
-          ),
+          );
+          const patchData = await patchRes.json();
+          if (!patchRes.ok) throw new Error(patchData.error);
+
+          setShareUrl(null);
+          setDirectShareSummary(
+            `Updated share — now ${recipients.length} recipient${recipients.length === 1 ? "" : "s"}.`,
+          );
+          toast.success("Share updated");
+        }
+
+        const existingRes = await scopedOrPlainFetch(
+          `/api/direct-shares?objectId=${primaryFile.id}`,
+        );
+        if (existingRes.ok) {
+          const existingData = await existingRes.json();
+          const newest = Array.isArray(existingData.directShares)
+            ? existingData.directShares[0]
+            : null;
+          if (newest) {
+            await mergeIntoExistingShare({
+              id: String(newest._id),
+              recipients: (newest.recipients ??
+                []) as ExistingShareRecipient[],
+            });
+            return;
+          }
+        }
+
+        const lookups = await lookupRecipients(recipientEmails);
+        const recipients = await Promise.all(
+          lookups.map(async (recipient) => ({
+            recipientUserId: recipient.userId,
+            recipientEmail: recipient.email,
+            wrappedShareKey: await wrapShareKeyForRecipient(recipient),
+            accessType: shareRole,
+          })),
         );
 
-        const directShareRes = workspace?.scopedFetch
-          ? await workspace.scopedFetch("/api/direct-shares", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                objectId: primaryFile.id,
-                shareEncryptedDEK,
-                shareKeyIv,
-                shareEncryptedName,
-                shareEncryptedContentType,
-                shareEncryptedThumbnail,
-                recipients,
-              }),
-            })
-          : await fetch("/api/direct-shares", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                objectId: primaryFile.id,
-                shareEncryptedDEK,
-                shareKeyIv,
-                shareEncryptedName,
-                shareEncryptedContentType,
-                shareEncryptedThumbnail,
-                recipients,
-              }),
-            });
+        const directShareRes = await scopedOrPlainFetch("/api/direct-shares", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            objectId: primaryFile.id,
+            shareEncryptedDEK,
+            shareKeyIv,
+            shareEncryptedName,
+            shareEncryptedContentType,
+            shareEncryptedThumbnail,
+            recipients,
+          }),
+        });
         const directShareData = await directShareRes.json();
-        if (!directShareRes.ok) throw new Error(directShareData.error);
+        if (!directShareRes.ok) {
+          if (directShareData.code === "share_exists") {
+            // Race fallback: another request created the share since our pre-check.
+            await mergeIntoExistingShare({
+              id: String(directShareData.directShareId),
+              recipients: (directShareData.recipients ??
+                []) as ExistingShareRecipient[],
+            });
+            return;
+          }
+          throw new Error(directShareData.error);
+        }
 
         setShareUrl(null);
         setDirectShareSummary(

@@ -10,15 +10,17 @@ interface RouteParams {
   params: Promise<{ orgId: string }>;
 }
 
-const PROJECTION = "size contentType mediaCategory starred createdAt lastAccessedAt bucketId";
+const PROJECTION =
+  "size contentType mediaCategory starred createdAt lastAccessedAt bucketId isEncrypted encryptedName";
 const MAX = 100;
 
 /**
  * GET /api/orgs/[orgId]/objects/browse?scope=recent|favorites|bin
  *
  * Cross-bucket, read-only object listing for the Recent / Favorites / Bin
- * collaboration screens. Returns opaque metadata only (size/category/date/
- * starred) — never plaintext names or crypto fields.
+ * collaboration screens. `encryptedName` is AES-GCM ciphertext (decryptable only
+ * with the org space key the member already holds) — no plaintext leaves the
+ * server; crypto keys/DEK are never returned.
  */
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
@@ -51,6 +53,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         mediaCategory: o.mediaCategory ?? "other",
         starred: !!o.starred,
         createdAt: o.createdAt ?? null,
+        isEncrypted: !!o.isEncrypted,
+        encryptedName: o.encryptedName ?? null,
+        deletedAt: bin ? (o as { deletedAt?: Date }).deletedAt ?? null : null,
       })),
     });
   } catch (error) {

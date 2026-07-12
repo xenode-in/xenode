@@ -14,6 +14,7 @@ import { OrgAnalyticsClient } from "@/components/organizations/OrgAnalyticsClien
 import { OrgSecurityClient } from "@/components/organizations/OrgSecurityClient";
 import { OrgPeopleClient } from "@/components/organizations/OrgPeopleClient";
 import { OrgObjectList } from "@/components/organizations/OrgObjectList";
+import { OrgBinClient } from "@/components/organizations/OrgBinClient";
 import { OrgSharesClient } from "@/components/organizations/OrgSharesClient";
 import { OrgPageHeader } from "@/components/organizations/org-ui";
 import { OrgComingSoon } from "@/components/dashboard/OrgComingSoon";
@@ -190,7 +191,13 @@ export default async function OrgSectionPage({ params }: PageProps) {
   }
 
   // Collaboration file views need a space key — guests can't use them.
-  if (section === "recent" || section === "favorites" || section === "bin") {
+  if (section === "bin") {
+    if (membership.role === "guest") {
+      redirect("/dashboard");
+    }
+    return <OrgBinClient orgId={activeOrgId} />;
+  }
+  if (section === "recent" || section === "favorites") {
     if (membership.role === "guest") {
       redirect("/dashboard");
     }

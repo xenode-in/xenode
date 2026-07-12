@@ -47,8 +47,10 @@ export function SpreadsheetHeader(props: {
   onExport: (format: SpreadsheetExportFormat) => void;
   onUndo: () => void;
   onRedo: () => void;
-  onVersions: () => void;
+  onVersions?: () => void;
   onBack: () => void;
+  /** Extra header content, e.g. a View-only badge + request-access button for shares. */
+  accessSlot?: React.ReactNode;
 }) {
   return (
     <header className="flex min-h-14 items-center justify-between gap-3 border-b bg-background px-2 md:px-4">
@@ -64,15 +66,18 @@ export function SpreadsheetHeader(props: {
         </div>
       </div>
       <div className="flex items-center gap-1">
+        {props.accessSlot}
         <Button variant="ghost" size="icon" onClick={props.onUndo} title="Undo">
           <Undo2 className="h-4 w-4" />
         </Button>
         <Button variant="ghost" size="icon" onClick={props.onRedo} title="Redo">
           <Redo2 className="h-4 w-4" />
         </Button>
-        <Button variant="ghost" size="icon" onClick={props.onVersions} title="Version history">
-          <History className="h-4 w-4" />
-        </Button>
+        {props.onVersions && (
+          <Button variant="ghost" size="icon" onClick={props.onVersions} title="Version history">
+            <History className="h-4 w-4" />
+          </Button>
+        )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm">

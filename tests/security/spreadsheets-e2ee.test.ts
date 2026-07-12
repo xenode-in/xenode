@@ -11,6 +11,8 @@ describe("spreadsheet E2EE boundary", () => {
       "app/api/objects/[id]/route.ts",
       "app/api/objects/[id]/content/route.ts",
       "app/api/objects/[id]/update-content/route.ts",
+      "app/api/direct-shares/[id]/update-content/route.ts",
+      "lib/storage/applyContentUpdate.ts",
     ].map(read).join("\n");
     expect(routeSources).not.toMatch(/from ["']xlsx["']/);
     expect(routeSources).not.toMatch(/@univerjs/);
@@ -32,10 +34,21 @@ describe("spreadsheet E2EE boundary", () => {
   });
 
   it("atomically rejects stale saves with 409", () => {
-    const route = read("app/api/objects/[id]/update-content/route.ts");
-    expect(route).toContain("revisionFilter(expectedRevision)");
-    expect(route).toContain("update.matchedCount !== 1");
-    expect(route).toContain("{ status: 409 }");
+    const helper = read("lib/storage/applyContentUpdate.ts");
+    expect(helper).toContain("revisionFilter(expectedRevision)");
+    expect(helper).toContain("update.matchedCount !== 1");
+    const ownerRoute = read("app/api/objects/[id]/update-content/route.ts");
+    const shareRoute = read("app/api/direct-shares/[id]/update-content/route.ts");
+    for (const route of [ownerRoute, shareRoute]) {
+      expect(route).toContain("applyContentUpdate");
+      expect(route).toContain("{ status: 409 }");
+    }
+  });
+
+  it("share saves require the editor role", () => {
+    const shareRoute = read("app/api/direct-shares/[id]/update-content/route.ts");
+    expect(shareRoute).toContain("canEdit(normalizeShareRole(recipient.accessType))");
+    expect(shareRoute).toContain("edit_forbidden");
   });
 });
 

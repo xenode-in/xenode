@@ -44,6 +44,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useCrypto } from "@/contexts/CryptoContext";
+import { ShareAccessRequestsInbox } from "@/components/ShareAccessRequestsInbox";
+import { normalizeShareRole, type ShareRole } from "@/lib/orgs/shareRoles";
 import {
   decryptMetadataString,
   encryptWithShareKey,
@@ -90,7 +92,7 @@ interface DirectRecipient {
   recipientUserId: string;
   recipientEmail: string;
   wrappedShareKey: string;
-  accessType: "view" | "download";
+  accessType: string;
   downloadCount: number;
   lastAccessedAt?: string;
 }
@@ -167,9 +169,7 @@ export default function SharedPage() {
   const [bundleNameInput, setBundleNameInput] = useState("");
   const [bundleItemIds, setBundleItemIds] = useState<Set<string>>(new Set());
   const [sharedWithInput, setSharedWithInput] = useState("");
-  const [accessType, setAccessType] = useState<"view" | "download">(
-    "download",
-  );
+  const [accessType, setAccessType] = useState<ShareRole>("viewer");
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>(
     {},
   );
@@ -458,7 +458,7 @@ export default function SharedPage() {
     );
     setMaxDownloads(row.maxDownloads ? String(row.maxDownloads) : "");
     setSharedWithInput(row.sharedWith.join(", "));
-    setAccessType(row.recipients?.[0]?.accessType || "download");
+    setAccessType(normalizeShareRole(row.recipients?.[0]?.accessType));
   };
 
   const saveEdit = async () => {
@@ -507,7 +507,7 @@ export default function SharedPage() {
   const openUsers = (row: ShareRow) => {
     setUsersRow(row);
     setSharedWithInput(row.sharedWith.join(", "));
-    setAccessType(row.recipients?.[0]?.accessType || "download");
+    setAccessType(normalizeShareRole(row.recipients?.[0]?.accessType));
   };
 
   const openBundle = (row: ShareRow) => {
@@ -680,6 +680,8 @@ export default function SharedPage() {
           Manage public links and direct shares you created
         </p>
       </div>
+
+      <ShareAccessRequestsInbox onDecided={fetchShares} />
 
       {rows.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed p-12 text-center mt-8">
@@ -934,16 +936,15 @@ export default function SharedPage() {
               <Label>Recipient access</Label>
               <Select
                 value={accessType}
-                onValueChange={(value) =>
-                  setAccessType(value === "view" ? "view" : "download")
-                }
+                onValueChange={(value) => setAccessType(normalizeShareRole(value))}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="download">Can download</SelectItem>
-                  <SelectItem value="view">View only</SelectItem>
+                  <SelectItem value="viewer">Viewer — preview & download</SelectItem>
+                  <SelectItem value="commenter">Commenter — can also comment</SelectItem>
+                  <SelectItem value="editor">Editor — can also edit content</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1069,16 +1070,15 @@ export default function SharedPage() {
                 <Label>Access</Label>
                 <Select
                   value={accessType}
-                  onValueChange={(value) =>
-                    setAccessType(value === "view" ? "view" : "download")
-                  }
+                  onValueChange={(value) => setAccessType(normalizeShareRole(value))}
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="download">Can download</SelectItem>
-                    <SelectItem value="view">View only</SelectItem>
+                    <SelectItem value="viewer">Viewer — preview & download</SelectItem>
+                    <SelectItem value="commenter">Commenter — can also comment</SelectItem>
+                    <SelectItem value="editor">Editor — can also edit content</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

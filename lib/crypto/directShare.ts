@@ -34,6 +34,7 @@ export async function buildDek(
   shareKey: CryptoKey,
   shareEncryptedDEK: string,
   shareKeyIv: string,
+  usages: KeyUsage[] = ["decrypt"],
 ): Promise<CryptoKey> {
   return crypto.subtle.unwrapKey(
     "raw",
@@ -42,7 +43,7 @@ export async function buildDek(
     { name: "AES-GCM", iv: fromB64(shareKeyIv).buffer as ArrayBuffer },
     { name: "AES-GCM" },
     false,
-    ["decrypt"],
+    usages,
   );
 }
 

@@ -1710,7 +1710,14 @@ export function FilePreviewDialog({
   };
 
   const openInXenodeSheets = () => {
-    if (!file || sharedToken || albumShareToken || directShareId) return;
+    if (!file || sharedToken || albumShareToken) return;
+    if (directShareId) {
+      // Shared spreadsheets open through the share-authorized editor mode:
+      // read-only for viewers/commenters, editable for editor recipients.
+      onClose();
+      window.location.assign("/sheets/editor?shareId=" + directShareId);
+      return;
+    }
     const params = new URLSearchParams({ id: file.id });
     const scope = workspace?.driveScope;
     if (scope?.type === "organization" || scope?.type === "team") {
@@ -1789,7 +1796,9 @@ export function FilePreviewDialog({
           type.includes("spreadsheet") ||
           type.includes("text/csv")
         ) {
-          const isSharePreview = !!(sharedToken || albumShareToken || directShareId);
+          // Direct shares can open in the share-authorized sheets editor;
+          // only public-link/album previews stay download-only.
+          const isSharePreview = !!(sharedToken || albumShareToken);
           innerContent = (
             <div className="flex h-full flex-col items-center justify-center px-6 text-center">
               <AlertCircle className="mb-3 h-10 w-10 text-emerald-500" />

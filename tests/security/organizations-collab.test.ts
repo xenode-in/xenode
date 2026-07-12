@@ -54,20 +54,25 @@ describe("org collaboration browse + star", () => {
     mockedGetServerSession.mockReset();
   });
 
-  it("browses recent org objects (cross-bucket, no plaintext)", async () => {
+  it("browses recent org objects (cross-bucket, ciphertext name only)", async () => {
     process.env.ORGS_ENABLED = "true";
     mockSession("member_1");
     await createOrg();
     await addMember("member_1", "member");
-    await makeObject({ encryptedName: "SECRET_NAME" });
+    // encryptedName is AES-GCM ciphertext — only decryptable with the space key.
+    await makeObject({ encryptedName: "AgEC_ciphertext_blob", isEncrypted: true });
 
     const res = await browseGET(new NextRequest("http://localhost/x?scope=recent"), p());
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.objects).toHaveLength(1);
     expect(body.objects[0].size).toBe(100);
-    expect(JSON.stringify(body)).not.toContain("SECRET_NAME");
+    // The client needs the ciphertext to decrypt the name locally.
+    expect(body.objects[0].encryptedName).toBe("AgEC_ciphertext_blob");
+    // The server never decrypts or returns key material.
+    expect(body.objects[0].name).toBeUndefined();
     expect(JSON.stringify(body)).not.toContain("wrapped");
+    expect(JSON.stringify(body)).not.toContain("encryptedDEK");
   });
 
   it("filters favorites to starred and toggles star via PATCH", async () => {

@@ -10,18 +10,12 @@ import { assertScopeAction } from "@/lib/authz/policy";
 import dbConnect from "@/lib/mongodb";
 import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
-import { getUploadUrl, uploadObject, deleteObjects } from "@/lib/b2/objects";
-import { updateBucketStats, adjustStorageBytes } from "@/lib/metering/usage";
+import { getUploadUrl } from "@/lib/b2/objects";
+import { adjustStorageBytes } from "@/lib/metering/usage";
 import { adjustOrgStorage } from "@/lib/orgs/billing/orgUsage";
 import { resolveWorkspace } from "@/lib/workspace/resolve";
-import { parseBaseRevision, revisionFilter, REVISION_HEADER } from "@/lib/storage/revisions";
-import {
-  snapshotCurrentAsVersion,
-  newObjectKey,
-  evictOverflow,
-  collectVersionB2Keys,
-  versionsTotalBytes,
-} from "@/lib/storage/versions";
+import { parseBaseRevision, REVISION_HEADER } from "@/lib/storage/revisions";
+import { applyContentUpdate } from "@/lib/storage/applyContentUpdate";
 
 export const dynamic = "force-dynamic";
 
@@ -105,107 +99,26 @@ export async function POST(
         );
       }
 
-      // 1. Snapshot the current content before mutating fields. Spreadsheet
-      // originals are pinned and never duplicated when the current pointer is
-      // already referencing that immutable source ciphertext.
-      const existingVersions = [...(object.versions || [])];
-      let versionCandidates: typeof existingVersions;
-      if (object.mediaCategory === "excel") {
-        let original = existingVersions.find((version) => version.isOriginal);
-        if (!original && existingVersions.length > 0) {
-          original = existingVersions[existingVersions.length - 1];
-          original.isOriginal = true;
-          original.sharesCurrentContent = original.key === object.key;
-        }
-        if (!original) {
-          original = snapshotCurrentAsVersion(object, userId, {
-            isOriginal: true,
-            sharesCurrentContent: true,
-          });
-          existingVersions.push(original);
-        }
-        const currentIsPinnedOriginal = original.key === object.key;
-        if (currentIsPinnedOriginal) original.sharesCurrentContent = false;
-        versionCandidates = currentIsPinnedOriginal
-          ? existingVersions
-          : [snapshotCurrentAsVersion(object, userId), ...existingVersions];
-      } else {
-        versionCandidates = [
-          snapshotCurrentAsVersion(object, userId),
-          ...existingVersions,
-        ];
-      }
-      const { kept, evicted } = evictOverflow(versionCandidates);
-      const evictedBytes = versionsTotalBytes(evicted);
-      const newSize = buffer.byteLength;
+      const result = await applyContentUpdate({
+        object,
+        bucket,
+        buffer,
+        iv,
+        encryptedDEK: dek,
+        actorUserId: userId,
+        baseRevision,
+        newKeyPrefix: resolveWorkspace(ctx).keyPrefix,
+        adjustWorkspaceStorage,
+      });
 
-      // 2. Reserve quota FIRST (atomic + enforced). The retained old version now
-      //    also occupies space, so the net delta is +newSize − evictedBytes.
-      const netDelta = newSize - evictedBytes;
-      if (netDelta !== 0) {
-        await adjustWorkspaceStorage(netDelta); // throws QUOTA_EXCEEDED
-      }
-
-      // 3. Upload NEW content to a fresh key. Roll back the reservation on fail.
-      const newKey = newObjectKey(userId, resolveWorkspace(ctx).keyPrefix);
-      let uploadResult;
-      try {
-        uploadResult = await uploadObject(
-          bucket.b2BucketId,
-          newKey,
-          buffer,
-          "application/octet-stream",
-          newSize,
-        );
-      } catch (uploadErr) {
-        if (netDelta !== 0) {
-          await adjustWorkspaceStorage(-netDelta).catch(() => {});
-        }
-        throw uploadErr;
-      }
-
-      // 4. Atomically point the object at the new ciphertext. A second editor
-      // may have saved while this upload was in flight, so the revision guard
-      // must be part of the database write rather than only a preflight check.
-      const expectedRevision = baseRevision ?? (object.revision ?? 0);
-      const update = await StorageObject.updateOne(
-        { _id: object._id, ...revisionFilter(expectedRevision) },
-        {
-          $set: {
-            key: newKey,
-            b2FileId: uploadResult.b2FileId,
-            size: newSize,
-            iv,
-            ...(dek ? { encryptedDEK: dek } : {}),
-            versions: kept,
-            updatedAt: new Date(),
-          },
-          $inc: { revision: 1 },
-        },
-      );
-      if (update.matchedCount !== 1) {
-        await deleteObjects(bucket.b2BucketId, [newKey]).catch(() => {});
-        if (netDelta !== 0) await adjustWorkspaceStorage(-netDelta).catch(() => {});
-        const latest = await StorageObject.findById(object._id).select("revision").lean();
+      if (!result.ok) {
         return NextResponse.json(
-          { error: "The object changed since it was opened", code: "revision_conflict", revision: latest?.revision ?? expectedRevision },
+          { error: "The object changed since it was opened", code: "revision_conflict", revision: result.revision },
           { status: 409 },
         );
       }
-      const updatedObject = await StorageObject.findById(object._id);
 
-      // 5. Best-effort: drop evicted version blobs + reconcile bucket stats.
-      if (evicted.length > 0) {
-        await deleteObjects(
-          bucket.b2BucketId,
-          evicted.flatMap(collectVersionB2Keys),
-        );
-      }
-      if (netDelta !== 0) {
-        await updateBucketStats(object.bucketId.toString(), 0, netDelta);
-      }
-
-      return NextResponse.json({ success: true, object: updatedObject, revision: updatedObject?.revision ?? expectedRevision + 1 });
+      return NextResponse.json({ success: true, object: result.object, revision: result.revision });
     }
 
     // Legacy presigned-url flow. Deprecated and NOT versioned — the docs editor

@@ -8,6 +8,7 @@ import dbConnect from "@/lib/mongodb";
 import DirectShare from "@/models/DirectShare";
 import type { IDirectShareRecipient } from "@/models/DirectShare";
 import { User } from "@/models/User";
+import { normalizeShareRole } from "@/lib/orgs/shareRoles";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +21,7 @@ export async function GET(request: NextRequest) {
       "recipients.recipientUserId": ctx.userId,
       isRevoked: false,
     })
-      .populate("objectId", "key size contentType isEncrypted encryptedName thumbnail")
+      .populate("objectId", "key size contentType isEncrypted encryptedName thumbnail mediaCategory")
       .sort({ createdAt: -1 })
       .lean();
 
@@ -30,19 +31,23 @@ export async function GET(request: NextRequest) {
       .lean();
     const ownerMap = new Map(owners.map((owner) => [String(owner._id), owner]));
 
-    const result = shares.map((share) => ({
-      ...share,
-      owner: ownerMap.get(String(share.createdBy))
-        ? {
-            id: String(ownerMap.get(String(share.createdBy))!._id),
-            name: ownerMap.get(String(share.createdBy))!.name,
-            email: ownerMap.get(String(share.createdBy))!.email,
-          }
-        : null,
-      recipient: ((share.recipients || []) as IDirectShareRecipient[]).find(
-        (recipient) => recipient.recipientUserId === ctx.userId,
-      ),
-    }));
+    const result = shares.map((share) => {
+      const recipient = ((share.recipients || []) as IDirectShareRecipient[]).find(
+        (item) => item.recipientUserId === ctx.userId,
+      );
+      return {
+        ...share,
+        owner: ownerMap.get(String(share.createdBy))
+          ? {
+              id: String(ownerMap.get(String(share.createdBy))!._id),
+              name: ownerMap.get(String(share.createdBy))!.name,
+              email: ownerMap.get(String(share.createdBy))!.email,
+            }
+          : null,
+        recipient,
+        role: normalizeShareRole(recipient?.accessType),
+      };
+    });
 
     return NextResponse.json({ directShares: result });
   } catch (error: unknown) {

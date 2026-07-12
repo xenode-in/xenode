@@ -9,14 +9,17 @@ import {
   Download,
   Eye,
   Loader2,
+  Table2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FilePreviewDialog } from "@/components/dashboard/FilePreviewDialog";
+import { ShareAccessRequestButton } from "@/components/ShareAccessRequestButton";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { decryptWithShareKey } from "@/lib/crypto/fileEncryption";
 import { buildShareKey, fetchShareBlob } from "@/lib/crypto/directShare";
+import { normalizeShareRole } from "@/lib/orgs/shareRoles";
 import { formatBytes } from "@/lib/utils";
 
 interface ShareDetail {
@@ -231,7 +234,29 @@ export default function SharedWithMeDetailPage() {
             Shared by {share.owner?.name || share.owner?.email || "Unknown"}
           </p>
         </div>
-        <div className="flex shrink-0 gap-2">
+        <div className="flex shrink-0 flex-wrap gap-2">
+          {share.recipient?.accessType && (
+            <ShareAccessRequestButton
+              shareId={shareId}
+              currentRole={share.recipient.accessType}
+              variant="secondary"
+            />
+          )}
+          {share.objectId.mediaCategory === "excel" && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!isUnlocked && share.objectId.isEncrypted) {
+                  setModalOpen(true);
+                  return;
+                }
+                window.location.assign(`/sheets/editor?shareId=${shareId}`);
+              }}
+            >
+              <Table2 className="mr-2 h-4 w-4" />
+              Open in Sheets
+            </Button>
+          )}
           <Button variant="outline" onClick={handlePreview}>
             <Eye className="mr-2 h-4 w-4" />
             Preview
@@ -284,7 +309,7 @@ export default function SharedWithMeDetailPage() {
             <div className="rounded-md border border-border bg-secondary/20 p-4">
               <div className="text-muted-foreground">Access</div>
               <div className="mt-1 font-medium capitalize">
-                {share.recipient?.accessType || "download"}
+                {normalizeShareRole(share.recipient?.accessType)}
               </div>
             </div>
             <div className="rounded-md border border-border bg-secondary/20 p-4">

@@ -145,6 +145,35 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         .lean(),
     ]);
 
+    // Object name/type metadata (space-key encrypted) so members can decrypt the
+    // shown file names. Keyed by object id.
+    const referencedIds = Array.from(
+      new Set([
+        ...links.map((l) => String(l.objectId)),
+        ...direct.map((d) => String(d.objectId)),
+      ]),
+    );
+    const objectMeta = await StorageObject.find({ _id: { $in: referencedIds } })
+      .select("encryptedName encryptedContentType isEncrypted mediaCategory size contentType key bucketId")
+      .lean();
+    const metaById = new Map(objectMeta.map((o) => [String(o._id), o]));
+    const objectInfo = (objId: string) => {
+      const o = metaById.get(objId);
+      return o
+        ? {
+            id: objId,
+            encryptedName: o.encryptedName ?? null,
+            encryptedContentType: o.encryptedContentType ?? null,
+            isEncrypted: !!o.isEncrypted,
+            mediaCategory: o.mediaCategory ?? null,
+            size: o.size ?? 0,
+            contentType: o.contentType ?? "application/octet-stream",
+            key: o.key ?? "",
+            bucketId: o.bucketId ? String(o.bucketId) : null,
+          }
+        : null;
+    };
+
     const shares = [
       ...links.map((l) => ({
         id: String(l._id),
@@ -153,16 +182,25 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         isBundle: !!l.isBundle,
         bundleName: l.bundleName ?? null,
         itemCount: l.isBundle ? l.bundleItems?.length ?? 0 : null,
+        token: (l as { token?: string }).token ?? null,
         createdBy: (l as { createdBy?: string }).createdBy ?? null,
         recipientCount: null as number | null,
+        recipientEmails: [] as string[],
+        object: objectInfo(String(l.objectId)),
         createdAt: (l as { createdAt?: Date }).createdAt ?? null,
       })),
       ...direct.map((d) => ({
         id: String(d._id),
         objectId: String(d.objectId),
         type: "direct" as const,
+        isBundle: false,
+        bundleName: null,
+        itemCount: null as number | null,
+        token: null as string | null,
         createdBy: d.createdBy,
         recipientCount: d.recipients.length,
+        recipientEmails: d.recipients.map((r) => r.recipientEmail),
+        object: objectInfo(String(d.objectId)),
         createdAt: d.createdAt,
       })),
     ].sort(

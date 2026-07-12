@@ -12,11 +12,20 @@ import {
   Lock,
   MessageSquare,
   Share2,
-  Users,
+  Table2,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import {
   OrgPageHeader,
   OrgLoading,
@@ -24,10 +33,17 @@ import {
 } from "@/components/organizations/org-ui";
 import { FilePreviewDialog } from "@/components/dashboard/FilePreviewDialog";
 import { FileCommentsDialog } from "@/components/FileCommentsDialog";
+import { WorkspaceScopeProvider } from "@/contexts/WorkspaceContext";
+import { ShareAccessRequestButton } from "@/components/ShareAccessRequestButton";
+import { ShareAccessRequestsInbox } from "@/components/ShareAccessRequestsInbox";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptWithShareKey } from "@/lib/crypto/fileEncryption";
+import {
+  decryptMetadataString,
+  decryptWithShareKey,
+} from "@/lib/crypto/fileEncryption";
 import { buildShareKey, fetchShareBlob } from "@/lib/crypto/directShare";
-import { normalizeShareRole, type ShareRole } from "@/lib/orgs/shareRoles";
+import { unwrapSpaceKeyGrant } from "@/lib/orgs/spaceKeyClient";
+import { type ShareRole } from "@/lib/orgs/shareRoles";
 import { formatBytes, formatDate } from "@/lib/utils";
 
 // ─── "Shared" scope (admin view of what's shared out of the org) ──────────────
@@ -39,9 +55,21 @@ interface ShareRow {
   isBundle?: boolean;
   bundleName?: string | null;
   itemCount?: number | null;
+  token?: string | null;
   createdBy: string | null;
   recipientCount?: number | null;
-  accessType?: string;
+  recipientEmails?: string[];
+  object?: {
+    id: string;
+    encryptedName: string | null;
+    encryptedContentType: string | null;
+    isEncrypted: boolean;
+    mediaCategory: string | null;
+    size: number;
+    contentType: string;
+    key: string;
+    bucketId: string | null;
+  } | null;
   createdAt: string | null;
 }
 
@@ -95,7 +123,13 @@ export function OrgSharesClient({
   if (scope === "with-me") {
     return <SharedWithMe orgId={orgId} />;
   }
-  return <SharedOut orgId={orgId} />;
+  return (
+    // Org scope so the preview dialog gets org scopedFetch + the space key
+    // (admins preview the underlying org object, not the share payload).
+    <WorkspaceScopeProvider driveScope={{ type: "organization", orgId }}>
+      <SharedOut orgId={orgId} />
+    </WorkspaceScopeProvider>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -210,6 +244,20 @@ function SharedWithMe({ orgId }: { orgId: string }) {
     setPreview(row);
   };
 
+  // Clicking the file itself behaves like the normal file list: spreadsheets
+  // open in the (permission-aware) editor, everything else opens the preview.
+  const openRow = (row: WithMeRow) => {
+    if (row.object?.isEncrypted && !isUnlocked) {
+      setModalOpen(true);
+      return;
+    }
+    if (row.object?.mediaCategory === "excel") {
+      window.location.assign(`/sheets/editor?shareId=${row.id}`);
+      return;
+    }
+    setPreview(row);
+  };
+
   if (loading) return <OrgLoading />;
 
   const previewName = preview ? names[preview.id]?.name || fallbackName(preview) : "";
@@ -265,20 +313,44 @@ function SharedWithMe({ orgId }: { orgId: string }) {
             const name = names[row.id]?.name || fallbackName(row);
             return (
               <li key={row.id} className="flex items-center gap-3 px-4 py-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary/50 text-muted-foreground">
-                  <FileText className="h-4 w-4" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-foreground">
-                    {name}
-                  </p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {row.owner?.name || row.owner?.email || "A teammate"}
-                    {row.object ? ` · ${formatBytes(row.object.size)}` : ""}
-                    {row.createdAt ? ` · ${formatDate(row.createdAt)}` : ""}
-                  </p>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => openRow(row)}
+                  className="flex min-w-0 flex-1 items-center gap-3 rounded-lg text-left transition-colors hover:bg-secondary/30"
+                >
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary/50 text-muted-foreground">
+                    <FileText className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {name}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {row.owner?.name || row.owner?.email || "A teammate"}
+                      {row.object ? ` · ${formatBytes(row.object.size)}` : ""}
+                      {row.createdAt ? ` · ${formatDate(row.createdAt)}` : ""}
+                    </p>
+                  </div>
+                </button>
                 <Badge variant="secondary">{ROLE_LABEL[row.role]}</Badge>
+                <ShareAccessRequestButton shareId={row.id} currentRole={row.role} />
+                {row.object?.mediaCategory === "excel" && (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => {
+                      if (row.object?.isEncrypted && !isUnlocked) {
+                        setModalOpen(true);
+                        return;
+                      }
+                      window.location.assign(`/sheets/editor?shareId=${row.id}`);
+                    }}
+                    aria-label="Open in Xenode Sheets"
+                    title="Open in Xenode Sheets"
+                  >
+                    <Table2 className="h-4 w-4" />
+                  </Button>
+                )}
                 <Button
                   variant="ghost"
                   size="icon"
@@ -341,9 +413,15 @@ function SharedWithMe({ orgId }: { orgId: string }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function SharedOut({ orgId }: { orgId: string }) {
+  const { privateKey, isUnlocked, setModalOpen } = useCrypto();
   const [shares, setShares] = useState<ShareRow[]>([]);
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [types, setTypes] = useState<Record<string, string>>({});
+  const [spaceKey, setSpaceKey] = useState<CryptoKey | null>(null);
   const [loading, setLoading] = useState(true);
   const [restricted, setRestricted] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [preview, setPreview] = useState<ShareRow | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -366,14 +444,107 @@ function SharedOut({ orgId }: { orgId: string }) {
     void load();
   }, [load]);
 
+  // Load the org space key to decrypt file names.
+  useEffect(() => {
+    if (!privateKey) return;
+    let active = true;
+    (async () => {
+      try {
+        const data = await readJson<{
+          grants: { wrappedSpaceKey: string; keyVersion: number }[];
+        }>(await fetch(`/api/orgs/${orgId}/keys`));
+        const grant = data.grants?.[0];
+        if (!grant?.wrappedSpaceKey) return;
+        const raw = await unwrapSpaceKeyGrant({
+          wrappedSpaceKey: grant.wrappedSpaceKey,
+          privateKey,
+        });
+        const key = await crypto.subtle.importKey(
+          "raw",
+          raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer,
+          { name: "AES-GCM" },
+          false,
+          ["decrypt"],
+        );
+        if (active) setSpaceKey(key);
+      } catch {
+        /* names stay generic */
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [orgId, privateKey]);
+
+  useEffect(() => {
+    if (!spaceKey || shares.length === 0) return;
+    let active = true;
+    (async () => {
+      const resolved: Record<string, string> = {};
+      const resolvedTypes: Record<string, string> = {};
+      for (const s of shares) {
+        if (s.isBundle || !s.object?.isEncrypted) continue;
+        if (s.object.encryptedName) {
+          try {
+            resolved[s.id] = await decryptMetadataString(s.object.encryptedName, spaceKey);
+          } catch {
+            /* keep generic */
+          }
+        }
+        if (s.object.encryptedContentType) {
+          try {
+            resolvedTypes[s.id] = await decryptMetadataString(s.object.encryptedContentType, spaceKey);
+          } catch {
+            /* keep generic */
+          }
+        }
+      }
+      if (active) {
+        setNames((prev) => ({ ...prev, ...resolved }));
+        setTypes((prev) => ({ ...prev, ...resolvedTypes }));
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [shares, spaceKey]);
+
+  const openPreview = (s: ShareRow) => {
+    if (s.object?.isEncrypted && !isUnlocked) {
+      setModalOpen(true);
+      return;
+    }
+    setPreview(s);
+  };
+
+  async function revoke(s: ShareRow) {
+    if (!window.confirm("Revoke this share? Recipients will lose access.")) return;
+    setBusyId(s.id);
+    try {
+      const endpoint =
+        s.type === "link" && s.token
+          ? `/api/share/${s.token}`
+          : `/api/direct-shares/${s.id}`;
+      await readJson(await fetch(endpoint, { method: "DELETE" }));
+      setShares((prev) => prev.filter((r) => r.id !== s.id));
+      toast.success("Share revoked");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to revoke");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   if (loading) return <OrgLoading />;
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-6">
+    <div className="mx-auto w-full max-w-4xl space-y-6">
       <OrgPageHeader
         title="Shared"
         description="Organization files shared via links or direct shares."
       />
+
+      <ShareAccessRequestsInbox onDecided={load} />
 
       {restricted ? (
         <OrgEmptyState
@@ -388,44 +559,131 @@ function SharedOut({ orgId }: { orgId: string }) {
           description="Share links and direct shares of org files will appear here."
         />
       ) : (
-        <ul className="divide-y divide-border/60 rounded-xl border border-border bg-card">
-          {shares.map((s) => (
-            <li key={s.id} className="flex items-center gap-3 px-4 py-3">
-              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary/50 text-muted-foreground">
-                {s.isBundle ? (
-                  <FolderOpen className="h-4 w-4" />
-                ) : s.type === "link" ? (
-                  <Link2 className="h-4 w-4" />
-                ) : (
-                  <Users className="h-4 w-4" />
-                )}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-foreground">
-                  {s.isBundle
-                    ? s.bundleName || `${s.itemCount || 0} shared files`
-                    : "Encrypted file"}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {s.isBundle
-                    ? `Bundle${typeof s.itemCount === "number" ? ` · ${s.itemCount} file${s.itemCount === 1 ? "" : "s"}` : ""}`
-                    : s.type === "link"
-                      ? "Public link"
-                      : "Direct share"}
-                  {typeof s.recipientCount === "number" &&
-                    ` · ${s.recipientCount} recipient${s.recipientCount === 1 ? "" : "s"}`}
-                  {s.createdAt && ` · ${formatDate(s.createdAt)}`}
-                </p>
-              </div>
-              {s.accessType && (
-                <Badge variant="secondary" className="capitalize">
-                  {ROLE_LABEL[normalizeShareRole(s.accessType)]}
-                </Badge>
-              )}
-            </li>
-          ))}
-        </ul>
+        <div className="rounded-lg border">
+          <Table className="min-w-[640px] md:min-w-full">
+            <TableHeader>
+              <TableRow className="hover:bg-transparent">
+                <TableHead>File</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Shared with</TableHead>
+                <TableHead className="hidden md:table-cell">Created</TableHead>
+                <TableHead className="w-16 text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {shares.map((s) => {
+                const displayName = s.isBundle
+                  ? s.bundleName || `${s.itemCount || 0} shared files`
+                  : names[s.id] || "Encrypted file";
+                return (
+                  <TableRow key={s.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-3">
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-secondary/50 text-muted-foreground">
+                          {s.isBundle ? (
+                            <FolderOpen className="h-4 w-4" />
+                          ) : s.type === "link" ? (
+                            <Link2 className="h-4 w-4" />
+                          ) : (
+                            <FileText className="h-4 w-4" />
+                          )}
+                        </span>
+                        <span className="max-w-[260px] truncate font-medium">
+                          {displayName}
+                        </span>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="secondary" className="text-[10px]">
+                        {s.type === "link" ? "Public link" : "Direct share"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {s.type === "link" ? (
+                        <span className="text-xs text-muted-foreground">Anyone with link</span>
+                      ) : s.recipientEmails && s.recipientEmails.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {s.recipientEmails.slice(0, 2).map((email) => (
+                            <Badge key={email} variant="outline" className="text-[10px]">
+                              {email}
+                            </Badge>
+                          ))}
+                          {s.recipientEmails.length > 2 && (
+                            <Badge variant="outline" className="text-[10px]">
+                              +{s.recipientEmails.length - 2}
+                            </Badge>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">
+                          {s.recipientCount ?? 0} recipient
+                          {s.recipientCount === 1 ? "" : "s"}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
+                      {s.createdAt ? formatDate(s.createdAt) : "-"}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-0.5">
+                        {!s.isBundle && s.object && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => openPreview(s)}
+                            aria-label="Preview file"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => revoke(s)}
+                          disabled={busyId === s.id}
+                          aria-label="Revoke share"
+                        >
+                          {busyId === s.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
       )}
+
+      <FilePreviewDialog
+        file={
+          preview?.object
+            ? {
+                id: preview.object.id,
+                key: preview.object.key,
+                size: preview.object.size,
+                contentType:
+                  types[preview.id] ||
+                  preview.object.contentType ||
+                  "application/octet-stream",
+                createdAt: preview.createdAt || new Date().toISOString(),
+                isEncrypted: preview.object.isEncrypted,
+                encryptedName: undefined,
+                name: names[preview.id] || "Encrypted file",
+                mediaCategory: preview.object.mediaCategory ?? undefined,
+                bucketId: preview.object.bucketId ?? undefined,
+              }
+            : null
+        }
+        isOpen={!!preview}
+        onClose={() => setPreview(null)}
+      />
     </div>
   );
 }
