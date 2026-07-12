@@ -82,6 +82,34 @@ const nextConfig: NextConfig = {
         source: "/((?!plans|pricing|checkout).*)",
         headers: strictHeaders,
       },
+      {
+        source: "/sheets-v2/:path*",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value:
+              "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; frame-src 'self' blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; worker-src 'self' blob:",
+          },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+        ],
+      },
+      {
+        source: "/internal-editors/onlyoffice/:path*",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value:
+              "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self' https://sheets-v2.xenode.in; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; worker-src 'self' blob:",
+          },
+          {
+            key: "Cache-Control",
+            value: "public, max-age=31536000, immutable",
+          },
+          { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+        ],
+      },
 
       {
         source: "/sync",

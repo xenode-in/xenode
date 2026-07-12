@@ -15,6 +15,11 @@
     "cron:cleanup-orphans": "node scripts/cron-trigger.mjs cleanup-orphans",
     "cron:charge": "node scripts/cron-trigger.mjs charge-recurring",
     "dev:worker": "tsx watch worker/index.ts",
+    "onlyoffice:verify-sources": "node scripts/onlyoffice/verify-sources.mjs",
+    "onlyoffice:build-client": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/onlyoffice/build-client.ps1",
+    "onlyoffice:build-x2t": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/onlyoffice/build-x2t.ps1",
+    "onlyoffice:install-host": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/onlyoffice/install-host.ps1",
+    "onlyoffice:verify-client": "node scripts/onlyoffice/verify-client.mjs",
     "postinstall": "mkdir -p public/ffmpeg && cp node_modules/@ffmpeg/core/dist/umd/ffmpeg-core.* public/ffmpeg/"
   },
   "dependencies": {

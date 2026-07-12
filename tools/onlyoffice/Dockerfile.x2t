@@ -1,0 +1,66 @@
+# syntax=docker/dockerfile:1.7
+#
+# Compiles ONLYOFFICE x2t to browser WASM (x2t.js + x2t.wasm) at Xenode's pinned
+# editor version (9.4.0.131), to stay Editor.bin-compatible with the client
+# bundle built by Dockerfile.client.
+#
+# IMPORTANT: x2t has NO WebAssembly target in stock ONLYOFFICE `core` — core
+# ships only Qt (native) and Android x2t builds. Getting an Emscripten build
+# requires CryptPad's onlyoffice-x2t-wasm patch set, which CryptPad maintains
+# against 9.3.0.140. Per the Xenode decision to keep the newer 9.4.0.131 client,
+# those patches are FORWARD-PORTED into an in-repo harness at
+#   tools/onlyoffice/x2t-wasm/            (embuild.sh, pre-js.js, *.patch, README)
+# and applied on top of the already-vendored 9.4.0.131 core
+#   vendor/onlyoffice/core/
+#
+# build-x2t.ps1 fails fast if the harness is absent, so this file is never run
+# against an incomplete port.
+#
+# CryptPad recipe this port mirrors: emsdk 4.0.11; boost 1.84.0; openssl
+# 1.1.1f; ICU; qmake X2tConverter/build/Qt/X2tConverter.pro through an
+# emscripten wrapper; EXPORTED_FUNCTIONS=_main1, EXPORTED_RUNTIME_METHODS=ccall,FS,
+# a --pre-js wrapper, ALLOW_MEMORY_GROWTH, USE_ICU=1.
+
+FROM emscripten/emsdk:4.0.11 AS build
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       autoconf automake build-essential cmake libtool make pkg-config \
+       brotli lbzip2 xz-utils git python-is-python3 wget zip ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+# Stock 9.4.0.131 core (same source the client bundle is built from) + the
+# Xenode-maintained forward-port of CryptPad's Emscripten harness. Copied in —
+# never fetched at build time.
+COPY vendor/onlyoffice/core ./core
+COPY tools/onlyoffice/x2t-wasm ./x2t-wasm
+
+ARG ONLYOFFICE_VERSION=9.4.0.131
+ARG CRYPTPAD_PATCH_BASE=9.3.0.140
+
+# Apply the forward-ported Emscripten-compat patches, then drive the vendored
+# embuild wrapper. The Emscripten flag set is owned by the harness so it stays
+# in one reviewable place rather than drifting across the Dockerfile.
+RUN cd core \
+    && for p in ../x2t-wasm/patches/*.patch; do \
+         [ -e "$p" ] || { echo "no patches found — port incomplete" >&2; exit 1; }; \
+         git apply --whitespace=nowarn "$p" || patch -p1 < "$p"; \
+       done \
+    && bash ../x2t-wasm/embuild.sh \
+       -l "-looxmlsignature" \
+       -l "-L/usr/local/lib" \
+       -l "--pre-js /workspace/x2t-wasm/pre-js.js" \
+       -l "-sEXPORTED_RUNTIME_METHODS=ccall,FS" \
+       -l "-sEXPORTED_FUNCTIONS=_main1" \
+       -l "-sALLOW_MEMORY_GROWTH" \
+       X2tConverter/build/Qt/X2tConverter.pro
+
+RUN mkdir -p /dist/x2t \
+    && cp core/build/x2t.js /dist/x2t/x2t.js \
+    && cp core/build/x2t.wasm /dist/x2t/x2t.wasm \
+    && node -e "const fs=require('fs');const p='/dist/x2t/x2t.manifest.json';const files=['x2t.js','x2t.wasm'].map(f=>({file:f,bytes:fs.statSync('/dist/x2t/'+f).size}));fs.writeFileSync(p, JSON.stringify({onlyoffice:process.env.ONLYOFFICE_VERSION,cryptpadPatchBase:process.env.CRYPTPAD_PATCH_BASE,files},null,2)+'\n')"
+
+FROM scratch AS output
+COPY --from=build /dist/x2t /x2t

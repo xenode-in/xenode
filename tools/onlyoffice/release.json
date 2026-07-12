@@ -1,0 +1,55 @@
+{
+  "release": "9.4.0",
+  "componentTag": "v9.4.0.131",
+  "artifactVersion": "9.4.0.131-xenode.1",
+  "repositories": {
+    "sdkjs": {
+      "url": "https://github.com/ONLYOFFICE/sdkjs.git",
+      "tag": "v9.4.0.131",
+      "commit": "0cd3e72a8c88c512666157bb452a4ba7b4213617"
+    },
+    "web-apps": {
+      "url": "https://github.com/ONLYOFFICE/web-apps.git",
+      "tag": "v9.4.0.131",
+      "commit": "1993a6d89731af0fcb5129ebf0ee380076fea5a9"
+    },
+    "core": {
+      "url": "https://github.com/ONLYOFFICE/core.git",
+      "tag": "v9.4.0.131",
+      "commit": "55e5f973b036661ec8cae377f0744772cb64232a"
+    },
+    "core-fonts": {
+      "url": "https://github.com/ONLYOFFICE/core-fonts.git",
+      "tag": "v9.4.0.131",
+      "commit": "7030c6681fb5bbed560675cb42422f91df15d5c9"
+    },
+    "build_tools": {
+      "url": "https://github.com/ONLYOFFICE/build_tools.git",
+      "tag": "v9.4.0.131",
+      "commit": "cf4cac0846d03e2e00a6fec5d1ecd4e9463086d5"
+    },
+    "server": {
+      "url": "https://github.com/ONLYOFFICE/server.git",
+      "tag": "v9.4.0.131",
+      "commit": "13142e41dfc9e1c337bbe76f0222d4b2ce7efbc8"
+    },
+    "dictionaries": {
+      "url": "https://github.com/ONLYOFFICE/dictionaries.git",
+      "tag": "v9.4.0.131",
+      "commit": "d3223bbb777883db66ac3cd249f71c6ebdc992c7"
+    },
+    "document-server": {
+      "url": "https://github.com/ONLYOFFICE/DocumentServer.git",
+      "tag": "v9.4.0",
+      "commit": "fb73d33c85f59d1a5d2e5a5ed05388ebc2418337"
+    }
+  },
+  "patchSources": {
+    "cryptpad_x2t_wasm": {
+      "url": "https://github.com/cryptpad/onlyoffice-x2t-wasm.git",
+      "note": "x2t->WASM Emscripten harness (reference). Targets ONLYOFFICE 9.3.0.140; Xenode forward-ports its patches to 9.4.0.131 core under tools/onlyoffice/x2t-wasm. Not vendored under vendor/onlyoffice, so verify-sources ignores it. Pin the reviewed commit here before building.",
+      "targetsOnlyofficeVersion": "9.3.0.140",
+      "commit": "PENDING_PIN"
+    }
+  }
+}
