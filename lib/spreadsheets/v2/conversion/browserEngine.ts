@@ -6,11 +6,18 @@
  * (or dedicated editor-origin) immutable directory — never a CDN or the
  * ONLYOFFICE Document Server.
  *
- * The module is produced by `tools/onlyoffice/Dockerfile.x2t` and expected at:
- *   ${ONLYOFFICE_EDITOR_URL}/x2t/x2t.js     (Emscripten glue, exposes createX2T)
- *   ${ONLYOFFICE_EDITOR_URL}/x2t/x2t.wasm   (loaded via locateFile)
+ * The module is produced by tools/onlyoffice/Dockerfile.x2t (CryptPad's recipe)
+ * and expected at:
+ *   ${ONLYOFFICE_EDITOR_URL}/x2t/x2t.js     (Emscripten glue + pre-js.js)
+ *   ${ONLYOFFICE_EDITOR_URL}/x2t/x2t.wasm   (located via pre-js.js locateFile)
  *
- * Until that build has run, `version.json.x2tReady` is false and this loader
+ * IMPORTANT: CryptPad's build is a CLASSIC Emscripten module (NOT MODULARIZE) —
+ * loading x2t.js populates the global `Module`, with `noInitialRun` set by
+ * pre-js.js so `main` does not auto-run. We pre-seed `window.Module` with an
+ * `onRuntimeInitialized` hook before injecting the script, then drive the
+ * converter via `Module.ccall("main1", ...)` + `Module.FS`.
+ *
+ * Until the artifact is built, `version.json.x2tReady` is false and this loader
  * throws `X2tUnavailableError`, so callers can cleanly fall back to v1.
  */
 
@@ -19,17 +26,18 @@ import { adaptRawModule, RawX2tModule, X2tEngine, X2tUnavailableError } from "./
 
 const X2T_DIR = `${ONLYOFFICE_EDITOR_URL}/x2t`;
 
-type X2tFactory = (overrides: {
-  locateFile: (path: string) => string;
-}) => Promise<RawX2tModule>;
-
+// The global the Emscripten glue reads/populates. CryptPad's build uses the
+// default name `Module`.
 declare global {
   interface Window {
-    createX2T?: X2tFactory;
+    Module?: Partial<RawX2tModule> & {
+      onRuntimeInitialized?: () => void;
+      onAbort?: (reason: unknown) => void;
+    };
   }
 }
 
-let scriptPromise: Promise<X2tFactory> | null = null;
+let enginePromise: Promise<X2tEngine> | null = null;
 
 /** Confirm the artifact declares x2t as built before we try to load it. */
 export async function probeX2tReady(): Promise<boolean> {
@@ -45,42 +53,42 @@ export async function probeX2tReady(): Promise<boolean> {
   }
 }
 
-function loadScript(): Promise<X2tFactory> {
+function loadModule(): Promise<RawX2tModule> {
   if (typeof window === "undefined") {
     return Promise.reject(new X2tUnavailableError("no_window"));
   }
-  if (window.createX2T) return Promise.resolve(window.createX2T);
-  if (scriptPromise) return scriptPromise;
-
-  scriptPromise = new Promise<X2tFactory>((resolve, reject) => {
+  return new Promise<RawX2tModule>((resolve, reject) => {
+    // Pre-seed the global Module so the glue merges our hooks. pre-js.js will
+    // add noInitialRun/noExitRuntime and its own locateFile (which resolves
+    // x2t.wasm next to x2t.js), so we do not set locateFile here.
+    const settle = (ok: boolean, reason?: unknown) => {
+      if (ok) resolve(window.Module as unknown as RawX2tModule);
+      else reject(new X2tUnavailableError(reason));
+    };
+    window.Module = {
+      onRuntimeInitialized: () => settle(true),
+      onAbort: (reason) => settle(false, reason),
+    };
     const el = document.createElement("script");
     el.src = `${X2T_DIR}/x2t.js`;
     el.async = true;
-    el.onload = () => {
-      if (window.createX2T) resolve(window.createX2T);
-      else reject(new X2tUnavailableError("factory_missing"));
-    };
-    el.onerror = () => {
-      scriptPromise = null;
-      reject(new X2tUnavailableError("script_load_failed"));
-    };
+    el.onerror = () => settle(false, "script_load_failed");
     document.head.appendChild(el);
   });
-  return scriptPromise;
 }
 
 export async function loadBrowserX2tEngine(): Promise<X2tEngine> {
   if (!(await probeX2tReady())) {
     throw new X2tUnavailableError("artifact_not_ready");
   }
-  let factory: X2tFactory;
-  try {
-    factory = await loadScript();
-  } catch (err) {
-    throw err instanceof X2tUnavailableError ? err : new X2tUnavailableError(err);
+  // The WASM module is a process-wide singleton (global Module); reuse it.
+  if (!enginePromise) {
+    enginePromise = loadModule()
+      .then((mod) => adaptRawModule(mod))
+      .catch((err) => {
+        enginePromise = null;
+        throw err instanceof X2tUnavailableError ? err : new X2tUnavailableError(err);
+      });
   }
-  const mod = await factory({
-    locateFile: (path: string) => `${X2T_DIR}/${path}`,
-  });
-  return adaptRawModule(mod);
+  return enginePromise;
 }

@@ -41,3 +41,9 @@ yarn-error.log*
 next-env.d.ts
 
 /agency-agents-main
+# Generated ONLYOFFICE browser artifacts. Source stays under vendor/onlyoffice.
+/public/internal-editors/onlyoffice/*
+!/public/internal-editors/onlyoffice/README.md
+/.artifacts/onlyoffice/
+# Transient x2t WASM build context (junction to vendor/core + harness copy).
+/tools/onlyoffice/.x2t-build-context/

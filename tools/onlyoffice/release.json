@@ -47,9 +47,9 @@
   "patchSources": {
     "cryptpad_x2t_wasm": {
       "url": "https://github.com/cryptpad/onlyoffice-x2t-wasm.git",
-      "note": "x2t->WASM Emscripten harness (reference). Targets ONLYOFFICE 9.3.0.140; Xenode forward-ports its patches to 9.4.0.131 core under tools/onlyoffice/x2t-wasm. Not vendored under vendor/onlyoffice, so verify-sources ignores it. Pin the reviewed commit here before building.",
+      "note": "x2t->WASM Emscripten harness. tools/onlyoffice/x2t-wasm/{embuild.sh,pre-js.js,wrap-main.cpp,patches/harfbuzz.patch} and tools/onlyoffice/Dockerfile.x2t are transcribed from this commit, then adapted (build_tools v9.3.0.140 -> v9.4.0.131) to build against the vendored 9.4.0.131 core. Not vendored under vendor/onlyoffice, so verify-sources ignores it.",
       "targetsOnlyofficeVersion": "9.3.0.140",
-      "commit": "PENDING_PIN"
+      "commit": "96886ff143e05471144c4426fb304b4d794370d2"
     }
   }
 }
