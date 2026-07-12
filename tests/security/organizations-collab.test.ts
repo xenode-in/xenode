@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET as browseGET } from "@/app/api/orgs/[orgId]/objects/browse/route";
 import { PATCH as objectPATCH } from "@/app/api/orgs/[orgId]/objects/[objectId]/route";
 import { GET as sharesGET } from "@/app/api/orgs/[orgId]/shares/route";
-import { POST as commentsPOST } from "@/app/api/direct-shares/[id]/comments/route";
+import { POST as commentsPOST } from "@/app/api/objects/[id]/comments/route";
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
@@ -178,7 +178,9 @@ describe("org collaboration browse + star", () => {
       ],
       isRevoked: false,
     });
-    const cp = { params: Promise.resolve({ id: String(share._id) }) };
+    void share;
+    // Comments are object-centric now — recipients reach them via the object id.
+    const cp = { params: Promise.resolve({ id: String(obj._id) }) };
     const makeReq = () =>
       new NextRequest("http://localhost/c", {
         method: "POST",

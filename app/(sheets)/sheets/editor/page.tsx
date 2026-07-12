@@ -50,6 +50,6 @@ function SheetsEditorInner() {
   if (error) return <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center"><p className="font-medium">Unable to open spreadsheet</p><p className="text-sm text-muted-foreground">{error}</p><button className="text-sm underline" onClick={() => router.push(shareId ? "/dashboard/shared-with-me" : "/sheets")}>{shareId ? "Back to shared files" : "Back to spreadsheets"}</button></div>;
   if (!loaded || !persistence || !session?.user.id || !metadataKey) return <SpreadsheetLoadingState/>;
   const recoveryKey = shareId || workspace.type === "personal" ? metadataKey : space.cryptoKey!;
-  return <SpreadsheetEditor loaded={loaded} persistence={persistence} userId={session.user.id} recoveryKey={recoveryKey} onReload={reload} onBack={() => router.push(shareId ? "/dashboard/shared-with-me" : "/sheets")} onSaveCopy={!shareId && bucketId && prefix ? (file) => addTasks([new File([file], file.name.replace(/\.xlsx$/i, " copy.xlsx"), { type: file.type })], bucketId, prefix) : undefined}/>;
+  return <SpreadsheetEditor loaded={loaded} persistence={persistence} userId={session.user.id} recoveryKey={recoveryKey} onReload={reload} onBack={() => router.push(shareId ? "/dashboard/shared-with-me" : "/sheets")} scopedFetch={shareId ? undefined : (workspaceContext.scopedFetch as typeof fetch)} onSaveCopy={!shareId && bucketId && prefix ? (file) => addTasks([new File([file], file.name.replace(/\.xlsx$/i, " copy.xlsx"), { type: file.type })], bucketId, prefix) : undefined}/>;
 }
 

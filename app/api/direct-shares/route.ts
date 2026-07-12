@@ -38,16 +38,16 @@ export async function POST(request: NextRequest) {
 
     const object = await assertObjectAccess(ctx, objectId, "share", { lean: true });
 
-    const existing = await DirectShare.findOne({
-      objectId: object._id,
-      createdBy: userId,
-      isRevoked: false,
-    })
-      .sort({ createdAt: -1 })
-      .select("_id recipients")
-      .lean();
-
-    if (existing) {
+    const shareExistsResponse = async () => {
+      const existing = await DirectShare.findOne({
+        objectId: object._id,
+        createdBy: userId,
+        isRevoked: false,
+      })
+        .sort({ createdAt: -1 })
+        .select("_id recipients")
+        .lean();
+      if (!existing) return null;
       return NextResponse.json(
         {
           error: "This file is already shared. Update the existing share instead.",
@@ -63,7 +63,10 @@ export async function POST(request: NextRequest) {
         },
         { status: 409 },
       );
-    }
+    };
+
+    const conflict = await shareExistsResponse();
+    if (conflict) return conflict;
 
     if (object.isEncrypted && (!shareEncryptedDEK || !shareKeyIv)) {
       return NextResponse.json(
@@ -90,17 +93,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Each recipient must include an email and wrapped share key" }, { status: 400 });
     }
 
-    const directShare = await DirectShare.create({
-      objectId: object._id,
-      bucketId: object.bucketId,
-      createdBy: userId,
-      shareEncryptedDEK,
-      shareKeyIv,
-      shareEncryptedName,
-      shareEncryptedContentType,
-      shareEncryptedThumbnail,
-      recipients: normalizedRecipients,
-    });
+    let directShare;
+    try {
+      directShare = await DirectShare.create({
+        objectId: object._id,
+        bucketId: object.bucketId,
+        createdBy: userId,
+        shareEncryptedDEK,
+        shareKeyIv,
+        shareEncryptedName,
+        shareEncryptedContentType,
+        shareEncryptedThumbnail,
+        recipients: normalizedRecipients,
+      });
+    } catch (createError: unknown) {
+      // Concurrent POST lost the race against the partial unique index on
+      // (objectId, createdBy, isRevoked: false) — surface it like the guard.
+      if ((createError as { code?: number })?.code === 11000) {
+        const raced = await shareExistsResponse();
+        if (raced) return raced;
+      }
+      throw createError;
+    }
 
     captureEvent(userId, "direct_share_created", {
       shareType: "direct",

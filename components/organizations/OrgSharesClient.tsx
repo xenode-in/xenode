@@ -396,8 +396,11 @@ function SharedWithMe({ orgId }: { orgId: string }) {
       />
 
       <FileCommentsDialog
-        shareId={commentRow?.id ?? null}
+        objectId={commentRow?.object?.id ?? null}
         wrappedShareKey={commentRow?.wrappedShareKey ?? null}
+        shareEncryptedDEK={commentRow?.shareEncryptedDEK ?? null}
+        shareKeyIv={commentRow?.shareKeyIv ?? null}
+        canComment={commentRow ? commentRow.role !== "viewer" : false}
         fileName={commentRow ? names[commentRow.id]?.name : undefined}
         open={!!commentRow}
         onOpenChange={(next) => {

@@ -1,5 +1,5 @@
 "use client";
-import { ArrowLeft, Download, History, Redo2, Save, Undo2 } from "lucide-react";
+import { ArrowLeft, Download, History, MessageSquare, Redo2, Save, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -45,9 +45,10 @@ export function SpreadsheetHeader(props: {
   state: SpreadsheetSaveState;
   onSave: () => void;
   onExport: (format: SpreadsheetExportFormat) => void;
-  onUndo: () => void;
-  onRedo: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
   onVersions?: () => void;
+  onComments?: () => void;
   onBack: () => void;
   /** Extra header content, e.g. a View-only badge + request-access button for shares. */
   accessSlot?: React.ReactNode;
@@ -67,12 +68,21 @@ export function SpreadsheetHeader(props: {
       </div>
       <div className="flex items-center gap-1">
         {props.accessSlot}
-        <Button variant="ghost" size="icon" onClick={props.onUndo} title="Undo">
-          <Undo2 className="h-4 w-4" />
-        </Button>
-        <Button variant="ghost" size="icon" onClick={props.onRedo} title="Redo">
-          <Redo2 className="h-4 w-4" />
-        </Button>
+        {props.onUndo && (
+          <Button variant="ghost" size="icon" onClick={props.onUndo} title="Undo">
+            <Undo2 className="h-4 w-4" />
+          </Button>
+        )}
+        {props.onRedo && (
+          <Button variant="ghost" size="icon" onClick={props.onRedo} title="Redo">
+            <Redo2 className="h-4 w-4" />
+          </Button>
+        )}
+        {props.onComments && (
+          <Button variant="ghost" size="icon" onClick={props.onComments} title="Comments">
+            <MessageSquare className="h-4 w-4" />
+          </Button>
+        )}
         {props.onVersions && (
           <Button variant="ghost" size="icon" onClick={props.onVersions} title="Version history">
             <History className="h-4 w-4" />

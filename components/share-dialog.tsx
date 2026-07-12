@@ -16,6 +16,7 @@ import {
 import { toast } from "sonner";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
+import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 import {
   decryptMetadataString,
   encryptWithShareKey,
@@ -106,6 +107,7 @@ export function ShareDialog({
   );
   const { metadataKey, publicKey } = useCrypto();
   const workspace = useOptionalWorkspace();
+  const space = useWorkspaceSpaceKey();
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -311,44 +313,64 @@ export function ShareDialog({
         let itemShareEncryptedContentType: string | undefined;
         let itemShareEncryptedThumbnail: string | undefined;
 
-        if (metadataKey) {
+        // Org/team file metadata is wrapped with the workspace space key, not
+        // the personal vault metadata key. Using the wrong key here would wrap
+        // decryptMetadataString's failure sentinel into the share, breaking
+        // recipient-side names and spreadsheet detection.
+        const itemMetadataKey = orgId ? space.cryptoKey : metadataKey;
+        if (orgId && !itemMetadataKey) {
+          throw new Error(
+            "Workspace encryption key is still loading — try again in a moment",
+          );
+        }
+
+        if (itemMetadataKey) {
           const nameToDecrypt =
             targetFile.encryptedDisplayName || targetFile.encryptedName;
           if (nameToDecrypt) {
             const plaintextName = await decryptMetadataString(
               nameToDecrypt,
-              metadataKey,
+              itemMetadataKey,
             );
-            itemShareEncryptedName = await encryptWithShareKey(
-              plaintextName,
-              shareKeyObj,
-            );
+            // decryptMetadataString returns this sentinel instead of throwing.
+            if (plaintextName && plaintextName !== "Encrypted File") {
+              itemShareEncryptedName = await encryptWithShareKey(
+                plaintextName,
+                shareKeyObj,
+              );
+            }
           }
 
           if (targetFile.encryptedContentType) {
             const plaintextType = await decryptMetadataString(
               targetFile.encryptedContentType,
-              metadataKey,
+              itemMetadataKey,
             );
-            itemShareEncryptedContentType = await encryptWithShareKey(
-              plaintextType,
-              shareKeyObj,
-            );
+            if (plaintextType && plaintextType !== "Encrypted File") {
+              itemShareEncryptedContentType = await encryptWithShareKey(
+                plaintextType,
+                shareKeyObj,
+              );
+            }
           }
 
-          if (targetFile.thumbnail && targetFile.thumbnail.startsWith("enc:")) {
+          if (
+            targetFile.thumbnail &&
+            targetFile.thumbnail.startsWith("enc:")
+          ) {
             const { decryptThumbnail } =
               await import("@/lib/crypto/fileEncryption");
+            // Returns "" when the key is wrong — skip rather than wrap junk.
             const plaintextThumb = await decryptThumbnail(
               targetFile.thumbnail,
-              metadataKey,
+              itemMetadataKey,
             );
-            const encryptedThumb = await encryptWithShareKey(
-              plaintextThumb,
-              shareKeyObj,
-            );
+            const encryptedThumb = plaintextThumb
+              ? await encryptWithShareKey(plaintextThumb, shareKeyObj)
+              : "";
 
-            try {
+            if (encryptedThumb) {
+              try {
               const configRes = workspace?.scopedFetch
                 ? await workspace.scopedFetch("/api/drive/config")
                 : await fetch("/api/drive/config");
@@ -389,11 +411,12 @@ export function ShareDialog({
 
                 itemShareEncryptedThumbnail = objectKey;
               }
-            } catch (thumbnailError) {
-              console.error(
-                "Failed to upload shared thumbnail to B2",
-                thumbnailError,
-              );
+              } catch (thumbnailError) {
+                console.error(
+                  "Failed to upload shared thumbnail to B2",
+                  thumbnailError,
+                );
+              }
             }
           }
         }

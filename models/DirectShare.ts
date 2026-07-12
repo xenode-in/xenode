@@ -89,6 +89,13 @@ const DirectShareSchema = new Schema<IDirectShare>(
 
 DirectShareSchema.index({ createdBy: 1, createdAt: -1 });
 DirectShareSchema.index({ "recipients.recipientUserId": 1, isRevoked: 1, createdAt: -1 });
+// One ACTIVE share per (object, owner) — re-sharing merges into it (Drive
+// semantics). Revoked shares drop out of the partial index, so a fresh share
+// after a revoke is still allowed.
+DirectShareSchema.index(
+  { objectId: 1, createdBy: 1 },
+  { unique: true, partialFilterExpression: { isRevoked: false } },
+);
 
 const DirectShare: Model<IDirectShare> =
   mongoose.models.DirectShare ||
