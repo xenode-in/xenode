@@ -18,6 +18,7 @@
     "onlyoffice:verify-sources": "node scripts/onlyoffice/verify-sources.mjs",
     "onlyoffice:build-client": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/onlyoffice/build-client.ps1",
     "onlyoffice:build-x2t": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/onlyoffice/build-x2t.ps1",
+    "onlyoffice:fetch-prebuilt": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/onlyoffice/fetch-prebuilt.ps1",
     "onlyoffice:verify-x2t": "tsx scripts/onlyoffice/verify-x2t-roundtrip.ts",
     "onlyoffice:install-host": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/onlyoffice/install-host.ps1",
     "onlyoffice:verify-client": "node scripts/onlyoffice/verify-client.mjs",

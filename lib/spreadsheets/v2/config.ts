@@ -1,6 +1,9 @@
 export const ONLYOFFICE_ARTIFACT_VERSION =
   process.env.NEXT_PUBLIC_ONLYOFFICE_ARTIFACT_VERSION ??
-  "9.4.0.131-xenode.1";
+  // CryptPad's patched, server-less editor + x2t at 9.3.0.140 (see
+  // docs/ONLYOFFICE_EDITOR_V2_PLAN.md). The earlier stock 9.4.0.131 build could
+  // not edit server-less; this is the whole stack aligned to CryptPad's 9.3.
+  "9.3.0.140-cryptpad.2-xenode.1";
 
 const configuredBase =
   process.env.NEXT_PUBLIC_ONLYOFFICE_EDITOR_BASE_URL ??
