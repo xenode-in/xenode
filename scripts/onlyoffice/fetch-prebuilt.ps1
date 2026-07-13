@@ -70,6 +70,8 @@ try {
   New-Item -ItemType Directory -Force -Path "$dest\xenode" | Out-Null
   Copy-Item (Join-Path $projectRoot "tools\onlyoffice\host\host.html") "$dest\xenode\host.html" -Force
   Copy-Item (Join-Path $projectRoot "tools\onlyoffice\host\xenode-frame.js") "$dest\xenode\xenode-frame.js" -Force
+  # Dev-only empirical harness for the editor protocol (see host/lab.html).
+  Copy-Item (Join-Path $projectRoot "tools\onlyoffice\host\lab.html") "$dest\xenode\lab.html" -Force
 
   Write-Host "Assembled CryptPad editor artifact: $dest"
 }

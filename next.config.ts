@@ -100,7 +100,7 @@ const nextConfig: NextConfig = {
           {
             key: "Content-Security-Policy",
             value:
-              "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self' https://sheets-v2.xenode.in; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; worker-src 'self' blob:",
+              "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self' https://sheets-v2.xenode.in; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:",
           },
           {
             key: "Cache-Control",

@@ -48,7 +48,14 @@ describe("Sheets v2 E2EE boundary", () => {
 
   it("the editor artifact CSP forbids network egress from the iframe", () => {
     const config = read("next.config.ts");
-    // connect-src 'none' on the editor origin keeps the iframe from phoning home.
-    expect(config).toMatch(/internal-editors\/onlyoffice[\s\S]*connect-src 'none'/);
+    // The editor origin's connect-src is limited to same-origin + local blobs
+    // (server-less editing fetches the document as a blob URL). Crucially it
+    // lists NO external http(s) host, so the iframe still cannot phone home.
+    const connectSrc = config.match(
+      /internal-editors\/onlyoffice[\s\S]*?connect-src ([^;]+);/,
+    )?.[1];
+    expect(connectSrc).toBeDefined();
+    expect(connectSrc).not.toMatch(/https?:\/\//);
+    expect(connectSrc).toMatch(/^'self'(?:\s+(?:blob:|data:))*\s*$/);
   });
 });
