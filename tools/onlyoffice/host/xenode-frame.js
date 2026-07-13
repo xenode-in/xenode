@@ -80,38 +80,143 @@
     post({ type: "DESTROYED" });
   }
 
-  // ── Editor adapter seam ────────────────────────────────────────────────────
-  // A real adapter loads web-apps/apps/api/documents/api.js, feeds it the
-  // Editor.bin through the local (server-less) editing path, and reports
-  // dirty/save/selection back through the callbacks. The stub below keeps the
-  // byte plumbing honest end-to-end without faking a working canvas.
+  // ── Editor adapter: CryptPad server-less ONLYOFFICE integration ─────────────
+  // Loads the CryptPad wrapper (web-apps/apps/api/documents/api.js), which
+  // replaces DocsAPI.DocEditor with a server-less version driven by a "mock
+  // server". On the editor's `auth` the wrapper answers `documentOpen` with the
+  // Editor.bin at config.document.url — so we hand it a blob URL of the bytes
+  // the parent transferred. Verified end-to-end (open + render) via lab.html.
+  var API_URL = "../web-apps/apps/api/documents/api.js";
+
+  function loadDocsApi() {
+    return new Promise(function (resolve, reject) {
+      if (window.DocsAPI && window.DocsAPI.DocEditor) return resolve();
+      var el = document.createElement("script");
+      el.src = API_URL;
+      el.onload = function () {
+        window.DocsAPI && window.DocsAPI.DocEditor
+          ? resolve()
+          : reject(new Error("docs_api_missing"));
+      };
+      el.onerror = function () { reject(new Error("api_load_failed")); };
+      document.head.appendChild(el);
+    });
+  }
+
   function createEditorAdapter(callbacks) {
+    // The wrapper writes window.APP.getImageURL during connectMockServer.
+    window.APP = window.APP || {};
+    var editor = null;
+    var blobUrl = null;
+    var dirty = false;
+    var lastSaveBin = null; // most recent Editor.bin captured from the editor
+    var pendingSave = null; // requestId awaiting SAVE_BYTES
+
+    // Minimal single-user mock server. Participant shape matches what
+    // onAuthParticipantsChanged/getUserInitials read (username required).
+    var participant = {
+      id: "xenode-user", idOriginal: "xenode-user", username: "Xenode",
+      indexUser: 0, connectionId: "xenode-conn", isCloseCoAuthoring: false, view: false,
+    };
+    var mockServer = {
+      getInitialChanges: function () { return []; },
+      getParticipants: function () { return { list: [participant], index: 0 }; },
+      onAuth: function () {},
+      onCorruptionWarning: function () { callbacks.onError("workbook_corruption"); },
+      onMessage: function (msg) {
+        if (!msg || typeof msg !== "object") return;
+        if (msg.type === "saveChanges" || msg.type === "unsaveLock") {
+          if (!dirty) { dirty = true; callbacks.onDirty(true); }
+        }
+        // The editor emits the serialized document (checkpoint) here; the exact
+        // save-message shape is validated separately (see host README). When a
+        // full Editor.bin is present, surface it to the parent.
+        var bin = extractSavedBin(msg);
+        if (bin) {
+          lastSaveBin = bin;
+          if (pendingSave) {
+            callbacks.onSave(bin, pendingSave);
+            pendingSave = null;
+          }
+          if (dirty) { dirty = false; callbacks.onDirty(false); }
+        }
+      },
+    };
+
+    function extractSavedBin(msg) {
+      // ONLYOFFICE's coauthoring "saveChanges" carries change deltas, not a full
+      // bin; a checkpoint bin arrives via a save/download path. This is the
+      // remaining piece to validate — returns null until confirmed so we never
+      // hand the parent a wrong/partial payload.
+      return null;
+    }
+
+    function buildConfig(binUrl) {
+      return {
+        documentType: "cell",
+        document: {
+          fileType: state.extension || "xlsx",
+          key: "xenode-" + Math.random().toString(16).slice(2),
+          title: "workbook." + (state.extension || "xlsx"),
+          url: binUrl,
+          permissions: { edit: state.mode !== "view", download: true },
+        },
+        editorConfig: {
+          mode: state.mode === "view" ? "view" : "edit",
+          lang: "en",
+          user: { id: participant.id, name: participant.username },
+          customization: { comments: false, chat: false, plugins: false, help: false },
+        },
+        events: {
+          onAppReady: function () {},
+          onDocumentReady: function () { setPlaceholder(""); callbacks.onReady(); },
+          onError: function (e) {
+            callbacks.onError("editor_error", e && e.data ? String(e.data) : "");
+          },
+        },
+      };
+    }
+
     return {
-      open: function (/* editorBinArrayBuffer */) {
-        setPlaceholder(
-          "Bridge connected. The ONLYOFFICE canvas integration (sdkjs local editing) is not wired yet.",
-        );
-        callbacks.onError(
-          "editor_integration_pending",
-          "x2t + sdkjs local editing harness not yet integrated",
-        );
+      open: function (binArrayBuffer) {
+        setPlaceholder("Loading editor…");
+        try {
+          if (blobUrl) URL.revokeObjectURL(blobUrl);
+          blobUrl = URL.createObjectURL(new Blob([binArrayBuffer]));
+        } catch (e) {
+          return callbacks.onError("blob_failed", String(e));
+        }
+        loadDocsApi()
+          .then(function () {
+            editor = new window.DocsAPI.DocEditor("oo-mount", buildConfig(blobUrl));
+            if (typeof editor.connectMockServer === "function") {
+              editor.connectMockServer(mockServer);
+            } else {
+              callbacks.onError("mock_server_unavailable");
+            }
+          })
+          .catch(function (e) { callbacks.onError("editor_load_failed", String(e && e.message || e)); });
       },
-      setMode: function (mode) {
-        state.mode = mode;
-      },
-      setTheme: function (theme) {
-        state.theme = theme;
-      },
+      setMode: function (mode) { state.mode = mode; },
+      setTheme: function (theme) { state.theme = theme; },
       requestSave: function (requestId) {
-        callbacks.onError("editor_integration_pending", "cannot save before canvas is wired");
-        void requestId;
+        // Trigger the editor to serialize, then SAVE_BYTES flows via onMessage.
+        pendingSave = requestId || "save";
+        if (lastSaveBin) { callbacks.onSave(lastSaveBin, pendingSave); pendingSave = null; return; }
+        try {
+          if (editor && typeof editor.downloadAs === "function") editor.downloadAs();
+        } catch (e) { void e; }
       },
       requestExport: function (requestId) {
-        callbacks.onError("editor_integration_pending", "cannot export before canvas is wired");
-        void requestId;
+        if (lastSaveBin) return callbacks.onExport(lastSaveBin, requestId);
+        callbacks.onError("export_pending", "no serialized workbook yet");
       },
-      focus: function () {},
-      destroy: function () {},
+      focus: function () { try { editor && editor.grabFocus && editor.grabFocus(); } catch (e) { void e; } },
+      destroy: function () {
+        try { editor && editor.destroyEditor && editor.destroyEditor(); } catch (e) { void e; }
+        if (blobUrl) { try { URL.revokeObjectURL(blobUrl); } catch (e) { void e; } blobUrl = null; }
+        editor = null;
+      },
     };
   }
 

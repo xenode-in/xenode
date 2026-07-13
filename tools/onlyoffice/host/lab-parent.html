@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+  <head><meta charset="utf-8" /><title>Xenode host+bridge lab</title>
+    <style>html,body{margin:0;height:100%}#f{border:0;width:100%;height:calc(100% - 22px)}#l{height:22px;font:11px monospace;background:#111;color:#0f0;overflow:hidden;white-space:nowrap;padding:0 6px;line-height:22px}</style>
+  </head>
+  <body>
+    <div id="l">booting…</div>
+    <iframe id="f"></iframe>
+    <script>
+      const CH = "xenode.sheets.v2", V = 1, NONCE = "lab-nonce", PORIGIN = location.origin;
+      const logEl = document.getElementById("l");
+      const log = (s) => { logEl.textContent = s; console.log("[parent]", s); };
+      const f = document.getElementById("f");
+      const send = (body, transfer) => {
+        f.contentWindow.postMessage(Object.assign({ channel: CH, v: V, nonce: NONCE }, body), PORIGIN, transfer || []);
+      };
+      let opened = false;
+      window.addEventListener("message", async (ev) => {
+        if (ev.origin !== PORIGIN || ev.source !== f.contentWindow) return;
+        const d = ev.data;
+        if (!d || d.channel !== CH || d.nonce !== NONCE) return;
+        console.log("[parent] frame→", d.type, d.code || "");
+        if (d.type === "READY" && !opened) {
+          opened = true;
+          send({ type: "INIT", mode: "edit", theme: "light", extension: "xlsx" });
+          const buf = await (await fetch("./test-Editor.bin")).arrayBuffer();
+          log("READY → sending OPEN_EDITOR_BIN (" + buf.byteLength + " bytes)");
+          send({ type: "OPEN_EDITOR_BIN", bin: buf }, [buf]);
+        } else if (d.type === "ERROR") {
+          log("frame ERROR: " + d.code + (d.message ? " — " + d.message : ""));
+        } else if (d.type === "DIRTY_CHANGED") {
+          log("dirty=" + d.dirty);
+        } else if (d.type === "SAVE_BYTES") {
+          log("SAVE_BYTES received: " + (d.bin && d.bin.byteLength) + " bytes ✅");
+        }
+      });
+      f.src = "./host.html#o=" + encodeURIComponent(PORIGIN) + "&n=" + NONCE;
+    </script>
+  </body>
+</html>

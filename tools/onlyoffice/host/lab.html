@@ -61,9 +61,18 @@
         },
       };
 
+      const participant = {
+        id: "u1",
+        idOriginal: "u1",
+        username: "Lab",
+        indexUser: 0,
+        connectionId: "conn-1",
+        isCloseCoAuthoring: false,
+        view: false,
+      };
       const mockServer = {
         getInitialChanges: () => { log("server.getInitialChanges"); return []; },
-        getParticipants: () => ({ list: [{ id: "u1", name: "Lab" }], index: 0 }),
+        getParticipants: () => ({ list: [participant], index: 0 }),
         onMessage: (msg) => log("server.onMessage:", (msg && msg.type) || "?"),
         onAuth: () => log("server.onAuth"),
         onCorruptionWarning: () => log("server.onCorruptionWarning"),
