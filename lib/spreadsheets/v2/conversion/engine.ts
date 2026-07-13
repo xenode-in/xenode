@@ -3,25 +3,35 @@
  *
  * Abstraction over the x2t WASM converter. The rest of the app talks to
  * `X2tEngine`; concrete engines (the real browser WASM module, or a test fake)
- * implement it. This keeps the conversion policy (guards, format mapping)
- * testable without shipping or loading the multi-hundred-MB WASM in unit tests.
+ * implement it. This keeps the conversion policy (guards) testable without
+ * shipping or loading the multi-hundred-MB WASM in unit tests.
  *
  * The real engine is produced by the out-of-band build in
  * `tools/onlyoffice/Dockerfile.x2t` and lands at
  * `${ONLYOFFICE_EDITOR_URL}/x2t/x2t.js` (+ `x2t.wasm`). Until that artifact is
  * present, `loadBrowserX2tEngine()` rejects with `x2t_unavailable`, which the UI
  * surfaces as "v2 not ready — falling back to v1".
+ *
+ * Usage validated against CryptPad's test.js (scripts/onlyoffice/
+ * verify-x2t-roundtrip.mjs): x2t reads a TaskQueueDataConvert params XML, infers
+ * the conversion from the m_sFileFrom / m_sFileTo file EXTENSIONS (`.bin` =
+ * Editor.bin), needs a populated font dir to measure text, and is invoked via
+ * `ccall("main1", "number", ["string"], [paramsPath])` returning 0 on success.
  */
+
+/** MEMFS layout x2t expects (mirrors CryptPad's test.js). */
+export const WORKING_DIR = "/working";
+export const FONTS_DIR = "/working/fonts";
+export const THEMES_DIR = "/working/themes";
 
 export interface X2tConversion {
   /** Raw bytes to convert. */
   input: Uint8Array;
-  /** ONLYOFFICE numeric format id of the input. */
-  inputFormat: number;
-  /** ONLYOFFICE numeric format id of the desired output. */
-  outputFormat: number;
-  /** Internal MEMFS names (document-independent). */
+  /** MEMFS file name INCLUDING extension — x2t infers the input format from it
+   *  (e.g. `input.xlsx`, `Editor.bin`). Document-independent. */
   inputName: string;
+  /** MEMFS output file name including extension — drives the output format
+   *  (e.g. `Editor.bin`, `output.xlsx`). */
   outputName: string;
 }
 
@@ -44,11 +54,7 @@ export class X2tUnavailableError extends Error {
  * module (onlyoffice-x2t-wasm) mounts a MEMFS and runs the converter over files
  * written into it. Its build exports `_main1` (C `main1`) with
  * `EXPORTED_RUNTIME_METHODS=ccall,FS`, so the converter is invoked as
- * `ccall("main1", "number", ["string"], [paramsXmlPath])`. We adapt that narrow
- * surface here in one place so a glue-API change is a one-file edit.
- *
- * NOTE: the exact entry name and argument convention must be reconciled against
- * the vendored `pre-js.js` wrapper when the WASM artifact is first built.
+ * `ccall("main1", "number", ["string"], [paramsXmlPath])`.
  */
 export const X2T_ENTRY_FUNCTION = "main1";
 
@@ -57,7 +63,7 @@ export interface RawX2tModule {
     writeFile(path: string, data: Uint8Array): void;
     readFile(path: string, opts: { encoding: "binary" }): Uint8Array;
     unlink(path: string): void;
-    mkdir?(path: string): void;
+    mkdir(path: string): void;
   };
   /** Runs x2t against a params XML already written to MEMFS. Returns 0 on ok. */
   ccall(
@@ -68,28 +74,54 @@ export interface RawX2tModule {
   ): number;
 }
 
-const PARAMS_PATH = "/params.xml";
+const PARAMS_PATH = `${WORKING_DIR}/params.xml`;
+
+function mkdirSafe(mod: RawX2tModule, path: string): void {
+  try {
+    mod.FS.mkdir(path);
+  } catch {
+    // already exists
+  }
+}
+
+/** Create the /working tree x2t needs. Idempotent; safe to call repeatedly.
+ *  Does NOT populate fonts — the caller (browserEngine) loads those once. */
+export function ensureWorkDirs(mod: RawX2tModule): void {
+  mkdirSafe(mod, "/tmp");
+  mkdirSafe(mod, WORKING_DIR);
+  mkdirSafe(mod, FONTS_DIR);
+  mkdirSafe(mod, THEMES_DIR);
+  mkdirSafe(mod, `${WORKING_DIR}/media`);
+}
 
 function buildParamsXml(inputName: string, outputName: string): string {
-  // x2t reads a TaskQueueDataConvert XML. Only the fields required for a local
-  // package<->bin conversion are set; nothing references a network resource.
+  // TaskQueueDataConvert. Format is inferred from the file extensions; the
+  // numeric format-id fields are intentionally omitted (see module doc). Font
+  // and theme dirs are required for text measurement. Nothing references a
+  // network resource.
   return (
     `<?xml version="1.0" encoding="utf-8"?>` +
-    `<TaskQueueDataConvert xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">` +
-    `<m_sFileFrom>/${inputName}</m_sFileFrom>` +
-    `<m_sFileTo>/${outputName}</m_sFileTo>` +
+    `<TaskQueueDataConvert xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">` +
+    `<m_sFontDir>${FONTS_DIR}/</m_sFontDir>` +
+    `<m_sThemeDir>${THEMES_DIR}</m_sThemeDir>` +
+    `<m_sFileFrom>${WORKING_DIR}/${inputName}</m_sFileFrom>` +
+    `<m_sFileTo>${WORKING_DIR}/${outputName}</m_sFileTo>` +
     `<m_bIsNoBase64>false</m_bIsNoBase64>` +
+    `<m_nCsvTxtEncoding>46</m_nCsvTxtEncoding>` +
+    `<m_nCsvDelimiter>4</m_nCsvDelimiter>` +
     `</TaskQueueDataConvert>`
   );
 }
 
 /** Adapt a raw Emscripten x2t module to the `X2tEngine` contract. Exposed so
- *  both the main-thread loader and the worker can reuse the conversion body. */
+ *  both the main-thread loader and a future worker can reuse the conversion
+ *  body. Assumes fonts have already been loaded into FONTS_DIR. */
 export function adaptRawModule(mod: RawX2tModule): X2tEngine {
   return {
     async convert(request: X2tConversion): Promise<Uint8Array> {
-      const inPath = `/${request.inputName}`;
-      const outPath = `/${request.outputName}`;
+      ensureWorkDirs(mod);
+      const inPath = `${WORKING_DIR}/${request.inputName}`;
+      const outPath = `${WORKING_DIR}/${request.outputName}`;
       mod.FS.writeFile(inPath, request.input);
       mod.FS.writeFile(
         PARAMS_PATH,
@@ -104,7 +136,8 @@ export function adaptRawModule(mod: RawX2tModule): X2tEngine {
         throw new Error(`x2t_conversion_failed:${rc}`);
       }
       const output = mod.FS.readFile(outPath, { encoding: "binary" });
-      // Release scratch immediately; plaintext must not linger in MEMFS.
+      // Release scratch immediately; plaintext must not linger in MEMFS. Fonts
+      // and theme dirs are intentionally kept for the next conversion.
       safeUnlink(mod, inPath);
       safeUnlink(mod, outPath);
       safeUnlink(mod, PARAMS_PATH);

@@ -1,10 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-  extensionToSpreadsheetFormat,
   isSupportedInputExtension,
   looksLikePackage,
   scratchNames,
-  X2T_FORMAT,
 } from "@/lib/spreadsheets/v2/conversion/formats";
 import { X2tClient } from "@/lib/spreadsheets/v2/conversion/x2tClient";
 import type { X2tConversion, X2tEngine } from "@/lib/spreadsheets/v2/conversion/engine";
@@ -24,8 +22,8 @@ function fakeEngine(): { engine: X2tEngine; calls: X2tConversion[] } {
   const engine: X2tEngine = {
     async convert(request) {
       calls.push(request);
-      // Echo a deterministic, format-tagged output so round-trips are testable.
-      const tag = request.outputFormat === X2T_FORMAT.BIN ? 0xbb : 0xaa;
+      // Echo a deterministic, output-tagged blob so round-trips are testable.
+      const tag = request.outputName.endsWith(".bin") ? 0xbb : 0xaa;
       return new Uint8Array([tag, ...request.input.subarray(0, 4)]);
     },
     dispose: vi.fn(),
@@ -34,13 +32,6 @@ function fakeEngine(): { engine: X2tEngine; calls: X2tConversion[] } {
 }
 
 describe("v2 conversion formats", () => {
-  it("maps extensions to ONLYOFFICE spreadsheet format ids", () => {
-    expect(extensionToSpreadsheetFormat("xlsx")).toBe(X2T_FORMAT.XLSX);
-    expect(extensionToSpreadsheetFormat("XLS")).toBe(X2T_FORMAT.XLS);
-    expect(extensionToSpreadsheetFormat("csv")).toBe(X2T_FORMAT.CSV);
-    expect(() => extensionToSpreadsheetFormat("pdf")).toThrow();
-  });
-
   it("recognizes supported input extensions", () => {
     expect(isSupportedInputExtension("xlsx")).toBe(true);
     expect(isSupportedInputExtension("docx")).toBe(false);
@@ -70,14 +61,12 @@ describe("v2 limit guards", () => {
 });
 
 describe("X2tClient", () => {
-  it("converts xlsx -> Editor.bin with the right formats and names", async () => {
+  it("converts xlsx -> Editor.bin with extension-driven names", async () => {
     const { engine, calls } = fakeEngine();
     const client = new X2tClient({ engineFactory: async () => engine });
     const bin = await client.toEditorBin(ZIP_XLSX, "xlsx");
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
-      inputFormat: X2T_FORMAT.XLSX,
-      outputFormat: X2T_FORMAT.BIN,
       inputName: "input.xlsx",
       outputName: "Editor.bin",
     });
@@ -89,8 +78,6 @@ describe("X2tClient", () => {
     const client = new X2tClient({ engineFactory: async () => engine });
     const out = await client.fromEditorBinToXlsx(new Uint8Array([9, 9, 9, 9]));
     expect(calls[0]).toMatchObject({
-      inputFormat: X2T_FORMAT.BIN,
-      outputFormat: X2T_FORMAT.XLSX,
       inputName: "Editor.bin",
       outputName: "output.xlsx",
     });

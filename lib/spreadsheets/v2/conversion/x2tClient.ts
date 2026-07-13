@@ -16,11 +16,9 @@ import {
   WorkbookLimitError,
 } from "../limits";
 import {
-  extensionToSpreadsheetFormat,
   isSupportedInputExtension,
   looksLikePackage,
   scratchNames,
-  X2T_FORMAT,
 } from "./formats";
 import { X2tEngine, X2tUnavailableError } from "./engine";
 
@@ -76,8 +74,6 @@ export class X2tClient {
     const engine = await this.ensureEngine();
     const bin = await engine.convert({
       input: bytes,
-      inputFormat: extensionToSpreadsheetFormat(ext),
-      outputFormat: X2T_FORMAT.BIN,
       inputName: names.input,
       outputName: names.bin,
     });
@@ -92,8 +88,6 @@ export class X2tClient {
     const engine = await this.ensureEngine();
     const xlsx = await engine.convert({
       input: bin,
-      inputFormat: X2T_FORMAT.BIN,
-      outputFormat: X2T_FORMAT.XLSX,
       inputName: names.bin,
       outputName: names.output,
     });

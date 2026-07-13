@@ -15,29 +15,9 @@ export const V2_INPUT_EXTENSIONS = new Set(["xlsx", "xls", "csv"]);
 /** Extensions we will export back to (Editor.bin -> package). */
 export const V2_OUTPUT_EXTENSIONS = new Set(["xlsx"]);
 
-/** ONLYOFFICE numeric format ids for x2t (`AVS_OFFICESTUDIO_FILE_*`). Only the
- *  spreadsheet formats currently in scope are listed. */
-export const X2T_FORMAT = {
-  BIN: 8193, // AVS_OFFICESTUDIO_FILE_CANVAS_SPREADSHEET (Editor.bin)
-  XLSX: 257, // AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLSX
-  XLS: 258, // AVS_OFFICESTUDIO_FILE_SPREADSHEET_XLS
-  CSV: 261, // AVS_OFFICESTUDIO_FILE_SPREADSHEET_CSV
-} as const;
-
-export type ConversionDirection = "to_bin" | "from_bin";
-
-export function extensionToSpreadsheetFormat(ext: string): number {
-  switch (ext.toLowerCase()) {
-    case "xlsx":
-      return X2T_FORMAT.XLSX;
-    case "xls":
-      return X2T_FORMAT.XLS;
-    case "csv":
-      return X2T_FORMAT.CSV;
-    default:
-      throw new Error(`unsupported_input_extension:${ext}`);
-  }
-}
+// x2t infers the conversion from the MEMFS file EXTENSIONS (see engine.ts), so
+// there is no numeric-format-id plumbing here — the scratch names below carry
+// the right extensions (`.xlsx`/`.bin`) and x2t does the rest.
 
 export function isSupportedInputExtension(ext: string): boolean {
   return V2_INPUT_EXTENSIONS.has(ext.toLowerCase());

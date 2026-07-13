@@ -90,5 +90,22 @@ $manifest = Get-Content -LiteralPath $versionFile -Raw | ConvertFrom-Json
 $manifest.x2tReady = $true
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $versionFile -Encoding utf8
 
+# --- Font manifest -----------------------------------------------------------
+# Enumerate the artifact's TTF fonts (from the client build's core-fonts) so
+# browserEngine can preload them into the WASM FS — x2t measures text against
+# real fonts. Paths are relative to the artifact root (served under the editor
+# URL); the browser can't list a directory over HTTP, hence this manifest.
+$fontsDir = Join-Path $artifactPath "fonts"
+if (Test-Path -LiteralPath $fontsDir) {
+  $prefixLen = $fontsDir.Length + 1
+  $fontFiles = @(
+    Get-ChildItem -LiteralPath $fontsDir -Recurse -Filter *.ttf -File |
+      ForEach-Object { "fonts/" + ($_.FullName.Substring($prefixLen) -replace '\\', '/') }
+  )
+  ConvertTo-Json -InputObject $fontFiles -Depth 2 |
+    Set-Content -LiteralPath (Join-Path $x2tPath "fonts.manifest.json") -Encoding utf8
+  Write-Host "Wrote fonts.manifest.json ($($fontFiles.Count) fonts)"
+}
+
 Write-Host "Built x2t WASM into artifact: $x2tPath"
 Write-Host "Marked x2tReady = true in $versionFile"
