@@ -35,16 +35,25 @@ if (Test-Path -LiteralPath $x2tPath) {
 }
 
 # --- Assemble build context ---------------------------------------------------
-# The context contains only `core/` and `x2t-wasm/` at its root, so nothing else
-# in the repo (node_modules, .next, the 1.5GB client artifact) is transferred.
+# Docker Desktop does not follow a Windows junction whose target is outside the
+# build-context directory. Materialize the pinned source instead; otherwise the
+# context contains only the harness and every `COPY core/...` fails immediately.
+$expectedContextPath = [System.IO.Path]::GetFullPath(
+  (Join-Path $projectRoot "tools\onlyoffice\.x2t-build-context")
+)
+$resolvedContextPath = [System.IO.Path]::GetFullPath($contextDir)
+if ($resolvedContextPath -ne $expectedContextPath -or -not $resolvedContextPath.StartsWith($projectRoot)) {
+  throw "Refusing to manage unexpected x2t context path: $resolvedContextPath"
+}
 if (Test-Path -LiteralPath $contextDir) {
-  # Remove a stale junction/dir without following it into vendor/core.
-  cmd /c "rmdir /S /Q `"$contextDir`"" | Out-Null
+  Remove-Item -LiteralPath $contextDir -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $contextDir | Out-Null
-# Junction core in (no 800MB copy); BuildKit tars it as a normal directory.
-cmd /c "mklink /J `"$(Join-Path $contextDir 'core')`" `"$coreDir`"" | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Failed to junction core into the build context." }
+$contextCoreDir = Join-Path $contextDir "core"
+New-Item -ItemType Directory -Force -Path $contextCoreDir | Out-Null
+Get-ChildItem -LiteralPath $coreDir -Force |
+  Where-Object { $_.Name -ne ".git" } |
+  Copy-Item -Destination $contextCoreDir -Recurse -Force
 Copy-Item -Recurse -Force -LiteralPath $harnessDir -Destination (Join-Path $contextDir "x2t-wasm")
 
 try {
@@ -59,12 +68,9 @@ try {
   }
 }
 finally {
-  # Always drop the junction so the context dir never risks a recursive delete
-  # into vendor/core.
-  if (Test-Path -LiteralPath (Join-Path $contextDir "core")) {
-    cmd /c "rmdir `"$(Join-Path $contextDir 'core')`"" | Out-Null
+  if (Test-Path -LiteralPath $contextDir) {
+    Remove-Item -LiteralPath $contextDir -Recurse -Force
   }
-  cmd /c "rmdir /S /Q `"$contextDir`"" | Out-Null
 }
 
 if (-not (Test-Path -LiteralPath (Join-Path $x2tPath "x2t.wasm"))) {

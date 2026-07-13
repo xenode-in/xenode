@@ -45,5 +45,6 @@ next-env.d.ts
 /public/internal-editors/onlyoffice/*
 !/public/internal-editors/onlyoffice/README.md
 /.artifacts/onlyoffice/
-# Transient x2t WASM build context (junction to vendor/core + harness copy).
+# Transient x2t WASM build context + build log.
 /tools/onlyoffice/.x2t-build-context/
+/x2t-build.log

@@ -132,11 +132,15 @@ RUN --mount=type=cache,sharing=locked,target=/emsdk/upstream/emscripten/cache/ \
 
 
 FROM base AS boost
+# XENODE: build boost from a SHALLOW, PARALLEL recursive submodule clone. The
+# release archive was tried but is incompatible with boost's modular CMake build
+# (no top-level CMakeLists.txt, headers consolidated instead of per-lib include
+# dirs, and only a subset of libs actually build — e.g. regex/date_time, which
+# x2t links, were missing). A shallow + --jobs submodule clone yields the exact
+# structure boost's CMake expects and is far faster than a full-history clone.
 WORKDIR /
-RUN git clone https://github.com/boostorg/boost.git
+RUN git clone --depth=1 --branch boost-1.84.0 --recurse-submodules --shallow-submodules --jobs 8 https://github.com/boostorg/boost.git /boost
 WORKDIR /boost
-RUN git fetch && git checkout boost-1.84.0
-RUN git submodule update --init --recursive
 RUN . /emsdk/emsdk_env.sh \
  && CXXFLAGS=-fms-extensions emcmake cmake '-DBOOST_EXCLUDE_LIBRARIES=context;cobalt;coroutine;fiber;log;thread;wave;type_erasure;serialization;locale;contract;graph'
 RUN . /emsdk/emsdk_env.sh && emmake make
@@ -150,7 +154,7 @@ COPY core/UnicodeConverter /core/UnicodeConverter
 COPY core/DesktopEditor/common /core/DesktopEditor/common
 WORKDIR /core
 RUN --mount=type=cache,sharing=locked,target=/emsdk/upstream/emscripten/cache/ \
-    embuild.sh UnicodeConverter
+    rm -rf /emsdk/upstream/emscripten/cache/ports/icu && embuild.sh UnicodeConverter
 RUN mkdir -p /core/build/lib/linux_64
 RUN mv /core/UnicodeConverter.o /core/build/lib/linux_64/libUnicodeConverter.a
 
@@ -413,9 +417,13 @@ RUN --mount=type=cache,sharing=locked,target=/emsdk/upstream/emscripten/cache/ \
 
 FROM base AS doctrenderer
 COPY core/DesktopEditor/ /core/DesktopEditor/
-RUN cp /core/DesktopEditor/doctrenderer/doctrenderer_empty.cpp /core/DesktopEditor/doctrenderer/doctrenderer.cpp
-RUN cp /core/DesktopEditor/doctrenderer/docbuilder_empty.cpp /core/DesktopEditor/doctrenderer/docbuilder.cpp
-RUN cp /core/DesktopEditor/doctrenderer/docbuilder_p_empty.cpp /core/DesktopEditor/doctrenderer/docbuilder_p.cpp
+# XENODE: CryptPad's WASM-only compatibility sources are not part of official
+# ONLYOFFICE core. Fetch the exact sources from the harness provenance pin.
+RUN wget -q https://raw.githubusercontent.com/cryptpad/onlyoffice-x2t-wasm/96886ff143e05471144c4426fb304b4d794370d2/core/DesktopEditor/doctrenderer/doctrenderer_empty.cpp -O /core/DesktopEditor/doctrenderer/doctrenderer.cpp
+RUN wget -q https://raw.githubusercontent.com/cryptpad/onlyoffice-x2t-wasm/96886ff143e05471144c4426fb304b4d794370d2/core/DesktopEditor/doctrenderer/docbuilder_empty.cpp -O /core/DesktopEditor/doctrenderer/docbuilder.cpp
+RUN wget -q https://raw.githubusercontent.com/cryptpad/onlyoffice-x2t-wasm/96886ff143e05471144c4426fb304b4d794370d2/core/DesktopEditor/doctrenderer/docbuilder_p_empty.cpp -O /core/DesktopEditor/doctrenderer/docbuilder_p.cpp
+RUN wget -q https://raw.githubusercontent.com/cryptpad/onlyoffice-x2t-wasm/96886ff143e05471144c4426fb304b4d794370d2/core/DesktopEditor/doctrenderer/doctrenderer.pri -O /core/DesktopEditor/doctrenderer/doctrenderer.pri
+RUN wget -q https://raw.githubusercontent.com/cryptpad/onlyoffice-x2t-wasm/96886ff143e05471144c4426fb304b4d794370d2/core/DesktopEditor/doctrenderer/js_internal/js_base.pri -O /core/DesktopEditor/doctrenderer/js_internal/js_base.pri
 COPY core/Common /core/Common
 COPY core/OfficeUtils /core/OfficeUtils
 COPY core/OOXML /core/OOXML
@@ -433,6 +441,14 @@ COPY core/DesktopEditor /core/DesktopEditor
 COPY core/HtmlFile2 /core/HtmlFile2
 COPY core/OfficeUtils /core/OfficeUtils
 COPY core/UnicodeConverter /core/UnicodeConverter
+# XENODE: 9.4.0.131 Fb2File compiles Common/3dParty/html/htmltoxhtml.cpp (needs
+# the FETCHED gumbo/markdown 3dParty from the html/md stages) and includes
+# OdfFile/Common/logging.h. The bare `COPY core/Common` above only has the html
+# sources pre-fetch, so overlay the fetched dirs and add OdfFile.
+COPY core/OdfFile /core/OdfFile
+COPY --from=md /core/Common/3dParty/md /core/Common/3dParty/md
+COPY --from=html /core/Common/3dParty/html /core/Common/3dParty/html
+COPY --from=boost /usr/local/include/boost /boost/libs/functional/include/boost
 COPY --from=common /core/build/lib/linux_64/libkernel.a /core/build/lib/linux_64/
 COPY --from=graphics /core/build/lib/linux_64/libgraphics.a /core/build/lib/linux_64/
 COPY --from=unicodeconverter /core/build/lib/linux_64/libUnicodeConverter.a /core/build/lib/linux_64/
@@ -510,6 +526,8 @@ COPY core/Common /core/Common
 COPY core/DesktopEditor /core/DesktopEditor
 COPY core/OfficeUtils /core/OfficeUtils
 COPY --from=apple3rdparty /core/Common/3dParty/apple /core/Common/3dParty/apple
+# serialization is EXCLUDED from the boost build, so its headers aren't in the
+# install; grab them from the submodule tree (which the shallow clone provides).
 COPY --from=boost /boost/libs/serialization/include/boost/archive/iterators/ /boost/libs/functional/include/boost/archive/iterators/
 COPY --from=boost /boost/libs/serialization/include/boost/serialization/throw_exception.hpp /boost/libs/functional/include/boost/serialization/throw_exception.hpp
 COPY --from=boost /usr/local/include/boost /boost/libs/functional/include/boost
@@ -547,6 +565,43 @@ COPY --from=graphics /core/build/lib/linux_64/libgraphics.a /core/build/lib/linu
 WORKDIR /core
 RUN --mount=type=cache,sharing=locked,target=/emsdk/upstream/emscripten/cache/ \
     embuild.sh DocxRenderer
+
+
+# XENODE: OFDFile + StarMathConverter are NEW x2t link dependencies in 9.4.0.131
+# (X2tConverter.pri ADD_DEPENDENCY lists them); CryptPad's 9.3.0.140 build has no
+# stage for them. Both are staticlib compiles modeled on the existing modules.
+FROM base AS ofdfile
+COPY core/OFDFile /core/OFDFile
+COPY core/Common /core/Common
+COPY core/DesktopEditor /core/DesktopEditor
+COPY core/OfficeUtils /core/OfficeUtils
+COPY core/UnicodeConverter /core/UnicodeConverter
+COPY core/OOXML /core/OOXML
+COPY core/OdfFile /core/OdfFile
+COPY core/PdfFile /core/PdfFile
+COPY --from=boost /usr/local/include/boost /boost/libs/functional/include/boost
+COPY --from=common /core/build/lib/linux_64/libkernel.a /core/build/lib/linux_64/
+COPY --from=unicodeconverter /core/build/lib/linux_64/libUnicodeConverter.a /core/build/lib/linux_64/
+COPY --from=graphics /core/build/lib/linux_64/libgraphics.a /core/build/lib/linux_64/
+COPY --from=pdffile /core/build/lib/linux_64/libPdfFile.a /core/build/lib/linux_64/
+WORKDIR /core
+RUN --mount=type=cache,sharing=locked,target=/emsdk/upstream/emscripten/cache/ \
+    embuild.sh OFDFile
+
+
+FROM base AS starmath
+COPY core/OdfFile /core/OdfFile
+COPY core/Common /core/Common
+COPY core/DesktopEditor /core/DesktopEditor
+COPY core/OfficeUtils /core/OfficeUtils
+COPY core/UnicodeConverter /core/UnicodeConverter
+# StarMath2OOXML.pro compiles OOXML/Base/Unit.cpp via ../../../../OOXML.
+COPY core/OOXML /core/OOXML
+COPY --from=boost /usr/local/include/boost /boost/libs/functional/include/boost
+COPY --from=common /core/build/lib/linux_64/libkernel.a /core/build/lib/linux_64/
+WORKDIR /core
+RUN --mount=type=cache,sharing=locked,target=/emsdk/upstream/emscripten/cache/ \
+    embuild.sh OdfFile/Reader/Converter/StarMath2OOXML
 
 
 # XENODE: upstream's testfiles / documentserver / test / log-symbols stages are
@@ -589,8 +644,31 @@ COPY --from=hwpfile /core/build/lib/linux_64/libHWPFile.a /core/build/lib/linux_
 COPY --from=docxrenderer /core/build/lib/linux_64/libDocxRenderer.a /core/build/lib/linux_64/
 COPY --from=doctrenderer /core/build/lib/linux_64/libdoctrenderer.a /core/build/lib/linux_64/
 COPY --from=ooxmlsignature /core/build/lib/linux_64/libooxmlsignature.a /core/build/lib/linux_64/
+# XENODE: 9.4.0.131 links these format libs that upstream's build stage omits.
+COPY --from=fb2file /core/build/lib/linux_64/libFb2File.a /core/build/lib/linux_64/
+COPY --from=ofdfile /core/build/lib/linux_64/libOFDFile.a /core/build/lib/linux_64/
+COPY --from=starmath /core/build/lib/linux_64/libStarMathConverter.a /core/build/lib/linux_64/
 
 RUN cat /wrap-main.cpp >> /core/X2tConverter/src/main.cpp
+# XENODE: base.pri adds GNU-ld-only flags for TEMPLATE=app (the x2t executable)
+# that wasm-ld rejects: --disable-new-dtags and --exclude-libs,ALL. Strip them.
+RUN sed -i '/--disable-new-dtags/d; /--exclude-libs,ALL/d' /core/Common/base.pri
+# XENODE: 9.4.0.131 proclimits.h only includes <stddef.h> inside the
+# !_RWSTD_NO_SETRLIMIT branch, but embuild defines _RWSTD_NO_SETRLIMIT and the
+# #else branch still uses size_t. Older toolchains pulled size_t in
+# transitively; emsdk 4.0.11's clang does not. Include it unconditionally.
+RUN sed -i '1i #include <stddef.h>' /core/Common/3dParty/misc/proclimits.h
+# XENODE: icu.pri's core_linux branch links ONLYOFFICE's native libicuuc/
+# libicudata .so.74, which we never build — ICU is supplied by Emscripten's
+# port via -sUSE_ICU=1. Static-lib stages skip linking so they didn't hit it;
+# the final executable link does. Drop the native ICU .so LIBS lines.
+RUN sed -i '/libicuuc\.so\./d; /libicudata\.so\./d' /core/Common/3dParty/icu/icu.pri
+# XENODE: Boost.Regex is header-only in 1.84 and its compiled lib target isn't
+# produced by the modular CMake build (no ICU), yet ONLYOFFICE passes
+# -lboost_regex. Every OO module that uses regex already compiled header-only,
+# so an empty archive satisfies the linker (ERROR_ON_UNDEFINED_SYMBOLS=0 covers
+# any stray symbol).
+RUN . /emsdk/emsdk_env.sh && emar rcs /usr/local/lib/libboost_regex.a
 RUN --mount=type=cache,sharing=locked,target=/emsdk/upstream/emscripten/cache/ \
     embuild.sh \
     -l "-looxmlsignature" \
@@ -599,6 +677,7 @@ RUN --mount=type=cache,sharing=locked,target=/emsdk/upstream/emscripten/cache/ \
     -l "-sEXPORTED_RUNTIME_METHODS=ccall,FS" \
     -l "-sEXPORTED_FUNCTIONS=_main1" \
     -l "-sALLOW_MEMORY_GROWTH" \
+    -l "-Wl,--allow-multiple-definition" \
     X2tConverter/build/Qt/X2tConverter.pro
 
 WORKDIR /core/build/bin/linux_64/
