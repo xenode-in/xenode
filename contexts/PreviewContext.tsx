@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, ReactNode } from "react";
 import dynamic from "next/dynamic";
-import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
+import type { PreviewIntent, PreviewSourceContext } from "@/lib/file-security";
 
 const FilePreviewDialog = dynamic(
   () =>
@@ -28,47 +28,34 @@ interface ObjectData {
   bucketId?: string;
 }
 
+interface OpenPreviewOptions {
+  sourceContext: PreviewSourceContext;
+  intent: PreviewIntent;
+  fileList?: ObjectData[];
+}
+
 interface PreviewContextType {
   previewFile: ObjectData | null;
   isPreviewOpen: boolean;
-  openPreview: (file: ObjectData, fileList?: ObjectData[]) => void;
+  openPreview: (file: ObjectData, options: OpenPreviewOptions) => void;
   closePreview: () => void;
 }
 
 const PreviewContext = createContext<PreviewContextType | undefined>(undefined);
 
 export function PreviewProvider({ children }: { children: ReactNode }) {
-  const workspace = useOptionalWorkspace();
   const [previewFile, setPreviewFile] = useState<ObjectData | null>(null);
   const [currentFileList, setCurrentFileList] = useState<ObjectData[]>([]);
+  const [previewOptions, setPreviewOptions] = useState<OpenPreviewOptions>({
+    sourceContext: "owned",
+    intent: "preview",
+  });
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
-  const openPreview = (file: ObjectData, fileList?: ObjectData[]) => {
-    const type = file.contentType.toLowerCase();
-    const name = (file.name || "").toLowerCase();
-    const isSpreadsheet =
-      file.mediaCategory === "excel" ||
-      type.includes("spreadsheet") ||
-      type.includes("excel") ||
-      type.includes("csv") ||
-      /\.(xlsx|xls|csv)$/.test(name);
-
-    if (isSpreadsheet) {
-      const params = new URLSearchParams({ id: file.id });
-      const scope = workspace?.driveScope;
-      if (scope?.type === "organization" || scope?.type === "team") {
-        params.set("orgId", scope.orgId);
-      }
-      if (scope?.type === "team") params.set("teamId", scope.teamId);
-      if (file.bucketId) params.set("bucketId", file.bucketId);
-      const slash = file.key.lastIndexOf("/");
-      if (slash >= 0) params.set("prefix", file.key.slice(0, slash + 1));
-      window.location.assign("/sheets/editor?" + params.toString());
-      return;
-    }
-
+  const openPreview = (file: ObjectData, options: OpenPreviewOptions) => {
     setPreviewFile(file);
-    setCurrentFileList(fileList || []);
+    setCurrentFileList(options.fileList || []);
+    setPreviewOptions(options);
     setIsPreviewOpen(true);
   };
 
@@ -76,8 +63,12 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
     setIsPreviewOpen(false);
   };
 
-  const currentIndex = previewFile && currentFileList ? currentFileList.findIndex(f => f.id === previewFile.id) : -1;
-  const hasNext = currentIndex !== -1 && currentIndex < currentFileList.length - 1;
+  const currentIndex =
+    previewFile && currentFileList
+      ? currentFileList.findIndex((f) => f.id === previewFile.id)
+      : -1;
+  const hasNext =
+    currentIndex !== -1 && currentIndex < currentFileList.length - 1;
   const hasPrevious = currentIndex !== -1 && currentIndex > 0;
 
   const handleNext = () => {
@@ -102,6 +93,8 @@ export function PreviewProvider({ children }: { children: ReactNode }) {
           file={previewFile}
           isOpen={isPreviewOpen}
           onClose={closePreview}
+          sourceContext={previewOptions.sourceContext}
+          intent={previewOptions.intent}
           onNext={handleNext}
           onPrevious={handlePrevious}
           hasNext={hasNext}

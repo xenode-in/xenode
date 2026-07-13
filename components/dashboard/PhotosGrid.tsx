@@ -832,7 +832,11 @@ export function PhotosGrid({
       // Bridge the gap by spreading `id` alongside the existing fields.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const asLegacy = (p: GridObject) => ({ ...p, id: p._id }) as any;
-      openPreview(asLegacy(photo), filteredPhotosRef.current.map(asLegacy));
+      openPreview(asLegacy(photo), {
+        sourceContext: "owned",
+        intent: "preview",
+        fileList: filteredPhotosRef.current.map(asLegacy),
+      });
     },
     [openPreview],
   );

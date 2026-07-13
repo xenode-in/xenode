@@ -6,26 +6,6 @@ const nextConfig: NextConfig = {
   output: "standalone",
   reactStrictMode: false,
 
-  // ── Turbopack: redirect mediainfo.js → CDN shim so the WASM is never bundled ──
-  turbopack: {
-    resolveAlias: {
-      "mediainfo.js": "./lib/metadata/mediainfo-loader",
-    },
-  },
-
-  // ── Webpack (non-Turbopack builds) ──────────────────────────────────────────
-  webpack(config, { isServer }) {
-    if (!isServer) {
-      // Redirect mediainfo.js → CDN shim at the webpack level too
-      config.resolve = config.resolve || {};
-      config.resolve.alias = {
-        ...(config.resolve.alias || {}),
-        "mediainfo.js": require.resolve("./lib/metadata/mediainfo-loader"),
-      };
-    }
-    return config;
-  },
-
   images: {
     remotePatterns: [
       {
@@ -44,12 +24,20 @@ const nextConfig: NextConfig = {
   },
 
   async headers() {
+    const securityHeaders = [
+      { key: "X-Content-Type-Options", value: "nosniff" },
+      { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+      { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
+      { key: "Content-Security-Policy-Report-Only", value: "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; frame-src https://edit.xenode.in; form-action 'self'" },
+    ];
     const relaxedHeaders = [
+      ...securityHeaders,
       { key: "Cross-Origin-Opener-Policy", value: "unsafe-none" },
       { key: "Cross-Origin-Embedder-Policy", value: "unsafe-none" },
     ];
 
     const strictHeaders = [
+      ...securityHeaders,
       { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
       { key: "Cross-Origin-Embedder-Policy", value: "require-corp" },
     ];
@@ -111,12 +99,6 @@ const nextConfig: NextConfig = {
         ],
       },
 
-      {
-        source: "/sync",
-        headers: [
-          { key: "Cross-Origin-Resource-Policy", value: "cross-origin" },
-        ],
-      },
       {
         source: "/admin/:path*",
         headers: [

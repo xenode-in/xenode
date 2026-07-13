@@ -1277,7 +1277,11 @@ export function FilesBrowser() {
 
   const handlePreview = useCallback(
     (file: ObjectData) => {
-      openPreview(file, viewObjects.files);
+      openPreview(file, {
+        sourceContext: "owned",
+        intent: "preview",
+        fileList: viewObjects.files,
+      });
     },
     [openPreview, viewObjects.files],
   );

@@ -101,7 +101,7 @@ export default function SharedWithMePage() {
       return;
     }
     if (share.objectId.mediaCategory === "excel") {
-      window.location.assign(`/sheets/editor?shareId=${share._id}`);
+      window.location.assign(`/sheets-v2/editor?shareId=${share._id}`);
       return;
     }
     setPreview(share);
@@ -267,7 +267,7 @@ export default function SharedWithMePage() {
                         />
                         {share.objectId.mediaCategory === "excel" && (
                           <Button variant="outline" size="sm" asChild>
-                            <Link href={`/sheets/editor?shareId=${share._id}`}>
+                            <Link href={`/sheets-v2/editor?shareId=${share._id}`}>
                               <Table2 className="mr-1.5 h-3.5 w-3.5" />
                               Open in Sheets
                             </Link>

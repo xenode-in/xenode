@@ -17,6 +17,7 @@ import {
 import { cacheKeys, clearCachedKeys, loadCachedKeys } from "@/lib/crypto/keyCache";
 import { clearLocalDb } from "@/lib/db/local";
 import { signOut, useSession } from "@/lib/auth/client";
+import { clearThumbnailMemoryCache } from "@/lib/thumbnails/memoryCache";
 
 interface CryptoContextType {
   isInitializing: boolean;
@@ -47,12 +48,6 @@ interface CryptoContextType {
 }
 
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
-
-interface SyncedCryptoKeys {
-  privateKey: CryptoKey;
-  publicKey: CryptoKey;
-  metadataKey?: CryptoKey;
-}
 
 function getLoginRedirect(reason: string) {
   if (typeof window === "undefined") return `/login?reason=${reason}`;
@@ -85,6 +80,7 @@ export function CryptoProvider({
     setMetadataKey(null);
     setPrivateKeyBuf(null);
     setIsUnlocked(false);
+    clearThumbnailMemoryCache();
   }, []);
 
   const signOutStaleVaultSession = useCallback(
@@ -131,68 +127,10 @@ export function CryptoProvider({
           return;
         }
 
-        const hostname =
-          typeof window !== "undefined" ? window.location.hostname : "";
-        const isSubdomain =
-          hostname.startsWith("docs.") || hostname.startsWith("admin.");
-
-        if (isSubdomain) {
-          const mainUrl =
-            process.env.NEXT_PUBLIC_APP_URL ||
-            (hostname.includes("localhost")
-              ? "http://localhost:3000"
-              : "https://xenode.in");
-
-          const iframe = document.createElement("iframe");
-          iframe.src = `${mainUrl}/sync`;
-          iframe.style.display = "none";
-          document.body.appendChild(iframe);
-
-          const syncPromise = new Promise<SyncedCryptoKeys | null>((resolve) => {
-            const timeout = setTimeout(() => resolve(null), 5000);
-
-            const handleSync = async (event: MessageEvent) => {
-              if (event.origin !== new URL(mainUrl).origin) return;
-
-              if (event.data?.type === "XENODE_SYNC_READY") {
-                iframe.contentWindow?.postMessage(
-                  { type: "XENODE_GET_KEYS" },
-                  mainUrl,
-                );
-              }
-
-              if (event.data?.type === "XENODE_KEYS_RELAY") {
-                clearTimeout(timeout);
-                window.removeEventListener("message", handleSync);
-                document.body.removeChild(iframe);
-                resolve(event.data.keys as SyncedCryptoKeys);
-              }
-
-              if (event.data?.type === "XENODE_KEYS_NOT_FOUND") {
-                clearTimeout(timeout);
-                window.removeEventListener("message", handleSync);
-                document.body.removeChild(iframe);
-                resolve(null);
-              }
-            };
-            window.addEventListener("message", handleSync);
-          });
-
-          const syncedKeys = await syncPromise;
-          if (syncedKeys) {
-            setPrivateKey(syncedKeys.privateKey);
-            setPublicKey(syncedKeys.publicKey);
-            setMetadataKey(syncedKeys.metadataKey || null);
-            setPrivateKeyBuf(null);
-            setIsUnlocked(true);
-            await cacheKeys(
-              syncedKeys.privateKey,
-              syncedKeys.publicKey,
-              syncedKeys.metadataKey,
-            );
-            return;
-          }
-        }
+        // Cross-origin key relay (the old docs.xenode.in subdomain flow) has
+        // been removed. Private and metadata keys are never relayed across
+        // origins — the vault is unlocked only from cached keys, the one-shot
+        // session password, or an explicit unlock.
 
         const storedPw = sessionStorage.getItem("xenode-vault-pw");
         if (storedPw) {

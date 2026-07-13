@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowLeft, FileSpreadsheet, ShieldCheck } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { FileSpreadsheet, ShieldCheck } from "lucide-react";
 import { useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
 import {
@@ -43,7 +43,6 @@ export function SheetsV2DriveEditor() {
 
 function SheetsV2DriveEditorInner() {
   const search = useSearchParams();
-  const router = useRouter();
   const objectId = search.get("id") ?? "";
   const shareId = search.get("shareId");
   const { data: session } = useSession();
@@ -112,11 +111,6 @@ function SheetsV2DriveEditorInner() {
     return () => persistence?.dispose?.();
   }, [persistence]);
 
-  const legacyHref = useMemo(() => {
-    const query = search.toString();
-    return query ? `/sheets/editor?${query}` : "/sheets";
-  }, [search]);
-
   const handleLoaded = (loaded: LoadedBinaryWorkbook) => {
       setWorkbookName(loaded.name);
       if (!session?.user.id) return;
@@ -168,13 +162,6 @@ function SheetsV2DriveEditorInner() {
             </span>
           </div>
         </div>
-        <Link
-          href={legacyHref}
-          className="inline-flex h-8 shrink-0 items-center gap-2 rounded-md border bg-background px-3 text-xs font-medium hover:bg-muted"
-        >
-          <ArrowLeft className="size-3.5" />
-          Current editor
-        </Link>
       </header>
       {editorMessage && (
         <div className="border-b bg-amber-500/5 px-4 py-2 text-xs text-amber-700">
@@ -188,8 +175,9 @@ function SheetsV2DriveEditorInner() {
           theme="light"
           onLoaded={handleLoaded}
           onFallbackToV1={(reason) => {
-            setEditorMessage(`Sheets v2 unavailable (${reason}). Opening the current editor…`);
-            router.replace(legacyHref);
+            setEditorMessage(
+              `Sheets v2 is temporarily unavailable (${reason}). Please reload to try again.`,
+            );
           }}
           onError={(code, message) =>
             setEditorMessage(`Editor: ${code}${message ? ` — ${message}` : ""}`)

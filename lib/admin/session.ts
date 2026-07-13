@@ -2,7 +2,9 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 
-const ADMIN_COOKIE = "Xenode_admin_session";
+const ADMIN_COOKIE = process.env.NODE_ENV === "production"
+  ? "__Host-Xenode_admin_session"
+  : "Xenode_admin_session";
 const ADMIN_JWT_SECRET =
   process.env.ADMIN_JWT_SECRET || "change_me_in_production";
 

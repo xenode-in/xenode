@@ -7,7 +7,7 @@ export const ONLYOFFICE_ARTIFACT_VERSION =
 
 const configuredBase =
   process.env.NEXT_PUBLIC_ONLYOFFICE_EDITOR_BASE_URL ??
-  "/internal-editors/onlyoffice";
+  "https://edit.xenode.in/onlyoffice";
 
 export const ONLYOFFICE_EDITOR_BASE_URL = configuredBase.replace(/\/$/, "");
 
@@ -22,7 +22,7 @@ export const ONLYOFFICE_HOST_URL = `${ONLYOFFICE_EDITOR_URL}/xenode/host.html?re
 
 /** Explicit editor origin for production (e.g. `https://sheets-v2.xenode.in`).
  *  When unset we treat the editor as same-origin (dev / relative asset path). */
-const configuredOrigin = process.env.NEXT_PUBLIC_ONLYOFFICE_EDITOR_ORIGIN ?? "";
+const configuredOrigin = process.env.NEXT_PUBLIC_ONLYOFFICE_EDITOR_ORIGIN ?? "https://edit.xenode.in";
 
 /** Resolve the exact origin the iframe will run at, for postMessage targeting
  *  and origin validation. Never returns a wildcard. */
@@ -36,5 +36,5 @@ export function resolveEditorOrigin(): string {
       /* fall through to same-origin */
     }
   }
-  return typeof window !== "undefined" ? window.location.origin : "";
+  throw new Error("A distinct absolute OnlyOffice editor origin is required");
 }

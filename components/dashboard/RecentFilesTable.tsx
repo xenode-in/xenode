@@ -137,7 +137,7 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
         {files.map((file) => (
           <div
             key={file.id}
-            onClick={() => openPreview(file)}
+            onClick={() => openPreview(file, { sourceContext: "owned", intent: "preview" })}
             className="grid grid-cols-[2fr_1fr_1fr_40px] gap-4 px-4 py-3 border-b border-border/50 last:border-0 hover:bg-secondary/40 transition-colors items-center cursor-pointer group"
           >
             {/* Name */}
@@ -185,7 +185,7 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
                     className="hover:bg-accent cursor-pointer"
                     onClick={(e) => {
                       e.stopPropagation();
-                      openPreview(file);
+                      openPreview(file, { sourceContext: "owned", intent: "preview" });
                     }}
                   >
                     <FileText className="w-4 h-4 mr-2" />

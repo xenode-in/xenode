@@ -1,5 +1,6 @@
 "use client";
 "use client";
+import { downloadFromUrl } from "@/lib/downloads/client-download";
 import React, {
   createContext,
   useContext,
@@ -189,7 +190,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
               "Plaintext chunked files are not supported for download directly yet.",
             );
           } else if (data.url) {
-            window.open(data.url, "_blank");
+            await downloadFromUrl(data.url, name);
           }
           updateTask(obj.id, { status: "completed", progress: 100 });
           abortControllers.delete(obj.id);

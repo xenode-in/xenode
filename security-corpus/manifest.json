@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "samples": [
+    {
+      "id": "mime-confusion-pdf-as-jpeg",
+      "sha256": null,
+      "source": "synthetic",
+      "expected": "blocked-preview"
+    },
+    {
+      "id": "macro-enabled-xlsm",
+      "sha256": null,
+      "source": "synthetic",
+      "expected": "download-only"
+    },
+    {
+      "id": "nul-bearing-text",
+      "sha256": null,
+      "source": "synthetic",
+      "expected": "blocked-preview"
+    }
+  ],
+  "restrictedCorpusRequiredBeforeEnablement": true
+}

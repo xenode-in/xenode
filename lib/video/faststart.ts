@@ -42,6 +42,13 @@ export type FaststartResult =
 const MAX_MOOV_BYTES = 128 * 1024 * 1024;
 
 /**
+ * Cap on the number of top-level boxes we will parse. Real MP4/MOV files have a
+ * handful of top-level boxes; a file with millions of tiny boxes is malformed
+ * or hostile — bail out and leave it untouched rather than spin.
+ */
+const MAX_TOP_LEVEL_BOXES = 4096;
+
+/**
  * Total wall-clock budget for the entire faststart operation.
  * If anything hangs (FileReader, iOS WKWebView quirks, etc.) the original
  * file is returned rather than blocking the upload indefinitely.
@@ -142,6 +149,10 @@ async function parseTopLevelBoxes(file: File): Promise<Mp4Box[]> {
   let offset = 0;
 
   while (offset + 8 <= file.size) {
+    if (boxes.length >= MAX_TOP_LEVEL_BOXES) {
+      warn(`Exceeded ${MAX_TOP_LEVEL_BOXES} top-level boxes — stopping parse`);
+      break;
+    }
     const probeEnd = Math.min(offset + BOX_HEADER_PROBE, file.size);
     const headerBuf = await readSlice(file, offset, probeEnd);
     const view = new DataView(headerBuf);
@@ -355,37 +366,53 @@ async function assembleParts(
       box.offset < firstMdat.offset,
   );
 
+  // Every original box is appended as a lazy file.slice() Blob (zero RAM —
+  // bytes flow only when the resulting File is read for upload). Only the
+  // patched moov lives in memory, because it's the one box we rewrote. This
+  // avoids eagerly loading arbitrarily large non-mdat boxes (a malformed/
+  // hostile file could declare a multi-GB `free`/`uuid` box and OOM the tab).
+
   // 1. ftyp — always first if present
   if (ftyp) {
-    parts.push(await readSlice(file, ftyp.offset, ftyp.offset + ftyp.size));
+    parts.push(file.slice(ftyp.offset, ftyp.offset + ftyp.size));
   }
 
   // 2. Any non-media structural boxes that were before the first mdat in the
   //    original (e.g. "free" padding written between ftyp and mdat).
   for (const box of leadingStructuralBoxes) {
-    parts.push(await readSlice(file, box.offset, box.offset + box.size));
+    parts.push(file.slice(box.offset, box.offset + box.size));
   }
 
-  // 3. Patched moov
+  // 3. Patched moov (the only box held in RAM)
   parts.push(copyToArrayBuffer(patchedMoov));
 
   // 4. Everything else in original order. For the common [ftyp][mdat][moov]
   //    layout, this places mdat after moov, which is the actual faststart move.
   for (const box of boxes) {
-    if (box.type === "ftyp" || box.type === "moov") continue;
+    if (box === ftyp || box === moov) continue;
     if (leadingStructuralBoxes.includes(box)) continue;
-
-    if (box.type === "mdat") {
-      // Never load mdat into RAM — lazy reference, zero memory cost
-      parts.push(file.slice(box.offset, box.offset + box.size));
-    } else {
-      // free, skip, wide, uuid — small structural boxes, eager is fine
-      parts.push(await readSlice(file, box.offset, box.offset + box.size));
-    }
+    parts.push(file.slice(box.offset, box.offset + box.size));
   }
 
   return parts;
 }
+
+function structuralBoxError(boxes: readonly Mp4Box[]): string | null {
+  const ftypCount = boxes.filter((box) => box.type === "ftyp").length;
+  const moovCount = boxes.filter((box) => box.type === "moov").length;
+  if (ftypCount > 1) {
+    return `duplicate ftyp boxes (${ftypCount})`;
+  }
+  if (moovCount !== 1) {
+    return `expected exactly one moov box, found ${moovCount}`;
+  }
+  return null;
+}
+
+export const __faststartTestUtils =
+  process.env.NODE_ENV === "test"
+    ? { structuralBoxError }
+    : undefined;
 
 // ─── Public API ───────────────────────────────────────────────────────────────
 
@@ -438,6 +465,20 @@ export async function optimizeVideoForStreaming(
         };
       }
 
+      // 1b. Full-coverage guard. The parser stops cleanly on malformed or
+      //     truncated boxes, returning only what it read so far. Rewriting from
+      //     a partial box list would silently drop the unparsed tail, so if the
+      //     boxes don't tile the whole file exactly, leave the file untouched.
+      const lastBox = boxes[boxes.length - 1];
+      const coveredBytes = lastBox.offset + lastBox.size;
+      if (boxes[0].offset !== 0 || coveredBytes !== file.size) {
+        return {
+          status: "skipped",
+          file,
+          reason: `box layout does not fully cover the file (${coveredBytes}/${file.size} bytes) — leaving unchanged`,
+        };
+      }
+
       // 2. fMP4 check — must precede moov/mdat checks
       if (isFragmentedMp4(boxes)) {
         log(
@@ -447,6 +488,14 @@ export async function optimizeVideoForStreaming(
         return { status: "fragmented", file };
       }
 
+      const structuralError = structuralBoxError(boxes);
+      if (structuralError) {
+        return {
+          status: "skipped",
+          file,
+          reason: `${structuralError}; leaving unchanged`,
+        };
+      }
       // 3. Locate required boxes
       const ftyp = boxes.find((b) => b.type === "ftyp");
       const moov = boxes.find((b) => b.type === "moov");
@@ -509,6 +558,14 @@ export async function optimizeVideoForStreaming(
         type: file.type || "video/mp4",
         lastModified: file.lastModified,
       });
+
+      if (optimized.size !== file.size) {
+        return {
+          status: "skipped",
+          file,
+          reason: `rewritten size changed (${optimized.size}/${file.size}); leaving unchanged`,
+        };
+      }
 
       log(
         `✅ Done — moov moved to front.`,

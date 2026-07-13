@@ -273,8 +273,7 @@ function createAuth() {
     },
     advanced: {
       crossSubDomainCookies: {
-        enabled: true,
-        domain: process.env.NODE_ENV === "production" ? "xenode.in" : "localhost",
+        enabled: false,
       },
     },
     rateLimit: {
@@ -289,8 +288,6 @@ function createAuth() {
     },
     trustedOrigins: [
       process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
-      "https://docs.xenode.in",
-      "http://docs.localhost:3000",
       "xenode://",
       "xenode://*",
       "http://localhost:8081",

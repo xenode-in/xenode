@@ -110,7 +110,11 @@ export function GlobalSearch() {
                     encryptedName: result.encryptedName ?? undefined,
                     name: result.name,
                   },
-                  fileResults,
+                  {
+                    sourceContext: "owned",
+                    intent: "preview",
+                    fileList: fileResults,
+                  },
                 );
               };
 

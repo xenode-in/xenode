@@ -3,8 +3,6 @@
 const NOOP = () => {};
 
 import React, { useEffect, useState, useRef, useCallback } from "react";
-import dynamic from "next/dynamic";
-import DocxViewer from "./DocxViewer";
 import { FileVersionsDialog } from "./FileVersionsDialog";
 import {
   Dialog,
@@ -24,7 +22,6 @@ import {
   Maximize2,
   ChevronLeft,
   ChevronRight,
-  Pencil,
   History,
   Play,
 } from "lucide-react";
@@ -43,7 +40,10 @@ import {
 import { fromB64 } from "@/lib/crypto/utils";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
 import { useVideoStream, VideoStreamOptions } from "@/hooks/useVideoStream";
-import { useThumbnail } from "@/hooks/useThumbnail";
+import {
+  createServiceWorkerMediaSession,
+  type ServiceWorkerMediaSession,
+} from "@/lib/media/serviceWorkerMedia";
 import {
   useAudioTrackSyncer,
   SidecarAudioTrack,
@@ -51,6 +51,21 @@ import {
 import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 
+import { useRendererConfig } from "@/hooks/useRendererConfig";
+import {
+  CONSTRAINED_RESOURCE_BUDGET,
+  DESKTOP_RESOURCE_BUDGET,
+  type BrowserCapabilities,
+  decideFileDisposition,
+  isDispositionRendererEnabled,
+  inspectFileHeader,
+  type PreviewDisposition,
+  type PreviewIntent,
+  type PreviewSourceContext,
+  type ResourceBudget,
+} from "@/lib/file-security";
+import { SafePdfPreview } from "./SafePdfPreview";
+import { SafeTextPreview } from "./SafeTextPreview";
 import "@vidstack/react/player/styles/default/theme.css";
 import "@vidstack/react/player/styles/default/layouts/video.css";
 import "@vidstack/react/player/styles/default/layouts/audio.css";
@@ -60,12 +75,6 @@ import {
   DefaultVideoLayout,
   DefaultAudioLayout,
 } from "@vidstack/react/player/layouts/default";
-import { DocViewerRenderers } from "@cyntler/react-doc-viewer";
-
-const DocViewer = dynamic(() => import("@cyntler/react-doc-viewer"), {
-  ssr: false,
-});
-
 // ─── Zoomable Image ───────────────────────────────────────────────────────────
 
 function ZoomableImage({
@@ -165,8 +174,12 @@ function ZoomableImage({
 
     let isHovered = false;
 
-    const onEnter = () => { isHovered = true; };
-    const onLeave = () => { isHovered = false; };
+    const onEnter = () => {
+      isHovered = true;
+    };
+    const onLeave = () => {
+      isHovered = false;
+    };
 
     const onWindowWheel = (e: WheelEvent) => {
       if (isHovered && (e.ctrlKey || e.metaKey)) {
@@ -185,34 +198,28 @@ function ZoomableImage({
     };
   }, []);
 
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      if (e.button !== 0) return;
-      isDragging.current = true;
-      didDrag.current = false;
-      lastMouse.current = { x: e.clientX, y: e.clientY };
-      e.preventDefault();
-    },
-    [],
-  );
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    isDragging.current = true;
+    didDrag.current = false;
+    lastMouse.current = { x: e.clientX, y: e.clientY };
+    e.preventDefault();
+  }, []);
 
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent) => {
-      if (!isDragging.current) return;
-      const dx = e.clientX - lastMouse.current.x;
-      const dy = e.clientY - lastMouse.current.y;
-      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) didDrag.current = true;
-      lastMouse.current = { x: e.clientX, y: e.clientY };
-      if (scaleRef.current > MIN_SCALE) {
-        translateRef.current = {
-          x: translateRef.current.x + dx,
-          y: translateRef.current.y + dy,
-        };
-        forceRender((n) => n + 1);
-      }
-    },
-    [],
-  );
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isDragging.current) return;
+    const dx = e.clientX - lastMouse.current.x;
+    const dy = e.clientY - lastMouse.current.y;
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) didDrag.current = true;
+    lastMouse.current = { x: e.clientX, y: e.clientY };
+    if (scaleRef.current > MIN_SCALE) {
+      translateRef.current = {
+        x: translateRef.current.x + dx,
+        y: translateRef.current.y + dy,
+      };
+      forceRender((n) => n + 1);
+    }
+  }, []);
 
   const handleMouseUp = useCallback(
     (e: React.MouseEvent) => {
@@ -264,7 +271,13 @@ function ZoomableImage({
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseLeave}
       onDoubleClick={handleDoubleClick}
-      style={{ cursor: isZoomed ? (isDragging.current ? "grabbing" : "grab") : "zoom-in" }}
+      style={{
+        cursor: isZoomed
+          ? isDragging.current
+            ? "grabbing"
+            : "grab"
+          : "zoom-in",
+      }}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
@@ -399,6 +412,8 @@ interface FilePreviewDialogProps {
   file: ObjectData | null;
   isOpen: boolean;
   onClose: () => void;
+  sourceContext?: PreviewSourceContext;
+  intent?: PreviewIntent;
   onNext?: () => void;
   onPrevious?: () => void;
   hasNext?: boolean;
@@ -650,6 +665,26 @@ function fileNameFromKey(key: string) {
 function formatMB(bytes: number) {
   return (bytes / 1024 / 1024).toFixed(2);
 }
+function getPreviewRuntimeProfile(): {
+  budget: ResourceBudget;
+  capabilities: BrowserCapabilities;
+} {
+  const memory = (navigator as Navigator & { deviceMemory?: number })
+    .deviceMemory;
+  const constrained =
+    memory === undefined ||
+    memory <= 4 ||
+    /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+
+  return {
+    budget: constrained ? CONSTRAINED_RESOURCE_BUDGET : DESKTOP_RESOURCE_BUDGET,
+    capabilities: {
+      messageChannel: typeof MessageChannel !== "undefined",
+      mediaSource: typeof MediaSource !== "undefined",
+      transferableArrayBuffer: typeof ArrayBuffer !== "undefined",
+    },
+  };
+}
 
 function inferContentTypeFromName(name: string): string | null {
   const lower = name.toLowerCase();
@@ -792,10 +827,19 @@ export function FilePreviewDialog({
   shareKey,
   password,
   directShareId,
+  sourceContext: explicitSourceContext,
+  intent = "preview",
   directShareWrappedKey,
   sharedItemId,
   onDownload,
 }: FilePreviewDialogProps) {
+  const sourceContext: PreviewSourceContext =
+    explicitSourceContext ??
+    (albumShareToken
+      ? "album"
+      : sharedToken || directShareId
+        ? "public-share"
+        : "owned");
   const [url, setUrl] = useState<string | null>(null);
   const cryptoControl = useOptionalCrypto();
   const downloadControl = useOptionalDownload();
@@ -810,6 +854,10 @@ export function FilePreviewDialog({
 
   const startDownload = downloadControl?.startDownload;
   const [loading, setLoading] = useState(true);
+  const [previewBlob, setPreviewBlob] = useState<Blob | null>(null);
+  const [disposition, setDisposition] = useState<PreviewDisposition | null>(
+    null,
+  );
   const [error, setError] = useState("");
   const [isEncrypted, setIsEncrypted] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -833,12 +881,20 @@ export function FilePreviewDialog({
   const [wantHd, setWantHd] = useState(false);
   const [hdUrl, setHdUrl] = useState<string | null>(null);
   const [hdLoading, setHdLoading] = useState(false);
+  const mediaSessionRef = useRef<ServiceWorkerMediaSession | null>(null);
+  const mediaInspectionRef = useRef<{
+    key: string;
+    promise: Promise<{ ciphertext: ArrayBuffer; plaintext: ArrayBuffer }>;
+  } | null>(null);
   const hdObjectUrlRef = useRef<string | null>(null);
   const hdRequestedRef = useRef(false);
 
   const objectUrlRef = useRef<string | null>(null);
+  const { renderers: rendererFlags, refresh: refreshRendererConfig } =
+    useRendererConfig();
   const previewContentType = decryptedContentType || file?.contentType || "";
-  const previewMediaCategory = fetchedData?.mediaCategory || file?.mediaCategory;
+  const previewMediaCategory =
+    fetchedData?.mediaCategory || file?.mediaCategory;
   const isVisualPreview =
     previewContentType.startsWith("image/") ||
     previewContentType.startsWith("video/") ||
@@ -846,13 +902,36 @@ export function FilePreviewDialog({
     previewMediaCategory === "video";
   const isVideoPreview =
     previewContentType.startsWith("video/") || previewMediaCategory === "video";
-  const placeholderThumbnailUrl = useThumbnail(
-    isVisualPreview ? file?.thumbnail || fetchedData?.thumbnail : undefined,
-    metadataKey ?? null,
-  );
 
   const isLockedOut =
     !sharedToken && !directShareId && file?.isEncrypted && !privateKey;
+
+  const inspectForPreview = useCallback(
+    async (
+      bytes: Uint8Array,
+      name: string,
+      suppliedMime: string,
+      size: number,
+    ) => {
+      const currentConfig = await refreshRendererConfig();
+      const { budget, capabilities } = getPreviewRuntimeProfile();
+      const inspected = inspectFileHeader(bytes, name, suppliedMime, size);
+      const nextDisposition = decideFileDisposition(
+        inspected,
+        sourceContext,
+        intent,
+        currentConfig.renderers,
+        capabilities,
+        budget,
+      );
+      return {
+        disposition: nextDisposition,
+        budget,
+        detectedMime: inspected.detectedMime || suppliedMime,
+      };
+    },
+    [intent, refreshRendererConfig, sourceContext],
+  );
 
   useEffect(() => {
     if (isOpen && isLockedOut) {
@@ -860,33 +939,25 @@ export function FilePreviewDialog({
       onClose();
     }
   }, [isOpen, isLockedOut, setModalOpen, onClose]);
-
-  // Service Worker registration is now handled at page/layout level
-  // ensuring it's ready before the dialog even mounts.
-
-  // Listen to Service Worker broadcast messages for real-time chunk download progress
   useEffect(() => {
-    if (!isOpen || !("serviceWorker" in navigator)) return;
-
-    const handleMessage = (event: MessageEvent) => {
-      if (
-        event.data?.type === "CHUNK_PROGRESS" &&
-        event.data?.fileId === file?.id
-      ) {
-        setProgress(event.data.progress);
-        if (event.data.progress >= 100) {
-          setLoadingMessage("Decrypting stream...");
-        } else {
-          setLoadingMessage("Buffering initial stream...");
-        }
-      }
-    };
-
-    navigator.serviceWorker.addEventListener("message", handleMessage);
-    return () => {
-      navigator.serviceWorker.removeEventListener("message", handleMessage);
-    };
-  }, [isOpen, file?.id]);
+    if (!isOpen || !disposition) return;
+    if (isDispositionRendererEnabled(disposition, rendererFlags)) return;
+    mediaSessionRef.current?.close();
+    mediaSessionRef.current = null;
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+    setUrl(null);
+    setPreviewBlob(null);
+    setStreamOpts(null);
+    setStreamDek(null);
+    setIsVideoPreparing(false);
+    setDisposition({
+      action: "download-only",
+      reason: "This renderer was disabled by the security kill switch",
+    });
+  }, [disposition, isOpen, rendererFlags]);
 
   // Keyboard arrow navigation
   useEffect(() => {
@@ -895,7 +966,12 @@ export function FilePreviewDialog({
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't intercept if user is typing in an input/textarea
       const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable) return;
+      if (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        (e.target as HTMLElement)?.isContentEditable
+      )
+        return;
 
       if (e.key === "ArrowLeft" && hasPrevious && onPrevious) {
         e.preventDefault();
@@ -912,11 +988,15 @@ export function FilePreviewDialog({
 
   useEffect(() => {
     if (!isOpen) {
+      mediaSessionRef.current?.close();
+      mediaSessionRef.current = null;
       if (objectUrlRef.current) {
         URL.revokeObjectURL(objectUrlRef.current);
         objectUrlRef.current = null;
       }
       setUrl(null);
+      setPreviewBlob(null);
+      setDisposition(null);
       setError("");
       setIsEncrypted(false);
       setIsMinimized(false);
@@ -933,6 +1013,7 @@ export function FilePreviewDialog({
   // Reset HD state whenever the file changes or the dialog closes, and revoke
   // the original-quality blob URL so it doesn't leak across navigations.
   useEffect(() => {
+    mediaInspectionRef.current = null;
     setWantHd(false);
     setHdLoading(false);
     setHdUrl(null);
@@ -1041,14 +1122,23 @@ export function FilePreviewDialog({
 
   useEffect(() => {
     let cancelled = false;
+    let createdMediaSession: ServiceWorkerMediaSession | null = null;
 
     async function run() {
       if (!isOpen || !file || isLockedOut) return;
+      mediaSessionRef.current?.close();
+      mediaSessionRef.current = null;
 
       setLoading(true);
       setLoadingMessage("Fetching metadata...");
       setError("");
       setUrl(null);
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+      setPreviewBlob(null);
+      setDisposition(null);
       setStreamOpts(null);
       setStreamDek(null);
       setProgress(null);
@@ -1080,7 +1170,9 @@ export function FilePreviewDialog({
           });
         } else {
           res = workspace?.scopedFetch
-            ? await workspace.scopedFetch(`/api/objects/${file.id}?preview=true`)
+            ? await workspace.scopedFetch(
+                `/api/objects/${file.id}?preview=true`,
+              )
             : await fetch(`/api/objects/${file.id}?preview=true`);
         }
 
@@ -1189,32 +1281,34 @@ export function FilePreviewDialog({
           if (!cancelled) setDecryptedContentType(type);
         }
 
-        const shouldShowPreparingUI =
-          type.startsWith("video/") ||
-          type.startsWith("audio/") ||
-          type.startsWith("image/") ||
-          type === "application/pdf";
+        const openingConfig = await refreshRendererConfig();
+        const { budget: openingBudget } = getPreviewRuntimeProfile();
+        if (!openingConfig.renderers.global) {
+          if (!cancelled) {
+            setDisposition({
+              action: "download-only",
+              reason: "Preview system is disabled",
+            });
+          }
+          return;
+        }
+        if (file.size > openingBudget.maxInputBytes) {
+          if (!cancelled) {
+            setDisposition({
+              action: "download-only",
+              reason: "File exceeds the preview resource budget",
+            });
+          }
+          return;
+        }
 
         if (!encrypted) {
-          if (data.chunkUrls && data.chunkUrls.length > 0) {
-            if (!cancelled) {
-              setStreamOpts({
-                urls: data.chunkUrls,
-                dek: null,
-                chunkSize: data.chunkSize || 2 * 1024 * 1024,
-                chunkCount: data.chunkCount || data.chunkUrls.length,
-                chunkIvs: [],
-                contentType: type,
-              });
-              setLoadingMessage("Fetching initial chunks...");
-              if (shouldShowPreparingUI) setIsVideoPreparing(true);
-              setLoading(false);
-            }
-          } else {
-            if (!cancelled) {
-              setUrl(data.url || "");
-              setIsEncrypted(false);
-            }
+          if (!cancelled) {
+            setDisposition({
+              action: "download-only",
+              reason: "Unencrypted legacy objects are not previewed",
+            });
+            setIsEncrypted(false);
           }
           return;
         }
@@ -1305,89 +1399,116 @@ export function FilePreviewDialog({
           );
         }
 
-        // --- Path B: Chunked Streaming ---
+        // --- Path B: inspected chunked media streaming ---
         if (data.chunkUrls && data.chunkUrls.length > 0) {
-          setLoadingMessage("Preparing decryption...");
+          setLoadingMessage("Inspecting decrypted media header...");
+          const dek = await crypto.subtle.importKey(
+            "raw",
+            rawDEK,
+            { name: "AES-GCM", length: 256 },
+            false,
+            ["decrypt"],
+          );
+          const chunkIvs: string[] =
+            typeof data.chunkIvs === "string"
+              ? JSON.parse(data.chunkIvs)
+              : data.chunkIvs;
+          if (
+            !Array.isArray(chunkIvs) ||
+            chunkIvs.length !== data.chunkUrls.length
+          ) {
+            throw new Error("Invalid encrypted chunk metadata");
+          }
 
-          if (!cancelled) {
-            if ("serviceWorker" in navigator) {
-              try {
-                console.log("[Preview] Attempting SW streaming for:", file.id);
-                setLoadingMessage("Preparing stream...");
-                const registration = await navigator.serviceWorker.ready;
-                const sw = registration.active;
-
-                if (sw) {
-                  await new Promise<void>((resolve, reject) => {
-                    const channel = new MessageChannel();
-                    channel.port1.onmessage = (event) => {
-                      if (event.data.success) {
-                        console.log("[Preview] SW registration successful");
-                        resolve();
-                      } else {
-                        reject(new Error("Failed to register stream with SW"));
-                      }
-                    };
-                    sw.postMessage(
-                      {
-                        type: "REGISTER_STREAM",
-                        fileId: file.id,
-                        rawDEK,
-                        chunkSize: data.chunkSize || 2 * 1024 * 1024,
-                        chunkCount: data.chunkCount || data.chunkUrls.length,
-                        chunkIvs: data.chunkIvs
-                          ? JSON.parse(data.chunkIvs)
-                          : [],
-                        urls: data.chunkUrls,
-                        contentType: type,
-                        size: file.size,
-                      },
-                      [channel.port2],
-                    );
-                  });
-
-                  if (!cancelled) {
-                    setLoadingMessage("Buffering initial stream...");
-                    setProgress(0);
-                    if (shouldShowPreparingUI) setIsVideoPreparing(true);
-                    setUrl(`/sw/objects/${file.id}`);
-                    setLoading(false);
-                    return;
-                  }
-                }
-              } catch (err) {
-                console.warn(
-                  "[Preview] SW streaming failed, falling back to MSE",
-                  err,
+          const inspectionKey = `${file.id}:${chunkIvs[0]}`;
+          let inspection = mediaInspectionRef.current;
+          if (!inspection || inspection.key !== inspectionKey) {
+            const promise = (async () => {
+              const response = await fetch(data.chunkUrls[0]);
+              if (!response.ok) {
+                throw new Error(
+                  `Failed to inspect media: HTTP ${response.status}`,
                 );
               }
-            }
-            console.log("[Preview] Using MSE fallback mode");
-
-            const dek = await crypto.subtle.importKey(
-              "raw",
-              rawDEK,
-              { name: "AES-GCM", length: 256 },
-              false,
-              ["decrypt"],
-            );
-
-            if (data.chunkUrls && data.chunkUrls.length > 0) {
-              if (!cancelled) setStreamDek(dek);
-
-              setStreamOpts({
-                urls: data.chunkUrls,
+              const ciphertext = await response.arrayBuffer();
+              const plaintext = await decryptChunk(
+                ciphertext,
                 dek,
-                chunkSize: data.chunkSize || 2 * 1024 * 1024,
-                chunkCount: data.chunkCount || data.chunkUrls.length,
-                chunkIvs: data.chunkIvs ? JSON.parse(data.chunkIvs) : [],
-                contentType: type,
-              });
-              if (shouldShowPreparingUI) setIsVideoPreparing(true);
-              setLoadingMessage("Fetching initial chunks...");
-              setLoading(false);
-            }
+                chunkIvs[0],
+              );
+              return { ciphertext, plaintext };
+            })();
+            inspection = { key: inspectionKey, promise };
+            mediaInspectionRef.current = inspection;
+            void promise.catch(() => {
+              if (mediaInspectionRef.current?.promise === promise) {
+                mediaInspectionRef.current = null;
+              }
+            });
           }
+          const { ciphertext: firstCiphertext, plaintext: firstPlaintext } =
+            await inspection.promise;
+          const previewName =
+            decryptedName || file.name || fileNameFromKey(file.key);
+          const approved = await inspectForPreview(
+            new Uint8Array(firstPlaintext).slice(0, 1024 * 1024),
+            previewName,
+            type,
+            file.size,
+          );
+          if (cancelled) return;
+
+          setDisposition(approved.disposition);
+          if (approved.disposition.action !== "safe-media") {
+            return;
+          }
+
+          setDecryptedContentType(approved.detectedMime);
+          try {
+            setLoadingMessage("Starting encrypted range stream...");
+            const mediaSession = await createServiceWorkerMediaSession({
+              urls: data.chunkUrls,
+              rawDEK,
+              chunkSize: data.chunkSize || 2 * 1024 * 1024,
+              chunkCount: data.chunkCount || data.chunkUrls.length,
+              chunkIvs,
+              contentType: approved.detectedMime,
+              cipherSize: file.size,
+              initialCiphertext: firstCiphertext,
+            });
+            if (cancelled) {
+              mediaSession.close();
+              return;
+            }
+
+            createdMediaSession = mediaSession;
+            mediaSessionRef.current = mediaSession;
+            setStreamDek(dek);
+            setStreamOpts(null);
+            setUrl(mediaSession.url);
+            setIsVideoPreparing(true);
+            setLoadingMessage("Streaming encrypted media...");
+            setLoading(false);
+            return;
+          } catch (serviceWorkerError) {
+            console.warn(
+              "[Preview] Native range streaming unavailable; using MSE fallback",
+              serviceWorkerError,
+            );
+          }
+
+          setStreamDek(dek);
+          setStreamOpts({
+            urls: data.chunkUrls,
+            dek,
+            chunkSize: data.chunkSize || 2 * 1024 * 1024,
+            chunkCount: data.chunkCount || data.chunkUrls.length,
+            chunkIvs,
+            contentType: approved.detectedMime,
+          });
+          setIsVideoPreparing(true);
+          setLoadingMessage("Fetching initial chunks...");
+          setLoading(false);
           return;
         }
 
@@ -1398,8 +1519,8 @@ export function FilePreviewDialog({
           (pct) => {
             if (!cancelled) setProgress(pct);
           },
-          directShareId 
-            ? `direct-share-${directShareId}-${file.id}` 
+          directShareId
+            ? `direct-share-${directShareId}-${file.id}`
             : `${file.id}-${data.iv || ""}`,
           file.size,
         );
@@ -1439,10 +1560,43 @@ export function FilePreviewDialog({
           );
         }
 
-        const objectUrl = URL.createObjectURL(decryptedBlob);
-        objectUrlRef.current = objectUrl;
+        const previewName =
+          decryptedName || file.name || fileNameFromKey(file.key);
+        const inspectionBytes = new Uint8Array(
+          await decryptedBlob.slice(0, 1024 * 1024).arrayBuffer(),
+        );
+        const approved = await inspectForPreview(
+          inspectionBytes,
+          previewName,
+          type,
+          decryptedBlob.size,
+        );
+        if (cancelled) return;
 
-        if (!cancelled) setUrl(objectUrl);
+        setDisposition(approved.disposition);
+        if (
+          approved.disposition.action === "safe-image" ||
+          approved.disposition.action === "safe-media" ||
+          approved.disposition.action === "pdf-canvas" ||
+          approved.disposition.action === "safe-text"
+        ) {
+          const safeBlob = decryptedBlob.slice(
+            0,
+            decryptedBlob.size,
+            approved.detectedMime,
+          );
+          setPreviewBlob(safeBlob);
+          setDecryptedContentType(approved.detectedMime);
+
+          if (
+            approved.disposition.action === "safe-image" ||
+            approved.disposition.action === "safe-media"
+          ) {
+            const objectUrl = URL.createObjectURL(safeBlob);
+            objectUrlRef.current = objectUrl;
+            setUrl(objectUrl);
+          }
+        }
       } catch (e) {
         console.error(e);
         if (!cancelled) {
@@ -1460,6 +1614,12 @@ export function FilePreviewDialog({
     run();
     return () => {
       cancelled = true;
+      if (createdMediaSession) {
+        createdMediaSession.close();
+        if (mediaSessionRef.current === createdMediaSession) {
+          mediaSessionRef.current = null;
+        }
+      }
     };
   }, [
     isOpen,
@@ -1482,6 +1642,8 @@ export function FilePreviewDialog({
     directShareId,
     directShareWrappedKey,
     decryptedName,
+    inspectForPreview,
+    refreshRendererConfig,
   ]);
 
   // ── HD / original-quality loader (owned image files) ─────────────────────
@@ -1508,11 +1670,41 @@ export function FilePreviewDialog({
           : await fetch(`/api/objects/${file.id}`);
         if (!res.ok) throw new Error("Failed to load original");
         const data = await res.json();
-        const type = decryptedContentType || data.contentType || file.contentType;
+        const originalName =
+          decryptedName || file.name || fileNameFromKey(file.key);
+
+        // `decryptedContentType` describes the image currently on screen. When
+        // the API served an optimized preview that value can be `image/webp`
+        // even though this request returns the original JPEG/PNG bytes. Recover
+        // the original MIME metadata instead so the hostile-file inspector
+        // compares the original signature with the original declaration.
+        let type =
+          data.contentType || file.contentType || "application/octet-stream";
+        if (data.encryptedContentType && activeMetadataKey) {
+          try {
+            type = await decryptMetadataString(
+              data.encryptedContentType,
+              activeMetadataKey,
+            );
+          } catch (metadataError) {
+            console.warn(
+              "Failed to decrypt original content type, using safe fallback",
+              metadataError,
+            );
+          }
+        }
+        if (!type || type === "application/octet-stream") {
+          type =
+            inferContentTypeFromName(originalName) ||
+            inferContentTypeFromCategory(
+              data.mediaCategory || file.mediaCategory,
+              type,
+            ) ||
+            "application/octet-stream";
+        }
 
         if (!data.isEncrypted) {
-          if (!cancelled && data.url) setHdUrl(data.url);
-          return;
+          throw new Error("Unencrypted originals are not previewed");
         }
         let rawDEK: ArrayBuffer;
         if (data.wrappedBy === "space") {
@@ -1546,12 +1738,37 @@ export function FilePreviewDialog({
           false,
           ["decrypt"],
         );
-        const buf = await fetchWithProgress(
-          data.url,
-          undefined,
-          `${file.id}-original-${data.iv || ""}`,
-          file.size,
-        );
+        let buf: ArrayBuffer;
+        if (Array.isArray(data.chunkUrls) && data.chunkUrls.length > 0) {
+          const ciphertextChunks: ArrayBuffer[] = [];
+          let totalCiphertextBytes = 0;
+          for (const chunkUrl of data.chunkUrls as string[]) {
+            const chunkResponse = await fetch(chunkUrl);
+            if (!chunkResponse.ok) {
+              throw new Error(
+                `Failed to load original image chunk: HTTP ${chunkResponse.status}`,
+              );
+            }
+            const chunk = await chunkResponse.arrayBuffer();
+            ciphertextChunks.push(chunk);
+            totalCiphertextBytes += chunk.byteLength;
+          }
+          const combined = new Uint8Array(totalCiphertextBytes);
+          let offset = 0;
+          for (const chunk of ciphertextChunks) {
+            combined.set(new Uint8Array(chunk), offset);
+            offset += chunk.byteLength;
+          }
+          buf = combined.buffer;
+        } else {
+          if (!data.url) throw new Error("No original image URL returned");
+          buf = await fetchWithProgress(
+            data.url,
+            undefined,
+            `${file.id}-original-${data.iv || ""}`,
+            file.size,
+          );
+        }
         let blob: Blob;
         if (data.chunkIvs && data.chunkSize && data.chunkCount) {
           blob = await decryptFileChunkedCombined(
@@ -1566,7 +1783,20 @@ export function FilePreviewDialog({
         } else {
           blob = await decryptFileWithDEK(buf, dek, data.iv, type);
         }
-        const objUrl = URL.createObjectURL(blob);
+        const inspectionBytes = new Uint8Array(
+          await blob.slice(0, 1024 * 1024).arrayBuffer(),
+        );
+        const approved = await inspectForPreview(
+          inspectionBytes,
+          originalName,
+          type,
+          blob.size,
+        );
+        if (approved.disposition.action !== "safe-image") {
+          throw new Error(approved.disposition.reason);
+        }
+        const safeBlob = blob.slice(0, blob.size, approved.detectedMime);
+        const objUrl = URL.createObjectURL(safeBlob);
         hdObjectUrlRef.current = objUrl;
         if (!cancelled) setHdUrl(objUrl);
       } catch (e) {
@@ -1590,6 +1820,10 @@ export function FilePreviewDialog({
     decryptedContentType,
     workspace,
     workspaceSpaceKey.rawSpaceKey,
+    albumShareToken,
+    inspectForPreview,
+    decryptedName,
+    activeMetadataKey,
   ]);
 
   if (!file) return null;
@@ -1599,10 +1833,10 @@ export function FilePreviewDialog({
 
   // HD applies to owned image files (shared links serve their own stream).
   const canHd =
+    disposition?.action === "safe-image" &&
     !sharedToken &&
     !albumShareToken &&
-    !directShareId &&
-    type.startsWith("image/");
+    !directShareId;
 
   // Version history is an owner-only feature (not for shared/album/direct views).
   const canVersions = !sharedToken && !albumShareToken && !directShareId;
@@ -1629,7 +1863,8 @@ export function FilePreviewDialog({
         if (!res.ok) throw new Error(data.error || "Failed to load file");
 
         const dlName = decryptedName || file.name || fileNameFromKey(file.key);
-        const dlType = decryptedContentType || data.contentType || file.contentType;
+        const dlType =
+          decryptedContentType || data.contentType || file.contentType;
         let blob: Blob;
 
         if (data.isEncrypted) {
@@ -1653,7 +1888,10 @@ export function FilePreviewDialog({
             "raw",
             fromB64(data.shareEncryptedDEK).buffer as ArrayBuffer,
             shareKeyObj,
-            { name: "AES-GCM", iv: fromB64(data.shareKeyIv).buffer as ArrayBuffer },
+            {
+              name: "AES-GCM",
+              iv: fromB64(data.shareKeyIv).buffer as ArrayBuffer,
+            },
             { name: "AES-GCM" },
             false,
             ["decrypt"],
@@ -1664,15 +1902,21 @@ export function FilePreviewDialog({
             const parts: ArrayBuffer[] = [];
             for (let i = 0; i < data.chunkUrls.length; i++) {
               const cr = await fetch(data.chunkUrls[i]);
-              parts.push(await decryptChunk(await cr.arrayBuffer(), dek, chunkIvs[i]));
+              parts.push(
+                await decryptChunk(await cr.arrayBuffer(), dek, chunkIvs[i]),
+              );
             }
             blob = new Blob(parts, { type: dlType });
           } else {
-            const cipher = await (await fetch(data.url || data.streamUrl)).arrayBuffer();
+            const cipher = await (
+              await fetch(data.url || data.streamUrl)
+            ).arrayBuffer();
             blob = await decryptFileWithDEK(cipher, dek, data.iv, dlType);
           }
         } else {
-          const raw = await (await fetch(data.url || data.streamUrl)).arrayBuffer();
+          const raw = await (
+            await fetch(data.url || data.streamUrl)
+          ).arrayBuffer();
           blob = new Blob([raw], { type: dlType });
         }
 
@@ -1730,8 +1974,7 @@ export function FilePreviewDialog({
     onClose();
     window.location.assign(editorPath + "?" + params.toString());
   };
-  const openInXenodeSheets = () => openInXenodeSheetsAt("/sheets/editor");
-  const openInXenodeSheetsV2 = () =>
+  const openInIsolatedOfficeEditor = () =>
     openInXenodeSheetsAt("/sheets-v2/editor");
   const renderContent = () => {
     let innerContent = null;
@@ -1777,23 +2020,27 @@ export function FilePreviewDialog({
             />
           );
         } else if (type === "application/pdf") {
-          innerContent = (
-            <div className="h-full w-full bg-white">
-              <iframe
-                src={url}
-                className="h-full w-full border-0"
-                title={name}
-                onLoad={() => setIsVideoPreparing(false)}
-                onError={() => setIsVideoPreparing(false)}
-              />
-            </div>
-          );
+          const { budget } = getPreviewRuntimeProfile();
+          innerContent = previewBlob ? (
+            <SafePdfPreview
+              blob={previewBlob}
+              maxPages={budget.maxPdfPages}
+              maxPixelsPerPage={Math.min(budget.maxImagePixels, 25_000_000)}
+            />
+          ) : null;
         } else if (
           type.includes("word") ||
           type.includes("officedocument.wordprocessingml") ||
           type.includes("msword")
         ) {
-          innerContent = <DocxViewer url={url} name={name} />;
+          innerContent = (
+            <div className="grid h-full place-items-center p-6 text-center">
+              <p className="text-sm text-muted-foreground">
+                This Office format is download-only until its isolated editor is
+                enabled.
+              </p>
+            </div>
+          );
         } else if (
           type.includes("excel") ||
           type.includes("spreadsheet") ||
@@ -1806,7 +2053,9 @@ export function FilePreviewDialog({
             <div className="flex h-full flex-col items-center justify-center px-6 text-center">
               <AlertCircle className="mb-3 h-10 w-10 text-emerald-500" />
               <p className="text-sm font-medium">
-                {isSharePreview ? "Spreadsheet preview unavailable for shared links" : "Open with Xenode Sheets"}
+                {isSharePreview
+                  ? "Spreadsheet preview unavailable for shared links"
+                  : "Open with Xenode Sheets"}
               </p>
               <p className="mt-1 max-w-sm text-xs text-muted-foreground">
                 {isSharePreview
@@ -1824,11 +2073,8 @@ export function FilePreviewDialog({
                 </Button>
               ) : (
                 <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
-                  <Button variant="outline" size="sm" onClick={openInXenodeSheets}>
-                    Open in Xenode Sheets
-                  </Button>
-                  <Button size="sm" onClick={openInXenodeSheetsV2}>
-                    Try Sheets v2
+                  <Button size="sm" onClick={openInIsolatedOfficeEditor}>
+                    Open isolated editor
                   </Button>
                 </div>
               )}
@@ -1839,22 +2085,9 @@ export function FilePreviewDialog({
           type.includes("powerpoint") ||
           type.includes("text/plain")
         ) {
-          innerContent = (
-            <div className="h-full w-full doc-viewer-wrapper">
-              <DocViewer
-                documents={[{ uri: url, fileType: type, fileName: name }]}
-                pluginRenderers={DocViewerRenderers}
-                style={{ height: "100%" }}
-                config={{
-                  header: {
-                    disableHeader: true,
-                    disableFileName: true,
-                    retainURLParams: false,
-                  },
-                }}
-              />
-            </div>
-          );
+          innerContent = previewBlob ? (
+            <SafeTextPreview blob={previewBlob} />
+          ) : null;
         } else {
           innerContent = (
             <div className="flex h-full flex-col items-center justify-center text-center px-6">
@@ -1875,6 +2108,67 @@ export function FilePreviewDialog({
             </div>
           );
         }
+      } else if (disposition?.action === "pdf-canvas" && previewBlob) {
+        const { budget } = getPreviewRuntimeProfile();
+        innerContent = (
+          <SafePdfPreview
+            blob={previewBlob}
+            maxPages={budget.maxPdfPages}
+            maxPixelsPerPage={Math.min(budget.maxImagePixels, 25_000_000)}
+          />
+        );
+      } else if (disposition?.action === "safe-text" && previewBlob) {
+        innerContent = <SafeTextPreview blob={previewBlob} />;
+      } else if (disposition?.action === "office-view-edit") {
+        const spreadsheetSupported = /\.(xlsx|ods)$/i.test(name);
+        innerContent = (
+          <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+            <AlertCircle className="mb-3 h-10 w-10 text-emerald-500" />
+            <p className="text-sm font-medium">Isolated Office editor</p>
+            <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+              {spreadsheetSupported
+                ? "Open this file in the isolated edit.xenode.in runtime."
+                : "This Office format remains download-only until its isolated editor is available."}
+            </p>
+            {spreadsheetSupported ? (
+              <Button
+                size="sm"
+                className="mt-4"
+                onClick={openInIsolatedOfficeEditor}
+              >
+                Open isolated editor
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-4"
+                onClick={handleDownload}
+              >
+                Download file
+              </Button>
+            )}
+          </div>
+        );
+      } else {
+        innerContent = (
+          <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+            <AlertCircle className="mb-3 h-10 w-10 text-muted-foreground" />
+            <p className="text-sm font-medium">Preview not available</p>
+            <p className="mt-1 max-w-md text-xs text-muted-foreground">
+              {disposition?.reason ||
+                "This file is not in the approved preview set."}
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-4"
+              onClick={handleDownload}
+            >
+              Download file
+            </Button>
+          </div>
+        );
       }
     }
 
@@ -1884,7 +2178,7 @@ export function FilePreviewDialog({
       <div className="relative h-full w-full">
         {showLoader && isVisualPreview ? (
           <MediaLoadingPlaceholder
-            thumbnailUrl={placeholderThumbnailUrl}
+            thumbnailUrl={null}
             isVideo={isVideoPreview}
             progress={progress}
           />
@@ -1931,195 +2225,179 @@ export function FilePreviewDialog({
 
   return (
     <>
-    <Dialog open={isOpen} onOpenChange={onClose} modal={false}>
-      <DialogPortal>
-        <DialogOverlay className={isMinimized ? "hidden" : ""} />
-        <DialogPrimitive.Content
-          onPointerDownOutside={(e) => {
-            if (isMinimized) {
+      <Dialog open={isOpen} onOpenChange={onClose} modal={false}>
+        <DialogPortal>
+          <DialogOverlay className={isMinimized ? "hidden" : ""} />
+          <DialogPrimitive.Content
+            onPointerDownOutside={(e) => {
+              if (isMinimized) {
+                e.preventDefault();
+                return;
+              }
+              const target = e.detail?.originalEvent?.target as HTMLElement;
+              if (target && !document.contains(target)) {
+                e.preventDefault();
+              }
+            }}
+            onFocusOutside={(e) => {
               e.preventDefault();
-              return;
-            }
-            const target = e.detail?.originalEvent?.target as HTMLElement;
-            if (target && !document.contains(target)) {
-              e.preventDefault();
-            }
-          }}
-          onFocusOutside={(e) => {
-            e.preventDefault();
-          }}
-          className={cn(
-            "bg-card outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 flex flex-col overflow-hidden border",
-            isMinimized
-              ? "fixed bottom-4 right-4 z-150 w-80 sm:w-96 rounded-xl shadow-2xl data-[state=open]:slide-in-from-bottom-[20%]"
-              : "fixed inset-0 z-150 h-dvh w-screen max-w-none max-h-none rounded-none shadow-lg data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
-          )}
-        >
-          {/* Top bar */}
-          <div
+            }}
             className={cn(
-              "sticky top-0 z-20 flex items-center justify-between gap-3 border-b bg-card/95 backdrop-blur",
-              isMinimized ? "px-3 py-2" : "px-4 py-3 sm:px-5",
+              "bg-card outline-none duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 flex flex-col overflow-hidden border",
+              isMinimized
+                ? "fixed bottom-4 right-4 z-150 w-80 sm:w-96 rounded-xl shadow-2xl data-[state=open]:slide-in-from-bottom-[20%]"
+                : "fixed inset-0 z-150 h-dvh w-screen max-w-none max-h-none rounded-none shadow-lg data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
             )}
           >
-            <div className="min-w-0 flex-1">
-              <DialogPrimitive.Title
-                className={cn(
-                  "truncate font-medium flex items-center gap-1.5",
-                  isMinimized ? "text-xs" : "text-sm sm:text-base",
-                )}
-              >
-                {(isEncrypted || file.isEncrypted) && (
-                  <Lock
-                    className={cn(
-                      "shrink-0 text-primary",
-                      isMinimized ? "h-3 w-3" : "h-3.5 w-3.5",
-                    )}
-                    aria-label="Encrypted"
-                  />
-                )}
-                {name}
-              </DialogPrimitive.Title>
-              {!isMinimized && (
-                <DialogPrimitive.Description className="truncate text-xs text-muted-foreground mt-0.5">
-                  {formatMB(file.size)} MB • {type}
-                  {(isEncrypted || file.isEncrypted) && " • e2e encrypted"}
-                </DialogPrimitive.Description>
+            {/* Top bar */}
+            <div
+              className={cn(
+                "sticky top-0 z-20 flex items-center justify-between gap-3 border-b bg-card/95 backdrop-blur",
+                isMinimized ? "px-3 py-2" : "px-4 py-3 sm:px-5",
               )}
-            </div>
-
-            <div className="flex shrink-0 items-center gap-1">
-              {url && !isMinimized && (
-                <div className="flex items-center gap-1.5 mr-1">
-                  {canHd && (
-                    <Button
-                      variant={wantHd ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setWantHd((v) => !v)}
-                      className="h-8 gap-1.5"
-                      title={
-                        wantHd
-                          ? "Showing original quality"
-                          : "View original (full-resolution) image"
-                      }
-                    >
-                      {hdLoading ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : null}
-                      HD
-                    </Button>
+            >
+              <div className="min-w-0 flex-1">
+                <DialogPrimitive.Title
+                  className={cn(
+                    "truncate font-medium flex items-center gap-1.5",
+                    isMinimized ? "text-xs" : "text-sm sm:text-base",
                   )}
-                  {type === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        const editorUrl = window.location.hostname === "localhost" 
-                          ? `http://docs.localhost:3000/?id=${file.id}` 
-                          : `https://docs.xenode.in/?id=${file.id}`;
-                        window.open(editorUrl, "_blank");
-                      }}
-                      className="h-8 gap-1.5 text-primary hover:text-primary hover:bg-primary/10"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                      <span className="hidden sm:inline">Edit</span>
-                    </Button>
-                  )}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleDownload}
-                    className="h-8"
-                  >
-                    Download
-                  </Button>
-                </div>
-              )}
-
-              {canVersions && !isMinimized && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowVersions(true)}
-                  className="h-8 gap-1.5"
-                  title="View version history"
                 >
-                  <History className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">History</span>
-                </Button>
-              )}
-
-              <Button
-                variant="ghost"
-                size="icon"
-                className={isMinimized ? "h-6 w-6" : "h-8 w-8"}
-                aria-label="Toggle Minimize"
-                onClick={() => setIsMinimized((prev) => !prev)}
-              >
-                {isMinimized ? (
-                  <Maximize2 className="h-4 w-4" />
-                ) : (
-                  <Minimize2 className="h-4 w-4" />
+                  {(isEncrypted || file.isEncrypted) && (
+                    <Lock
+                      className={cn(
+                        "shrink-0 text-primary",
+                        isMinimized ? "h-3 w-3" : "h-3.5 w-3.5",
+                      )}
+                      aria-label="Encrypted"
+                    />
+                  )}
+                  {name}
+                </DialogPrimitive.Title>
+                {!isMinimized && (
+                  <DialogPrimitive.Description className="truncate text-xs text-muted-foreground mt-0.5">
+                    {formatMB(file.size)} MB • {type}
+                    {(isEncrypted || file.isEncrypted) && " • e2e encrypted"}
+                  </DialogPrimitive.Description>
                 )}
-              </Button>
+              </div>
 
-              <DialogClose asChild>
+              <div className="flex shrink-0 items-center gap-1">
+                {url && !isMinimized && (
+                  <div className="flex items-center gap-1.5 mr-1">
+                    {canHd && (
+                      <Button
+                        variant={wantHd ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setWantHd((v) => !v)}
+                        className="h-8 gap-1.5"
+                        title={
+                          wantHd
+                            ? "Showing original quality"
+                            : "View original (full-resolution) image"
+                        }
+                      >
+                        {hdLoading ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : null}
+                        HD
+                      </Button>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleDownload}
+                      className="h-8"
+                    >
+                      Download
+                    </Button>
+                  </div>
+                )}
+
+                {canVersions && !isMinimized && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setShowVersions(true)}
+                    className="h-8 gap-1.5"
+                    title="View version history"
+                  >
+                    <History className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">History</span>
+                  </Button>
+                )}
+
                 <Button
                   variant="ghost"
                   size="icon"
-                  aria-label="Close"
                   className={isMinimized ? "h-6 w-6" : "h-8 w-8"}
+                  aria-label="Toggle Minimize"
+                  onClick={() => setIsMinimized((prev) => !prev)}
                 >
-                  <X className="h-4 w-4" />
+                  {isMinimized ? (
+                    <Maximize2 className="h-4 w-4" />
+                  ) : (
+                    <Minimize2 className="h-4 w-4" />
+                  )}
                 </Button>
-              </DialogClose>
+
+                <DialogClose asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Close"
+                    className={isMinimized ? "h-6 w-6" : "h-8 w-8"}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </DialogClose>
+              </div>
             </div>
-          </div>
 
-          {/* Preview area */}
-          <div
-            className={cn(
-              "overflow-hidden bg-black/5 dark:bg-black/20 flex items-center justify-center relative",
-              isMinimized ? "h-48" : "flex-1",
-            )}
-          >
-            <div className="h-full w-full">{renderContent()}</div>
+            {/* Preview area */}
+            <div
+              className={cn(
+                "overflow-hidden bg-black/5 dark:bg-black/20 flex items-center justify-center relative",
+                isMinimized ? "h-48" : "flex-1",
+              )}
+            >
+              <div className="h-full w-full">{renderContent()}</div>
 
-            {/* Side navigation buttons */}
-            {hasPrevious && !isMinimized && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute left-2 top-1/2 -translate-y-1/2 z-30 h-10 w-10 rounded-full bg-black/40 text-white hover:bg-black/60 hover:text-white backdrop-blur-sm shadow-lg transition-all"
-                onClick={onPrevious}
-              >
-                <ChevronLeft className="h-5 w-5" />
-              </Button>
-            )}
-            {hasNext && !isMinimized && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="absolute right-2 top-1/2 -translate-y-1/2 z-30 h-10 w-10 rounded-full bg-black/40 text-white hover:bg-black/60 hover:text-white backdrop-blur-sm shadow-lg transition-all"
-                onClick={onNext}
-              >
-                <ChevronRight className="h-5 w-5" />
-              </Button>
-            )}
-          </div>
-        </DialogPrimitive.Content>
-      </DialogPortal>
-    </Dialog>
+              {/* Side navigation buttons */}
+              {hasPrevious && !isMinimized && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute left-2 top-1/2 -translate-y-1/2 z-30 h-10 w-10 rounded-full bg-black/40 text-white hover:bg-black/60 hover:text-white backdrop-blur-sm shadow-lg transition-all"
+                  onClick={onPrevious}
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                </Button>
+              )}
+              {hasNext && !isMinimized && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 z-30 h-10 w-10 rounded-full bg-black/40 text-white hover:bg-black/60 hover:text-white backdrop-blur-sm shadow-lg transition-all"
+                  onClick={onNext}
+                >
+                  <ChevronRight className="h-5 w-5" />
+                </Button>
+              )}
+            </div>
+          </DialogPrimitive.Content>
+        </DialogPortal>
+      </Dialog>
 
-    {canVersions && (
-      <FileVersionsDialog
-        fileId={file.id}
-        fileName={name}
-        isOpen={showVersions}
-        onClose={() => setShowVersions(false)}
-        onRestored={() => setShowVersions(false)}
-      />
-    )}
+      {canVersions && (
+        <FileVersionsDialog
+          fileId={file.id}
+          fileName={name}
+          isOpen={showVersions}
+          onClose={() => setShowVersions(false)}
+          onRestored={() => setShowVersions(false)}
+        />
+      )}
     </>
   );
 }

@@ -1,4 +1,5 @@
 "use client";
+import { downloadFromUrl } from "@/lib/downloads/client-download";
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -288,7 +289,7 @@ export default function BucketDetailPage() {
 
       if (!data.isEncrypted) {
         if (data.url) {
-          window.open(data.url, "_blank");
+          await downloadFromUrl(data.url, obj.key.split("/").pop());
         }
         return;
       }
@@ -570,8 +571,8 @@ export default function BucketDetailPage() {
                 <TableRow
                   key={obj.id}
                   className="border-border hover:bg-secondary/50 cursor-pointer"
-                  onClick={() => openPreview(obj, viewObjects.files)}
-                  onDoubleClick={() => openPreview(obj, viewObjects.files)}
+                  onClick={() => openPreview(obj, { sourceContext: "owned", intent: "preview", fileList: viewObjects.files })}
+                  onDoubleClick={() => openPreview(obj, { sourceContext: "owned", intent: "preview", fileList: viewObjects.files })}
                 >
                   <TableCell>
                     <div className="flex items-center gap-3 text-foreground">
@@ -602,7 +603,7 @@ export default function BucketDetailPage() {
                         size="icon"
                         onClick={(e) => {
                           e.stopPropagation();
-                          openPreview(obj, viewObjects.files);
+                          openPreview(obj, { sourceContext: "owned", intent: "preview", fileList: viewObjects.files });
                         }}
                         className="text-muted-foreground hover:text-primary hover:bg-primary/10"
                         title="Preview"
@@ -680,8 +681,8 @@ export default function BucketDetailPage() {
             {viewObjects.files.map((obj) => (
               <div
                 key={obj.id}
-                onDoubleClick={() => openPreview(obj, viewObjects.files)}
-                onClick={() => openPreview(obj, viewObjects.files)}
+                onDoubleClick={() => openPreview(obj, { sourceContext: "owned", intent: "preview", fileList: viewObjects.files })}
+                onClick={() => openPreview(obj, { sourceContext: "owned", intent: "preview", fileList: viewObjects.files })}
                 className="group relative aspect-square bg-card rounded-xl border border-border flex flex-col items-center justify-center cursor-pointer hover:bg-secondary/50 transition-all hover:scale-[1.02] overflow-hidden"
               >
                 {/* Icon/Thumbnail */}
@@ -717,7 +718,7 @@ export default function BucketDetailPage() {
                     className="h-7 w-7 rounded-md bg-black/50 hover:bg-primary hover:text-primary-foreground text-foreground backdrop-blur-sm"
                     onClick={(e) => {
                       e.stopPropagation();
-                      openPreview(obj, viewObjects.files);
+                      openPreview(obj, { sourceContext: "owned", intent: "preview", fileList: viewObjects.files });
                     }}
                     title="Preview"
                   >
