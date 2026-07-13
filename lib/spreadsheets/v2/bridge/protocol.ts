@@ -15,13 +15,14 @@
  *    A1-range selection needed for comments.
  */
 
-export const BRIDGE_PROTOCOL_VERSION = 1;
+export const BRIDGE_PROTOCOL_VERSION = 2;
 
 /** Marks every Xenode bridge envelope so foreign postMessages are ignored. */
 export const BRIDGE_CHANNEL = "xenode.sheets.v2" as const;
 
 export type EditorMode = "edit" | "view";
 export type EditorTheme = "light" | "dark";
+export type SavedDocumentFormat = "editor-bin" | "xlsx";
 
 /** Parent -> frame message types. */
 export type ParentMessageType =
@@ -30,6 +31,7 @@ export type ParentMessageType =
   | "SET_MODE"
   | "SET_THEME"
   | "REQUEST_SAVE"
+  | "SAVE_RESULT"
   | "REQUEST_EXPORT"
   | "FOCUS"
   | "DESTROY";
@@ -78,6 +80,11 @@ export interface SetThemeMessage extends EnvelopeBase {
 export interface RequestSaveMessage extends EnvelopeBase {
   type: "REQUEST_SAVE";
 }
+export interface SaveResultMessage extends EnvelopeBase {
+  type: "SAVE_RESULT";
+  ok: boolean;
+  requestId: string;
+}
 export interface RequestExportMessage extends EnvelopeBase {
   type: "REQUEST_EXPORT";
   format: "xlsx";
@@ -95,6 +102,7 @@ export type ParentMessage =
   | SetModeMessage
   | SetThemeMessage
   | RequestSaveMessage
+  | SaveResultMessage
   | RequestExportMessage
   | FocusMessage
   | DestroyMessage;
@@ -110,7 +118,8 @@ export interface DirtyChangedMessage extends EnvelopeBase {
 }
 export interface SaveBytesMessage extends EnvelopeBase {
   type: "SAVE_BYTES";
-  /** Exported Editor.bin (or target-format) bytes, transferred. */
+  /** Complete serialized document bytes, transferred. */
+  format: SavedDocumentFormat;
   bin: ArrayBuffer;
 }
 export interface ExportBytesMessage extends EnvelopeBase {
@@ -151,6 +160,7 @@ const PARENT_TYPES: ReadonlySet<string> = new Set<ParentMessageType>([
   "SET_MODE",
   "SET_THEME",
   "REQUEST_SAVE",
+  "SAVE_RESULT",
   "REQUEST_EXPORT",
   "FOCUS",
   "DESTROY",
@@ -210,6 +220,34 @@ export function validateEnvelope(
 
   if (env.requestId !== undefined && typeof env.requestId !== "string") {
     return { ok: false, reason: "bad_request_id" };
+  }
+  if (env.type === "SAVE_RESULT") {
+    if (typeof env.requestId !== "string" || env.requestId.length === 0) {
+      return { ok: false, reason: "bad_request_id" };
+    }
+    if (typeof env.ok !== "boolean") {
+      return { ok: false, reason: "bad_save_result" };
+    }
+  }
+
+  if (env.type === "OPEN_EDITOR_BIN" && !(env.bin instanceof ArrayBuffer)) {
+    return { ok: false, reason: "missing_binary_payload" };
+  }
+  if (env.type === "SAVE_BYTES") {
+    if (!(env.bin instanceof ArrayBuffer)) {
+      return { ok: false, reason: "missing_binary_payload" };
+    }
+    if (env.format !== "xlsx" && env.format !== "editor-bin") {
+      return { ok: false, reason: "bad_saved_document_format" };
+    }
+  }
+  if (env.type === "EXPORT_BYTES") {
+    if (!(env.bin instanceof ArrayBuffer)) {
+      return { ok: false, reason: "missing_binary_payload" };
+    }
+    if (env.format !== "xlsx") {
+      return { ok: false, reason: "bad_export_format" };
+    }
   }
 
   const buffer = extractBuffer(env);

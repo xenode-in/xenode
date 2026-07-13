@@ -1,5 +1,5 @@
 param(
-  [string]$ArtifactVersion = "9.4.0.131-xenode.1"
+  [string]$ArtifactVersion = "9.3.0.140-cryptpad.2-xenode.1"
 )
 
 # Copies the Xenode frame-host files (checked into tools/onlyoffice/host) into

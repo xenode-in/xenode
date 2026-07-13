@@ -18,6 +18,20 @@ import type { WorkspaceNav } from "@/lib/navigation/sidebar-nav";
 type Organization = { id: string; name: string; role?: WorkspaceNav["role"] };
 type Item = { _id?: string; id?: string; encryptedName?: string | null; contentType?: string; bucketId?: string; lastAccessedAt?: string; name?: string };
 
+type SheetsHomeProps = {
+  editorPath?: string;
+  title?: string;
+  legacyHref?: string;
+};
+
+function buildEditorHref(editorPath: string, values: Record<string, string | undefined>) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(values)) {
+    if (value) params.set(key, value);
+  }
+  return `${editorPath}?${params.toString()}`;
+}
+
 function FileGrid({ title, items }: { title: string; items: Array<Item & { displayName: string; href: string }> }) {
   return (
     <section>
@@ -41,7 +55,7 @@ function FileGrid({ title, items }: { title: string; items: Array<Item & { displ
 
 /* ── Personal scope content ─────────────────────────────────────────────── */
 
-function PersonalScopeContent({ query }: { query: string }) {
+function PersonalScopeContent({ query, editorPath }: { query: string; editorPath: string }) {
   const { data: session } = useSession();
   const { metadataKey } = useCrypto();
   const { addTasks } = useUpload();
@@ -70,7 +84,7 @@ function PersonalScopeContent({ query }: { query: string }) {
         objects.map(async (item) => ({
           ...item,
           displayName: item.encryptedName ? await decryptMetadataString(item.encryptedName, metadataKey) : "Encrypted spreadsheet",
-          href: `/sheets/editor?id=${item._id ?? item.id}`,
+          href: buildEditorHref(editorPath, { id: item._id ?? item.id }),
         }))
       );
       setPersonal(mapped);
@@ -82,7 +96,7 @@ function PersonalScopeContent({ query }: { query: string }) {
             if (!response.ok) return null;
             const meta = await response.json();
             const displayName = meta.encryptedName ? await decryptMetadataString(meta.encryptedName, metadataKey) : "Encrypted spreadsheet";
-            return { id: row.objectId, displayName, href: `/sheets/editor?id=${row.objectId}`, lastAccessedAt: new Date(row.lastOpenedAt).toISOString() };
+            return { id: row.objectId, displayName, href: buildEditorHref(editorPath, { id: row.objectId }), lastAccessedAt: new Date(row.lastOpenedAt).toISOString() };
           })
         )
       ).filter(Boolean) as Array<Item & { displayName: string; href: string }>;
@@ -90,9 +104,9 @@ function PersonalScopeContent({ query }: { query: string }) {
     } finally {
       setLoading(false);
     }
-  }, [metadataKey, session]);
+  }, [editorPath, metadataKey, session]);
 
-  // eslint-disable-next-line react-hooks/set-state-in-effect
+
   useEffect(() => { void load(); }, [load]);
 
   const visible = useMemo(
@@ -138,15 +152,15 @@ function PersonalScopeContent({ query }: { query: string }) {
 
 /* ── Organization scope content ─────────────────────────────────────────── */
 
-function OrganizationScopeContent({ organization, query }: { organization: Organization; query: string }) {
+function OrganizationScopeContent({ organization, query, editorPath }: { organization: Organization; query: string; editorPath: string }) {
   return (
     <WorkspaceScopeProvider driveScope={{ type: "organization", orgId: organization.id, orgName: organization.name, role: organization.role }}>
-      <OrganizationScopeFiles organization={organization} query={query} />
+      <OrganizationScopeFiles organization={organization} query={query} editorPath={editorPath} />
     </WorkspaceScopeProvider>
   );
 }
 
-function OrganizationScopeFiles({ organization, query }: { organization: Organization; query: string }) {
+function OrganizationScopeFiles({ organization, query, editorPath }: { organization: Organization; query: string; editorPath: string }) {
   const workspace = useWorkspace();
   const space = useWorkspaceSpaceKey();
   const { addTasks } = useUpload();
@@ -177,7 +191,12 @@ function OrganizationScopeFiles({ organization, query }: { organization: Organiz
           objectRows.map(async (item: Item) => ({
             ...item,
             displayName: item.encryptedName ? await decryptMetadataString(item.encryptedName, space.cryptoKey) : "Encrypted spreadsheet",
-            href: "/sheets/editor?id=" + (item._id ?? item.id) + "&orgId=" + organization.id + "&bucketId=" + bucketId + "&prefix=" + encodeURIComponent(rootPrefix),
+            href: buildEditorHref(editorPath, {
+              id: item._id ?? item.id,
+              orgId: organization.id,
+              bucketId,
+              prefix: rootPrefix,
+            }),
           }))
         );
         if (!cancelled) setItems(mapped);
@@ -185,7 +204,7 @@ function OrganizationScopeFiles({ organization, query }: { organization: Organiz
       finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; };
-  }, [organization.id, space.cryptoKey, workspace]);
+  }, [editorPath, organization.id, space.cryptoKey, workspace]);
 
   const upload = (files: FileList | null) => {
     if (!driveConfig || !files) return;
@@ -229,7 +248,11 @@ function OrganizationScopeFiles({ organization, query }: { organization: Organiz
 
 /* ── Main SheetsHome ────────────────────────────────────────────────────── */
 
-export function SheetsHome() {
+export function SheetsHome({
+  editorPath = "/sheets/editor",
+  title = "Xenode Sheets",
+  legacyHref,
+}: SheetsHomeProps = {}) {
   const { data: session } = useSession();
   const { metadataKey } = useCrypto();
   const [query, setQuery] = useState("");
@@ -259,9 +282,16 @@ export function SheetsHome() {
     <main className="h-full overflow-auto">
       <div className="mx-auto max-w-7xl space-y-8 p-5 md:p-10">
         {/* Header */}
-        <div>
-          <p className="text-sm font-medium text-emerald-500">Xenode Sheets</p>
-          <h1 className="text-3xl font-semibold tracking-tight">Encrypted spreadsheets, edited locally.</h1>
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-emerald-500">{title}</p>
+            <h1 className="text-3xl font-semibold tracking-tight">Encrypted spreadsheets, edited locally.</h1>
+          </div>
+          {legacyHref ? (
+            <Button asChild variant="outline" size="sm">
+              <Link href={legacyHref}>Current editor</Link>
+            </Button>
+          ) : null}
         </div>
 
         {/* Search */}
@@ -282,12 +312,12 @@ export function SheetsHome() {
           </TabsList>
 
           <TabsContent value="personal" className="mt-6">
-            <PersonalScopeContent query={query} />
+            <PersonalScopeContent query={query} editorPath={editorPath} />
           </TabsContent>
 
           {organizations.map((org) => (
             <TabsContent key={org.id} value={`org-${org.id}`} className="mt-6">
-              <OrganizationScopeContent organization={org} query={query} />
+              <OrganizationScopeContent organization={org} query={query} editorPath={editorPath} />
             </TabsContent>
           ))}
         </Tabs>

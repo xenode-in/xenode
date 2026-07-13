@@ -60,6 +60,7 @@ async function buildFixture() {
     wrappedBy: "user" as const,
     spaceKeyWrapIv: null,
     canWrite: true,
+    url: "https://storage.test/encrypted-workbook",
   };
 
   return { rsa, dek, metadataKey, meta, ciphertext };
@@ -97,7 +98,7 @@ describe("v2 binary persistence — ciphertext only", () => {
       });
       if (url.endsWith(`/api/objects/${OBJECT_ID}`)) return jsonResponse(meta);
       if (url.includes("/versions/baseline")) return jsonResponse({ ok: true });
-      if (url.endsWith(`/api/objects/${OBJECT_ID}/content`)) return binResponse(ciphertext);
+      if (url === meta.url) return binResponse(ciphertext);
       if (url.includes("/update-content")) return jsonResponse({ revision: 4 });
       throw new Error(`unexpected url ${url}`);
     }) as unknown as typeof fetch;
@@ -107,6 +108,7 @@ describe("v2 binary persistence — ciphertext only", () => {
       privateKey: rsa.privateKey,
       metadataKey,
       workspace: { type: "personal", workspaceId: "ws1" },
+      storageFetch: fetchImpl,
     });
 
     const loaded = await adapter.loadBinary(OBJECT_ID);
@@ -151,7 +153,7 @@ describe("v2 binary persistence — ciphertext only", () => {
     const fetchImpl = (async (url: string) => {
       if (url.endsWith(`/api/objects/${OBJECT_ID}`)) return jsonResponse(meta);
       if (url.includes("/versions/baseline")) return jsonResponse({ ok: true });
-      if (url.endsWith(`/api/objects/${OBJECT_ID}/content`)) return binResponse(ciphertext);
+      if (url === meta.url) return binResponse(ciphertext);
       if (url.includes("/update-content")) return jsonResponse({ revision: 7 }, 409);
       throw new Error(`unexpected url ${url}`);
     }) as unknown as typeof fetch;
@@ -161,6 +163,7 @@ describe("v2 binary persistence — ciphertext only", () => {
       privateKey: rsa.privateKey,
       metadataKey,
       workspace: { type: "personal", workspaceId: "ws1" },
+      storageFetch: fetchImpl,
     });
     const loaded = await adapter.loadBinary(OBJECT_ID);
     await expect(
@@ -174,7 +177,7 @@ describe("v2 binary persistence — ciphertext only", () => {
     const readOnlyMeta = { ...meta, canWrite: false };
     const fetchImpl = (async (url: string) => {
       if (url.endsWith(`/api/objects/${OBJECT_ID}`)) return jsonResponse(readOnlyMeta);
-      if (url.endsWith(`/api/objects/${OBJECT_ID}/content`)) return binResponse(ciphertext);
+      if (url === readOnlyMeta.url) return binResponse(ciphertext);
       throw new Error(`unexpected url ${url}`);
     }) as unknown as typeof fetch;
 
@@ -183,6 +186,7 @@ describe("v2 binary persistence — ciphertext only", () => {
       privateKey: rsa.privateKey,
       metadataKey,
       workspace: { type: "personal", workspaceId: "ws1" },
+      storageFetch: fetchImpl,
     });
     const loaded = await adapter.loadBinary(OBJECT_ID);
     expect(loaded.readOnly).toBe(true);

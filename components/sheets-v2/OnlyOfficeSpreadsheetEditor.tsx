@@ -27,6 +27,7 @@ import {
   type BinaryPersistenceAdapter,
   type LoadedBinaryWorkbook,
 } from "@/lib/spreadsheets/v2/types";
+import type { SavedDocumentFormat } from "@/lib/spreadsheets/v2/bridge/protocol";
 
 export type SaveState =
   | "loading"
@@ -46,6 +47,7 @@ export interface OnlyOfficeSpreadsheetEditorProps {
   /** Invoked when v2 cannot proceed and the caller should offer v1 instead. */
   onFallbackToV1?: (reason: string) => void;
   onError?: (code: string, message?: string) => void;
+  onLoaded?: (loaded: LoadedBinaryWorkbook) => void;
 }
 
 export function OnlyOfficeSpreadsheetEditor({
@@ -55,10 +57,12 @@ export function OnlyOfficeSpreadsheetEditor({
   x2t,
   onFallbackToV1,
   onError,
+  onLoaded,
 }: OnlyOfficeSpreadsheetEditorProps) {
   const frameRef = useRef<OnlyOfficeFrameHandle | null>(null);
   const loadedRef = useRef<LoadedBinaryWorkbook | null>(null);
   const x2tRef = useRef<X2tClient | null>(null);
+  const saveInFlightRef = useRef(false);
   const [state, setState] = useState<SaveState>("loading");
   const [message, setMessage] = useState<string | null>(null);
 
@@ -85,6 +89,7 @@ export function OnlyOfficeSpreadsheetEditor({
         const loaded = await adapter.loadBinary(objectId, controller.signal);
         if (cancelled) return;
         loadedRef.current = loaded;
+        onLoaded?.(loaded);
 
         let bin: Uint8Array;
         try {
@@ -130,17 +135,30 @@ export function OnlyOfficeSpreadsheetEditor({
 
   // ── Bridge handlers ─────────────────────────────────────────────────────────
   const handleSaveBytes = useCallback(
-    async (bin: Uint8Array) => {
+    async (bytes: Uint8Array, format: SavedDocumentFormat, requestId?: string) => {
       const loaded = loadedRef.current;
-      if (!loaded || loaded.readOnly) return;
+      if (!loaded || loaded.readOnly || !requestId) {
+        if (requestId) frameRef.current?.saveResult(requestId, false);
+        return;
+      }
+      if (saveInFlightRef.current) {
+        frameRef.current?.saveResult(requestId, false);
+        return;
+      }
+      saveInFlightRef.current = true;
       setState("saving");
       try {
-        const xlsx = await x2tClient.fromEditorBinToXlsx(bin);
+        const xlsx =
+          format === "xlsx"
+            ? bytes
+            : await x2tClient.fromEditorBinToXlsx(bytes);
         const result = await adapter.saveBinary({ loaded, bytes: xlsx });
         loaded.revision = result.revision;
+        frameRef.current?.saveResult(requestId, true);
         setState("saved");
         setMessage(null);
       } catch (err) {
+        frameRef.current?.saveResult(requestId, false);
         if (err instanceof BinaryConflictError) {
           setState("conflict");
           setMessage(
@@ -151,6 +169,8 @@ export function OnlyOfficeSpreadsheetEditor({
           return;
         }
         fail(err instanceof Error ? err.message : "save_failed");
+      } finally {
+        saveInFlightRef.current = false;
       }
     },
     [adapter, x2tClient, fail],
@@ -162,10 +182,13 @@ export function OnlyOfficeSpreadsheetEditor({
         /* frame booted; INIT/OPEN already queued after load */
       },
       onDirtyChanged: (dirty: boolean) =>
-        setState((prev) =>
-          prev === "read_only" ? prev : dirty ? "dirty" : "ready",
-        ),
-      onSaveBytes: (bin: Uint8Array) => void handleSaveBytes(bin),
+        setState((prev) => {
+          if (prev === "read_only") return prev;
+          if (dirty) return "dirty";
+          return prev === "loading" ? "ready" : "saved";
+        }),
+      onSaveBytes: (bytes: Uint8Array, format: SavedDocumentFormat, requestId?: string) =>
+        void handleSaveBytes(bytes, format, requestId),
       onError: (code: string, msg?: string) => {
         if (code === "editor_integration_pending") {
           // Known prototype gap: bridge works, canvas not wired. Do not crash.
@@ -181,9 +204,13 @@ export function OnlyOfficeSpreadsheetEditor({
   );
 
   const requestSave = useCallback(() => {
-    if (state === "read_only" || state === "loading") return;
-    frameRef.current?.requestSave();
+    const canRetryFailedSave = state === "failed" && loadedRef.current !== null;
+    if (state !== "dirty" && !canRetryFailedSave) return;
+    frameRef.current?.requestSave(crypto.randomUUID());
   }, [state]);
+  const canSave =
+    state === "dirty" ||
+    (state === "failed" && loadedRef.current !== null);
 
   // Ctrl/Cmd+S -> explicit save through the bridge.
   useEffect(() => {
@@ -204,7 +231,7 @@ export function OnlyOfficeSpreadsheetEditor({
         <button
           type="button"
           onClick={requestSave}
-          disabled={state === "read_only" || state === "loading" || state === "saving"}
+          disabled={!canSave}
           className="inline-flex h-7 items-center rounded-md border bg-background px-3 font-medium hover:bg-muted disabled:opacity-50"
         >
           Save
@@ -213,7 +240,7 @@ export function OnlyOfficeSpreadsheetEditor({
       <OnlyOfficeFrame
         ref={frameRef}
         handlers={handlers}
-        className="min-h-0 flex-1 border-0"
+        className="block min-h-0 w-full flex-1 border-0"
       />
     </div>
   );

@@ -17,6 +17,7 @@ import { canEdit, normalizeShareRole } from "@/lib/orgs/shareRoles";
 import { REVISION_HEADER } from "@/lib/storage/revisions";
 import { toB64 } from "@/lib/crypto/utils";
 import { isSupportedSpreadsheet, spreadsheetExtension } from "../types";
+import { assertWorkbookSize } from "./limits";
 import {
   BinaryConflictError,
   type BinaryPersistenceAdapter,
@@ -111,6 +112,7 @@ export class DirectShareBinaryPersistenceAdapter
     const ciphertext = await ciphertextResponse.arrayBuffer();
     const plaintextBlob = await decryptFileWithDEK(ciphertext, dek, object.iv, contentType);
     const bytes = new Uint8Array(await plaintextBlob.arrayBuffer());
+    assertWorkbookSize(bytes.byteLength);
 
     return {
       objectId: String(object._id),

@@ -36,6 +36,16 @@ describe("Sheets v2 E2EE boundary", () => {
     // Inbound messages are origin- and source-checked.
     expect(frame).toContain("event.origin !== PARENT_ORIGIN");
     expect(frame).toContain("event.source !== window.parent");
+    // Saves must serialize Editor.bin from the in-browser model. Calling
+    // asc_Save would fall back to the absent server /downloadas service.
+    expect(frame).toContain("api.asc_nativeGetFile()");
+    expect(frame).not.toContain("api.asc_Save()");
+    expect(frame).toContain('callbacks.onSave(buffer, "editor-bin", resolvedRequestId)');
+    expect(frame).toContain("api.asc_Save = function (isAutoSave)");
+    expect(frame).toContain("if (isAutoSave === true || !dirty || activeSave) return true");
+    expect(frame).toContain('case "SAVE_RESULT"');
+    expect(frame).toContain("savedGeneration === changeGeneration");
+    expect(frame).not.toContain("onSaveDocument: handleSavedDocument");
   });
 
   it("the parent bridge validates origin + source and never posts to '*'", () => {

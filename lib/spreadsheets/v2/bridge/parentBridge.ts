@@ -22,6 +22,7 @@ import {
   type EditorTheme,
   type FrameMessage,
   type ParentMessage,
+  type SavedDocumentFormat,
 } from "./protocol";
 import { MAX_BRIDGE_PAYLOAD_BYTES } from "../limits";
 
@@ -42,7 +43,11 @@ export interface ParentBridgeOptions {
 export interface BridgeHandlers {
   onReady?: () => void;
   onDirtyChanged?: (dirty: boolean) => void;
-  onSaveBytes?: (bytes: Uint8Array, requestId?: string) => void;
+  onSaveBytes?: (
+    bytes: Uint8Array,
+    format: SavedDocumentFormat,
+    requestId?: string,
+  ) => void;
   onExportBytes?: (bytes: Uint8Array, requestId?: string) => void;
   onSelectionChanged?: (sheet: string, range: string) => void;
   onError?: (code: string, message?: string) => void;
@@ -103,7 +108,11 @@ export class OnlyOfficeParentBridge {
         this.handlers.onDirtyChanged?.(msg.dirty);
         break;
       case "SAVE_BYTES":
-        this.handlers.onSaveBytes?.(new Uint8Array(msg.bin), msg.requestId);
+        this.handlers.onSaveBytes?.(
+          new Uint8Array(msg.bin),
+          msg.format,
+          msg.requestId,
+        );
         break;
       case "EXPORT_BYTES":
         this.handlers.onExportBytes?.(new Uint8Array(msg.bin), msg.requestId);
@@ -163,6 +172,17 @@ export class OnlyOfficeParentBridge {
   requestSave(requestId?: string): void {
     this.post(this.envelope({ type: "REQUEST_SAVE" }, requestId));
   }
+  saveResult(requestId: string, ok: boolean): void {
+    this.post({
+      channel: BRIDGE_CHANNEL,
+      v: BRIDGE_PROTOCOL_VERSION,
+      nonce: this.nonce,
+      requestId,
+      type: "SAVE_RESULT",
+      ok,
+    });
+  }
+
 
   requestExport(requestId?: string): void {
     this.post(this.envelope({ type: "REQUEST_EXPORT", format: "xlsx" }, requestId));

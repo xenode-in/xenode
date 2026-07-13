@@ -1709,13 +1709,13 @@ export function FilePreviewDialog({
     }
   };
 
-  const openInXenodeSheets = () => {
+  const openInXenodeSheetsAt = (editorPath: string) => {
     if (!file || sharedToken || albumShareToken) return;
     if (directShareId) {
       // Shared spreadsheets open through the share-authorized editor mode:
       // read-only for viewers/commenters, editable for editor recipients.
       onClose();
-      window.location.assign("/sheets/editor?shareId=" + directShareId);
+      window.location.assign(editorPath + "?shareId=" + directShareId);
       return;
     }
     const params = new URLSearchParams({ id: file.id });
@@ -1728,8 +1728,11 @@ export function FilePreviewDialog({
     const slash = file.key.lastIndexOf("/");
     if (slash >= 0) params.set("prefix", file.key.slice(0, slash + 1));
     onClose();
-    window.location.assign("/sheets/editor?" + params.toString());
+    window.location.assign(editorPath + "?" + params.toString());
   };
+  const openInXenodeSheets = () => openInXenodeSheetsAt("/sheets/editor");
+  const openInXenodeSheetsV2 = () =>
+    openInXenodeSheetsAt("/sheets-v2/editor");
   const renderContent = () => {
     let innerContent = null;
 
@@ -1810,14 +1813,25 @@ export function FilePreviewDialog({
                   ? "Download this encrypted spreadsheet to view it locally. Xenode never sends it to Microsoft Office viewers."
                   : "This spreadsheet is edited locally in your browser with end-to-end encryption."}
               </p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-4"
-                onClick={isSharePreview ? handleDownload : openInXenodeSheets}
-              >
-                {isSharePreview ? "Download spreadsheet" : "Open in Xenode Sheets"}
-              </Button>
+              {isSharePreview ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-4"
+                  onClick={handleDownload}
+                >
+                  Download spreadsheet
+                </Button>
+              ) : (
+                <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                  <Button variant="outline" size="sm" onClick={openInXenodeSheets}>
+                    Open in Xenode Sheets
+                  </Button>
+                  <Button size="sm" onClick={openInXenodeSheetsV2}>
+                    Try Sheets v2
+                  </Button>
+                </div>
+              )}
             </div>
           );
         } else if (

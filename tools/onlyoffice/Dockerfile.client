@@ -1,0 +1,46 @@
+# syntax=docker/dockerfile:1.7
+
+FROM node:20-bookworm AS build
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
+
+COPY vendor/onlyoffice/sdkjs ./sdkjs
+COPY vendor/onlyoffice/web-apps ./web-apps
+COPY vendor/onlyoffice/dictionaries ./dictionaries
+COPY vendor/onlyoffice/core-fonts ./core-fonts
+
+ARG PRODUCT_VERSION=9.4.0
+ARG BUILD_NUMBER=131
+ARG XENODE_ARTIFACT_VERSION=9.4.0.131-xenode.1
+
+ENV NODE_ENV=production \
+    PRODUCT_VERSION=${PRODUCT_VERSION} \
+    BUILD_NUMBER=${BUILD_NUMBER} \
+    XENODE_ARTIFACT_VERSION=${XENODE_ARTIFACT_VERSION}
+
+# Build only the engines currently in scope: Documents and Spreadsheets.
+RUN python3 sdkjs/build/build.py --product word --product cell --map
+
+# Build the shared browser shell plus the two editor UIs. Plugins are not
+# copied into the output; network-capable integrations remain disabled.
+RUN cd web-apps/build \
+    && npm ci \
+    && npx grunt --force --verbose \
+       deploy-documents-component \
+       deploy-documenteditor-component \
+       deploy-spreadsheeteditor-component
+
+RUN mkdir -p /dist \
+    && cp -R sdkjs/deploy/sdkjs /dist/sdkjs \
+    && cp -R web-apps/deploy/web-apps /dist/web-apps \
+    && cp -R web-apps/vendor /dist/web-apps/vendor \
+    && cp -R dictionaries /dist/dictionaries \
+    && cp -R core-fonts /dist/fonts \
+    && node -e "require('fs').writeFileSync('/dist/version.json', JSON.stringify({onlyoffice:'9.4.0',build:131,xenode:process.env.XENODE_ARTIFACT_VERSION,editors:['document','spreadsheet'],bridgeReady:false,x2tReady:false}, null, 2) + '\\n')"
+
+FROM scratch AS output
+COPY --from=build /dist /

@@ -73,7 +73,7 @@ describe("bridge protocol validation", () => {
   it("rejects an oversized transferred payload", () => {
     const bin = new ArrayBuffer(2048);
     const result = validateEnvelope(
-      frameEnvelope({ type: "SAVE_BYTES", bin }),
+      frameEnvelope({ type: "SAVE_BYTES", format: "xlsx", bin }),
       frameOpts,
     );
     expect(result).toMatchObject({ ok: false, reason: "payload_too_large" });
@@ -82,12 +82,54 @@ describe("bridge protocol validation", () => {
   it("accepts an in-limit transferred payload", () => {
     const bin = new ArrayBuffer(512);
     const result = validateEnvelope(
-      frameEnvelope({ type: "SAVE_BYTES", bin }),
+      frameEnvelope({ type: "SAVE_BYTES", format: "xlsx", bin }),
       frameOpts,
     );
     expect(result.ok).toBe(true);
   });
 
+  it("rejects save messages without a complete binary payload", () => {
+    expect(
+      validateEnvelope(
+        frameEnvelope({ type: "SAVE_BYTES", format: "xlsx" }),
+        frameOpts,
+      ),
+    ).toMatchObject({ ok: false, reason: "missing_binary_payload" });
+  });
+
+  it("rejects save messages with an unknown document format", () => {
+    expect(
+      validateEnvelope(
+        frameEnvelope({
+          type: "SAVE_BYTES",
+          format: "unknown",
+          bin: new ArrayBuffer(8),
+        }),
+        frameOpts,
+      ),
+    ).toMatchObject({ ok: false, reason: "bad_saved_document_format" });
+  });
+
+  it("accepts a correlated save result from the parent", () => {
+    expect(
+      validateEnvelope(
+        parentEnvelope({ type: "SAVE_RESULT", requestId: "save-1", ok: true }),
+        parentOpts,
+      ).ok,
+    ).toBe(true);
+  });
+
+  it("rejects malformed save acknowledgements", () => {
+    expect(
+      validateEnvelope(parentEnvelope({ type: "SAVE_RESULT", ok: true }), parentOpts),
+    ).toMatchObject({ ok: false, reason: "bad_request_id" });
+    expect(
+      validateEnvelope(
+        parentEnvelope({ type: "SAVE_RESULT", requestId: "save-1", ok: "yes" }),
+        parentOpts,
+      ),
+    ).toMatchObject({ ok: false, reason: "bad_save_result" });
+  });
   it("rejects non-object data", () => {
     expect(validateEnvelope(null, parentOpts)).toMatchObject({ ok: false });
     expect(validateEnvelope("nope", parentOpts)).toMatchObject({ ok: false });

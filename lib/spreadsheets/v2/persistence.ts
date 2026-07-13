@@ -19,6 +19,7 @@ import {
 import { fromB64, toB64 } from "@/lib/crypto/utils";
 import { REVISION_HEADER } from "@/lib/storage/revisions";
 import { isSupportedSpreadsheet, spreadsheetExtension } from "../types";
+import { assertWorkbookSize } from "./limits";
 import {
   BinaryConflictError,
   type BinaryPersistenceAdapter,
@@ -39,6 +40,11 @@ interface ObjectMetadata {
   wrappedBy: "user" | "space" | null;
   spaceKeyWrapIv: string | null;
   canWrite: boolean;
+  url?: string;
+  chunkUrls?: string[];
+  chunkSize?: number | null;
+  chunkCount?: number | null;
+  chunkIvs?: string | null;
 }
 
 export interface XenodeBinaryPersistenceOptions {
@@ -48,6 +54,8 @@ export interface XenodeBinaryPersistenceOptions {
   workspace: SpreadsheetWorkspace;
   workspaceSpaceKey?: Uint8Array | null;
   workspaceMetadataKey?: CryptoKey | null;
+  /** Separate so scoped API headers are never attached to signed B2 URLs. */
+  storageFetch?: typeof fetch;
 }
 
 export class XenodeBinaryPersistenceAdapter implements BinaryPersistenceAdapter {
@@ -130,16 +138,23 @@ export class XenodeBinaryPersistenceAdapter implements BinaryPersistenceAdapter 
       if (!baselineResponse.ok) throw new Error("original_protection_failed");
     }
 
-    const ciphertextResponse = await this.options.fetch(
-      `/api/objects/${objectId}/content`,
-      { signal },
-    );
+    if (meta.chunkUrls?.length || meta.chunkCount) {
+      throw new Error("chunked_object_unsupported");
+    }
+    if (!meta.url) throw new Error("spreadsheet_download_failed");
+
+    // The API only authorizes and signs the opaque B2 object key. Ciphertext
+    // then travels directly from B2 to this browser; the Next.js server never
+    // receives the file body.
+    const storageFetch = this.options.storageFetch ?? fetch;
+    const ciphertextResponse = await storageFetch(meta.url, { signal });
     if (!ciphertextResponse.ok) throw new Error("spreadsheet_download_failed");
 
     const dek = await this.unwrap(meta);
     const ciphertext = await ciphertextResponse.arrayBuffer();
     const plaintextBlob = await decryptFileWithDEK(ciphertext, dek, meta.iv, contentType);
     const bytes = new Uint8Array(await plaintextBlob.arrayBuffer());
+    assertWorkbookSize(bytes.byteLength);
 
     return {
       objectId,

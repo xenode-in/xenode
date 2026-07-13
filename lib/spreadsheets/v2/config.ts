@@ -18,7 +18,7 @@ export const ONLYOFFICE_API_URL =
   `${ONLYOFFICE_EDITOR_URL}/web-apps/apps/api/documents/api.js`;
 
 /** URL of the Xenode frame host served from the editor origin. */
-export const ONLYOFFICE_HOST_URL = `${ONLYOFFICE_EDITOR_URL}/xenode/host.html`;
+export const ONLYOFFICE_HOST_URL = `${ONLYOFFICE_EDITOR_URL}/xenode/host.html?rev=save-ack-1`;
 
 /** Explicit editor origin for production (e.g. `https://sheets-v2.xenode.in`).
  *  When unset we treat the editor as same-origin (dev / relative asset path). */

@@ -33,6 +33,15 @@ import {
 
 const X2T_DIR = `${ONLYOFFICE_EDITOR_URL}/x2t`;
 
+/**
+ * CryptPad's generated x2t pre-js reads currentScript.getAttribute("src") and
+ * passes it to the one-argument URL constructor. Keep the injected attribute
+ * absolute so a same-origin relative editor base cannot trigger `Invalid URL`.
+ */
+export function resolveX2tScriptUrl(baseUrl: string): string {
+  return new URL(`${X2T_DIR}/x2t.js`, baseUrl).href;
+}
+
 /** Cap on how many fonts to preload into the WASM FS at startup. x2t only needs
  *  enough coverage to measure text; loading the full core-fonts set would be
  *  tens of MB of requests. Browser-cached (immutable) after first load. */
@@ -82,7 +91,7 @@ function loadModule(): Promise<RawX2tModule> {
       onAbort: (reason) => settle(false, reason),
     };
     const el = document.createElement("script");
-    el.src = `${X2T_DIR}/x2t.js`;
+    el.src = resolveX2tScriptUrl(document.baseURI);
     el.async = true;
     el.onerror = () => settle(false, "script_load_failed");
     document.head.appendChild(el);

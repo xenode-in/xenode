@@ -22,7 +22,7 @@
   "use strict";
 
   var CHANNEL = "xenode.sheets.v2";
-  var VERSION = 1;
+  var VERSION = 2;
 
   var hash = new URLSearchParams((location.hash || "").replace(/^#/, ""));
   var PARENT_ORIGIN = decodeURIComponent(hash.get("o") || "");
@@ -64,8 +64,8 @@
   function sendDirty(dirty) {
     post({ type: "DIRTY_CHANGED", dirty: !!dirty });
   }
-  function sendSaveBytes(buffer, requestId) {
-    post({ type: "SAVE_BYTES", bin: buffer }, [buffer], requestId);
+  function sendSaveBytes(buffer, format, requestId) {
+    post({ type: "SAVE_BYTES", format: format, bin: buffer }, [buffer], requestId);
   }
   function sendExportBytes(buffer, requestId) {
     post({ type: "EXPORT_BYTES", format: "xlsx", bin: buffer }, [buffer], requestId);
@@ -109,8 +109,11 @@
     var editor = null;
     var blobUrl = null;
     var dirty = false;
-    var lastSaveBin = null; // most recent Editor.bin captured from the editor
     var pendingSave = null; // requestId awaiting SAVE_BYTES
+    var saveTimer = null;
+    var changeGeneration = 0;
+    var localSaveSequence = 0;
+    var activeSave = null;
 
     // Minimal single-user mock server. Participant shape matches what
     // onAuthParticipantsChanged/getUserInitials read (username required).
@@ -126,33 +129,188 @@
       onMessage: function (msg) {
         if (!msg || typeof msg !== "object") return;
         if (msg.type === "saveChanges" || msg.type === "unsaveLock") {
+          changeGeneration += 1;
           if (!dirty) { dirty = true; callbacks.onDirty(true); }
-        }
-        // The editor emits the serialized document (checkpoint) here; the exact
-        // save-message shape is validated separately (see host README). When a
-        // full Editor.bin is present, surface it to the parent.
-        var bin = extractSavedBin(msg);
-        if (bin) {
-          lastSaveBin = bin;
-          if (pendingSave) {
-            callbacks.onSave(bin, pendingSave);
-            pendingSave = null;
-          }
-          if (dirty) { dirty = false; callbacks.onDirty(false); }
         }
       },
     };
 
-    function extractSavedBin(msg) {
-      // ONLYOFFICE's coauthoring "saveChanges" carries change deltas, not a full
-      // bin; a checkpoint bin arrives via a save/download path. This is the
-      // remaining piece to validate — returns null until confirmed so we never
-      // hand the parent a wrong/partial payload.
+    function clearSaveTimer() {
+      if (saveTimer !== null) {
+        clearTimeout(saveTimer);
+        saveTimer = null;
+      }
+    }
+
+    function toArrayBuffer(value) {
+      if (value instanceof ArrayBuffer) return value;
+      if (typeof ArrayBuffer !== "undefined" && ArrayBuffer.isView(value)) {
+        return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength);
+      }
       return null;
     }
 
+    function extractSavedDocument(event) {
+      var value = event;
+      if (value && typeof value === "object" && value.data !== undefined) {
+        value = value.data;
+      }
+      var buffer = toArrayBuffer(value);
+      if (buffer) return buffer;
+      if (value && typeof value === "object" && value.buffer !== undefined) {
+        return toArrayBuffer(value.buffer);
+      }
+      return null;
+    }
+
+    function detectSavedDocumentFormat(buffer) {
+      var bytes = new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 4));
+      if (
+        bytes.length >= 4 &&
+        bytes[0] === 0x50 &&
+        bytes[1] === 0x4b &&
+        ((bytes[2] === 0x03 && bytes[3] === 0x04) ||
+          (bytes[2] === 0x05 && bytes[3] === 0x06) ||
+          (bytes[2] === 0x07 && bytes[3] === 0x08))
+      ) {
+        return "xlsx";
+      }
+      return "editor-bin";
+    }
+
+    function handleSavedDocument(event) {
+      var buffer = extractSavedDocument(event);
+      if (!buffer || buffer.byteLength === 0) {
+        clearSaveTimer();
+        pendingSave = null;
+        callbacks.onError("save_payload_missing", "ONLYOFFICE returned no document bytes");
+        return;
+      }
+      var requestId = pendingSave;
+      pendingSave = null;
+      clearSaveTimer();
+      if (dirty) { dirty = false; callbacks.onDirty(false); }
+      callbacks.onSave(buffer, detectSavedDocumentFormat(buffer), requestId);
+    }
+
+    function getEditorApi() {
+      var frame = editor && typeof editor.getIframe === "function"
+        ? editor.getIframe()
+        : document.querySelector('iframe[name="frameEditor"]');
+      var frameWindow = frame && frame.contentWindow;
+      return frameWindow && frameWindow.Asc && frameWindow.Asc.editor
+        ? frameWindow.Asc.editor
+        : frameWindow && frameWindow.editor;
+    }
+
+    function encodeUtf8(value) {
+      if (typeof TextEncoder !== "undefined") {
+        return new TextEncoder().encode(value).buffer;
+      }
+      var bytes = new Uint8Array(value.length);
+      for (var i = 0; i < value.length; i += 1) bytes[i] = value.charCodeAt(i) & 0xff;
+      return bytes.buffer;
+    }
+
+    function serializeEditorBin() {
+      var api = getEditorApi();
+      if (!api || typeof api.asc_nativeGetFile !== "function") {
+        throw new Error("editor_binary_serializer_unavailable");
+      }
+      if (
+        api.wbModel &&
+        api.wbModel.dependencyFormulas &&
+        typeof api.wbModel.dependencyFormulas.calcTree === "function"
+      ) {
+        api.wbModel.dependencyFormulas.calcTree();
+      }
+      var serialized = api.asc_nativeGetFile();
+      var buffer = typeof serialized === "string"
+        ? encodeUtf8(serialized)
+        : toArrayBuffer(serialized);
+      if (!buffer || buffer.byteLength === 0) {
+        throw new Error("editor_binary_serializer_empty");
+      }
+      var signature = new Uint8Array(buffer, 0, Math.min(5, buffer.byteLength));
+      if (
+        signature.length < 5 ||
+        signature[0] !== 0x58 ||
+        signature[1] !== 0x4c ||
+        signature[2] !== 0x53 ||
+        signature[3] !== 0x59 ||
+        signature[4] !== 0x3b
+      ) {
+        throw new Error("editor_binary_signature_invalid");
+      }
+      return buffer;
+    }
+
+    function emitSerializedEditorBin(requestId) {
+      if (!dirty || activeSave) return false;
+      var resolvedRequestId = requestId || "local-save-" + (++localSaveSequence);
+      var buffer = serializeEditorBin();
+      activeSave = {
+        requestId: resolvedRequestId,
+        generation: changeGeneration,
+      };
+      callbacks.onSave(buffer, "editor-bin", resolvedRequestId);
+      return true;
+    }
+
+    function completeSave(requestId, ok) {
+      if (!activeSave || activeSave.requestId !== requestId) return;
+      var savedGeneration = activeSave.generation;
+      activeSave = null;
+      if (!ok) return;
+      if (savedGeneration === changeGeneration) {
+        dirty = false;
+      }
+      callbacks.onDirty(dirty);
+    }
+
+    function installLocalSaveHook() {
+      var api = getEditorApi();
+      if (!api || api.__xenodeLocalSaveInstalled) return;
+      api.__xenodeLocalSaveInstalled = true;
+      api.asc_Save = function (isAutoSave) {
+        // Internal autosave must never create a Xenode storage revision.
+        if (isAutoSave === true || !dirty || activeSave) return true;
+        try {
+          emitSerializedEditorBin();
+          return true;
+        } catch (e) {
+          callbacks.onError("save_trigger_failed", String(e && e.message || e));
+          return false;
+        }
+      };
+    }
+
+    function watchEditorFrameSize() {
+      function applySize() {
+        var frame = document.querySelector('iframe[name="frameEditor"]');
+        if (!frame) return false;
+        frame.setAttribute("width", "100%");
+        frame.setAttribute("height", "100%");
+        frame.style.display = "block";
+        frame.style.width = "100%";
+        frame.style.height = "100%";
+        frame.style.border = "0";
+        return true;
+      }
+      if (applySize()) return;
+      var root = document.getElementById("editor");
+      if (!root || typeof MutationObserver === "undefined") return;
+      var observer = new MutationObserver(function () {
+        if (applySize()) observer.disconnect();
+      });
+      observer.observe(root, { childList: true, subtree: true });
+      setTimeout(function () { observer.disconnect(); }, 10000);
+    }
     function buildConfig(binUrl) {
       return {
+        type: "desktop",
+        width: "100%",
+        height: "100%",
         documentType: "cell",
         document: {
           fileType: state.extension || "xlsx",
@@ -165,11 +323,21 @@
           mode: state.mode === "view" ? "view" : "edit",
           lang: "en",
           user: { id: participant.id, name: participant.username },
-          customization: { comments: false, chat: false, plugins: false, help: false },
+          customization: {
+            comments: false,
+            chat: false,
+            plugins: false,
+            help: false,
+            logo: { visible: false },
+          },
         },
         events: {
           onAppReady: function () {},
-          onDocumentReady: function () { setPlaceholder(""); callbacks.onReady(); },
+          onDocumentReady: function () {
+            setPlaceholder("");
+            installLocalSaveHook();
+            callbacks.onReady();
+          },
           onError: function (e) {
             callbacks.onError("editor_error", e && e.data ? String(e.data) : "");
           },
@@ -188,6 +356,7 @@
         }
         loadDocsApi()
           .then(function () {
+            watchEditorFrameSize();
             editor = new window.DocsAPI.DocEditor("oo-mount", buildConfig(blobUrl));
             if (typeof editor.connectMockServer === "function") {
               editor.connectMockServer(mockServer);
@@ -200,21 +369,30 @@
       setMode: function (mode) { state.mode = mode; },
       setTheme: function (theme) { state.theme = theme; },
       requestSave: function (requestId) {
-        // Trigger the editor to serialize, then SAVE_BYTES flows via onMessage.
-        pendingSave = requestId || "save";
-        if (lastSaveBin) { callbacks.onSave(lastSaveBin, pendingSave); pendingSave = null; return; }
+        if (state.mode === "view") {
+          callbacks.onError("read_only", "This workbook is read only");
+          return;
+        }
+        if (!dirty || activeSave) return;
         try {
-          if (editor && typeof editor.downloadAs === "function") editor.downloadAs();
-        } catch (e) { void e; }
+          emitSerializedEditorBin(requestId);
+        } catch (e) {
+          callbacks.onError("save_trigger_failed", String(e && e.message || e));
+        }
+      },
+      saveResult: function (requestId, ok) {
+        completeSave(requestId, ok === true);
       },
       requestExport: function (requestId) {
-        if (lastSaveBin) return callbacks.onExport(lastSaveBin, requestId);
-        callbacks.onError("export_pending", "no serialized workbook yet");
+        callbacks.onError("export_unsupported", "Use Save while XLSX export is being integrated");
       },
       focus: function () { try { editor && editor.grabFocus && editor.grabFocus(); } catch (e) { void e; } },
       destroy: function () {
         try { editor && editor.destroyEditor && editor.destroyEditor(); } catch (e) { void e; }
         if (blobUrl) { try { URL.revokeObjectURL(blobUrl); } catch (e) { void e; } blobUrl = null; }
+        clearSaveTimer();
+        pendingSave = null;
+        activeSave = null;
         editor = null;
       },
     };
@@ -274,6 +452,13 @@
         break;
       case "REQUEST_SAVE":
         adapter.requestSave(msg.requestId);
+        break;
+      case "SAVE_RESULT":
+        if (typeof msg.requestId !== "string" || typeof msg.ok !== "boolean") {
+          sendError("bad_payload", "SAVE_RESULT is invalid");
+          return;
+        }
+        adapter.saveResult(msg.requestId, msg.ok);
         break;
       case "REQUEST_EXPORT":
         adapter.requestExport(msg.requestId);

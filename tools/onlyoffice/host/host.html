@@ -38,6 +38,13 @@
         height: 100%;
         width: 100%;
       }
+      #oo-mount,
+      #editor > iframe[name="frameEditor"] {
+        display: block;
+        width: 100% !important;
+        height: 100% !important;
+        border: 0;
+      }
       @media (prefers-color-scheme: dark) {
         html,
         body {
@@ -63,6 +70,6 @@
     <!-- Frame-side bridge. The ONLYOFFICE api.js is loaded lazily by the
          adapter only once an Editor.bin arrives, so no editor code runs before
          the parent has authenticated the session. -->
-    <script src="./xenode-frame.js"></script>
+    <script src="./xenode-frame.js?rev=save-ack-1"></script>
   </body>
 </html>

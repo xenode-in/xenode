@@ -30,6 +30,7 @@ export interface OnlyOfficeFrameHandle {
   setMode(mode: EditorMode): void;
   setTheme(theme: EditorTheme): void;
   requestSave(requestId?: string): void;
+  saveResult(requestId: string, ok: boolean): void;
   requestExport(requestId?: string): void;
   focus(): void;
 }
@@ -73,7 +74,8 @@ export const OnlyOfficeFrame = forwardRef<OnlyOfficeFrameHandle, OnlyOfficeFrame
       bridge.setHandlers({
         onReady: () => handlersRef.current.onReady?.(),
         onDirtyChanged: (d) => handlersRef.current.onDirtyChanged?.(d),
-        onSaveBytes: (b, id) => handlersRef.current.onSaveBytes?.(b, id),
+        onSaveBytes: (b, format, id) =>
+          handlersRef.current.onSaveBytes?.(b, format, id),
         onExportBytes: (b, id) => handlersRef.current.onExportBytes?.(b, id),
         onSelectionChanged: (s, r) => handlersRef.current.onSelectionChanged?.(s, r),
         onError: (c, m) => handlersRef.current.onError?.(c, m),
@@ -98,6 +100,7 @@ export const OnlyOfficeFrame = forwardRef<OnlyOfficeFrameHandle, OnlyOfficeFrame
         setMode: (mode) => bridgeRef.current?.setMode(mode),
         setTheme: (theme) => bridgeRef.current?.setTheme(theme),
         requestSave: (id) => bridgeRef.current?.requestSave(id),
+        saveResult: (id, ok) => bridgeRef.current?.saveResult(id, ok),
         requestExport: (id) => bridgeRef.current?.requestExport(id),
         focus: () => bridgeRef.current?.focus(),
       }),
