@@ -21,6 +21,15 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
+function canDeleteInScope(ctx: Awaited<ReturnType<typeof requireAccessContext>>): boolean {
+  if (ctx.scope.type === "personal") return true;
+  return (
+    ctx.scope.role === "owner" ||
+    ctx.scope.role === "admin" ||
+    ctx.scope.role === "manager"
+  );
+}
+
 /** 
  * GET /api/objects/[id] - Get download URL for an object 
  */
@@ -75,6 +84,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const keyToUse = useOptimized ? object.optimizedKey : object.key;
     const dekToUse = useOptimized ? object.optimizedEncryptedDEK : object.encryptedDEK;
     const ivToUse = useOptimized ? object.optimizedIV : object.iv;
+    const spaceKeyWrapIvToUse = useOptimized
+      ? object.optimizedSpaceKeyWrapIv
+      : object.spaceKeyWrapIv;
     const contentTypeToUse = useOptimized ? object.optimizedContentType : object.contentType;
     const sizeToUse = useOptimized ? object.optimizedSize : object.size;
 
@@ -107,6 +119,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       chunkUrls,
       isEncrypted: object.isEncrypted ?? false,
       encryptedDEK: dekToUse ?? null,
+      wrappedBy: object.wrappedBy ?? null,
+      spaceKeyVersion: object.spaceKeyVersion ?? null,
+      spaceKeyWrapIv: spaceKeyWrapIvToUse ?? null,
       iv: ivToUse ?? null,
       encryptedName: object.encryptedName ?? null,
       encryptedContentType: object.encryptedContentType ?? null,
@@ -114,6 +129,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       mediaCategory: object.mediaCategory ?? null,
       contentType: contentTypeToUse,
       size: sizeToUse,
+      revision: object.revision ?? 0,
+      updatedAt: object.updatedAt,
+      ownerScope: object.ownerScope ?? "personal",
+      orgId: object.orgId ?? null,
+      teamId: object.teamId ?? null,
+      canWrite: ctx.scope.type === "personal" || ctx.scope.role !== "guest",
       chunkSize: object.chunkSize ?? null,
       chunkCount: object.chunkCount ?? null,
       chunkIvs: object.chunkIvs ?? null,
@@ -174,6 +195,15 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
 
     await dbConnect();
+
+    if (!canDeleteInScope(ctx)) {
+      statusCode = 403;
+      errorMessage = "Forbidden";
+      return NextResponse.json(
+        { error: errorMessage, code: "workspace_delete_role_required" },
+        { status: statusCode },
+      );
+    }
 
     const object = await StorageObject.findOne(objectFilter(ctx, id)).lean();
     if (!object) {

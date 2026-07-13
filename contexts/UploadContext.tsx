@@ -12,7 +12,9 @@ import { useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
 import {
   encryptFile,
+  encryptFileForSpace,
   encryptFileChunked,
+  encryptFileChunkedForSpace,
   encryptMetadataString,
   encryptMetadataObject,
   encryptThumbnail,
@@ -23,6 +25,10 @@ import type { FileMetadata } from "@/lib/metadata/types";
 import { optimizeVideoForStreaming } from "@/lib/video/faststart";
 import { generatePreview } from "@/lib/images/optimizer";
 import { upsertLocalObject } from "@/lib/db/object-cache";
+import { extractSubtitleToVTT } from "@/lib/video/demuxer";
+import { extractAudioTrack } from "@/lib/video/audio-extractor";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 import type { UploadRecord } from "@/lib/db/local";
 import {
   saveUploadRecord,
@@ -560,12 +566,29 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
   const { publicKey: cryptoPublicKey, metadataKey: cryptoMetadataKey } =
     useCrypto();
+  const workspace = useWorkspace();
+  const {
+    rawSpaceKey,
+    cryptoKey: workspaceMetadataKey,
+    keyVersion: workspaceSpaceKeyVersion,
+    isWorkspaceEncrypted,
+  } = useWorkspaceSpaceKey();
   // Keep a ref so the useCallback below always reads the latest key
   // without needing to be re-created (avoids stale closure)
   const cryptoPublicKeyRef = useRef<CryptoKey | null>(null);
   cryptoPublicKeyRef.current = cryptoPublicKey;
   const cryptoMetadataKeyRef = useRef<CryptoKey | null>(null);
   cryptoMetadataKeyRef.current = cryptoMetadataKey;
+  const workspaceRawSpaceKeyRef = useRef<Uint8Array | null>(null);
+  workspaceRawSpaceKeyRef.current = rawSpaceKey;
+  const workspaceMetadataKeyRef = useRef<CryptoKey | null>(null);
+  workspaceMetadataKeyRef.current = workspaceMetadataKey;
+  const workspaceSpaceKeyVersionRef = useRef<number | null>(null);
+  workspaceSpaceKeyVersionRef.current = workspaceSpaceKeyVersion;
+  const isWorkspaceEncryptedRef = useRef(false);
+  isWorkspaceEncryptedRef.current = isWorkspaceEncrypted;
+  const scopedFetchRef = useRef(workspace.scopedFetch);
+  scopedFetchRef.current = workspace.scopedFetch;
 
   const uploadEncryptedThumbnail = useCallback(
     async (
@@ -580,7 +603,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         const bytes = new TextEncoder().encode(encryptedDataUrl);
         const blob = new Blob([bytes], { type: "application/octet-stream" });
 
-        const presign = await fetch("/api/objects/presign-upload", {
+        const presign = await scopedFetchRef.current("/api/objects/presign-upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -622,9 +645,30 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
    *  2. User has opted in via User Model preference (session.user.encryptByDefault)
    */
   function shouldEncryptNow(): boolean {
+    if (isWorkspaceEncryptedRef.current) {
+      if (!workspaceRawSpaceKeyRef.current || !workspaceMetadataKeyRef.current) {
+        throw new Error("Workspace encryption key is not available");
+      }
+      return true;
+    }
     if (!cryptoPublicKeyRef.current) return false;
     // @ts-expect-error additionalFields
     return sessionRef.current?.user?.encryptByDefault || false;
+  }
+
+  function currentMetadataKey(): CryptoKey | null {
+    return isWorkspaceEncryptedRef.current
+      ? workspaceMetadataKeyRef.current
+      : cryptoMetadataKeyRef.current;
+  }
+
+  function currentSpaceFields() {
+    return isWorkspaceEncryptedRef.current
+      ? {
+          wrappedBy: "space",
+          spaceKeyVersion: workspaceSpaceKeyVersionRef.current ?? undefined,
+        }
+      : {};
   }
 
   // Prevent page reload/close during active uploads
@@ -751,14 +795,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         const aspectRatio = thumbResult?.aspectRatio;
         console.log(`[Upload] ✅ Thumbnail step done (${task.file.name}, generated: ${!!rawThumbnail}, aspectRatio: ${aspectRatio ?? "n/a"})`);
         let thumbnail: string | undefined;
-        if (
-          rawThumbnail &&
-          cryptoMetadataKeyRef.current &&
-          shouldEncryptNow()
-        ) {
+        if (rawThumbnail && currentMetadataKey() && shouldEncryptNow()) {
           thumbnail = await encryptThumbnail(
             rawThumbnail,
-            cryptoMetadataKeyRef.current,
+            currentMetadataKey()!,
           ).catch(() => undefined);
         } else {
           thumbnail = rawThumbnail;
@@ -772,6 +812,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         let uploadBody: File | Blob = uploadFile;
         let uploadContentType = uploadFile.type || "application/octet-stream";
         let encryptedDEK: string | undefined;
+        let spaceKeyWrapIv: string | undefined;
         let encryptedName: string | undefined;
         let chunkCount = Math.ceil(uploadFile.size / chunkSize);
         let chunkIvs: string | undefined;
@@ -984,13 +1025,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             // Encrypt standardized metadata object
             encryptedMetadata = await encryptMetadataObject(
               metadata,
-              cryptoMetadataKeyRef.current!,
+              currentMetadataKey()!,
             );
 
             // Legacy backward-compatibility headers (optional but kept for safety)
             encryptedName = await encryptMetadataString(
               uploadFile.name,
-              cryptoMetadataKeyRef.current!,
+              currentMetadataKey()!,
             );
 
             setTasks((prev) =>
@@ -999,14 +1040,21 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               ),
             );
 
-            const enc = await encryptFileChunked(
-              uploadFile,
-              cryptoPublicKeyRef.current!,
-              chunkSize,
-            );
+            const enc = isWorkspaceEncryptedRef.current
+              ? await encryptFileChunkedForSpace(
+                  uploadFile,
+                  workspaceRawSpaceKeyRef.current!,
+                  chunkSize,
+                )
+              : await encryptFileChunked(
+                  uploadFile,
+                  cryptoPublicKeyRef.current!,
+                  chunkSize,
+                );
             uploadBody = enc.ciphertext;
             uploadContentType = "application/octet-stream";
             encryptedDEK = enc.encryptedDEK;
+            spaceKeyWrapIv = enc.spaceKeyWrapIv;
             chunkCount = enc.chunkCount;
             chunkIvs = JSON.stringify(enc.chunkIvs);
             cipherChunkSize = chunkSize + 16;
@@ -1028,19 +1076,22 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           : task.file.name;
 
         const presignMultipart = async () => {
-          const res = await fetch("/api/objects/presign-upload-multipart", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              fileName: presignFileName,
-              fileSize: uploadBody.size,
-              fileType: uploadContentType,
-              bucketId: task.bucketId,
-              prefix: task.prefix,
-              chunkCount,
-              chunkSize,
-            }),
-          });
+          const res = await scopedFetchRef.current(
+            "/api/objects/presign-upload-multipart",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                fileName: presignFileName,
+                fileSize: uploadBody.size,
+                fileType: uploadContentType,
+                bucketId: task.bucketId,
+                prefix: task.prefix,
+                chunkCount,
+                chunkSize,
+              }),
+            },
+          );
           if (!res.ok) {
             const error = await res.json().catch(() => ({}));
             throw new Error(error.error || "Failed to get multipart upload URLs");
@@ -1068,10 +1119,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         const totalSize = uploadBody.size;
         const userId = sessionRef.current?.user?.id;
         const encryptedContentTypeVal =
-          shouldEncryptNow() && cryptoMetadataKeyRef.current
+          shouldEncryptNow() && currentMetadataKey()
             ? await encryptMetadataString(
                 uploadFile.type,
-                cryptoMetadataKeyRef.current,
+                currentMetadataKey()!,
               )
             : undefined;
 
@@ -1175,7 +1226,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         );
         await Promise.all(workers);
 
-        const completeResponse = await fetch("/api/objects/complete-upload", {
+        const completeResponse = await scopedFetchRef.current("/api/objects/complete-upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1189,6 +1240,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             thumbnail: thumbnailKey || thumbnail, // Use thumbnailKey if available, otherwise original thumbnail
             isEncrypted: !!encryptedDEK,
             encryptedDEK,
+            spaceKeyWrapIv,
+            ...currentSpaceFields(),
             encryptedName,
             chunkSize: serverChunkSize,
             chunkCount,
@@ -1306,10 +1359,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       const aspectRatioFromThumb = thumbResult?.aspectRatio;
 
       let thumbnail: string | undefined;
-      if (rawThumbnail && cryptoMetadataKeyRef.current && shouldEncryptNow()) {
+      if (rawThumbnail && currentMetadataKey() && shouldEncryptNow()) {
         thumbnail = await encryptThumbnail(
           rawThumbnail,
-          cryptoMetadataKeyRef.current,
+          currentMetadataKey()!,
         ).catch(() => undefined);
       } else {
         thumbnail = rawThumbnail;
@@ -1321,7 +1374,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         ? crypto.randomUUID()
         : task.file.name;
       const presignMain = async () => {
-        const res = await fetch("/api/objects/presign-upload", {
+        const res = await scopedFetchRef.current("/api/objects/presign-upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1380,7 +1433,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           if (preview !== original && preview.size < task.file.size) {
             optimizedFile = preview;
 
-            const optPresignRes = await fetch("/api/objects/presign-upload", {
+            const optPresignRes = await scopedFetchRef.current("/api/objects/presign-upload", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
@@ -1417,6 +1470,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       let uploadContentType = task.file.type || "application/octet-stream";
       let encryptedDEK: string | undefined;
       let encryptedIV: string | undefined;
+      let spaceKeyWrapIv: string | undefined;
       let encryptedName: string | undefined;
       // Chunked encryption fields (video/audio only)
       let chunkSize: number | undefined;
@@ -1437,13 +1491,19 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           });
 
           if (isStreamable) {
-            const enc = await encryptFileChunked(
-              task.file,
-              cryptoPublicKeyRef.current!,
-            );
+            const enc = isWorkspaceEncryptedRef.current
+              ? await encryptFileChunkedForSpace(
+                  task.file,
+                  workspaceRawSpaceKeyRef.current!,
+                )
+              : await encryptFileChunked(
+                  task.file,
+                  cryptoPublicKeyRef.current!,
+                );
             uploadBody = enc.ciphertext;
             uploadContentType = "application/octet-stream";
             encryptedDEK = enc.encryptedDEK;
+            spaceKeyWrapIv = enc.spaceKeyWrapIv;
             chunkSize = enc.chunkSize;
             chunkCount = enc.chunkCount;
             chunkIvs = JSON.stringify(enc.chunkIvs);
@@ -1453,14 +1513,17 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             metadata.chunkCount = chunkCount;
             metadata.chunkIvs = enc.chunkIvs;
           } else {
-            const enc = await encryptFile(
-              task.file,
-              cryptoPublicKeyRef.current!,
-            );
+            const enc = isWorkspaceEncryptedRef.current
+              ? await encryptFileForSpace(
+                  task.file,
+                  workspaceRawSpaceKeyRef.current!,
+                )
+              : await encryptFile(task.file, cryptoPublicKeyRef.current!);
             uploadBody = enc.ciphertext;
             uploadContentType = "application/octet-stream";
             encryptedDEK = enc.encryptedDEK;
             encryptedIV = enc.iv;
+            spaceKeyWrapIv = enc.spaceKeyWrapIv;
           }
 
           // Encrypt standardized metadata object
@@ -1469,13 +1532,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               ...metadata,
               aspectRatio,
             },
-            cryptoMetadataKeyRef.current!,
+            currentMetadataKey()!,
           );
 
           // Legacy fields for backward compatibility
           encryptedName = await encryptMetadataString(
             task.file.name,
-            cryptoMetadataKeyRef.current!,
+            currentMetadataKey()!,
           );
         } catch (err) {
           failClosedOnEncryptionError(err);
@@ -1496,19 +1559,23 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       let optimizedIV: string | undefined;
       let optimizedSize: number | undefined;
       let optimizedEncryptedDEK: string | undefined;
+      let optimizedSpaceKeyWrapIv: string | undefined;
       let optBody: Blob | undefined;
 
       if (optimizedFile && optimizedUploadUrl && optimizedObjectKey) {
         optBody = optimizedFile;
         optimizedSize = optimizedFile.size;
         if (shouldEncryptNow()) {
-          const enc = await encryptFile(
-            optimizedFile,
-            cryptoPublicKeyRef.current!,
-          );
+          const enc = isWorkspaceEncryptedRef.current
+            ? await encryptFileForSpace(
+                optimizedFile,
+                workspaceRawSpaceKeyRef.current!,
+              )
+            : await encryptFile(optimizedFile, cryptoPublicKeyRef.current!);
           optBody = enc.ciphertext;
           optimizedIV = enc.iv;
           optimizedEncryptedDEK = enc.encryptedDEK;
+          optimizedSpaceKeyWrapIv = enc.spaceKeyWrapIv;
         }
       }
 
@@ -1517,10 +1584,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         uploadBody instanceof Blob ? uploadBody.size : task.file.size;
       const withinCap = mainSize <= RESUME_BYTE_CAP;
       const encryptedContentTypeVal =
-        shouldEncryptNow() && cryptoMetadataKeyRef.current
+        shouldEncryptNow() && currentMetadataKey()
           ? await encryptMetadataString(
               task.file.type,
-              cryptoMetadataKeyRef.current,
+              currentMetadataKey()!,
             )
           : undefined;
       const optContentType = shouldEncryptNow()
@@ -1610,7 +1677,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       });
 
       // Step 4: Notify server of completion
-      const completeResponse = await fetch("/api/objects/complete-upload", {
+      const completeResponse = await scopedFetchRef.current("/api/objects/complete-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1627,6 +1694,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           isEncrypted: !!encryptedDEK,
           encryptedDEK,
           iv: encryptedIV,
+          spaceKeyWrapIv,
+          ...currentSpaceFields(),
           encryptedName,
           chunkSize,
           chunkCount,
@@ -1637,6 +1706,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           optimizedContentType: optimizedFile?.type,
           optimizedIV,
           optimizedEncryptedDEK,
+          optimizedSpaceKeyWrapIv,
           aspectRatio,
         }),
       });

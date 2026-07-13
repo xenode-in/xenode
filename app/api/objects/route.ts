@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  objectOwnershipClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import { getSignedFileUrl } from "@/lib/b2/cdn";
 import { logRequest } from "@/lib/logRequest";
 import {
@@ -12,11 +18,12 @@ export const dynamic = "force-dynamic";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 
 const LIST_PROJECTION =
   "key size contentType encryptedContentType thumbnail tags position starred lastAccessedAt uploadSource createdAt " +
-  "isEncrypted encryptedName encryptedDisplayName mediaCategory " +
-  "optimizedKey optimizedEncryptedDEK optimizedIV optimizedSize aspectRatio syncContentFp";
+  "isEncrypted encryptedName encryptedDisplayName mediaCategory wrappedBy spaceKeyVersion spaceKeyWrapIv " +
+  "optimizedKey optimizedEncryptedDEK optimizedIV optimizedSpaceKeyWrapIv optimizedSize aspectRatio syncContentFp";
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
@@ -33,8 +40,8 @@ export async function GET(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(request);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    userId = ctx.userId;
 
     const { searchParams } = request.nextUrl;
     const bucketId = searchParams.get("bucketId");
@@ -97,7 +104,7 @@ export async function GET(request: NextRequest) {
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     })
       // b2BucketId is needed to sign per-object thumbnail / optimized URLs
       // below — without it we'd have to make a follow-up DB query in the
@@ -111,10 +118,17 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
+    const allowedSystemPrefix =
+      ctx.scope.type === "organization"
+        ? orgObjectKeyPrefix(ctx.scope.orgId)
+        : ctx.scope.type === "team"
+          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+        : `users/${userId}/`;
+
     if (
       prefix !== null &&
       bucket.userId === "system" &&
-      !prefix.startsWith(`users/${userId}/`)
+      !prefix.startsWith(allowedSystemPrefix)
     ) {
       statusCode = 403;
       errorMessage = "Access denied to this folder";
@@ -137,11 +151,11 @@ export async function GET(request: NextRequest) {
       const version =
         (await withRedis((redis) =>
           redis.get(
-            folderVersionKey(session.user.id, bucketId, cachePrefix),
+            folderVersionKey(ctx.userId, bucketId, cachePrefix),
           ),
         )) ?? "0";
       cacheKey = folderResponseKey({
-        userId: session.user.id,
+        userId: ctx.userId,
         bucketId,
         prefix: cachePrefix,
         version,
@@ -159,6 +173,7 @@ export async function GET(request: NextRequest) {
 
     const query: Record<string, unknown> = {
       bucketId,
+      ...objectOwnershipClause(ctx),
       deletedAt: { $exists: deleted },
       isSidecar: { $ne: true }, // exclude subtitle/audio sidecar files from listings
     };
@@ -178,8 +193,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (bucket.userId === "system") {
-      const prefix = `users/${userId}/`;
-      query.key = { $gte: prefix, $lt: prefix + "\uffff" };
+      query.key = { $gte: allowedSystemPrefix, $lt: allowedSystemPrefix + "\uffff" };
     }
 
     if (prefix !== null) {
@@ -303,6 +317,11 @@ export async function GET(request: NextRequest) {
       headers: { "x-xenode-cache": cacheKey ? "MISS" : "BYPASS" },
     });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      statusCode = error.status;
+      errorMessage = error.message;
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       statusCode = 401;
       errorMessage = "Unauthorized";

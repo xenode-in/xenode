@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import { User } from "@/models/User";
 import UserKeyVault from "@/models/UserKeyVault";
@@ -8,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
     const { emails } = await request.json();
 
     if (!Array.isArray(emails) || emails.length === 0) {
@@ -43,7 +47,7 @@ export async function POST(request: NextRequest) {
     const unavailable: Array<{ email: string; reason: string }> = [];
 
     for (const email of normalized) {
-      if (email === String(session.user.email || "").toLowerCase()) {
+      if (email === String(ctx.session.user.email || "").toLowerCase()) {
         unavailable.push({ email, reason: "You cannot share a file with your own account" });
         continue;
       }
@@ -69,8 +73,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ recipients, unavailable });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
     }
 
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

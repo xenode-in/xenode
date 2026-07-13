@@ -32,7 +32,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
 
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import { getSignedFileUrl } from "@/lib/b2/cdn";
 import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
@@ -60,8 +65,8 @@ export async function POST(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(request);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    userId = ctx.userId;
 
     let body: { bucketId?: string; ids?: string[] };
     try {
@@ -105,7 +110,7 @@ export async function POST(request: NextRequest) {
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     })
       .select("_id userId b2BucketId")
       .lean<{ _id: unknown; userId: string; b2BucketId: string }>();
@@ -183,6 +188,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ items });
   } catch (err: any) {
+    if (isAuthzError(err)) {
+      statusCode = err.status;
+      errorMessage = err.message;
+      return toJsonResponse(err);
+    }
     statusCode = err?.message === "Unauthorized" ? 401 : 500;
     errorMessage = err?.message ?? "Internal error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });

@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  isAuthzError,
+  objectOwnershipClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import StorageObject from "@/models/StorageObject";
 import { logRequest } from "@/lib/logRequest";
@@ -17,8 +22,8 @@ export async function POST(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(request);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    userId = ctx.userId;
 
     const {
       objectKey,
@@ -63,7 +68,7 @@ export async function POST(request: NextRequest) {
     // -------------------------
     const result = await StorageObject.collection.updateOne(
       {
-        userId,
+        ...objectOwnershipClause(ctx),
         key: objectKey,
       },
       { $set: updateData },
@@ -79,7 +84,7 @@ export async function POST(request: NextRequest) {
     // FETCH UPDATED DOCUMENT
     // -------------------------
     const storageObject = await StorageObject.findOne({
-      userId,
+      ...objectOwnershipClause(ctx),
       key: objectKey,
       ...(bucketId && { bucketId }),
     });
@@ -101,6 +106,11 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error: any) {
+    if (isAuthzError(error)) {
+      statusCode = error.status;
+      errorMessage = error.message;
+      return toJsonResponse(error);
+    }
     if (error.message === "Unauthorized") {
       statusCode = 401;
       errorMessage = "Unauthorized";

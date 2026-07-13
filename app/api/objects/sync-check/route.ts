@@ -22,7 +22,12 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
@@ -35,8 +40,8 @@ const MAX_FINGERPRINTS = 1000;
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    const userId = ctx.userId;
 
     const body = await request.json();
     const bucketId: unknown = body?.bucketId;
@@ -81,7 +86,7 @@ export async function POST(request: NextRequest) {
     // Ownership check — mirrors /api/objects and /api/objects/metadata.
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     })
       .select("_id userId")
       .lean<{ _id: unknown; userId: string }>();
@@ -123,6 +128,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ matches });
   } catch (err) {
+    if (isAuthzError(err)) {
+      return toJsonResponse(err);
+    }
     const message = err instanceof Error ? err.message : "Internal error";
     const statusCode = message === "Unauthorized" ? 401 : 500;
     return NextResponse.json({ error: message }, { status: statusCode });

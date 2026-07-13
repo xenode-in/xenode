@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  isAuthzError,
+  ownerClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import { logRequest } from "@/lib/logRequest";
 
 export const dynamic = "force-dynamic";
@@ -41,8 +46,8 @@ export async function POST(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(request);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    userId = ctx.userId;
 
     if (!checkRateLimit(userId, 5, 60000)) {
       statusCode = 429;
@@ -64,7 +69,7 @@ export async function POST(request: NextRequest) {
 
     await dbConnect();
 
-    const existing = await Bucket.findOne({ userId, name });
+    const existing = await Bucket.findOne({ ...ownerClause(ctx), name });
     if (existing) {
       statusCode = 409;
       errorMessage = "A bucket with this name already exists";
@@ -82,6 +87,8 @@ export async function POST(request: NextRequest) {
 
     const bucket = await Bucket.create({
       userId,
+      ownerScope: "personal",
+      createdBy: userId,
       name,
       b2BucketId: b2BucketId || b2BucketName,
     });
@@ -94,10 +101,10 @@ export async function POST(request: NextRequest) {
     statusCode = 201;
     return NextResponse.json({ bucket }, { status: statusCode });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      statusCode = 401;
-      errorMessage = "Unauthorized";
-      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    if (isAuthzError(error)) {
+      statusCode = error.status;
+      errorMessage = error.message;
+      return toJsonResponse(error);
     }
     statusCode = 500;
     errorMessage = error instanceof Error ? error.message : "Internal server error";
@@ -124,19 +131,19 @@ export async function GET(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(request);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    userId = ctx.userId;
 
     await dbConnect();
 
-    const buckets = await Bucket.find({ userId }).sort({ createdAt: -1 }).lean();
+    const buckets = await Bucket.find(ownerClause(ctx)).sort({ createdAt: -1 }).lean();
 
     return NextResponse.json({ buckets });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      statusCode = 401;
-      errorMessage = "Unauthorized";
-      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    if (isAuthzError(error)) {
+      statusCode = error.status;
+      errorMessage = error.message;
+      return toJsonResponse(error);
     }
     statusCode = 500;
     errorMessage = error instanceof Error ? error.message : "Internal server error";

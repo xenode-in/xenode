@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
@@ -15,12 +20,21 @@ import {
   publishSyncEvent,
   toSyncObjectSnapshot,
 } from "@/lib/realtime/publish";
+import {
+  adjustOrgStorage,
+  incrementOrgStorage,
+} from "@/lib/orgs/billing/orgUsage";
+import {
+  orgObjectKeyPrefix,
+  orgStorageOwnerId,
+  teamObjectKeyPrefix,
+} from "@/lib/orgs/storage";
 import { completeUploadSession } from "@/lib/uploads/session";
 
 export const dynamic = "force-dynamic";
 
-function belongsToUserPrefix(key: unknown, userId: string): key is string {
-  return typeof key === "string" && key.startsWith(`users/${userId}/`);
+function belongsToPrefix(key: unknown, prefix: string): key is string {
+  return typeof key === "string" && key.startsWith(prefix);
 }
 
 async function deleteUploadedKeys(
@@ -110,8 +124,8 @@ async function emitObjectChange(
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    const userId = ctx.userId;
 
     const {
       objectKey,
@@ -136,7 +150,11 @@ export async function POST(request: NextRequest) {
       optimizedContentType,
       optimizedIV,
       optimizedEncryptedDEK,
+      optimizedSpaceKeyWrapIv,
       aspectRatio,
+      wrappedBy,
+      spaceKeyVersion,
+      spaceKeyWrapIv,
       isSidecar,
       parentObjectId,
       syncContentFp,
@@ -151,7 +169,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!objectKey.startsWith(`users/${userId}/`)) {
+    const allowedPrefix =
+      ctx.scope.type === "organization"
+        ? orgObjectKeyPrefix(ctx.scope.orgId)
+        : ctx.scope.type === "team"
+          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+        : `users/${userId}/`;
+
+    if (!belongsToPrefix(objectKey, allowedPrefix)) {
       return NextResponse.json(
         { error: "Invalid object key" },
         { status: 403 },
@@ -162,18 +187,41 @@ export async function POST(request: NextRequest) {
       thumbnail,
       ...(Array.isArray(chunks) ? chunks.map((chunk) => chunk?.key) : []),
     ].filter(Boolean);
-    if (relatedKeys.some((key) => !belongsToUserPrefix(key, userId))) {
+    if (relatedKeys.some((key) => !belongsToPrefix(key, allowedPrefix))) {
       return NextResponse.json(
         { error: "Invalid related object key" },
         { status: 403 },
       );
     }
 
+    if (ctx.scope.type !== "personal") {
+      const version = Number(spaceKeyVersion);
+      if (
+        isEncrypted !== true ||
+        wrappedBy !== "space" ||
+        typeof encryptedDEK !== "string" ||
+        !encryptedDEK.trim() ||
+        typeof spaceKeyWrapIv !== "string" ||
+        !spaceKeyWrapIv.trim() ||
+        !Number.isInteger(version) ||
+        version < 1
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              "Organization and team uploads must be encrypted and wrapped by the workspace space key",
+            code: "workspace_space_wrapped_encryption_required",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
     await dbConnect();
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     });
 
     if (!bucket) {
@@ -249,7 +297,11 @@ export async function POST(request: NextRequest) {
     if (existingObject) {
       const sizeDiff = size - existingObject.size;
       if (sizeDiff !== 0) {
-        await adjustStorageBytes(userId, sizeDiff);
+        if (ctx.scope.type !== "personal") {
+          await adjustOrgStorage(ctx.scope.orgId, sizeDiff);
+        } else {
+          await adjustStorageBytes(userId, sizeDiff);
+        }
       }
       existingObject.size = size;
       existingObject.contentType = contentType;
@@ -261,6 +313,10 @@ export async function POST(request: NextRequest) {
         if (encryptedContentType)
           existingObject.encryptedContentType = encryptedContentType;
         if (encryptedDEK) existingObject.encryptedDEK = encryptedDEK;
+        if (wrappedBy) existingObject.wrappedBy = wrappedBy;
+        if (spaceKeyVersion)
+          existingObject.spaceKeyVersion = Number(spaceKeyVersion);
+        if (spaceKeyWrapIv) existingObject.spaceKeyWrapIv = spaceKeyWrapIv;
         if (iv) existingObject.iv = iv;
         if (encryptedName) existingObject.encryptedName = encryptedName;
         if (chunkSize) existingObject.chunkSize = chunkSize;
@@ -273,6 +329,7 @@ export async function POST(request: NextRequest) {
         if (optimizedContentType) existingObject.optimizedContentType = optimizedContentType;
         if (optimizedIV) existingObject.optimizedIV = optimizedIV;
         if (optimizedEncryptedDEK) existingObject.optimizedEncryptedDEK = optimizedEncryptedDEK;
+        if (optimizedSpaceKeyWrapIv) existingObject.optimizedSpaceKeyWrapIv = optimizedSpaceKeyWrapIv;
         if (aspectRatio) existingObject.aspectRatio = aspectRatio;
       }
       if (isSidecar !== undefined) existingObject.isSidecar = isSidecar;
@@ -284,8 +341,16 @@ export async function POST(request: NextRequest) {
         await existingObject.save();
       } catch (error) {
         if (sizeDiff !== 0) {
-          await adjustStorageBytes(userId, -sizeDiff).catch((rollbackError) =>
-            console.error("Failed to roll back storage byte adjustment:", rollbackError),
+          const rollback =
+            ctx.scope.type === "organization"
+            || ctx.scope.type === "team"
+              ? adjustOrgStorage(ctx.scope.orgId, -sizeDiff)
+              : adjustStorageBytes(userId, -sizeDiff);
+          await rollback.catch((rollbackError) =>
+            console.error(
+              "Failed to roll back storage byte adjustment:",
+              rollbackError,
+            ),
           );
         }
         throw error;
@@ -337,7 +402,21 @@ export async function POST(request: NextRequest) {
     try {
       storageObject = await StorageObject.create({
         bucketId,
-        userId,
+        userId:
+          ctx.scope.type !== "personal"
+            ? orgStorageOwnerId(ctx.scope.orgId)
+            : userId,
+        ownerScope:
+          ctx.scope.type === "organization"
+            ? "organization"
+            : ctx.scope.type === "team"
+              ? "team"
+              : "personal",
+        orgId:
+          ctx.scope.type !== "personal" ? ctx.scope.orgId : undefined,
+        teamId:
+          ctx.scope.type === "team" ? ctx.scope.teamId : undefined,
+        createdBy: userId,
         key: objectKey,
         size,
         contentType:
@@ -348,6 +427,10 @@ export async function POST(request: NextRequest) {
         thumbnail,
         isEncrypted: isEncrypted ?? false,
         encryptedDEK: encryptedDEK ?? undefined,
+        wrappedBy: wrappedBy ?? (isEncrypted ? "user" : undefined),
+        spaceKeyVersion:
+          spaceKeyVersion !== undefined ? Number(spaceKeyVersion) : undefined,
+        spaceKeyWrapIv: spaceKeyWrapIv ?? undefined,
         iv: iv ?? undefined,
         encryptedName: encryptedName ?? undefined,
         chunkSize: chunkSize ?? undefined,
@@ -360,6 +443,7 @@ export async function POST(request: NextRequest) {
         optimizedContentType: optimizedContentType ?? undefined,
         optimizedIV: optimizedIV ?? undefined,
         optimizedEncryptedDEK: optimizedEncryptedDEK ?? undefined,
+        optimizedSpaceKeyWrapIv: optimizedSpaceKeyWrapIv ?? undefined,
         aspectRatio: aspectRatio ?? undefined,
         isSidecar: isSidecar ?? false,
         parentObjectId: parentObjectId ?? undefined,
@@ -389,11 +473,15 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      await incrementStorage(userId, size, {
-        contentType: originalContentType ?? contentType,
-        bucketId,
-        isEncrypted,
-      });
+      if (ctx.scope.type !== "personal") {
+        await incrementOrgStorage(ctx.scope.orgId, size);
+      } else {
+        await incrementStorage(userId, size, {
+          contentType: originalContentType ?? contentType,
+          bucketId,
+          isEncrypted,
+        });
+      }
     } catch (error) {
       // The blobs already exist and the metadata row was just created. Roll
       // both back when quota rejects finalization so the client can surface a
@@ -419,6 +507,9 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ object: storageObject }, { status: 201 });
   } catch (error) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "QUOTA_EXCEEDED") {
       return NextResponse.json(
         { error: "Storage quota exceeded" },

@@ -13,6 +13,10 @@
       "schedule": "0 2 * * *"
     },
     {
+      "path": "/api/cron/purge-orgs",
+      "schedule": "0 3 * * *"
+    },
+    {
       "path": "/api/cron/cleanup-orphans",
       "schedule": "0 */6 * * *"
     }

@@ -1,16 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  assertObjectAccess,
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import DirectShare from "@/models/DirectShare";
-import StorageObject from "@/models/StorageObject";
+import { normalizeShareRole } from "@/lib/orgs/shareRoles";
 import { captureEvent, countBucket } from "@/lib/posthog";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    const userId = ctx.userId;
     const {
       objectId,
       shareEncryptedDEK,
@@ -31,10 +36,37 @@ export async function POST(request: NextRequest) {
 
     await dbConnect();
 
-    const object = await StorageObject.findOne({ _id: objectId, userId }).lean();
-    if (!object) {
-      return NextResponse.json({ error: "File not found" }, { status: 404 });
-    }
+    const object = await assertObjectAccess(ctx, objectId, "share", { lean: true });
+
+    const shareExistsResponse = async () => {
+      const existing = await DirectShare.findOne({
+        objectId: object._id,
+        createdBy: userId,
+        isRevoked: false,
+      })
+        .sort({ createdAt: -1 })
+        .select("_id recipients")
+        .lean();
+      if (!existing) return null;
+      return NextResponse.json(
+        {
+          error: "This file is already shared. Update the existing share instead.",
+          code: "share_exists",
+          directShareId: String(existing._id),
+          recipients: (existing.recipients || []).map((recipient) => ({
+            recipientUserId: recipient.recipientUserId,
+            recipientEmail: recipient.recipientEmail,
+            accessType: normalizeShareRole(recipient.accessType),
+            downloadCount: recipient.downloadCount ?? 0,
+            lastAccessedAt: recipient.lastAccessedAt ?? null,
+          })),
+        },
+        { status: 409 },
+      );
+    };
+
+    const conflict = await shareExistsResponse();
+    if (conflict) return conflict;
 
     if (object.isEncrypted && (!shareEncryptedDEK || !shareKeyIv)) {
       return NextResponse.json(
@@ -51,8 +83,7 @@ export async function POST(request: NextRequest) {
             recipientUserId: String(recipient.recipientUserId),
             recipientEmail: String(recipient.recipientEmail).toLowerCase(),
             wrappedShareKey: String(recipient.wrappedShareKey),
-            accessType:
-              recipient.accessType === "view" ? "view" : "download",
+            accessType: normalizeShareRole(recipient.accessType),
           },
         ]),
       ).values(),
@@ -62,17 +93,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Each recipient must include an email and wrapped share key" }, { status: 400 });
     }
 
-    const directShare = await DirectShare.create({
-      objectId: object._id,
-      bucketId: object.bucketId,
-      createdBy: userId,
-      shareEncryptedDEK,
-      shareKeyIv,
-      shareEncryptedName,
-      shareEncryptedContentType,
-      shareEncryptedThumbnail,
-      recipients: normalizedRecipients,
-    });
+    let directShare;
+    try {
+      directShare = await DirectShare.create({
+        objectId: object._id,
+        bucketId: object.bucketId,
+        createdBy: userId,
+        shareEncryptedDEK,
+        shareKeyIv,
+        shareEncryptedName,
+        shareEncryptedContentType,
+        shareEncryptedThumbnail,
+        recipients: normalizedRecipients,
+      });
+    } catch (createError: unknown) {
+      // Concurrent POST lost the race against the partial unique index on
+      // (objectId, createdBy, isRevoked: false) — surface it like the guard.
+      if ((createError as { code?: number })?.code === 11000) {
+        const raced = await shareExistsResponse();
+        if (raced) return raced;
+      }
+      throw createError;
+    }
 
     captureEvent(userId, "direct_share_created", {
       shareType: "direct",
@@ -85,8 +127,11 @@ export async function POST(request: NextRequest) {
       recipientCount: normalizedRecipients.length,
     });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      if (error.code === "object_not_found") {
+        return NextResponse.json({ error: "File not found" }, { status: 404 });
+      }
+      return toJsonResponse(error);
     }
 
     return NextResponse.json({ error: error instanceof Error ? error.message : "Internal server error" }, { status: 500 });
@@ -95,13 +140,23 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
     await dbConnect();
 
-    const directShares = await DirectShare.find({
-      createdBy: session.user.id,
+    const filter: Record<string, unknown> = {
+      createdBy: ctx.userId,
       isRevoked: false,
-    })
+    };
+
+    const objectIdParam = request.nextUrl.searchParams.get("objectId");
+    if (objectIdParam !== null) {
+      if (!/^[a-f\d]{24}$/i.test(objectIdParam)) {
+        return NextResponse.json({ error: "Invalid objectId" }, { status: 400 });
+      }
+      filter.objectId = objectIdParam;
+    }
+
+    const directShares = await DirectShare.find(filter)
       .populate(
         "objectId",
         "key size contentType isEncrypted encryptedName encryptedContentType mediaCategory",
@@ -111,8 +166,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ directShares });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
     }
 
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

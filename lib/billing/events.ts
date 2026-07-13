@@ -1,4 +1,5 @@
 import dbConnect from "@/lib/mongodb";
+import { sanitize } from "@/lib/audit/sanitize";
 import BillingEvent, {
   type BillingEventActorType,
 } from "@/models/BillingEvent";
@@ -10,31 +11,8 @@ import BillingEvent, {
  * throws out of `emit()`; failure to persist an audit row must not break the
  * surrounding billing operation. Errors are logged.
  *
- * Payload sanitization: strips known PII keys defensively.
+ * Payload sanitization (`lib/audit/sanitize`): strips known PII keys defensively.
  */
-
-const PII_KEYS = new Set([
-  "email",
-  "phone",
-  "name",
-  "firstName",
-  "lastName",
-  "contact",
-  "address",
-  "billingAddress",
-]);
-
-function sanitize(payload: unknown): Record<string, unknown> {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    return { value: payload };
-  }
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(payload as Record<string, unknown>)) {
-    if (PII_KEYS.has(k)) continue;
-    out[k] = v;
-  }
-  return out;
-}
 
 export interface EmitArgs {
   type: string;

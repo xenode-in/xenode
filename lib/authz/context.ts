@@ -1,5 +1,12 @@
 import { type NextRequest } from "next/server";
+import mongoose from "mongoose";
 import { getServerSession } from "@/lib/auth/session";
+import dbConnect from "@/lib/mongodb";
+import {
+  isOrganizationFeatureEnabled,
+  normalizeOrgRole,
+  type OrgRole,
+} from "@/lib/auth/organization";
 import { AuthzError } from "./errors";
 
 /**
@@ -13,7 +20,8 @@ import { AuthzError } from "./errors";
  */
 export type AccessScope =
   | { type: "personal"; userId: string }
-  | { type: "organization"; userId: string; orgId: string; role: string };
+  | { type: "organization"; userId: string; orgId: string; role: OrgRole }
+  | { type: "team"; userId: string; orgId: string; teamId: string; role: OrgRole };
 
 type BetterAuthSession = Awaited<ReturnType<typeof getServerSession>>;
 
@@ -24,6 +32,71 @@ export interface AccessContext {
   scope: AccessScope;
   /** The underlying better-auth session (non-null). */
   session: NonNullable<BetterAuthSession>;
+}
+
+type DriveScope = AccessScope["type"];
+
+interface OrganizationSessionFields {
+  activeOrganizationId?: string | null;
+  activeTeamId?: string | null;
+}
+
+interface MemberRecord {
+  userId: string;
+  organizationId: string;
+  role?: string | null;
+}
+
+function requestedDriveScope(request?: NextRequest): DriveScope {
+  if (!request) return "personal";
+  const headerScope = request.headers.get("x-xenode-drive-scope");
+  const queryScope = request.nextUrl.searchParams.get("scope");
+  const scope = (headerScope || queryScope || "personal").toLowerCase();
+  if (scope === "organization" || scope === "team") return scope;
+  return "personal";
+}
+
+function requestedTeamId(request?: NextRequest): string | null {
+  if (!request) return null;
+  return (
+    request.headers.get("x-xenode-team-id") ||
+    request.nextUrl.searchParams.get("teamId")
+  );
+}
+
+async function findActiveMember(args: {
+  userId: string;
+  organizationId: string;
+}): Promise<MemberRecord | null> {
+  await dbConnect();
+  return mongoose.connection
+    .collection<MemberRecord>("member")
+    .findOne({
+      userId: args.userId,
+      organizationId: args.organizationId,
+    });
+}
+
+async function assertTeamMembership(args: {
+  userId: string;
+  organizationId: string;
+  teamId: string;
+}): Promise<void> {
+  await dbConnect();
+  const [team, teamMember] = await Promise.all([
+    mongoose.connection.collection("team").findOne({
+      id: args.teamId,
+      organizationId: args.organizationId,
+    }),
+    mongoose.connection.collection("teamMember").findOne({
+      userId: args.userId,
+      teamId: args.teamId,
+    }),
+  ]);
+
+  if (!team || !teamMember) {
+    throw new AuthzError(403, "team_membership_required", "Forbidden");
+  }
 }
 
 /**
@@ -46,10 +119,46 @@ export async function getAccessContext(
 
   const userId = session.user.id;
 
-  // Personal scope today. Org resolution slots in right here later.
+  const scope = requestedDriveScope(request);
+  if (!isOrganizationFeatureEnabled() || scope === "personal") {
+    return {
+      userId,
+      scope: { type: "personal", userId },
+      session,
+    };
+  }
+
+  const sessionFields = session.session as OrganizationSessionFields;
+  const orgId = sessionFields.activeOrganizationId;
+  if (!orgId) {
+    throw new AuthzError(403, "organization_required", "Forbidden");
+  }
+
+  const member = await findActiveMember({ userId, organizationId: orgId });
+  if (!member) {
+    throw new AuthzError(403, "organization_membership_required", "Forbidden");
+  }
+
+  const role = normalizeOrgRole(member.role);
+
+  if (scope === "team") {
+    const teamId = requestedTeamId(request) || sessionFields.activeTeamId;
+    if (!teamId) {
+      throw new AuthzError(400, "team_required", "Team required");
+    }
+
+    await assertTeamMembership({ userId, organizationId: orgId, teamId });
+
+    return {
+      userId,
+      scope: { type: "team", userId, orgId, teamId, role },
+      session,
+    };
+  }
+
   return {
     userId,
-    scope: { type: "personal", userId },
+    scope: { type: "organization", userId, orgId, role },
     session,
   };
 }

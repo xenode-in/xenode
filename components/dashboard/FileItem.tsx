@@ -36,6 +36,8 @@ import { useIsVisible } from "@/hooks/useIsVisible";
 import { MetadataDialog } from "./MetadataDialog";
 import { SkeletonRow } from "./SkeletonRow";
 import { SkeletonCard } from "./SkeletonCard";
+import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
+import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 
 interface ObjectData {
   id: string; // use id, not _id
@@ -60,21 +62,25 @@ interface ObjectData {
  */
 function useStarToggle(item: ObjectData) {
   const [starred, setStarred] = useState(!!item.starred);
+  const workspace = useOptionalWorkspace();
 
   const toggle = useCallback(async () => {
     const next = !starred;
     setStarred(next);
     try {
-      const res = await fetch(`/api/objects/${item.id}`, {
+      const request = {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ starred: next }),
-      });
+      };
+      const res = workspace?.scopedFetch
+        ? await workspace.scopedFetch(`/api/objects/${item.id}`, request)
+        : await fetch(`/api/objects/${item.id}`, request);
       if (!res.ok) throw new Error("star failed");
     } catch {
       setStarred(!next); // revert on failure
     }
-  }, [starred, item.id]);
+  }, [starred, item.id, workspace]);
 
   return { starred, toggle };
 }
@@ -146,19 +152,21 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
       item.contentType === "application/x-directory" || item.key.endsWith("/");
 
     const { isUnlocked, metadataKey } = useCrypto();
+    const workspaceSpaceKey = useWorkspaceSpaceKey();
+    const activeMetadataKey = workspaceSpaceKey.cryptoKey ?? metadataKey;
     const [decryptedName, setDecryptedName] = useState<string | null>(null);
     const [decryptedTags, setDecryptedTags] = useState<string[] | null>(null);
     const [visibilityRef, isVisible] = useIsVisible();
     const decryptedThumbnail = useThumbnail(
       isVisible ? item.thumbnail : undefined,
-      metadataKey,
+      activeMetadataKey,
     );
     const [isMetaOpen, setIsMetaOpen] = useState(false);
     const { starred, toggle: toggleStar } = useStarToggle(item);
     const isCoarsePointer = useIsCoarsePointer();
 
     useEffect(() => {
-      if (isUnlocked && metadataKey) {
+      if (isUnlocked && activeMetadataKey) {
         const isFolder =
           item.contentType === "application/x-directory" ||
           item.key.endsWith("/");
@@ -169,16 +177,16 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
             : null;
 
         if (nameToDecrypt) {
-          decryptMetadataString(nameToDecrypt, metadataKey).then(
+          decryptMetadataString(nameToDecrypt, activeMetadataKey).then(
             setDecryptedName,
           );
         } else {
           setDecryptedName(null);
         }
 
-        if (item.tags && item.tags.length > 0 && metadataKey) {
+        if (item.tags && item.tags.length > 0 && activeMetadataKey) {
           Promise.all(
-            item.tags.map((t) => decryptMetadataString(t, metadataKey)),
+            item.tags.map((t) => decryptMetadataString(t, activeMetadataKey)),
           ).then(setDecryptedTags);
         } else {
           setDecryptedTags(null);
@@ -193,7 +201,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
       item.encryptedDisplayName,
       item.tags,
       isUnlocked,
-      metadataKey,
+      activeMetadataKey,
     ]);
 
     let baseName = item.key;
@@ -212,17 +220,21 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
 
     const defaultActions = (
       <>
-        <ContextMenuSeparator className="bg-border" />
-        <ContextMenuItem
-          className="hover:bg-accent cursor-pointer"
-          onClick={(e) => {
-            e.stopPropagation();
-            onCut?.(item);
-          }}
-        >
-          <Scissors className="w-4 h-4 mr-2" />
-          Cut
-        </ContextMenuItem>
+        {onCut && (
+          <>
+            <ContextMenuSeparator className="bg-border" />
+            <ContextMenuItem
+              className="hover:bg-accent cursor-pointer"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCut(item);
+              }}
+            >
+              <Scissors className="w-4 h-4 mr-2" />
+              Cut
+            </ContextMenuItem>
+          </>
+        )}
         {!item.id.startsWith("virtual-") && (
           <ContextMenuItem
             className="hover:bg-accent cursor-pointer"
@@ -235,17 +247,21 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
             Tags
           </ContextMenuItem>
         )}
-        <ContextMenuSeparator className="bg-border" />
-        <ContextMenuItem
-          className="text-destructive hover:bg-destructive/10 cursor-pointer focus:bg-destructive/10 focus:text-destructive"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete?.(item);
-          }}
-        >
-          <Trash2 className="w-4 h-4 mr-2" />
-          Delete
-        </ContextMenuItem>
+        {onDelete && (
+          <>
+            <ContextMenuSeparator className="bg-border" />
+            <ContextMenuItem
+              className="text-destructive hover:bg-destructive/10 cursor-pointer focus:bg-destructive/10 focus:text-destructive"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(item);
+              }}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete
+            </ContextMenuItem>
+          </>
+        )}
       </>
     );
 
@@ -443,7 +459,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
             item={item}
             isOpen={isMetaOpen}
             onOpenChange={setIsMetaOpen}
-            metadataKey={metadataKey}
+            metadataKey={activeMetadataKey}
           />
         </TableCell>
       </TableRow>
@@ -550,19 +566,21 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
       item.contentType === "application/x-directory" || item.key.endsWith("/");
 
     const { isUnlocked, metadataKey } = useCrypto();
+    const workspaceSpaceKey = useWorkspaceSpaceKey();
+    const activeMetadataKey = workspaceSpaceKey.cryptoKey ?? metadataKey;
     const [decryptedName, setDecryptedName] = useState<string | null>(null);
     const [decryptedTags, setDecryptedTags] = useState<string[] | null>(null);
     const [visibilityRef, isVisible] = useIsVisible();
     const decryptedThumbnail = useThumbnail(
       isVisible ? item.thumbnail : undefined,
-      metadataKey,
+      activeMetadataKey,
     );
     const [isMetaOpen, setIsMetaOpen] = useState(false);
     const { starred, toggle: toggleStar } = useStarToggle(item);
     const isCoarsePointer = useIsCoarsePointer();
 
     useEffect(() => {
-      if (isUnlocked && metadataKey) {
+      if (isUnlocked && activeMetadataKey) {
         const isFolder =
           item.contentType === "application/x-directory" ||
           item.key.endsWith("/");
@@ -573,16 +591,16 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
             : null;
 
         if (nameToDecrypt) {
-          decryptMetadataString(nameToDecrypt, metadataKey).then(
+          decryptMetadataString(nameToDecrypt, activeMetadataKey).then(
             setDecryptedName,
           );
         } else {
           setDecryptedName(null);
         }
 
-        if (item.tags && item.tags.length > 0 && metadataKey) {
+        if (item.tags && item.tags.length > 0 && activeMetadataKey) {
           Promise.all(
-            item.tags.map((t) => decryptMetadataString(t, metadataKey)),
+            item.tags.map((t) => decryptMetadataString(t, activeMetadataKey)),
           ).then(setDecryptedTags);
         } else {
           setDecryptedTags(null);
@@ -597,7 +615,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
       item.encryptedDisplayName,
       item.tags,
       isUnlocked,
-      metadataKey,
+      activeMetadataKey,
     ]);
 
     let baseName = item.key;
@@ -616,17 +634,21 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
 
     const defaultActions = (
       <>
-        <ContextMenuSeparator className="bg-border" />
-        <ContextMenuItem
-          className="hover:bg-accent cursor-pointer"
-          onClick={(e) => {
-            e.stopPropagation();
-            onCut?.(item);
-          }}
-        >
-          <Scissors className="w-4 h-4 mr-2" />
-          Cut
-        </ContextMenuItem>
+        {onCut && (
+          <>
+            <ContextMenuSeparator className="bg-border" />
+            <ContextMenuItem
+              className="hover:bg-accent cursor-pointer"
+              onClick={(e) => {
+                e.stopPropagation();
+                onCut(item);
+              }}
+            >
+              <Scissors className="w-4 h-4 mr-2" />
+              Cut
+            </ContextMenuItem>
+          </>
+        )}
         {!item.id.startsWith("virtual-") && (
           <ContextMenuItem
             className="hover:bg-accent cursor-pointer"
@@ -639,17 +661,21 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
             Tags
           </ContextMenuItem>
         )}
-        <ContextMenuSeparator className="bg-border" />
-        <ContextMenuItem
-          className="text-destructive hover:bg-destructive/10 cursor-pointer focus:bg-destructive/10 focus:text-destructive"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete?.(item);
-          }}
-        >
-          <Trash2 className="w-4 h-4 mr-2" />
-          Delete
-        </ContextMenuItem>
+        {onDelete && (
+          <>
+            <ContextMenuSeparator className="bg-border" />
+            <ContextMenuItem
+              className="text-destructive hover:bg-destructive/10 cursor-pointer focus:bg-destructive/10 focus:text-destructive"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(item);
+              }}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete
+            </ContextMenuItem>
+          </>
+        )}
       </>
     );
 
@@ -833,17 +859,19 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
             </Button>
           )}
 
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-7 w-7 rounded-md border border-border !bg-background/90 !text-foreground shadow-sm backdrop-blur-sm hover:!border-destructive/40 hover:!bg-destructive/10 hover:!text-destructive dark:!border-white/15 dark:!bg-zinc-900/90 dark:!text-zinc-100 dark:shadow-black/40 dark:hover:!border-destructive/50 dark:hover:!bg-red-950/70 dark:hover:!text-red-200 dark:focus-visible:!bg-zinc-900/90 dark:data-[state=open]:!bg-zinc-900/90"
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete?.(item);
-            }}
-          >
-            <Trash2 className="w-3.5 h-3.5" />
-          </Button>
+          {onDelete && (
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7 rounded-md border border-border !bg-background/90 !text-foreground shadow-sm backdrop-blur-sm hover:!border-destructive/40 hover:!bg-destructive/10 hover:!text-destructive dark:!border-white/15 dark:!bg-zinc-900/90 dark:!text-zinc-100 dark:shadow-black/40 dark:hover:!border-destructive/50 dark:hover:!bg-red-950/70 dark:hover:!text-red-200 dark:focus-visible:!bg-zinc-900/90 dark:data-[state=open]:!bg-zinc-900/90"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(item);
+              }}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+            </Button>
+          )}
 
           <Button
             size="icon"
@@ -861,7 +889,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
             item={item}
             isOpen={isMetaOpen}
             onOpenChange={setIsMetaOpen}
-            metadataKey={metadataKey}
+            metadataKey={activeMetadataKey}
           />
         </div>
       </div>

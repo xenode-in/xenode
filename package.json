@@ -15,6 +15,13 @@
     "cron:cleanup-orphans": "node scripts/cron-trigger.mjs cleanup-orphans",
     "cron:charge": "node scripts/cron-trigger.mjs charge-recurring",
     "dev:worker": "tsx watch worker/index.ts",
+    "onlyoffice:verify-sources": "node scripts/onlyoffice/verify-sources.mjs",
+    "onlyoffice:build-client": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/onlyoffice/build-client.ps1",
+    "onlyoffice:build-x2t": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/onlyoffice/build-x2t.ps1",
+    "onlyoffice:fetch-prebuilt": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/onlyoffice/fetch-prebuilt.ps1",
+    "onlyoffice:verify-x2t": "tsx scripts/onlyoffice/verify-x2t-roundtrip.ts",
+    "onlyoffice:install-host": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/onlyoffice/install-host.ps1",
+    "onlyoffice:verify-client": "node scripts/onlyoffice/verify-client.mjs",
     "postinstall": "mkdir -p public/ffmpeg && cp node_modules/@ffmpeg/core/dist/umd/ffmpeg-core.* public/ffmpeg/"
   },
   "dependencies": {
@@ -57,6 +64,8 @@
     "@tiptap/pm": "^3.22.3",
     "@tiptap/react": "^3.22.3",
     "@tiptap/starter-kit": "^3.22.3",
+    "@univerjs/preset-sheets-core": "0.25.1",
+    "@univerjs/presets": "0.25.1",
     "@uppy/aws-s3": "^5.1.0",
     "@uppy/core": "^5.2.0",
     "@uppy/dashboard": "^5.1.1",
@@ -118,6 +127,7 @@
     "socket.io": "^4.8.3",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.4.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.3.6"
   },
   "devDependencies": {

@@ -78,6 +78,45 @@ function ticketUrl(ticketId: string, isAdmin = false): string {
     : `${APP_URL}/dashboard/support/${ticketId}`;
 }
 
+function organizationInvitationUrl(invitationId: string): string {
+  return `${APP_URL}/invite/${invitationId}`;
+}
+
+export function organizationInvitationEmail(args: {
+  inviterName: string;
+  organizationName: string;
+  invitationId: string;
+  role: string;
+  expiresAt: Date;
+}) {
+  const invitationUrl = organizationInvitationUrl(args.invitationId);
+  const expiresAt = args.expiresAt.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  const body = `
+<p class="h1">You're invited to ${escapeHtml(args.organizationName)}</p>
+<p class="p">${escapeHtml(args.inviterName)} invited you to join ${escapeHtml(args.organizationName)} as ${escapeHtml(args.role)}.</p>
+<div class="box">
+  <span class="kv"><span class="k">Organization:</span> <span class="v">${escapeHtml(args.organizationName)}</span></span>
+  <span class="kv"><span class="k">Role:</span> <span class="v">${escapeHtml(args.role)}</span></span>
+  <span class="kv"><span class="k">Expires:</span> <span class="v">${escapeHtml(expiresAt)}</span></span>
+</div>
+<p class="p"><a class="button" href="${invitationUrl}">Review invitation</a></p>
+<p class="muted">For encrypted organization spaces, Xenode will only activate access after your space key is ready.</p>
+`;
+  return {
+    subject: `Invitation to join ${args.organizationName}`,
+    html: baseLayout({
+      title: "Organization invitation",
+      preheader: `Join ${args.organizationName} on Xenode`,
+      bodyHtml: body,
+    }),
+    text: `${args.inviterName} invited you to join ${args.organizationName} as ${args.role}.\n\nReview: ${invitationUrl}\nExpires: ${expiresAt}\n`,
+  };
+}
+
 // ─── User-facing ──────────────────────────────────────────────────────────
 
 export function ticketCreatedUserEmail(args: {

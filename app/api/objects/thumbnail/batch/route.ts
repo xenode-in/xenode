@@ -5,53 +5,55 @@
  * proxy URL for each one. The browser then downloads the thumbnails
  * directly via GET /api/files/[bucket]/[...key], which streams bytes
  * from B2 and is cacheable by Azure CDN / Cloudflare.
- *
- * This is intentionally a pure signing endpoint — no B2 I/O happens
- * here. HMAC generation for 50 keys takes ~5ms.
- *
- * Body:     { keys: string[] }          (max 50)
- * Response: { urls: { [key]: string } } (HMAC proxy URLs, same within 1h window)
- *
- * Security: keys are filtered to `users/{userId}/` (own files) or
- * `shares/` (public shares) before signing — callers cannot request
- * arbitrary B2 keys.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  getAccessContext,
+  isAuthzError,
+  toJsonResponse,
+} from "@/lib/authz";
 import { getSignedFileUrl } from "@/lib/b2/cdn";
-import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
+import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 
 export const dynamic = "force-dynamic";
 
 const MAX_KEYS = 50;
 
 export async function POST(request: NextRequest) {
-  const startTime = Date.now();
-  let userId: string | null = null;
   let statusCode = 200;
   let errorMessage: string | undefined;
 
   try {
-    // Auth is optional — unauthenticated callers can only sign shares/ keys.
+    let userId: string | null = null;
+    let ctx = null;
     try {
-      userId = (await requireAuth(request)).user.id;
+      ctx = await getAccessContext(request);
+      userId = ctx?.userId ?? null;
     } catch {
-      /* unauthenticated — shares/ only */
+      // Unauthenticated callers can still sign shares/ keys.
     }
 
     const body = await request.json().catch(() => ({}));
     const keys: string[] = Array.isArray(body?.keys) ? body.keys : [];
 
-    // Security: restrict to keys the caller is allowed to read.
+    const workspacePrefix =
+      ctx?.scope.type === "organization"
+        ? orgObjectKeyPrefix(ctx.scope.orgId)
+        : ctx?.scope.type === "team"
+          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+          : null;
+
     const allowed = keys
       .filter(
-        (k) =>
-          typeof k === "string" &&
-          (k.startsWith("shares/") ||
-            (userId && k.startsWith(`users/${userId}/`))),
+        (key) =>
+          typeof key === "string" &&
+          (key.startsWith("shares/") ||
+            (userId && key.startsWith(`users/${userId}/`)) ||
+            (workspacePrefix && key.startsWith(workspacePrefix))),
       )
       .slice(0, MAX_KEYS);
 
@@ -61,10 +63,14 @@ export async function POST(request: NextRequest) {
 
     await dbConnect();
 
-    // Resolve b2BucketId for HMAC URL construction.
-    const bucket = await Bucket.findOne({
-      $or: userId ? [{ userId }, { userId: "system" }] : [{ userId: "system" }],
-    })
+    const hasScopedKeys = allowed.some(
+      (key) =>
+        (userId && key.startsWith(`users/${userId}/`)) ||
+        (workspacePrefix && key.startsWith(workspacePrefix)),
+    );
+    const bucket = await Bucket.findOne(
+      ctx && hasScopedKeys ? bucketOwnershipClause(ctx) : { userId: "system" },
+    )
       .select("b2BucketId")
       .lean<{ b2BucketId: string }>();
 
@@ -74,7 +80,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    // Pure HMAC signing — ~0.1ms per URL, no network I/O.
     const urls: Record<string, string> = {};
     for (const key of allowed) {
       urls[key] = getSignedFileUrl(bucket.b2BucketId, key);
@@ -82,6 +87,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ urls });
   } catch (err: any) {
+    if (isAuthzError(err)) {
+      statusCode = err.status;
+      errorMessage = err.message;
+      return toJsonResponse(err);
+    }
     statusCode = 500;
     errorMessage = err?.message ?? "Internal error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });

@@ -7,6 +7,9 @@ export interface IShareLink extends Document {
   objectId: mongoose.Types.ObjectId;
   bucketId: mongoose.Types.ObjectId;
   createdBy: string;
+  isBundle?: boolean;
+  bundleName?: string;
+  bundleItems?: IShareBundleItem[];
   expiresAt?: Date;
   maxDownloads?: number;
   downloadCount: number;
@@ -27,6 +30,15 @@ export interface IShareLink extends Document {
   sharedWith: string[]; // Array of emails or user IDs the file is explicitly shared with
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface IShareBundleItem {
+  objectId: mongoose.Types.ObjectId;
+  shareEncryptedDEK?: string;
+  shareKeyIv?: string;
+  shareEncryptedName?: string;
+  shareEncryptedContentType?: string;
+  shareEncryptedThumbnail?: string;
 }
 
 const ShareLinkSchema = new Schema<IShareLink>(
@@ -50,6 +62,30 @@ const ShareLinkSchema = new Schema<IShareLink>(
       required: true,
     },
     createdBy: { type: String, required: true, index: true },
+    isBundle: { type: Boolean, default: false, index: true },
+    bundleName: { type: String, required: false },
+    bundleItems: {
+      type: [
+        new Schema<IShareBundleItem>(
+          {
+            objectId: {
+              type: Schema.Types.ObjectId,
+              ref: "StorageObject",
+              required: true,
+              index: true,
+            },
+            shareEncryptedDEK: { type: String, required: false },
+            shareKeyIv: { type: String, required: false },
+            shareEncryptedName: { type: String, required: false },
+            shareEncryptedContentType: { type: String, required: false },
+            shareEncryptedThumbnail: { type: String, required: false },
+          },
+          { _id: false },
+        ),
+      ],
+      required: false,
+      default: undefined,
+    },
     expiresAt: { type: Date, required: false },
     maxDownloads: { type: Number, required: false, min: 1 },
     downloadCount: { type: Number, default: 0 },
@@ -85,6 +121,7 @@ ShareLinkSchema.index(
 );
 ShareLinkSchema.index({ createdBy: 1, createdAt: -1 });
 ShareLinkSchema.index({ objectId: 1, isRevoked: 1 });
+ShareLinkSchema.index({ "bundleItems.objectId": 1, isRevoked: 1 });
 
 const ShareLink: Model<IShareLink> =
   mongoose.models.ShareLink ||

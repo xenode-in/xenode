@@ -3,6 +3,8 @@ import StorageObject, { type IStorageObject } from "@/models/StorageObject";
 import Bucket, { type IBucket } from "@/models/Bucket";
 import { type AccessContext } from "./context";
 import { AuthzError } from "./errors";
+import { orgObjectClause, teamObjectClause } from "@/lib/orgs/storage";
+import { systemWorkspaceBucketName } from "@/lib/storage/workspaceBucket";
 
 /**
  * Actions a caller may attempt on a resource.
@@ -13,6 +15,31 @@ import { AuthzError } from "./errors";
  * member/viewer) can be enforced per action without touching call sites.
  */
 export type Action = "read" | "write" | "delete" | "share" | "manage";
+
+/** Enforce the role attached to an already authenticated tenancy scope. */
+export function assertScopeAction(ctx: AccessContext, action: Action): void {
+  if (ctx.scope.type === "personal" || action === "read") return;
+  const role = ctx.scope.role;
+  const mayWrite =
+    role === "owner" ||
+    role === "admin" ||
+    role === "manager" ||
+    role === "member";
+  const mayManage = role === "owner" || role === "admin" || role === "manager";
+  if ((action === "write" && mayWrite) || (action !== "write" && mayManage)) {
+    return;
+  }
+  throw new AuthzError(403, "workspace_role_required", "Forbidden");
+}
+
+function assertPersonalStorageScope(ctx: AccessContext): void {
+  if (ctx.scope.type === "personal") return;
+  throw new AuthzError(
+    501,
+    "organization_storage_not_ready",
+    "Organization storage is not enabled yet",
+  );
+}
 
 /**
  * ── The ownership seam ───────────────────────────────────────────────────────
@@ -30,11 +57,18 @@ export type Action = "read" | "write" | "delete" | "share" | "manage";
  * scope today; org scope adds an $or on the future orgId field.
  */
 export function ownerClause(ctx: AccessContext): Record<string, unknown> {
+  assertPersonalStorageScope(ctx);
   return { userId: ctx.userId };
 }
 
 /** Ownership clause for a StorageObject query (excluding `_id`). */
 export function objectOwnershipClause(ctx: AccessContext): Record<string, unknown> {
+  if (ctx.scope.type === "organization") {
+    return orgObjectClause(ctx.scope.orgId);
+  }
+  if (ctx.scope.type === "team") {
+    return teamObjectClause(ctx.scope.orgId, ctx.scope.teamId);
+  }
   return ownerClause(ctx);
 }
 
@@ -53,6 +87,14 @@ export function objectFilter(
  * readable/usable by everyone (used for app-managed folders, migrations, etc.).
  */
 export function bucketOwnershipClause(ctx: AccessContext): Record<string, unknown> {
+  if (ctx.scope.type === "organization" || ctx.scope.type === "team") {
+    return {
+      userId: "system",
+      name: systemWorkspaceBucketName("ORGANIZATION"),
+      b2BucketId: systemWorkspaceBucketName("ORGANIZATION"),
+    };
+  }
+  assertPersonalStorageScope(ctx);
   return { $or: [{ userId: ctx.userId }, { userId: "system" }] };
 }
 
@@ -79,7 +121,7 @@ export async function assertObjectAccess(
   action: Action = "read",
   opts: { lean?: boolean } = {},
 ): Promise<IStorageObject> {
-  void action;
+  assertScopeAction(ctx, action);
   await dbConnect();
   const query = StorageObject.findOne(objectFilter(ctx, objectId));
   const object = opts.lean

@@ -34,6 +34,7 @@
 import { useState, useEffect, useRef } from "react";
 import { getDb } from "@/lib/db/local";
 import { useSession } from "@/lib/auth/client";
+import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 
 const MAX_THUMBNAILS = 500;
 const COALESCE_MS = 50;
@@ -125,7 +126,7 @@ const _inFlightPromises = new Map<string, Promise<string>>();
 
 let _flushTimer: ReturnType<typeof setTimeout> | null = null;
 
-async function flushBatch() {
+async function flushBatch(headers?: HeadersInit) {
   _flushTimer = null;
 
   // Drain the pending map atomically.
@@ -147,7 +148,7 @@ async function flushBatch() {
         const res = await fetch("/api/objects/thumbnail/batch", {
           method: "POST",
           credentials: "include",
-          headers: { "Content-Type": "application/json" },
+          headers: { ...Object.fromEntries(new Headers(headers)), "Content-Type": "application/json" },
           body: JSON.stringify({ keys: chunk }),
         });
 
@@ -181,7 +182,7 @@ async function flushBatch() {
  * Queue `key` for URL batch. Returns a Promise that resolves to the signed
  * proxy URL once the batch fires. Deduped within the coalesce window.
  */
-function requestUrl(key: string): Promise<string> {
+function requestUrl(key: string, headers?: HeadersInit): Promise<string> {
   if (_inFlightPromises.has(key)) return _inFlightPromises.get(key)!;
 
   const promise = new Promise<string>((resolve, reject) => {
@@ -192,7 +193,7 @@ function requestUrl(key: string): Promise<string> {
   _inFlightPromises.set(key, promise);
 
   if (!_flushTimer) {
-    _flushTimer = setTimeout(flushBatch, COALESCE_MS);
+    _flushTimer = setTimeout(() => flushBatch(headers), COALESCE_MS);
   }
 
   return promise;
@@ -239,6 +240,7 @@ export function useThumbnail(
 ) {
   const [url, setUrl] = useState<string | null>(null);
   const { data: session } = useSession();
+  const workspace = useOptionalWorkspace();
   const userId = session?.user?.id;
 
   // Track the current object URL in a ref so we can revoke it when replaced
@@ -276,15 +278,16 @@ export function useThumbnail(
     const abortCtrl = new AbortController();
 
     async function loadThumbnail() {
-      if (!userId) return; // wait for session
+      const isPublicShareThumbnail = thumbnail!.startsWith("shares/");
+      if (!userId && !isPublicShareThumbnail) return; // wait for session
 
-      const db = getDb(userId);
+      const db = userId ? getDb(userId) : null;
 
       try {
         // ── 1. Dexie LRU cache ───────────────────────────────────────────
-        const cached = await db.thumbnailCache.get(thumbnail!);
+        const cached = db ? await db.thumbnailCache.get(thumbnail!) : null;
         if (cached) {
-          db.thumbnailCache
+          db!.thumbnailCache
             .update(thumbnail!, { lastAccessed: Date.now() })
             .catch(() => {});
           if (!cancelled) {
@@ -298,7 +301,10 @@ export function useThumbnail(
         }
 
         // ── 2. Batch-fetch signed URL (coalesced with other visible tiles)
-        const signedUrl = await requestUrl(thumbnail!);
+        const signedUrl = await requestUrl(
+          thumbnail!,
+          workspace?.scopedHeaders(),
+        );
         if (cancelled) return;
 
         // ── 3. Download via proxy with concurrency limit ─────────────────
@@ -338,18 +344,20 @@ export function useThumbnail(
         if (cancelled) return;
 
         // ── 5. Store in Dexie with LRU eviction ──────────────────────────
-        const count = await db.thumbnailCache.count();
-        if (count >= MAX_THUMBNAILS) {
-          const oldest = await db.thumbnailCache
-            .orderBy("lastAccessed")
-            .first();
-          if (oldest) await db.thumbnailCache.delete(oldest.id);
+        if (db) {
+          const count = await db.thumbnailCache.count();
+          if (count >= MAX_THUMBNAILS) {
+            const oldest = await db.thumbnailCache
+              .orderBy("lastAccessed")
+              .first();
+            if (oldest) await db.thumbnailCache.delete(oldest.id);
+          }
+          await db.thumbnailCache.put({
+            id: thumbnail!,
+            blob,
+            lastAccessed: Date.now(),
+          });
         }
-        await db.thumbnailCache.put({
-          id: thumbnail!,
-          blob,
-          lastAccessed: Date.now(),
-        });
 
         if (!cancelled) {
           // Revoke previous object URL before creating new one
@@ -377,7 +385,7 @@ export function useThumbnail(
       // stay valid so the already-rendered <img> doesn't flash/break.
       abortCtrl.abort();
     };
-  }, [thumbnail, decryptionKey, userId]);
+  }, [thumbnail, decryptionKey, userId, workspace]);
 
   // Revoke the object URL only on full component unmount.
   useEffect(() => {

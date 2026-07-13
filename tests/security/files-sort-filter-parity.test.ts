@@ -55,7 +55,7 @@ describe("Files sort and filter parity", () => {
     const filesPage = readFileSync(
       path.join(
         repoRoot,
-        "xenode-nextjs/app/(dashboard)/dashboard/files/page.tsx",
+        "xenode-nextjs/components/dashboard/FilesBrowser.tsx",
       ),
       "utf8",
     );

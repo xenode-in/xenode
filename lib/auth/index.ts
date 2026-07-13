@@ -1,10 +1,15 @@
-import { betterAuth } from "better-auth";
+import { betterAuth, type BetterAuthPlugin } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import { MongoClient } from "mongodb";
 import { expo } from "@better-auth/expo";
 import { Resend } from "resend";
-import { twoFactor, emailOTP } from "better-auth/plugins";
+import { twoFactor, emailOTP, organization } from "better-auth/plugins";
 import { nextCookies } from "better-auth/next-js";
+import {
+  isOrganizationFeatureEnabled,
+  orgAccessControl,
+  orgRoles,
+} from "@/lib/auth/organization";
 
 function buildOtpEmail(otp: string): string {
   return `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
@@ -187,37 +192,49 @@ function createAuth() {
   const db = client.db();
   const resend = new Resend(process.env.RESEND_API_KEY || "fallback");
 
+  const plugins: BetterAuthPlugin[] = [
+    expo(),
+    nextCookies(),
+    twoFactor({
+      issuer: "Xenode",
+    }),
+    emailOTP({
+      otpLength: 6,
+      expiresIn: 600,
+      allowedAttempts: 5,
+      overrideDefaultEmailVerification: true,
+      sendVerificationOTP: async ({ email, otp, type }) => {
+        if (type !== "email-verification") return;
+        try {
+          await resend.emails.send({
+            from: "Xenode <noreply@alerts.xenode.in>",
+            to: email,
+            subject: "Your Xenode verification code",
+            html: buildOtpEmail(otp),
+          });
+        } catch (error) {
+          console.error("Failed to send OTP email:", error);
+        }
+      },
+    }),
+  ];
+
+  if (isOrganizationFeatureEnabled()) {
+    plugins.push(
+      organization({
+        teams: { enabled: true },
+        ac: orgAccessControl,
+        roles: orgRoles,
+      }),
+    );
+  }
+
   return betterAuth({
     database: mongodbAdapter(db, {
       usePlural: false,
       transaction: false,
     }),
-    plugins: [
-      expo(),
-      nextCookies(),
-      twoFactor({
-        issuer: "Xenode",
-      }),
-      emailOTP({
-        otpLength: 6,
-        expiresIn: 600,
-        allowedAttempts: 5,
-        overrideDefaultEmailVerification: true,
-        sendVerificationOTP: async ({ email, otp, type }) => {
-          if (type !== "email-verification") return;
-          try {
-            await resend.emails.send({
-              from: "Xenode <noreply@alerts.xenode.in>",
-              to: email,
-              subject: "Your Xenode verification code",
-              html: buildOtpEmail(otp),
-            });
-          } catch (error) {
-            console.error("Failed to send OTP email:", error);
-          }
-        },
-      }),
-    ],
+    plugins,
     emailVerification: {
       sendOnSignUp: false,
       autoSignInAfterVerification: true,

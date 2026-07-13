@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAccessContext, objectFilter } from "@/lib/authz";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  objectFilter,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
@@ -37,7 +43,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const bucket = await Bucket.findOne({ _id: object.bucketId });
+    const bucket = await Bucket.findOne({
+      _id: object.bucketId,
+      ...bucketOwnershipClause(ctx),
+    });
     if (!bucket) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
@@ -86,6 +95,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     // Stream directly — no arrayBuffer()
     return new NextResponse(upstream.body, { status, headers });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

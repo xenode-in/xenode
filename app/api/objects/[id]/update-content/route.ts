@@ -6,18 +6,16 @@ import {
   isAuthzError,
   toJsonResponse,
 } from "@/lib/authz";
+import { assertScopeAction } from "@/lib/authz/policy";
 import dbConnect from "@/lib/mongodb";
 import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
-import { getUploadUrl, uploadObject, deleteObjects } from "@/lib/b2/objects";
-import { updateBucketStats, adjustStorageBytes } from "@/lib/metering/usage";
-import {
-  snapshotCurrentAsVersion,
-  newObjectKey,
-  evictOverflow,
-  collectVersionB2Keys,
-  versionsTotalBytes,
-} from "@/lib/storage/versions";
+import { getUploadUrl } from "@/lib/b2/objects";
+import { adjustStorageBytes } from "@/lib/metering/usage";
+import { adjustOrgStorage } from "@/lib/orgs/billing/orgUsage";
+import { resolveWorkspace } from "@/lib/workspace/resolve";
+import { parseBaseRevision, REVISION_HEADER } from "@/lib/storage/revisions";
+import { applyContentUpdate } from "@/lib/storage/applyContentUpdate";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +39,19 @@ export async function POST(
 ) {
   try {
     const ctx = await requireAccessContext(request);
+    assertScopeAction(ctx, "write");
     const userId = ctx.userId;
+    const adjustWorkspaceStorage = (delta: number) =>
+      ctx.scope.type === "personal"
+        ? adjustStorageBytes(userId, delta)
+        : adjustOrgStorage(ctx.scope.orgId, delta);
+    const baseRevision = parseBaseRevision(request.headers.get(REVISION_HEADER));
+    if (Number.isNaN(baseRevision)) {
+      return NextResponse.json(
+        { error: "Invalid base revision", code: "invalid_base_revision" },
+        { status: 400 },
+      );
+    }
     const { id } = await params;
     const contentType = request.headers.get("content-type") || "";
     const isJsonRequest = contentType.includes("application/json");
@@ -63,6 +73,12 @@ export async function POST(
     if (!object) {
       return NextResponse.json({ error: "Object not found" }, { status: 404 });
     }
+    if (baseRevision !== null && (object.revision ?? 0) !== baseRevision) {
+      return NextResponse.json(
+        { error: "The object changed since it was opened", code: "revision_conflict", revision: object.revision ?? 0 },
+        { status: 409 },
+      );
+    }
 
     const bucket = await Bucket.findOne({
       _id: object.bucketId,
@@ -83,62 +99,26 @@ export async function POST(
         );
       }
 
-      // 1. Snapshot the current content as a version (before mutating fields).
-      const snapshot = snapshotCurrentAsVersion(object, userId);
-      const { kept, evicted } = evictOverflow([
-        snapshot,
-        ...(object.versions || []),
-      ]);
-      const evictedBytes = versionsTotalBytes(evicted);
-      const newSize = buffer.byteLength;
+      const result = await applyContentUpdate({
+        object,
+        bucket,
+        buffer,
+        iv,
+        encryptedDEK: dek,
+        actorUserId: userId,
+        baseRevision,
+        newKeyPrefix: resolveWorkspace(ctx).keyPrefix,
+        adjustWorkspaceStorage,
+      });
 
-      // 2. Reserve quota FIRST (atomic + enforced). The retained old version now
-      //    also occupies space, so the net delta is +newSize − evictedBytes.
-      const netDelta = newSize - evictedBytes;
-      if (netDelta !== 0) {
-        await adjustStorageBytes(userId, netDelta); // throws QUOTA_EXCEEDED
-      }
-
-      // 3. Upload NEW content to a fresh key. Roll back the reservation on fail.
-      const newKey = newObjectKey(userId);
-      let uploadResult;
-      try {
-        uploadResult = await uploadObject(
-          bucket.b2BucketId,
-          newKey,
-          buffer,
-          "application/octet-stream",
-          newSize,
-        );
-      } catch (uploadErr) {
-        if (netDelta !== 0) {
-          await adjustStorageBytes(userId, -netDelta).catch(() => {});
-        }
-        throw uploadErr;
-      }
-
-      // 4. Point the object at the new content; persist evicted-trimmed history.
-      object.key = newKey;
-      object.b2FileId = uploadResult.b2FileId;
-      object.size = newSize;
-      object.iv = iv;
-      if (dek) object.encryptedDEK = dek;
-      object.versions = kept;
-      object.updatedAt = new Date();
-      await object.save();
-
-      // 5. Best-effort: drop evicted version blobs + reconcile bucket stats.
-      if (evicted.length > 0) {
-        await deleteObjects(
-          bucket.b2BucketId,
-          evicted.flatMap(collectVersionB2Keys),
+      if (!result.ok) {
+        return NextResponse.json(
+          { error: "The object changed since it was opened", code: "revision_conflict", revision: result.revision },
+          { status: 409 },
         );
       }
-      if (netDelta !== 0) {
-        await updateBucketStats(object.bucketId.toString(), 0, netDelta);
-      }
 
-      return NextResponse.json({ success: true, object });
+      return NextResponse.json({ success: true, object: result.object, revision: result.revision });
     }
 
     // Legacy presigned-url flow. Deprecated and NOT versioned — the docs editor

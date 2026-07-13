@@ -1,5 +1,6 @@
 import { ADMIN_NOTIFY_EMAIL, EMAIL_FROM, getResend } from "./client";
 import {
+  organizationInvitationEmail,
   refundApprovedUserEmail,
   refundCompletedUserEmail,
   refundDeniedUserEmail,
@@ -44,6 +45,24 @@ async function safeSend(args: {
       error: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+export async function notifyOrganizationInvitation(args: {
+  to: string;
+  inviterName: string;
+  organizationName: string;
+  invitationId: string;
+  role: string;
+  expiresAt: Date;
+}): Promise<void> {
+  const email = organizationInvitationEmail({
+    inviterName: args.inviterName,
+    organizationName: args.organizationName,
+    invitationId: args.invitationId,
+    role: args.role,
+    expiresAt: args.expiresAt,
+  });
+  await safeSend({ to: args.to, ...email });
 }
 
 // ─── Ticket notifications ─────────────────────────────────────────────────

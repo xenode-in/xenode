@@ -1,6 +1,11 @@
 import { createAuthClient } from "better-auth/react";
 import { expo } from "@better-auth/expo";
-import { twoFactorClient, emailOTPClient } from "better-auth/client/plugins";
+import {
+  twoFactorClient,
+  emailOTPClient,
+  organizationClient,
+} from "better-auth/client/plugins";
+import { orgAccessControl, orgRoles } from "@/lib/auth/organization";
 
 const getAuthBaseURL = () => {
   if (typeof window !== "undefined") {
@@ -16,7 +21,20 @@ const getAuthBaseURL = () => {
 
 export const authClient = createAuthClient({
   baseURL: getAuthBaseURL(),
-  plugins: [expo(), twoFactorClient(), emailOTPClient()],
+  plugins: [
+    expo(),
+    twoFactorClient(),
+    emailOTPClient(),
+    ...(process.env.NEXT_PUBLIC_ORGS_ENABLED === "true"
+      ? [
+          organizationClient({
+            teams: { enabled: true },
+            ac: orgAccessControl,
+            roles: orgRoles,
+          }),
+        ]
+      : []),
+  ],
 });
 
 export const { signIn, signUp, signOut, useSession } = authClient;

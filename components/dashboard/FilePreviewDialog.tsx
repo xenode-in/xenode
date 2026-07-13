@@ -38,6 +38,7 @@ import {
   decryptMetadataString,
   decryptWithShareKey,
   decryptChunk,
+  unwrapDEKWithSpaceKey,
 } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
@@ -47,6 +48,8 @@ import {
   useAudioTrackSyncer,
   SidecarAudioTrack,
 } from "@/hooks/useAudioTrackSyncer";
+import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
+import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 
 import "@vidstack/react/player/styles/default/theme.css";
 import "@vidstack/react/player/styles/default/layouts/video.css";
@@ -297,6 +300,7 @@ interface ObjectData {
   encryptedName?: string;
   name?: string;
   mediaCategory?: string;
+  bucketId?: string;
   thumbnail?: string;
   encryptedContentType?: string;
   url?: string;
@@ -407,6 +411,7 @@ interface FilePreviewDialogProps {
   password?: string;
   directShareId?: string;
   directShareWrappedKey?: string;
+  sharedItemId?: string;
   onDownload?: () => void;
 }
 
@@ -788,6 +793,7 @@ export function FilePreviewDialog({
   password,
   directShareId,
   directShareWrappedKey,
+  sharedItemId,
   onDownload,
 }: FilePreviewDialogProps) {
   const [url, setUrl] = useState<string | null>(null);
@@ -796,6 +802,9 @@ export function FilePreviewDialog({
 
   const privateKey = cryptoControl?.privateKey;
   const metadataKey = cryptoControl?.metadataKey;
+  const workspace = useOptionalWorkspace();
+  const workspaceSpaceKey = useWorkspaceSpaceKey();
+  const activeMetadataKey = workspaceSpaceKey.cryptoKey ?? metadataKey;
   const setModalOpen = cryptoControl?.setModalOpen ?? NOOP;
   const isUnlocked = cryptoControl?.isUnlocked ?? false;
 
@@ -950,7 +959,7 @@ export function FilePreviewDialog({
         if (file.encryptedName) {
           const name = await decryptMetadataString(
             file.encryptedName,
-            metadataKey ?? null,
+            activeMetadataKey ?? null,
           );
           if (!cancelled) setDecryptedName(name);
         }
@@ -963,7 +972,7 @@ export function FilePreviewDialog({
     return () => {
       cancelled = true;
     };
-  }, [file, isUnlocked, metadataKey]);
+  }, [file, isUnlocked, activeMetadataKey]);
 
   useEffect(() => {
     if (!isOpen || !fetchedData) return;
@@ -1064,10 +1073,15 @@ export function FilePreviewDialog({
           res = await fetch(`/api/share/${sharedToken}/stream`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ password: password || undefined }),
+            body: JSON.stringify({
+              password: password || undefined,
+              itemId: sharedItemId,
+            }),
           });
         } else {
-          res = await fetch(`/api/objects/${file.id}?preview=true`);
+          res = workspace?.scopedFetch
+            ? await workspace.scopedFetch(`/api/objects/${file.id}?preview=true`)
+            : await fetch(`/api/objects/${file.id}?preview=true`);
         }
 
         if (!res.ok) {
@@ -1144,12 +1158,12 @@ export function FilePreviewDialog({
         if (
           type === "application/octet-stream" &&
           data.encryptedContentType &&
-          metadataKey
+          activeMetadataKey
         ) {
           try {
             type = await decryptMetadataString(
               data.encryptedContentType,
-              metadataKey,
+              activeMetadataKey,
             );
             if (!cancelled) setDecryptedContentType(type);
           } catch (e) {
@@ -1245,6 +1259,35 @@ export function FilePreviewDialog({
               ["decrypt"],
             )
             .then((key) => crypto.subtle.exportKey("raw", key));
+        } else if (data.wrappedBy === "space") {
+          if (!data.spaceKeyWrapIv) {
+            throw new Error("Workspace key unavailable. Please unlock first.");
+          }
+          if (!workspaceSpaceKey.rawSpaceKey) {
+            // The workspace space key loads asynchronously once the org/team
+            // scope resolves. Wait for it instead of failing the preview — this
+            // effect re-runs when rawSpaceKey / error / loading state changes.
+            if (
+              workspaceSpaceKey.isWorkspaceEncrypted &&
+              workspaceSpaceKey.isLoading
+            ) {
+              return;
+            }
+            if (
+              workspaceSpaceKey.isWorkspaceEncrypted &&
+              !workspaceSpaceKey.error
+            ) {
+              return;
+            }
+            if (!privateKey) setModalOpen(true);
+            throw new Error("Workspace key unavailable. Please unlock first.");
+          }
+          const dek = await unwrapDEKWithSpaceKey(
+            data.encryptedDEK,
+            data.spaceKeyWrapIv,
+            workspaceSpaceKey.rawSpaceKey,
+          );
+          rawDEK = await crypto.subtle.exportKey("raw", dek);
         } else if (privateKey) {
           rawDEK = await crypto.subtle.decrypt(
             { name: "RSA-OAEP" },
@@ -1425,7 +1468,14 @@ export function FilePreviewDialog({
     isLockedOut,
     setModalOpen,
     metadataKey,
+    activeMetadataKey,
+    workspace,
+    workspaceSpaceKey.rawSpaceKey,
+    workspaceSpaceKey.isWorkspaceEncrypted,
+    workspaceSpaceKey.isLoading,
+    workspaceSpaceKey.error,
     sharedToken,
+    sharedItemId,
     albumShareToken,
     shareKey,
     password,
@@ -1453,7 +1503,9 @@ export function FilePreviewDialog({
       setHdLoading(true);
       try {
         // No `preview` param → backend serves the original (full-res) key.
-        const res = await fetch(`/api/objects/${file.id}`);
+        const res = workspace?.scopedFetch
+          ? await workspace.scopedFetch(`/api/objects/${file.id}`)
+          : await fetch(`/api/objects/${file.id}`);
         if (!res.ok) throw new Error("Failed to load original");
         const data = await res.json();
         const type = decryptedContentType || data.contentType || file.contentType;
@@ -1462,13 +1514,31 @@ export function FilePreviewDialog({
           if (!cancelled && data.url) setHdUrl(data.url);
           return;
         }
-        if (!privateKey) throw new Error("Vault locked");
-
-        const rawDEK = await crypto.subtle.decrypt(
-          { name: "RSA-OAEP" },
-          privateKey,
-          fromB64(data.encryptedDEK),
-        );
+        let rawDEK: ArrayBuffer;
+        if (data.wrappedBy === "space") {
+          if (!data.spaceKeyWrapIv) {
+            throw new Error("Workspace key unavailable");
+          }
+          if (!workspaceSpaceKey.rawSpaceKey) {
+            // Space key still resolving — allow a retry once it lands rather
+            // than tearing down the HD load permanently.
+            hdRequestedRef.current = false;
+            return;
+          }
+          const unwrapped = await unwrapDEKWithSpaceKey(
+            data.encryptedDEK,
+            data.spaceKeyWrapIv,
+            workspaceSpaceKey.rawSpaceKey,
+          );
+          rawDEK = await crypto.subtle.exportKey("raw", unwrapped);
+        } else {
+          if (!privateKey) throw new Error("Vault locked");
+          rawDEK = await crypto.subtle.decrypt(
+            { name: "RSA-OAEP" },
+            privateKey,
+            fromB64(data.encryptedDEK),
+          );
+        }
         const dek = await crypto.subtle.importKey(
           "raw",
           rawDEK,
@@ -1513,10 +1583,13 @@ export function FilePreviewDialog({
   }, [
     wantHd,
     sharedToken,
+    sharedItemId,
     directShareId,
     file,
     privateKey,
     decryptedContentType,
+    workspace,
+    workspaceSpaceKey.rawSpaceKey,
   ]);
 
   if (!file) return null;
@@ -1629,13 +1702,37 @@ export function FilePreviewDialog({
         },
         !!file.isEncrypted,
         privateKey,
-        metadataKey,
+        activeMetadataKey,
       );
     } catch (err: unknown) {
       console.error("Download failed:", err);
     }
   };
 
+  const openInXenodeSheetsAt = (editorPath: string) => {
+    if (!file || sharedToken || albumShareToken) return;
+    if (directShareId) {
+      // Shared spreadsheets open through the share-authorized editor mode:
+      // read-only for viewers/commenters, editable for editor recipients.
+      onClose();
+      window.location.assign(editorPath + "?shareId=" + directShareId);
+      return;
+    }
+    const params = new URLSearchParams({ id: file.id });
+    const scope = workspace?.driveScope;
+    if (scope?.type === "organization" || scope?.type === "team") {
+      params.set("orgId", scope.orgId);
+    }
+    if (scope?.type === "team") params.set("teamId", scope.teamId);
+    if (file.bucketId) params.set("bucketId", file.bucketId);
+    const slash = file.key.lastIndexOf("/");
+    if (slash >= 0) params.set("prefix", file.key.slice(0, slash + 1));
+    onClose();
+    window.location.assign(editorPath + "?" + params.toString());
+  };
+  const openInXenodeSheets = () => openInXenodeSheetsAt("/sheets/editor");
+  const openInXenodeSheetsV2 = () =>
+    openInXenodeSheetsAt("/sheets-v2/editor");
   const renderContent = () => {
     let innerContent = null;
 
@@ -1652,7 +1749,7 @@ export function FilePreviewDialog({
             audioTracks={audioTracks}
             dek={streamDek}
             privateKey={privateKey}
-            metadataKey={metadataKey}
+            metadataKey={activeMetadataKey}
           />
         );
       } else if (url) {
@@ -1676,7 +1773,7 @@ export function FilePreviewDialog({
               audioTracks={audioTracks}
               dek={streamDek}
               privateKey={privateKey}
-              metadataKey={metadataKey}
+              metadataKey={activeMetadataKey}
             />
           );
         } else if (type === "application/pdf") {
@@ -1700,10 +1797,47 @@ export function FilePreviewDialog({
         } else if (
           type.includes("excel") ||
           type.includes("spreadsheet") ||
+          type.includes("text/csv")
+        ) {
+          // Direct shares can open in the share-authorized sheets editor;
+          // only public-link/album previews stay download-only.
+          const isSharePreview = !!(sharedToken || albumShareToken);
+          innerContent = (
+            <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+              <AlertCircle className="mb-3 h-10 w-10 text-emerald-500" />
+              <p className="text-sm font-medium">
+                {isSharePreview ? "Spreadsheet preview unavailable for shared links" : "Open with Xenode Sheets"}
+              </p>
+              <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+                {isSharePreview
+                  ? "Download this encrypted spreadsheet to view it locally. Xenode never sends it to Microsoft Office viewers."
+                  : "This spreadsheet is edited locally in your browser with end-to-end encryption."}
+              </p>
+              {isSharePreview ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-4"
+                  onClick={handleDownload}
+                >
+                  Download spreadsheet
+                </Button>
+              ) : (
+                <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+                  <Button variant="outline" size="sm" onClick={openInXenodeSheets}>
+                    Open in Xenode Sheets
+                  </Button>
+                  <Button size="sm" onClick={openInXenodeSheetsV2}>
+                    Try Sheets v2
+                  </Button>
+                </div>
+              )}
+            </div>
+          );
+        } else if (
           type.includes("presentation") ||
           type.includes("powerpoint") ||
-          type.includes("text/plain") ||
-          type.includes("text/csv")
+          type.includes("text/plain")
         ) {
           innerContent = (
             <div className="h-full w-full doc-viewer-wrapper">

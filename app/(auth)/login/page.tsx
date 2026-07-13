@@ -4,6 +4,7 @@ import { useState, Suspense, lazy, useEffect } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signIn, signUp, authClient } from "@/lib/auth/client";
+import { consumePostAuthRedirect } from "@/lib/postAuthRedirect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,6 +23,8 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const errorParam = searchParams.get("error");
+  const modeParam = searchParams.get("mode");
+  const emailParam = searchParams.get("email");
   const [isLogin, setIsLogin] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -34,6 +37,14 @@ function LoginForm() {
     password: "",
     confirmPassword: "",
   });
+
+  // Deep-link into signup (e.g. from an org invite link) and prefill email.
+  useEffect(() => {
+    if (modeParam === "signup") setIsLogin(false);
+    if (emailParam) {
+      setFormData((prev) => ({ ...prev, email: emailParam }));
+    }
+  }, [modeParam, emailParam]);
 
   // Handle URL errors (like expired tokens)
   useEffect(() => {
@@ -132,7 +143,7 @@ function LoginForm() {
             `/verify-email?email=${encodeURIComponent(formData.email)}`,
           );
         } else {
-          router.push("/dashboard");
+          router.push(consumePostAuthRedirect() || "/dashboard");
         }
       } else {
         router.push(

@@ -1,11 +1,16 @@
-import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import { NextRequest, NextResponse } from "next/server";
+import {
+  isAuthzError,
+  objectOwnershipClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import StorageObject from "@/models/StorageObject";
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   try {
-    const session = await requireAuth();
+    const ctx = await requireAccessContext(req);
     const { searchParams } = new URL(req.url);
     const lastSyncParam = searchParams.get("lastSync");
     const lastSyncDate = lastSyncParam ? new Date(lastSyncParam) : new Date(0);
@@ -14,7 +19,7 @@ export async function GET(req: Request) {
 
     // Query for user's files updated after lastSync (exclude sidecar files)
     const files = await StorageObject.find({
-      userId: session.user.id,
+      ...objectOwnershipClause(ctx),
       updatedAt: { $gt: lastSyncDate },
       isSidecar: { $ne: true },
     })
@@ -26,6 +31,9 @@ export async function GET(req: Request) {
 
     return NextResponse.json({ files });
   } catch (error: any) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     console.error("[Sync API]", error);
     return NextResponse.json({ error: "Unauthorized or Error" }, { status: 500 });
   }

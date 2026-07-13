@@ -1,0 +1,7 @@
+# The x2t WASM build runs inside a Linux Docker image. These files MUST keep LF
+# line endings or the build breaks (CRLF shebang on embuild.sh, CRLF in the
+# patch/wrapper). Force LF regardless of the developer's core.autocrlf.
+embuild.sh      text eol=lf
+pre-js.js       text eol=lf
+wrap-main.cpp   text eol=lf
+patches/*.patch text eol=lf

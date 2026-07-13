@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  objectOwnershipClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
@@ -11,14 +17,28 @@ import {
   publishSyncEvent,
   toSyncObjectSnapshot,
 } from "@/lib/realtime/publish";
+import {
+  orgObjectKeyPrefix,
+  orgStorageOwnerId,
+  teamObjectKeyPrefix,
+} from "@/lib/orgs/storage";
 
 export const dynamic = "force-dynamic";
+
+function canDeleteInScope(ctx: Awaited<ReturnType<typeof requireAccessContext>>): boolean {
+  if (ctx.scope.type === "personal") return true;
+  return (
+    ctx.scope.role === "owner" ||
+    ctx.scope.role === "admin" ||
+    ctx.scope.role === "manager"
+  );
+}
 
 /** POST /api/objects/folder - Create a new folder */
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    const userId = ctx.userId;
     const body = await request.json();
     const { bucketId, name, encryptedDisplayName, prefix = "" } = body;
 
@@ -30,18 +50,32 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Folder name contains invalid characters" }, { status: 400 });
     }
 
+    if (!canDeleteInScope(ctx)) {
+      return NextResponse.json(
+        { error: "Forbidden", code: "workspace_manage_role_required" },
+        { status: 403 },
+      );
+    }
+
     await dbConnect();
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     });
 
     if (!bucket) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
 
-    if (bucket.userId === "system" && !prefix.startsWith(`users/${userId}/`)) {
+    const allowedPrefix =
+      ctx.scope.type === "organization"
+        ? orgObjectKeyPrefix(ctx.scope.orgId)
+        : ctx.scope.type === "team"
+          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+        : `users/${userId}/`;
+
+    if (bucket.userId === "system" && !prefix.startsWith(allowedPrefix)) {
       return NextResponse.json({ error: "Access denied to this folder" }, { status: 403 });
     }
 
@@ -57,7 +91,19 @@ export async function POST(request: NextRequest) {
 
     const folder = await StorageObject.create({
       bucketId: bucket._id,
-      userId,
+      userId:
+        ctx.scope.type !== "personal"
+          ? orgStorageOwnerId(ctx.scope.orgId)
+          : userId,
+      ownerScope:
+        ctx.scope.type === "organization"
+          ? "organization"
+          : ctx.scope.type === "team"
+            ? "team"
+            : "personal",
+      orgId: ctx.scope.type !== "personal" ? ctx.scope.orgId : undefined,
+      teamId: ctx.scope.type === "team" ? ctx.scope.teamId : undefined,
+      createdBy: userId,
       key: fullKey,
       size: 0,
       contentType: "application/x-directory",
@@ -81,8 +127,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ folder }, { status: 201 });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
     }
     return NextResponse.json({ error: "Failed to create folder" }, { status: 500 });
   }
@@ -91,8 +137,8 @@ export async function POST(request: NextRequest) {
 /** DELETE /api/objects/folder - Recursively delete a folder and its contents */
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    const userId = ctx.userId;
     const body = await request.json();
     const { bucketId, prefix } = body;
 
@@ -100,23 +146,41 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "Bucket ID and prefix are required" }, { status: 400 });
     }
 
+    if (!canDeleteInScope(ctx)) {
+      return NextResponse.json(
+        { error: "Forbidden", code: "workspace_delete_role_required" },
+        { status: 403 },
+      );
+    }
+
     await dbConnect();
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     });
 
     if (!bucket) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
 
-    if (bucket.userId === "system" && !prefix.startsWith(`users/${userId}/`)) {
+    const allowedPrefix =
+      ctx.scope.type === "organization"
+        ? orgObjectKeyPrefix(ctx.scope.orgId)
+        : ctx.scope.type === "team"
+          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+        : `users/${userId}/`;
+
+    if (bucket.userId === "system" && !prefix.startsWith(allowedPrefix)) {
       return NextResponse.json({ error: "Access denied to this folder" }, { status: 403 });
     }
 
     const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const objects = await StorageObject.find({ bucketId, key: { $regex: `^${escapedPrefix}` } });
+    const objects = await StorageObject.find({
+      bucketId,
+      ...objectOwnershipClause(ctx),
+      key: { $regex: `^${escapedPrefix}` },
+    });
 
     const deletedObjectIds: string[] = [];
     const now = new Date();
@@ -149,8 +213,8 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ success: true, deletedCount: deletedObjectIds.length });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
     }
     return NextResponse.json({ error: "Failed to delete folder" }, { status: 500 });
   }

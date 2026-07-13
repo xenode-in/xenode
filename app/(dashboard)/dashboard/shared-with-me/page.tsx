@@ -19,10 +19,14 @@ import {
   Users,
   AlertCircle,
   ExternalLink,
+  Table2,
 } from "lucide-react";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { decryptWithShareKey } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
+import { ShareAccessRequestButton } from "@/components/ShareAccessRequestButton";
+import { FilePreviewDialog } from "@/components/dashboard/FilePreviewDialog";
+import { normalizeShareRole, type ShareRole } from "@/lib/orgs/shareRoles";
 
 interface DirectShare {
   _id: string;
@@ -32,6 +36,7 @@ interface DirectShare {
     size: number;
     contentType: string;
     isEncrypted?: boolean;
+    mediaCategory?: string;
   };
   owner?: {
     id: string;
@@ -42,12 +47,19 @@ interface DirectShare {
     recipientUserId: string;
     recipientEmail: string;
     wrappedShareKey: string;
-    accessType: "view" | "download";
+    accessType: string;
     downloadCount: number;
   };
+  role?: ShareRole;
   shareEncryptedName?: string;
   createdAt: string;
 }
+
+const ROLE_LABEL: Record<ShareRole, string> = {
+  viewer: "Viewer",
+  commenter: "Commenter",
+  editor: "Editor",
+};
 
 async function decryptSharedName(
   shareEncryptedName: string,
@@ -78,7 +90,22 @@ export default function SharedWithMePage() {
   const [decryptedNames, setDecryptedNames] = useState<Record<string, string>>(
     {},
   );
-  const { isUnlocked, privateKey } = useCrypto();
+  const [preview, setPreview] = useState<DirectShare | null>(null);
+  const { isUnlocked, privateKey, setModalOpen } = useCrypto();
+
+  // Clicking a file behaves like the normal file list: spreadsheets open in
+  // the (permission-aware) editor, everything else opens the preview modal.
+  const openRow = (share: DirectShare) => {
+    if (share.objectId.isEncrypted && !isUnlocked) {
+      setModalOpen(true);
+      return;
+    }
+    if (share.objectId.mediaCategory === "excel") {
+      window.location.assign(`/sheets/editor?shareId=${share._id}`);
+      return;
+    }
+    setPreview(share);
+  };
 
   useEffect(() => {
     const fetchShares = async () => {
@@ -188,12 +215,16 @@ export default function SharedWithMePage() {
                 return (
                   <TableRow key={share._id}>
                     <TableCell>
-                      <div className="flex items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => openRow(share)}
+                        className="flex w-full items-center gap-3 text-left"
+                      >
                         <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-secondary text-secondary-foreground">
                           <FileText className="h-5 w-5" />
                         </div>
                         <div className="flex flex-col overflow-hidden">
-                          <span className="truncate font-medium">
+                          <span className="truncate font-medium hover:underline">
                             {displayName}
                           </span>
                           <span className="text-xs text-muted-foreground">
@@ -201,7 +232,7 @@ export default function SharedWithMePage() {
                             {new Date(share.createdAt).toLocaleDateString()}
                           </span>
                         </div>
-                      </div>
+                      </button>
                     </TableCell>
                     <TableCell>
                       <span className="text-sm text-muted-foreground">
@@ -224,16 +255,30 @@ export default function SharedWithMePage() {
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
-                      <span className="text-sm text-muted-foreground capitalize">
-                        {share.recipient?.accessType || "download"}
-                      </span>
+                      <Badge variant="secondary">
+                        {ROLE_LABEL[share.role ?? normalizeShareRole(share.recipient?.accessType)]}
+                      </Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="outline" size="sm" asChild>
-                        <Link href={`/dashboard/shared-with-me/${share._id}`}>
-                          Open <ExternalLink className="ml-2 h-3 w-3" />
-                        </Link>
-                      </Button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <ShareAccessRequestButton
+                          shareId={share._id}
+                          currentRole={share.role ?? share.recipient?.accessType ?? "viewer"}
+                        />
+                        {share.objectId.mediaCategory === "excel" && (
+                          <Button variant="outline" size="sm" asChild>
+                            <Link href={`/sheets/editor?shareId=${share._id}`}>
+                              <Table2 className="mr-1.5 h-3.5 w-3.5" />
+                              Open in Sheets
+                            </Link>
+                          </Button>
+                        )}
+                        <Button variant="outline" size="sm" asChild>
+                          <Link href={`/dashboard/shared-with-me/${share._id}`}>
+                            Open <ExternalLink className="ml-2 h-3 w-3" />
+                          </Link>
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
                 );
@@ -242,6 +287,31 @@ export default function SharedWithMePage() {
           </Table>
         </div>
       )}
+
+      <FilePreviewDialog
+        file={
+          preview
+            ? {
+                id: preview.objectId._id,
+                key: preview.objectId.key,
+                size: preview.objectId.size,
+                contentType: preview.objectId.contentType,
+                createdAt: preview.createdAt,
+                isEncrypted: preview.objectId.isEncrypted,
+                encryptedName: undefined,
+                name:
+                  decryptedNames[preview._id] ||
+                  preview.objectId.key.split("/").pop() ||
+                  preview.objectId.key,
+                mediaCategory: preview.objectId.mediaCategory,
+              }
+            : null
+        }
+        isOpen={!!preview}
+        onClose={() => setPreview(null)}
+        directShareId={preview?._id}
+        directShareWrappedKey={preview?.recipient?.wrappedShareKey}
+      />
     </div>
   );
 }

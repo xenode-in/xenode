@@ -22,17 +22,24 @@ import { useOptionalCrypto } from "@/contexts/CryptoContext";
 import {
   decryptFileWithDEK,
   decryptFileChunkedCombined,
+  unwrapDEKWithSpaceKey,
 } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
+import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
+import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 
 interface VersionEntry {
   versionId: string;
+  isOriginal?: boolean;
   size: number;
   contentType: string | null;
   isEncrypted: boolean;
   createdAt: string;
   createdBy: string;
   encryptedDEK: string | null;
+  wrappedBy?: "user" | "space" | null;
+  spaceKeyVersion?: number | null;
+  spaceKeyWrapIv?: string | null;
   iv: string | null;
   chunkSize: number | null;
   chunkCount: number | null;
@@ -65,6 +72,8 @@ export function FileVersionsDialog({
 }: FileVersionsDialogProps) {
   const crypto = useOptionalCrypto();
   const privateKey = crypto?.privateKey;
+  const workspace = useOptionalWorkspace();
+  const workspaceSpaceKey = useWorkspaceSpaceKey();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -76,7 +85,9 @@ export function FileVersionsDialog({
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`/api/objects/${fileId}/versions`);
+      const res = workspace?.scopedFetch
+        ? await workspace.scopedFetch(`/api/objects/${fileId}/versions`)
+        : await fetch(`/api/objects/${fileId}/versions`);
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Failed to load versions");
@@ -89,7 +100,7 @@ export function FileVersionsDialog({
     } finally {
       setLoading(false);
     }
-  }, [fileId]);
+  }, [fileId, workspace]);
 
   useEffect(() => {
     if (isOpen) void load();
@@ -98,10 +109,15 @@ export function FileVersionsDialog({
   const handleRestore = async (versionId: string) => {
     setBusyId(versionId);
     try {
-      const res = await fetch(
-        `/api/objects/${fileId}/versions/${versionId}/restore`,
-        { method: "POST" },
-      );
+      const res = workspace?.scopedFetch
+        ? await workspace.scopedFetch(
+            `/api/objects/${fileId}/versions/${versionId}/restore`,
+            { method: "POST" },
+          )
+        : await fetch(
+            `/api/objects/${fileId}/versions/${versionId}/restore`,
+            { method: "POST" },
+          );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Restore failed");
@@ -121,10 +137,15 @@ export function FileVersionsDialog({
       return;
     setBusyId(versionId);
     try {
-      const res = await fetch(
-        `/api/objects/${fileId}/versions/${versionId}`,
-        { method: "DELETE" },
-      );
+      const res = workspace?.scopedFetch
+        ? await workspace.scopedFetch(
+            `/api/objects/${fileId}/versions/${versionId}`,
+            { method: "DELETE" },
+          )
+        : await fetch(
+            `/api/objects/${fileId}/versions/${versionId}`,
+            { method: "DELETE" },
+          );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Delete failed");
@@ -141,9 +162,13 @@ export function FileVersionsDialog({
   const handleDownload = async (v: VersionEntry) => {
     setBusyId(v.versionId);
     try {
-      const res = await fetch(
-        `/api/objects/${fileId}/content?version=${v.versionId}`,
-      );
+      const res = workspace?.scopedFetch
+        ? await workspace.scopedFetch(
+            `/api/objects/${fileId}/content?version=${v.versionId}`,
+          )
+        : await fetch(
+            `/api/objects/${fileId}/content?version=${v.versionId}`,
+          );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Failed to fetch version");
@@ -155,18 +180,30 @@ export function FileVersionsDialog({
       if (v.isEncrypted) {
         if (!privateKey) throw new Error("Unlock your vault to download this version");
         if (!v.encryptedDEK) throw new Error("Missing decryption key for version");
-        const rawDEK = await window.crypto.subtle.decrypt(
-          { name: "RSA-OAEP" },
-          privateKey,
-          fromB64(v.encryptedDEK),
-        );
-        const dek = await window.crypto.subtle.importKey(
-          "raw",
-          rawDEK,
-          { name: "AES-GCM", length: 256 },
-          false,
-          ["decrypt"],
-        );
+        let dek: CryptoKey;
+        if (v.wrappedBy === "space") {
+          if (!workspaceSpaceKey.rawSpaceKey || !v.spaceKeyWrapIv) {
+            throw new Error("Unlock the organization workspace key first");
+          }
+          dek = await unwrapDEKWithSpaceKey(
+            v.encryptedDEK,
+            v.spaceKeyWrapIv,
+            workspaceSpaceKey.rawSpaceKey,
+          );
+        } else {
+          const rawDEK = await window.crypto.subtle.decrypt(
+            { name: "RSA-OAEP" },
+            privateKey,
+            fromB64(v.encryptedDEK),
+          );
+          dek = await window.crypto.subtle.importKey(
+            "raw",
+            rawDEK,
+            { name: "AES-GCM", length: 256 },
+            false,
+            ["decrypt"],
+          );
+        }
         if (v.chunkIvs && v.chunkSize && v.chunkCount) {
           blob = await decryptFileChunkedCombined(
             cipher,
@@ -240,7 +277,7 @@ export function FileVersionsDialog({
               >
                 <div className="min-w-0">
                   <p className="text-sm font-medium">
-                    Version {versions.length - idx}
+                    {v.isOriginal ? "Original" : "Version " + (versions.length - idx)}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
                     {new Date(v.createdAt).toLocaleString()} ·{" "}
@@ -272,16 +309,18 @@ export function FileVersionsDialog({
                   >
                     <RotateCcw className="h-4 w-4" />
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-destructive hover:text-destructive"
-                    title="Delete this version"
-                    disabled={busyId === v.versionId}
-                    onClick={() => void handleDelete(v.versionId)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                  {!v.isOriginal && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-destructive hover:text-destructive"
+                      title="Delete this version"
+                      disabled={busyId === v.versionId}
+                      onClick={() => void handleDelete(v.versionId)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
                 </div>
               </li>
             ))}

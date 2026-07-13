@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
 import bcrypt from "bcryptjs";
 
-import { requireAuth } from "@/lib/auth/session";
+import {
+  isAuthzError,
+  objectOwnershipClause,
+  ownerClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import PhotoAlbum from "@/models/PhotoAlbum";
 import StorageObject from "@/models/StorageObject";
@@ -33,12 +39,13 @@ function shareUrl(token: string) {
 /** GET — return the current active share link for this album (owner only). */
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
+    ownerClause(ctx);
     const { id } = await params;
     await dbConnect();
 
     const album = await PhotoAlbum.findOne(
-      albumIdentifierFilter(session.user.id, id),
+      albumIdentifierFilter(ctx.userId, id),
     ).lean();
     if (!album) {
       return NextResponse.json({ error: "Album not found" }, { status: 404 });
@@ -46,7 +53,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const link = await AlbumShareLink.findOne({
       albumId: album._id,
-      createdBy: session.user.id,
+      createdBy: ctx.userId,
       isRevoked: false,
     }).lean();
 
@@ -67,6 +74,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       },
     });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -85,8 +95,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
  */
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    ownerClause(ctx);
+    const userId = ctx.userId;
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
 
@@ -116,7 +127,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const albumObjectIds = new Set((album.objectIds ?? []).map(String));
     const ownedObjects = await StorageObject.find({
       _id: { $in: requestedIds.map((v) => new Types.ObjectId(v)) },
-      userId,
+      ...objectOwnershipClause(ctx),
       deletedAt: { $exists: false },
     })
       .select("_id isEncrypted")
@@ -209,6 +220,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       { status: 201 },
     );
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -219,8 +233,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 /** PATCH — update the active share without rotating token/key. */
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    ownerClause(ctx);
+    const userId = ctx.userId;
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
 
@@ -269,7 +284,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       const existingItemIds = new Set(link.items.map((item) => String(item.objectId)));
       const ownedObjects = await StorageObject.find({
         _id: { $in: requestedIds.map((v) => new Types.ObjectId(v)) },
-        userId,
+        ...objectOwnershipClause(ctx),
         deletedAt: { $exists: false },
       })
         .select("_id isEncrypted")
@@ -322,6 +337,9 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       },
     });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -332,12 +350,13 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 /** DELETE — revoke the album's active public link (owner only). */
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
+    ownerClause(ctx);
     const { id } = await params;
     await dbConnect();
 
     const album = await PhotoAlbum.findOne(
-      albumIdentifierFilter(session.user.id, id),
+      albumIdentifierFilter(ctx.userId, id),
     ).lean();
     if (!album) {
       return NextResponse.json({ error: "Album not found" }, { status: 404 });
@@ -345,21 +364,24 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     const links = await AlbumShareLink.find({
       albumId: album._id,
-      createdBy: session.user.id,
+      createdBy: ctx.userId,
       isRevoked: false,
     })
       .select("items")
       .lean();
     for (const link of links) {
-      await deleteAlbumShareThumbnails(session.user.id, link.items);
+      await deleteAlbumShareThumbnails(ctx.userId, link.items);
     }
     await AlbumShareLink.updateMany(
-      { albumId: album._id, createdBy: session.user.id, isRevoked: false },
+      { albumId: album._id, createdBy: ctx.userId, isRevoked: false },
       { $set: { isRevoked: true } },
     );
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

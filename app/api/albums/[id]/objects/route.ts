@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
 
-import { requireAuth } from "@/lib/auth/session";
+import {
+  type AccessContext,
+  isAuthzError,
+  objectOwnershipClause,
+  ownerClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import PhotoAlbum from "@/models/PhotoAlbum";
 import StorageObject from "@/models/StorageObject";
@@ -36,11 +43,11 @@ function normalizeObjectIds(value: unknown): string[] {
 }
 
 // Albums hold photos AND videos; documents/audio/etc. stay excluded.
-async function verifiedMediaIds(userId: string, objectIds: string[]) {
+async function verifiedMediaIds(ctx: AccessContext, objectIds: string[]) {
   if (objectIds.length === 0) return [];
   const objects = await StorageObject.find({
     _id: { $in: objectIds.map((id) => new Types.ObjectId(id)) },
-    userId,
+    ...objectOwnershipClause(ctx),
     mediaCategory: { $in: ["image", "video"] },
     deletedAt: { $exists: false },
     isSidecar: { $ne: true },
@@ -64,7 +71,8 @@ function serializeAlbum(album: AlbumDoc) {
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
+    ownerClause(ctx);
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
     const requestedIds = normalizeObjectIds(body.objectIds);
@@ -81,7 +89,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     await dbConnect();
 
-    const verifiedIds = await verifiedMediaIds(session.user.id, requestedIds);
+    const verifiedIds = await verifiedMediaIds(ctx, requestedIds);
     const verifiedSet = new Set(verifiedIds.map(String));
     // Ids that were filtered out (deleted, foreign, sidecar, non-media).
     // Clients use this to settle those memberships instead of retrying.
@@ -92,7 +100,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     const album = await PhotoAlbum.findOneAndUpdate(
-      albumIdentifierFilter(session.user.id, id),
+      albumIdentifierFilter(ctx.userId, id),
       {
         $addToSet: { objectIds: { $each: verifiedIds } },
         $setOnInsert: { coverObjectId: verifiedIds[0] },
@@ -115,6 +123,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       invalidIds,
     });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -124,7 +135,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
+    ownerClause(ctx);
     const { id } = await params;
     const body = await request.json().catch(() => ({}));
     const idsToRemove = normalizeObjectIds(body.objectIds);
@@ -136,7 +148,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     await dbConnect();
 
     const album = await PhotoAlbum.findOne(
-      albumIdentifierFilter(session.user.id, id),
+      albumIdentifierFilter(ctx.userId, id),
     );
 
     if (!album) {
@@ -158,7 +170,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const removedObjectIds = idsToRemove.map((value) => new Types.ObjectId(value));
     const affectedLinks = await AlbumShareLink.find({
       albumId: album._id,
-      createdBy: session.user.id,
+      createdBy: ctx.userId,
       "items.objectId": { $in: removedObjectIds },
     })
       .select("items")
@@ -167,11 +179,11 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const removedItems = affectedLinks
       .flatMap((link) => link.items)
       .filter((item) => removedSet.has(String(item.objectId)));
-    await deleteAlbumShareThumbnails(session.user.id, removedItems);
+    await deleteAlbumShareThumbnails(ctx.userId, removedItems);
     await AlbumShareLink.updateMany(
       {
         albumId: album._id,
-        createdBy: session.user.id,
+        createdBy: ctx.userId,
         "items.objectId": { $in: removedObjectIds },
       },
       { $pull: { items: { objectId: { $in: removedObjectIds } } } },
@@ -179,7 +191,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     await AlbumShareLink.updateMany(
       {
         albumId: album._id,
-        createdBy: session.user.id,
+        createdBy: ctx.userId,
         isRevoked: false,
         items: { $size: 0 },
       },
@@ -188,6 +200,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ album: serializeAlbum(album.toObject()) });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

@@ -3,24 +3,17 @@ import { GlobalSearch } from "@/components/dashboard/GlobalSearch";
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Settings, LogOut, ChevronRight, Menu } from "lucide-react";
 import {
-  LayoutDashboard,
-  FolderOpen,
-  BarChart3,
-  CreditCard,
-  Settings,
-  LogOut,
-  ChevronRight,
-  Menu,
-  Share2,
-  Users,
-  CloudDownload,
-  Image,
-  LifeBuoy,
-  Trash2,
-  Star,
-  Album,
-} from "lucide-react";
+  getSidebarNav,
+  type NavItem,
+  type WorkspaceNav,
+} from "@/lib/navigation/sidebar-nav";
+import {
+  WorkspaceSwitcher,
+  type SwitcherOrg,
+} from "@/components/dashboard/WorkspaceSwitcher";
+import { NotificationBell } from "@/components/dashboard/NotificationBell";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -49,39 +42,26 @@ interface DashboardShellProps {
     email: string;
     image?: string;
   };
+  /** Active workspace (personal or organization) driving the sidebar + scope. */
+  workspace: WorkspaceNav;
+  /** Organizations the user belongs to, for the workspace switcher. */
+  orgs: SwitcherOrg[];
+  /** Whether the organizations feature is enabled (gates the switcher). */
+  orgsEnabled: boolean;
 }
 
-const sidebarItems = [
-  { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
-  { label: "My Files", href: "/dashboard/files", icon: FolderOpen },
-  { label: "Photos", href: "/dashboard/photos", icon: Image },
-  { label: "Albums", href: "/dashboard/albums", icon: Album },
-  {
-    label: "Migrations (Beta)",
-    href: "/dashboard/migrations",
-    icon: CloudDownload,
-  },
-  { label: "Shared", href: "/dashboard/shared", icon: Share2 },
-  { label: "Shared with me", href: "/dashboard/shared-with-me", icon: Users },
-  { label: "Starred", href: "/dashboard/starred", icon: Star },
-  { label: "Bin", href: "/dashboard/bin", icon: Trash2 },
-  { label: "Usage", href: "/dashboard/usage", icon: BarChart3 },
-  // { label: "API Keys", href: "/dashboard/keys", icon: Key },
-  { label: "Billing", href: "/dashboard/billing", icon: CreditCard },
-  { label: "Support", href: "/dashboard/support", icon: LifeBuoy },
-  { label: "Settings", href: "/dashboard/settings", icon: Settings },
-];
-
 function SidebarNav({
+  items,
   pathname,
   onNavigate,
 }: {
+  items: NavItem[];
   pathname: string;
   onNavigate?: () => void;
 }) {
   return (
     <nav className="flex flex-col gap-1 px-3">
-      {sidebarItems.map((item) => {
+      {items.map((item) => {
         const isActive =
           pathname === item.href ||
           (item.href !== "/dashboard" && pathname.startsWith(`${item.href}/`));
@@ -116,8 +96,17 @@ function SidebarNav({
   );
 }
 
-export function DashboardShell({ children, user }: DashboardShellProps) {
+export function DashboardShell({
+  children,
+  user,
+  workspace,
+  orgs,
+  orgsEnabled,
+}: DashboardShellProps) {
   const pathname = usePathname();
+  const navItems = getSidebarNav(workspace);
+  const activeOrgId =
+    workspace.kind === "organization" ? workspace.orgId ?? null : null;
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [signOutOpen, setSignOutOpen] = useState(false);
@@ -167,9 +156,16 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
           </Link>
         </div>
 
+        {/* Workspace switcher */}
+        {orgsEnabled && (
+          <div className="px-3 pt-3">
+            <WorkspaceSwitcher orgs={orgs} activeOrgId={activeOrgId} />
+          </div>
+        )}
+
         {/* Nav */}
         <div className="flex-1 py-4 overflow-y-auto">
-          <SidebarNav pathname={pathname} />
+          <SidebarNav items={navItems} pathname={pathname} />
         </div>
 
         {/* User section at bottom */}
@@ -226,8 +222,17 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
                       Storage
                     </span>
                   </div>
+                  {orgsEnabled && (
+                    <div className="px-3 pt-3">
+                      <WorkspaceSwitcher
+                        orgs={orgs}
+                        activeOrgId={activeOrgId}
+                      />
+                    </div>
+                  )}
                   <div className="py-4">
                     <SidebarNav
+                      items={navItems}
                       pathname={pathname}
                       onNavigate={() => setMobileOpen(false)}
                     />
@@ -249,9 +254,10 @@ export function DashboardShell({ children, user }: DashboardShellProps) {
             </div>
             
 
-            {/* User dropdown */}
-            <div className="ml-auto flex items-center gap-2 shrink-0">
+            {/* Notifications + theme + user dropdown */}
+            <div className="ml-auto flex items-center gap-1 shrink-0">
               <MinimalThemeSelector />
+              {mounted && <NotificationBell />}
               {mounted ? (
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>

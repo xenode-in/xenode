@@ -8,6 +8,7 @@ export interface EncryptedFileResult {
   ciphertext: Blob;
   encryptedDEK: string;
   iv: string;
+  spaceKeyWrapIv?: string;
 }
 
 export async function encryptFile(
@@ -41,6 +42,86 @@ export async function encryptFile(
     ciphertext: new Blob([ciphertext], { type: "application/octet-stream" }),
     encryptedDEK: toB64(wrappedDEK),
     iv: toB64(iv),
+  };
+}
+
+async function importRawSpaceKey(
+  rawSpaceKey: Uint8Array,
+  usages: KeyUsage[],
+): Promise<CryptoKey> {
+  return crypto.subtle.importKey(
+    "raw",
+    rawSpaceKey.buffer.slice(
+      rawSpaceKey.byteOffset,
+      rawSpaceKey.byteOffset + rawSpaceKey.byteLength,
+    ) as ArrayBuffer,
+    { name: "AES-GCM", length: 256 },
+    false,
+    usages,
+  );
+}
+
+async function wrapFileKeyWithSpaceKey(
+  fileKey: CryptoKey,
+  rawSpaceKey: Uint8Array,
+): Promise<{ encryptedDEK: string; spaceKeyWrapIv: string }> {
+  const spaceKey = await importRawSpaceKey(rawSpaceKey, ["wrapKey"]);
+  const spaceKeyWrapIv = crypto.getRandomValues(new Uint8Array(12));
+  const wrappedFileKey = await crypto.subtle.wrapKey(
+    "raw",
+    fileKey,
+    spaceKey,
+    { name: "AES-GCM", iv: spaceKeyWrapIv },
+  );
+  return {
+    encryptedDEK: toB64(wrappedFileKey),
+    spaceKeyWrapIv: toB64(spaceKeyWrapIv),
+  };
+}
+
+export async function unwrapDEKWithSpaceKey(
+  encryptedDEK: string,
+  spaceKeyWrapIv: string,
+  rawSpaceKey: Uint8Array,
+): Promise<CryptoKey> {
+  const spaceKey = await importRawSpaceKey(rawSpaceKey, ["unwrapKey"]);
+  return crypto.subtle.unwrapKey(
+    "raw",
+    fromB64(encryptedDEK),
+    spaceKey,
+    { name: "AES-GCM", iv: fromB64(spaceKeyWrapIv) },
+    { name: "AES-GCM", length: 256 },
+    true,
+    ["decrypt"],
+  );
+}
+
+export async function encryptFileForSpace(
+  file: File,
+  rawSpaceKey: Uint8Array,
+): Promise<EncryptedFileResult> {
+  const dek = await crypto.subtle.generateKey(
+    { name: "AES-GCM", length: 256 },
+    true,
+    ["encrypt", "decrypt"],
+  );
+
+  const iv = crypto.getRandomValues(
+    new Uint8Array(12),
+  ) as Uint8Array<ArrayBuffer>;
+  const plaintext = await file.arrayBuffer();
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv },
+    dek,
+    plaintext,
+  );
+  const wrapped = await wrapFileKeyWithSpaceKey(dek, rawSpaceKey);
+
+  return {
+    ciphertext: new Blob([ciphertext], { type: "application/octet-stream" }),
+    encryptedDEK: wrapped.encryptedDEK,
+    iv: toB64(iv),
+    spaceKeyWrapIv: wrapped.spaceKeyWrapIv,
   };
 }
 
@@ -145,6 +226,7 @@ export async function decryptFileChunkedCombined(
 export interface EncryptedFileChunkedResult {
   ciphertext: Blob;
   encryptedDEK: string;
+  spaceKeyWrapIv?: string;
   chunkSize: number;
   chunkCount: number;
   chunkIvs: string[];
@@ -203,6 +285,58 @@ export async function encryptFileChunked(
   return {
     ciphertext: new Blob(encryptedChunks, { type: "application/octet-stream" }),
     encryptedDEK: toB64(wrappedDEK),
+    chunkSize,
+    chunkCount,
+    chunkIvs,
+  };
+}
+
+export async function encryptFileChunkedForSpace(
+  file: File,
+  rawSpaceKey: Uint8Array,
+  chunkSize = 1_048_576,
+): Promise<EncryptedFileChunkedResult> {
+  const dek = await crypto.subtle.generateKey(
+    { name: "AES-GCM", length: 256 },
+    true,
+    ["encrypt", "decrypt"],
+  );
+
+  const plaintext = await file.arrayBuffer();
+  const chunkCount = Math.ceil(plaintext.byteLength / chunkSize);
+  const chunkIvs: string[] = new Array(chunkCount);
+  const encryptedChunks: ArrayBuffer[] = new Array(chunkCount);
+  const concurrency = 4;
+  let currentIndex = 0;
+
+  const encryptWorker = async () => {
+    while (currentIndex < chunkCount) {
+      const i = currentIndex++;
+      const start = i * chunkSize;
+      const end = Math.min(start + chunkSize, plaintext.byteLength);
+      const slice = plaintext.slice(start, end);
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const cipherChunk = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv },
+        dek,
+        slice,
+      );
+      chunkIvs[i] = toB64(iv);
+      encryptedChunks[i] = cipherChunk;
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, chunkCount) }, () =>
+      encryptWorker(),
+    ),
+  );
+  const wrapped = await wrapFileKeyWithSpaceKey(dek, rawSpaceKey);
+
+  return {
+    ciphertext: new Blob(encryptedChunks, { type: "application/octet-stream" }),
+    encryptedDEK: wrapped.encryptedDEK,
+    spaceKeyWrapIv: wrapped.spaceKeyWrapIv,
     chunkSize,
     chunkCount,
     chunkIvs,

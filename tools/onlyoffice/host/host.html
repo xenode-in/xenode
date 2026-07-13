@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Xenode Sheets v2 host</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #ffffff;
+        color: #0f172a;
+        font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      }
+      #placeholder {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        padding: 24px;
+        text-align: center;
+      }
+      #placeholder .card {
+        max-width: 460px;
+      }
+      #placeholder h1 {
+        font-size: 15px;
+        margin: 0 0 8px;
+      }
+      #placeholder p {
+        margin: 0;
+        color: #64748b;
+        font-size: 13px;
+      }
+      #editor {
+        height: 100%;
+        width: 100%;
+      }
+      #oo-mount,
+      #editor > iframe[name="frameEditor"] {
+        display: block;
+        width: 100% !important;
+        height: 100% !important;
+        border: 0;
+      }
+      @media (prefers-color-scheme: dark) {
+        html,
+        body {
+          background: #0b1120;
+          color: #e2e8f0;
+        }
+        #placeholder p {
+          color: #94a3b8;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="editor"><div id="oo-mount"></div></div>
+    <div id="placeholder">
+      <div class="card">
+        <h1>Xenode Sheets v2 editor host</h1>
+        <p id="placeholder-text">
+          Waiting for the parent to hand over the decrypted workbook…
+        </p>
+      </div>
+    </div>
+    <!-- Frame-side bridge. The ONLYOFFICE api.js is loaded lazily by the
+         adapter only once an Editor.bin arrives, so no editor code runs before
+         the parent has authenticated the session. -->
+    <script src="./xenode-frame.js?rev=save-ack-1"></script>
+  </body>
+</html>

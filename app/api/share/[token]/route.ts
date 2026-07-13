@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  isAuthzError,
+  ownerClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import ShareLink from "@/models/ShareLink";
 
@@ -7,6 +12,15 @@ export const dynamic = "force-dynamic";
 
 interface Params {
   params: Promise<{ token: string }>;
+}
+
+interface SharedBundleItem {
+  objectId?: SharedObjectMeta | null;
+  shareEncryptedDEK?: string;
+  shareKeyIv?: string;
+  shareEncryptedName?: string;
+  shareEncryptedContentType?: string;
+  shareEncryptedThumbnail?: string;
 }
 
 interface SharedObjectMeta {
@@ -27,6 +41,7 @@ export async function GET(_: NextRequest, { params }: Params) {
 
   const link = await ShareLink.findOne({ token: resolvedParams.token, isRevoked: false })
     .populate("objectId", "key size contentType isEncrypted encryptedName thumbnail mediaCategory")
+    .populate("bundleItems.objectId", "key size contentType isEncrypted encryptedName thumbnail mediaCategory")
     .lean();
 
   if (!link) return NextResponse.json({ error: "Link not found or revoked" }, { status: 404 });
@@ -34,9 +49,58 @@ export async function GET(_: NextRequest, { params }: Params) {
   if (link.maxDownloads && link.downloadCount >= link.maxDownloads) return NextResponse.json({ error: "Download limit reached" }, { status: 410 });
 
   const obj = link.objectId as SharedObjectMeta | null;
+  const bundleItems = (link.bundleItems || []) as SharedBundleItem[];
+  const isBundle = !!link.isBundle && bundleItems.length > 0;
 
   const response = {
     id: obj?._id,
+    isBundle,
+    bundleName: isBundle
+      ? link.isPasswordProtected
+        ? "Locked Folder"
+        : link.bundleName || `${bundleItems.length} shared files`
+      : undefined,
+    items: isBundle
+      ? bundleItems
+          .map((item) => {
+            const itemObj = item.objectId;
+            if (!itemObj) return null;
+            return {
+              id: itemObj._id,
+              name: link.isPasswordProtected
+                ? "Locked File"
+                : item.shareEncryptedName ||
+                  itemObj.encryptedName ||
+                  itemObj.key?.split("/").pop(),
+              encryptedName: link.isPasswordProtected
+                ? undefined
+                : item.shareEncryptedName || itemObj.encryptedName,
+              shareEncryptedName: link.isPasswordProtected
+                ? undefined
+                : item.shareEncryptedName,
+              shareEncryptedContentType: link.isPasswordProtected
+                ? undefined
+                : item.shareEncryptedContentType,
+              shareEncryptedThumbnail: link.isPasswordProtected
+                ? undefined
+                : item.shareEncryptedThumbnail,
+              size: itemObj.size,
+              contentType: link.isPasswordProtected
+                ? "application/octet-stream"
+                : item.shareEncryptedContentType || itemObj.contentType,
+              mediaCategory: itemObj.mediaCategory,
+              isEncrypted: itemObj.isEncrypted,
+              shareEncryptedDEK: link.isPasswordProtected
+                ? undefined
+                : item.shareEncryptedDEK,
+              shareKeyIv: link.isPasswordProtected ? undefined : item.shareKeyIv,
+              thumbnail: link.isPasswordProtected
+                ? undefined
+                : item.shareEncryptedThumbnail || itemObj.thumbnail,
+            };
+          })
+          .filter(Boolean)
+      : undefined,
     name: link.isPasswordProtected ? "Locked File" : (link.shareEncryptedName || obj?.encryptedName || obj?.key?.split("/").pop()),
     encryptedName: link.isPasswordProtected ? undefined : (link.shareEncryptedName || obj?.encryptedName),
     shareEncryptedName: link.isPasswordProtected ? undefined : link.shareEncryptedName,
@@ -62,11 +126,12 @@ export async function GET(_: NextRequest, { params }: Params) {
 export async function DELETE(request: NextRequest, { params }: Params) {
   try {
     const resolvedParams = await params;
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
+    ownerClause(ctx);
     await dbConnect();
 
     const link = await ShareLink.findOneAndUpdate(
-      { token: resolvedParams.token, createdBy: session.user.id },
+      { token: resolvedParams.token, createdBy: ctx.userId },
       { isRevoked: true },
       { new: true },
     );
@@ -75,6 +140,9 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized")
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -84,12 +152,25 @@ export async function DELETE(request: NextRequest, { params }: Params) {
 export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     const resolvedParams = await params;
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
+    ownerClause(ctx);
     const body = await request.json();
     await dbConnect();
 
     const update: Record<string, unknown> = {};
     const unset: Record<string, ""> = {};
+    const existingLink = await ShareLink.findOne({
+      token: resolvedParams.token,
+      createdBy: ctx.userId,
+      isRevoked: false,
+    });
+
+    if (!existingLink) {
+      return NextResponse.json(
+        { error: "Not found or not authorised" },
+        { status: 404 },
+      );
+    }
 
     if ("expiresAt" in body) {
       if (body.expiresAt) update.expiresAt = new Date(body.expiresAt);
@@ -112,6 +193,34 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         : [];
     }
 
+    if ("bundleName" in body && existingLink.isBundle) {
+      const nextName = String(body.bundleName || "").trim();
+      if (nextName) update.bundleName = nextName.slice(0, 120);
+    }
+
+    if ("bundleItemIds" in body && existingLink.isBundle) {
+      if (!Array.isArray(body.bundleItemIds)) {
+        return NextResponse.json(
+          { error: "bundleItemIds must be an array" },
+          { status: 400 },
+        );
+      }
+      const allowedIds = new Set(
+        body.bundleItemIds.map((id: unknown) => String(id)),
+      );
+      const nextItems = (existingLink.bundleItems || []).filter((item) =>
+        allowedIds.has(item.objectId.toString()),
+      );
+      if (nextItems.length === 0) {
+        return NextResponse.json(
+          { error: "A bundle share must include at least one file" },
+          { status: 400 },
+        );
+      }
+      update.bundleItems = nextItems;
+      update.objectId = nextItems[0].objectId;
+    }
+
     if (body.accessType === "view" || body.accessType === "download") {
       update.accessType = body.accessType;
     }
@@ -127,11 +236,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     }
 
     const link = await ShareLink.findOneAndUpdate(
-      {
-        token: resolvedParams.token,
-        createdBy: session.user.id,
-        isRevoked: false,
-      },
+      { _id: existingLink._id },
       {
         ...(Object.keys(update).length > 0 ? { $set: update } : {}),
         ...(Object.keys(unset).length > 0 ? { $unset: unset } : {}),
@@ -148,6 +253,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
     return NextResponse.json({ shareLink: link });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized")
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

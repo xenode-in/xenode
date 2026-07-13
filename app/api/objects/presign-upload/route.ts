@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { randomBytes } from "crypto";
@@ -7,14 +12,15 @@ import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
+import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 import { recordUploadSession, attachToUploadSession } from "@/lib/uploads/session";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    const userId = ctx.userId;
     await enforceStorageAccess(userId);
 
     const S3_ENDPOINT =
@@ -43,7 +49,7 @@ export async function POST(request: NextRequest) {
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     });
 
     if (!bucket) {
@@ -88,7 +94,19 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const basePrefix = prefix || `users/${userId}/`;
+    const allowedPrefix =
+      ctx.scope.type === "organization"
+        ? orgObjectKeyPrefix(ctx.scope.orgId)
+        : ctx.scope.type === "team"
+          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+        : `users/${userId}/`;
+    const basePrefix = typeof prefix === "string" && prefix ? prefix : allowedPrefix;
+    if (!basePrefix.startsWith(allowedPrefix)) {
+      return NextResponse.json(
+        { error: "Access denied to this folder" },
+        { status: 403 },
+      );
+    }
 
     // Fallback to random hex if no filename is provided
     let safeFileName = fileName || randomBytes(16).toString("hex");
@@ -147,6 +165,9 @@ export async function POST(request: NextRequest) {
       sessionId,
     });
   } catch (error) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.name === "SubscriptionRequired") {
       return NextResponse.json(
         { error: "Active subscription required" },

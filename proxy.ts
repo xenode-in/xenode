@@ -35,6 +35,18 @@ const DOCS_HOSTNAMES = [
   "docs.localhost:3000",
 ];
 
+const SHEETS_HOSTNAMES = [
+  "sheets.xenode.in",
+  "sheets.localhost",
+  "sheets.localhost:3000",
+];
+
+const SHEETS_V2_HOSTNAMES = [
+  "sheets-v2.xenode.in",
+  "sheets-v2.localhost",
+  "sheets-v2.localhost:3000",
+];
+
 /**
  * ── Defense-in-depth auth gate (main domain only) ────────────────────────────
  * A cheap, optimistic credential-presence check (no DB call) that bounces
@@ -47,7 +59,7 @@ const DOCS_HOSTNAMES = [
  * surfaces (/api/auth, /api/admin, /api/cron, payment webhooks) are NOT gated
  * here; they enforce their own (public-token / non-session) auth.
  */
-const PROTECTED_PAGE_PREFIXES = ["/dashboard", "/sync"];
+const PROTECTED_PAGE_PREFIXES = ["/dashboard", "/sync", "/sheets", "/sheets-v2"];
 const PROTECTED_API_PREFIXES = [
   "/api/objects",
   "/api/buckets",
@@ -137,6 +149,49 @@ export function proxy(req: NextRequest) {
     return NextResponse.rewrite(rewriteUrl);
   }
 
+  const isSheetsHost = SHEETS_HOSTNAMES.some(
+    (h) => hostname === h || hostname.startsWith(h),
+  );
+
+  // Sheets subdomain: shared APIs pass through; UI is rooted at /sheets.
+  if (isSheetsHost) {
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.next();
+    }
+    if (pathname.startsWith("/sheets")) {
+      const gated = authGate(req);
+      return gated ?? NextResponse.next();
+    }
+    const gated = authGate(req);
+    if (gated) return gated;
+    const rewriteUrl = req.nextUrl.clone();
+    rewriteUrl.pathname = "/sheets" + (pathname === "/" ? "" : pathname);
+    return NextResponse.rewrite(rewriteUrl);
+  }
+
+  const isSheetsV2Host = SHEETS_V2_HOSTNAMES.some(
+    (h) => hostname === h || hostname.startsWith(h),
+  );
+
+  // Sheets v2 subdomain: the current /sheets editor is never rewritten here.
+  if (isSheetsV2Host) {
+    if (
+      pathname.startsWith("/api/") ||
+      pathname.startsWith("/internal-editors/")
+    ) {
+      return NextResponse.next();
+    }
+    if (pathname.startsWith("/sheets-v2")) {
+      const gated = authGate(req);
+      return gated ?? NextResponse.next();
+    }
+    const gated = authGate(req);
+    if (gated) return gated;
+    const rewriteUrl = req.nextUrl.clone();
+    rewriteUrl.pathname =
+      "/sheets-v2" + (pathname === "/" ? "" : pathname);
+    return NextResponse.rewrite(rewriteUrl);
+  }
   // ── Main domain: block direct /admin access ──────────────────────────────
   if (pathname.startsWith("/admin")) {
     const url = req.nextUrl.clone();

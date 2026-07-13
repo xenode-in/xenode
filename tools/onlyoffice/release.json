@@ -1,0 +1,68 @@
+{
+  "release": "9.4.0",
+  "componentTag": "v9.4.0.131",
+  "artifactVersion": "9.4.0.131-xenode.1",
+  "repositories": {
+    "sdkjs": {
+      "url": "https://github.com/ONLYOFFICE/sdkjs.git",
+      "tag": "v9.4.0.131",
+      "commit": "0cd3e72a8c88c512666157bb452a4ba7b4213617"
+    },
+    "web-apps": {
+      "url": "https://github.com/ONLYOFFICE/web-apps.git",
+      "tag": "v9.4.0.131",
+      "commit": "1993a6d89731af0fcb5129ebf0ee380076fea5a9"
+    },
+    "core": {
+      "url": "https://github.com/ONLYOFFICE/core.git",
+      "tag": "v9.4.0.131",
+      "commit": "55e5f973b036661ec8cae377f0744772cb64232a"
+    },
+    "core-fonts": {
+      "url": "https://github.com/ONLYOFFICE/core-fonts.git",
+      "tag": "v9.4.0.131",
+      "commit": "7030c6681fb5bbed560675cb42422f91df15d5c9"
+    },
+    "build_tools": {
+      "url": "https://github.com/ONLYOFFICE/build_tools.git",
+      "tag": "v9.4.0.131",
+      "commit": "cf4cac0846d03e2e00a6fec5d1ecd4e9463086d5"
+    },
+    "server": {
+      "url": "https://github.com/ONLYOFFICE/server.git",
+      "tag": "v9.4.0.131",
+      "commit": "13142e41dfc9e1c337bbe76f0222d4b2ce7efbc8"
+    },
+    "dictionaries": {
+      "url": "https://github.com/ONLYOFFICE/dictionaries.git",
+      "tag": "v9.4.0.131",
+      "commit": "d3223bbb777883db66ac3cd249f71c6ebdc992c7"
+    },
+    "document-server": {
+      "url": "https://github.com/ONLYOFFICE/DocumentServer.git",
+      "tag": "v9.4.0",
+      "commit": "fb73d33c85f59d1a5d2e5a5ed05388ebc2418337"
+    }
+  },
+  "prebuilt": {
+    "note": "Sheets v2 uses CryptPad's PREBUILT server-less editor + x2t (9.3.0 stack). Stock ONLYOFFICE cannot edit without a Document Server; CryptPad's patched sdkjs/web-apps can. Fetched + SHA-512-verified by scripts/onlyoffice/fetch-prebuilt.ps1 into artifact 9.3.0.140-cryptpad.2-xenode.1. Provenance/license review of these binaries required before production (plan Phase 0).",
+    "onlyoffice_editor": {
+      "url": "https://github.com/cryptpad/onlyoffice-editor/releases/download/v9.3.0.140%2B2/onlyoffice-editor.zip",
+      "tag": "v9.3.0.140+2",
+      "sha512": "fedf1af4c3b061f6afadbc231cee7f06d15dd1a5e82db3c5f1e9739b7ddf5b5b38825f3ec3da5e92d7ed6ad1d944c11b9f83875cc5fb67bde4f9c9b1434579d8"
+    },
+    "onlyoffice_x2t_wasm": {
+      "url": "https://github.com/cryptpad/onlyoffice-x2t-wasm/releases/download/v9.3.0%2B0/x2t.zip",
+      "tag": "v9.3.0+0",
+      "sha512": "e82fbf21fcdcff2cbaca5b9a49c3a3d6bc5f5f02ba9b704a7384ceb91e17e979bf7659aaf59f677edf319fde91dd847b419e018f58f38eb1df6ab433a6cd207c"
+    }
+  },
+  "patchSources": {
+    "cryptpad_x2t_wasm": {
+      "url": "https://github.com/cryptpad/onlyoffice-x2t-wasm.git",
+      "note": "x2t->WASM Emscripten harness. tools/onlyoffice/x2t-wasm/{embuild.sh,pre-js.js,wrap-main.cpp,patches/harfbuzz.patch} and tools/onlyoffice/Dockerfile.x2t are transcribed from this commit, then adapted (build_tools v9.3.0.140 -> v9.4.0.131) to build against the vendored 9.4.0.131 core. Not vendored under vendor/onlyoffice, so verify-sources ignores it.",
+      "targetsOnlyofficeVersion": "9.3.0.140",
+      "commit": "96886ff143e05471144c4426fb304b4d794370d2"
+    }
+  }
+}

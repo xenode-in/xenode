@@ -87,6 +87,9 @@ export interface LocalFile {
   createdAt: string;
   updatedAt: string;
   isEncrypted: boolean;
+  wrappedBy?: "user" | "space";
+  spaceKeyVersion?: number;
+  spaceKeyWrapIv?: string;
   tags: string[];
   thumbnail?: string;
   bucketId: string;
@@ -98,15 +101,54 @@ export interface LocalFile {
   // Preview/optimized version
   optimizedKey?: string;
   optimizedEncryptedDEK?: string;
+  optimizedSpaceKeyWrapIv?: string;
   optimizedIV?: string;
   optimizedSize?: number;
   aspectRatio?: number;
+}
+export interface SpreadsheetDraftRecord {
+  id: string;
+  objectId: string;
+  workspaceId: string;
+  ciphertext: Blob;
+  iv: string;
+  baseRevision: number;
+  updatedAt: number;
+  schemaVersion: number;
+}
+export interface SpreadsheetRecentRecord {
+  id: string;
+  userId: string;
+  objectId: string;
+  workspaceId: string;
+  organizationId?: string;
+  lastOpenedAt: number;
+}
+/**
+ * Sheets v2 (ONLYOFFICE) encrypted recovery snapshot. Distinct from
+ * `SpreadsheetDraftRecord` (which holds v1 normalized-JSON drafts): v2 snapshots
+ * are encrypted Editor.bin or exported-workbook bytes, so the two engines never
+ * share a draft schema. `kind` records which of the two the ciphertext holds.
+ */
+export interface SpreadsheetV2DraftRecord {
+  id: string;
+  objectId: string;
+  workspaceId: string;
+  kind: "editor_bin" | "xlsx";
+  ciphertext: Blob;
+  iv: string;
+  baseRevision: number;
+  updatedAt: number;
+  schemaVersion: number;
 }
 export class XenodeDatabase extends Dexie {
   files!: Table<LocalFile, string>;
   metadataCache!: Table<MetadataCache, string>;
   thumbnailCache!: Table<ThumbnailCache, string>;
   uploads!: Table<UploadRecord, string>;
+  spreadsheetDrafts!: Table<SpreadsheetDraftRecord, string>;
+  spreadsheetRecents!: Table<SpreadsheetRecentRecord, string>;
+  spreadsheetV2Drafts!: Table<SpreadsheetV2DraftRecord, string>;
 
   constructor(userId: string) {
     super(`XenodeDB-${userId}`); // scoped per user
@@ -120,6 +162,16 @@ export class XenodeDatabase extends Dexie {
     // only the new table is declared here.
     this.version(2).stores({
       uploads: "id, status, createdAt",
+    });
+    this.version(3).stores({
+      spreadsheetDrafts: "id, objectId, workspaceId, updatedAt",
+      spreadsheetRecents: "id, userId, objectId, workspaceId, organizationId, lastOpenedAt",
+    });
+    // v4 adds the Sheets v2 (ONLYOFFICE) encrypted recovery store, kept
+    // separate from the v1 draft table so neither engine can read the other's
+    // snapshot format.
+    this.version(4).stores({
+      spreadsheetV2Drafts: "id, objectId, workspaceId, updatedAt",
     });
   }
 }

@@ -1,10 +1,22 @@
 import mongoose, { Document, Model, Schema } from "mongoose";
 
+/**
+ * Permission role. `viewer|commenter|editor` are canonical; `view|download` are
+ * legacy values still present on old rows (both read as `viewer`). See
+ * `lib/orgs/shareRoles.ts`.
+ */
+export type DirectShareAccessType =
+  | "viewer"
+  | "commenter"
+  | "editor"
+  | "view"
+  | "download";
+
 export interface IDirectShareRecipient {
   recipientUserId: string;
   recipientEmail: string;
   wrappedShareKey: string;
-  accessType: "view" | "download";
+  accessType: DirectShareAccessType;
   downloadCount: number;
   lastAccessedAt?: Date;
 }
@@ -32,8 +44,9 @@ const DirectShareRecipientSchema = new Schema<IDirectShareRecipient>(
     wrappedShareKey: { type: String, required: true },
     accessType: {
       type: String,
-      enum: ["view", "download"],
-      default: "download",
+      // Canonical roles + retained legacy values for back-compat with old rows.
+      enum: ["viewer", "commenter", "editor", "view", "download"],
+      default: "viewer",
     },
     downloadCount: { type: Number, default: 0 },
     lastAccessedAt: { type: Date, required: false },
@@ -76,6 +89,13 @@ const DirectShareSchema = new Schema<IDirectShare>(
 
 DirectShareSchema.index({ createdBy: 1, createdAt: -1 });
 DirectShareSchema.index({ "recipients.recipientUserId": 1, isRevoked: 1, createdAt: -1 });
+// One ACTIVE share per (object, owner) — re-sharing merges into it (Drive
+// semantics). Revoked shares drop out of the partial index, so a fresh share
+// after a revoke is still allowed.
+DirectShareSchema.index(
+  { objectId: 1, createdBy: 1 },
+  { unique: true, partialFilterExpression: { isRevoked: false } },
+);
 
 const DirectShare: Model<IDirectShare> =
   mongoose.models.DirectShare ||

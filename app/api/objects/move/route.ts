@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  objectOwnershipClause,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
@@ -12,6 +18,7 @@ import {
   publishSyncEvent,
   toSyncObjectSnapshot,
 } from "@/lib/realtime/publish";
+import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -24,10 +31,19 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
+function canManageInScope(ctx: Awaited<ReturnType<typeof requireAccessContext>>): boolean {
+  if (ctx.scope.type === "personal") return true;
+  return (
+    ctx.scope.role === "owner" ||
+    ctx.scope.role === "admin" ||
+    ctx.scope.role === "manager"
+  );
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    const userId = ctx.userId;
     const { bucketId, sourceKeys, destinationPrefix } = await request.json();
 
     if (
@@ -42,19 +58,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!canManageInScope(ctx)) {
+      return NextResponse.json(
+        { error: "Forbidden", code: "workspace_manage_role_required" },
+        { status: 403 },
+      );
+    }
+
     await dbConnect();
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     });
     if (!bucket) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
 
+    const allowedPrefix =
+      ctx.scope.type === "organization"
+        ? orgObjectKeyPrefix(ctx.scope.orgId)
+        : ctx.scope.type === "team"
+          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+        : `users/${userId}/`;
+
     if (
       bucket.userId === "system" &&
-      !destinationPrefix.startsWith(`users/${userId}/`)
+      !destinationPrefix.startsWith(allowedPrefix)
     ) {
       return NextResponse.json(
         { error: "Access denied to destination" },
@@ -125,7 +155,7 @@ export async function POST(request: NextRequest) {
     for (const sourceKey of Array.from(new Set(sourceKeys.map(String)))) {
       if (
         bucket.userId === "system" &&
-        !sourceKey.startsWith(`users/${userId}/`)
+        !sourceKey.startsWith(allowedPrefix)
       ) {
         errors.push({ key: sourceKey, error: "Access denied to source" });
         continue;
@@ -146,7 +176,7 @@ export async function POST(request: NextRequest) {
 
           const objectsToMove = await StorageObject.find({
             bucketId: bucket._id,
-            userId,
+            ...objectOwnershipClause(ctx),
             key: { $regex: `^${escapeRegex(sourceKey)}` },
           }).sort({ key: 1 });
 
@@ -169,7 +199,7 @@ export async function POST(request: NextRequest) {
         } else {
           const object = await StorageObject.findOne({
             bucketId: bucket._id,
-            userId,
+            ...objectOwnershipClause(ctx),
             key: sourceKey,
           });
           if (!object) throw new Error("File not found");
@@ -215,6 +245,9 @@ export async function POST(request: NextRequest) {
       errors,
     });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }

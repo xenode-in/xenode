@@ -28,6 +28,7 @@ import {
   Maximize,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 
 interface MetadataDialogProps {
   item: any;
@@ -45,6 +46,7 @@ export function MetadataDialog({
   const [metadata, setMetadata] = useState<FileMetadata | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const workspace = useOptionalWorkspace();
 
   useEffect(() => {
     if (isOpen && metadataKey && item.id) {
@@ -52,7 +54,11 @@ export function MetadataDialog({
       setError(null);
       setMetadata(null);
 
-      fetch(`/api/objects/${item.id}/metadata`)
+      const request = workspace?.scopedFetch
+        ? workspace.scopedFetch(`/api/objects/${item.id}/metadata`)
+        : fetch(`/api/objects/${item.id}/metadata`);
+
+      request
         .then((res) => {
           if (!res.ok) throw new Error("Failed to fetch metadata");
           return res.json();
@@ -74,7 +80,7 @@ export function MetadataDialog({
         })
         .finally(() => setLoading(false));
     }
-  }, [isOpen, item.id, metadataKey]);
+  }, [isOpen, item.id, metadataKey, workspace]);
 
   const renderSection = (
     title: string,

@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import DirectShare from "@/models/DirectShare";
 import type { IDirectShareRecipient } from "@/models/DirectShare";
+import { normalizeShareRole } from "@/lib/orgs/shareRoles";
 import { User } from "@/models/User";
 
 export const dynamic = "force-dynamic";
@@ -13,12 +18,15 @@ interface RouteParams {
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
     const { id } = await params;
     await dbConnect();
 
     const share = await DirectShare.findOne({ _id: id, isRevoked: false })
-      .populate("objectId", "key size contentType isEncrypted encryptedName thumbnail mediaCategory")
+      .populate(
+        "objectId",
+        "key size contentType isEncrypted encryptedName thumbnail mediaCategory iv revision",
+      )
       .lean();
 
     if (!share) {
@@ -27,7 +35,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     const recipients = (share.recipients || []) as IDirectShareRecipient[];
     const recipient = recipients.find(
-      (item) => item.recipientUserId === session.user.id,
+      (item) => item.recipientUserId === ctx.userId,
     );
 
     if (!recipient) {
@@ -48,11 +56,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       shareEncryptedContentType: share.shareEncryptedContentType,
       shareEncryptedThumbnail: share.shareEncryptedThumbnail,
       recipient,
+      role: normalizeShareRole(recipient.accessType),
       createdAt: share.createdAt,
     });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
     }
 
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -61,12 +70,12 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
     const { id } = await params;
     await dbConnect();
 
     const share = await DirectShare.findOneAndUpdate(
-      { _id: id, createdBy: session.user.id },
+      { _id: id, createdBy: ctx.userId },
       { isRevoked: true },
       { new: true },
     );
@@ -77,8 +86,8 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
     }
 
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -87,7 +96,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
-    const session = await requireAuth(request);
+    const ctx = await requireAccessContext(request);
     const { id } = await params;
     const body = await request.json();
     await dbConnect();
@@ -110,7 +119,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
           recipientUserId: String(recipient.recipientUserId),
           recipientEmail: String(recipient.recipientEmail).toLowerCase(),
           wrappedShareKey: String(recipient.wrappedShareKey),
-          accessType: recipient.accessType === "view" ? "view" : "download",
+          accessType: normalizeShareRole(recipient.accessType),
           downloadCount: Number(recipient.downloadCount || 0),
           lastAccessedAt: recipient.lastAccessedAt
             ? new Date(String(recipient.lastAccessedAt))
@@ -124,10 +133,13 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       update.shareKeyIv = body.shareKeyIv;
       update.shareEncryptedName = body.shareEncryptedName;
       update.shareEncryptedContentType = body.shareEncryptedContentType;
+      if ("shareEncryptedThumbnail" in body) {
+        update.shareEncryptedThumbnail = body.shareEncryptedThumbnail;
+      }
     }
 
     const share = await DirectShare.findOneAndUpdate(
-      { _id: id, createdBy: session.user.id, isRevoked: false },
+      { _id: id, createdBy: ctx.userId, isRevoked: false },
       { $set: update },
       { new: true },
     )
@@ -143,8 +155,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ directShare: share });
   } catch (error: unknown) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
     }
 
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

@@ -1,0 +1,109 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Xenode OO editor lab</title>
+    <style>
+      html, body { margin: 0; height: 100%; font: 12px monospace; }
+      #wrap { display: flex; height: 100%; }
+      #editor { flex: 1; min-width: 0; }
+      #log { width: 380px; overflow: auto; background: #111; color: #0f0; padding: 6px; white-space: pre-wrap; }
+      .err { color: #f66; }
+    </style>
+  </head>
+  <body>
+    <div id="wrap">
+      <div id="editor"><div id="placeholder"></div></div>
+      <div id="log"></div>
+    </div>
+    <script>
+      const logEl = document.getElementById("log");
+      const log = (...a) => {
+        const s = a.map((x) => {
+          try { return typeof x === "string" ? x : JSON.stringify(x); } catch { return String(x); }
+        }).join(" ");
+        logEl.textContent += s.slice(0, 400) + "\n";
+        console.log("[lab]", ...a);
+      };
+      window.onerror = (m, src, l, c, e) => log("window.onerror:", m, (e && e.stack) || "");
+
+      // Capture ALL cross-frame postMessages for protocol observation.
+      window.addEventListener("message", (ev) => {
+        let t = "";
+        try { t = typeof ev.data === "string" ? ev.data.slice(0, 120) : (ev.data && ev.data.type) || JSON.stringify(ev.data).slice(0, 120); } catch {}
+        log("MSG from", (ev.origin || "?"), ":", t);
+      });
+
+      const BASE = new URL("..", location.href).href; // artifact root
+      const binUrl = BASE + "xenode/test-Editor.bin";
+
+      const config = {
+        documentType: "cell",
+        document: {
+          fileType: "xlsx",
+          key: "lab-" + Math.random().toString(16).slice(2),
+          title: "lab.xlsx",
+          url: binUrl,
+          permissions: { edit: true, download: true },
+        },
+        editorConfig: {
+          mode: "edit",
+          lang: "en",
+          user: { id: "u1", name: "Lab" },
+          customization: { comments: false, chat: false, plugins: false },
+        },
+        events: {
+          onAppReady: () => log("EV onAppReady"),
+          onDocumentReady: () => log("EV onDocumentReady ✅"),
+          onError: (e) => log("EV onError", (e && e.data) || e),
+          onWarning: (e) => log("EV onWarning", (e && e.data) || e),
+          onInfo: (e) => log("EV onInfo", (e && e.data) || e),
+        },
+      };
+
+      const participant = {
+        id: "u1",
+        idOriginal: "u1",
+        username: "Lab",
+        indexUser: 0,
+        connectionId: "conn-1",
+        isCloseCoAuthoring: false,
+        view: false,
+      };
+      const mockServer = {
+        getInitialChanges: () => { log("server.getInitialChanges"); return []; },
+        getParticipants: () => ({ list: [participant], index: 0 }),
+        onMessage: (msg) => log("server.onMessage:", (msg && msg.type) || "?"),
+        onAuth: () => log("server.onAuth"),
+        onCorruptionWarning: () => log("server.onCorruptionWarning"),
+      };
+
+      // The wrapper's connectMockServer writes window.APP.getImageURL, so APP
+      // must exist. (In CryptPad this is their global app object.)
+      window.APP = window.APP || {};
+
+      function boot() {
+        log("BASE", BASE);
+        log("bin", binUrl);
+        if (!window.DocsAPI || !window.DocsAPI.DocEditor) { log("DocsAPI not ready, retrying…"); return setTimeout(boot, 200); }
+        try {
+          log("creating DocEditor…");
+          const ed = new window.DocsAPI.DocEditor("placeholder", config);
+          window.__ed = ed;
+          if (typeof ed.connectMockServer === "function") {
+            log("connectMockServer…");
+            ed.connectMockServer(mockServer);
+          } else {
+            log("connectMockServer MISSING", Object.getOwnPropertyNames(Object.getPrototypeOf(ed)).join(","));
+          }
+        } catch (e) { log("boot error:", (e && e.stack) || e); }
+      }
+
+      const s = document.createElement("script");
+      s.src = BASE + "web-apps/apps/api/documents/api.js";
+      s.onload = () => { log("api.js loaded"); boot(); };
+      s.onerror = () => log("api.js FAILED to load");
+      document.head.appendChild(s);
+    </script>
+  </body>
+</html>

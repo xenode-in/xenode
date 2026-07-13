@@ -32,6 +32,7 @@ export async function GET(
       maxVersions: MAX_VERSIONS_PER_OBJECT,
       versions: versions.map((v) => ({
         versionId: v.versionId,
+        isOriginal: !!v.isOriginal,
         size: v.size,
         contentType: v.contentType ?? null,
         isEncrypted: !!v.encryptedDEK || !!v.iv,
@@ -41,6 +42,9 @@ export async function GET(
         // side. These are the same encrypted/wrapped values the main object
         // endpoint returns — never plaintext keys.
         encryptedDEK: v.encryptedDEK ?? null,
+        wrappedBy: v.wrappedBy ?? null,
+        spaceKeyVersion: v.spaceKeyVersion ?? null,
+        spaceKeyWrapIv: v.spaceKeyWrapIv ?? null,
         iv: v.iv ?? null,
         chunkSize: v.chunkSize ?? null,
         chunkCount: v.chunkCount ?? null,

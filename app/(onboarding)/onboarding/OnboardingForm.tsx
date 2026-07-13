@@ -9,6 +9,7 @@ import * as z from "zod";
 import { authClient, useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { generateRecoveryKit } from "@/lib/crypto/recovery";
+import { consumePostAuthRedirect } from "@/lib/postAuthRedirect";
 import type { IPlan } from "@/models/PricingConfig";
 import {
   Moon,
@@ -352,10 +353,11 @@ export function OnboardingForm() {
           throw new Error(err?.error || "Failed to initialise storage quota");
         }
 
-        // 5a. Free plan — straight to dashboard
+        // 5a. Free plan — return to a pending invite if one sent us here,
+        //     otherwise the dashboard.
         if (!isPaidPlan) {
           toast.success("All set! Welcome to Xenode.");
-          router.push("/dashboard");
+          router.push(consumePostAuthRedirect() || "/dashboard");
           router.refresh();
           return;
         }

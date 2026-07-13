@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import { logRequest } from "@/lib/logRequest";
 import { randomBytes } from "crypto";
 
@@ -18,8 +23,8 @@ export async function POST(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const session = await requireAuth(request);
-    userId = session.user.id;
+    const ctx = await requireAccessContext(request);
+    userId = ctx.userId;
     await enforceStorageAccess(userId);
 
     const formData = await request.formData();
@@ -44,7 +49,7 @@ export async function POST(request: NextRequest) {
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     });
 
     if (!bucket) {
@@ -71,6 +76,8 @@ export async function POST(request: NextRequest) {
     const storageObject = await StorageObject.create({
       bucketId: bucket._id,
       userId,
+      ownerScope: "personal",
+      createdBy: userId,
       key: opaqueKey,
       size,
       contentType,
@@ -86,6 +93,11 @@ export async function POST(request: NextRequest) {
     statusCode = 201;
     return NextResponse.json({ object: storageObject }, { status: statusCode });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      statusCode = error.status;
+      errorMessage = error.message;
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       statusCode = 401;
       errorMessage = "Unauthorized";
