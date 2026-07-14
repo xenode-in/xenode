@@ -47,6 +47,14 @@ const SHEETS_V2_HOSTNAMES = [
   "sheets-v2.localhost:3000",
 ];
 
+const FILE_RUNTIME_HOSTNAMES = [
+  "preview.xenode.in",
+  "edit.xenode.in",
+  "docs.xenode.in",
+  "sheets.xenode.in",
+  "sheets-v2.xenode.in",
+];
+
 /**
  * ── Defense-in-depth auth gate (main domain only) ────────────────────────────
  * A cheap, optimistic credential-presence check (no DB call) that bounces
@@ -105,6 +113,11 @@ export function proxy(req: NextRequest) {
   const hostname = req.headers.get("host") || "";
   const { pathname } = req.nextUrl;
 
+  if (FILE_RUNTIME_HOSTNAMES.includes(hostname.split(":")[0])) {
+    return new NextResponse("Not Found", { status: 404 });
+  }
+
+
   const isAdminHost = ADMIN_HOSTNAMES.some(
     (h) => hostname === h || hostname.startsWith(h),
   );
@@ -115,6 +128,21 @@ export function proxy(req: NextRequest) {
     //    /api/admin/login  stays  /api/admin/login
     //    /api/*            stays  /api/*
     if (pathname.startsWith("/api/")) {
+      const protocol = hostname.includes("localhost") ? "http" : "https";
+      const adminOrigin = `${protocol}://${hostname}`;
+      const origin = req.headers.get("origin");
+      const fetchSite = req.headers.get("sec-fetch-site");
+      const isMutation = !["GET", "HEAD", "OPTIONS"].includes(req.method);
+      if (
+        fetchSite === "same-site" ||
+        (origin !== null && origin !== adminOrigin) ||
+        (isMutation && fetchSite !== null && origin !== adminOrigin)
+      ) {
+        return NextResponse.json(
+          { error: "Cross-origin admin API requests are forbidden" },
+          { status: 403 },
+        );
+      }
       return NextResponse.next();
     }
 
@@ -191,6 +219,37 @@ export function proxy(req: NextRequest) {
     rewriteUrl.pathname =
       "/sheets-v2" + (pathname === "/" ? "" : pathname);
     return NextResponse.rewrite(rewriteUrl);
+  }
+
+  if (
+    pathname === "/sync" ||
+    pathname.startsWith("/docs") ||
+    pathname.startsWith("/sheets")
+  ) {
+    const url = req.nextUrl.clone();
+    url.pathname = "/404";
+    return NextResponse.rewrite(url);
+  }
+
+  // Same-site renderer subdomains are not trusted application callers.
+  const appOrigin =
+    process.env.NEXT_PUBLIC_APP_URL ||
+    (process.env.NODE_ENV === "production"
+      ? "https://xenode.in" : "http://localhost:3000");
+  if (pathname.startsWith("/api/")) {
+    const origin = req.headers.get("origin");
+    const fetchSite = req.headers.get("sec-fetch-site");
+    const isMutation = !["GET", "HEAD", "OPTIONS"].includes(req.method);
+    if (
+      (origin !== null && origin !== appOrigin) ||
+      fetchSite === "same-site" ||
+      (isMutation && fetchSite !== null && origin !== appOrigin)
+    ) {
+      return NextResponse.json(
+        { error: "Cross-origin application API requests are forbidden" },
+        { status: 403 },
+      );
+    }
   }
   // ── Main domain: block direct /admin access ──────────────────────────────
   if (pathname.startsWith("/admin")) {

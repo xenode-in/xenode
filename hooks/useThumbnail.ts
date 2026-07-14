@@ -32,14 +32,29 @@
  */
 
 import { useState, useEffect, useRef } from "react";
-import { getDb } from "@/lib/db/local";
 import { useSession } from "@/lib/auth/client";
 import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
+import {
+  getCachedThumbnail,
+  getThumbnailCacheGeneration,
+  onThumbnailMemoryCacheCleared,
+  putCachedThumbnail,
+} from "@/lib/thumbnails/memoryCache";
 
-const MAX_THUMBNAILS = 500;
 const COALESCE_MS = 50;
 const MAX_BATCH_KEYS = 50;
 const MAX_CONCURRENT_DOWNLOADS = 10;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Module-level ephemeral thumbnail cache
+//
+// Decrypted thumbnails are plaintext, so they must never be persisted to disk.
+// The durable Dexie `thumbnailCache` table was removed in the v5 migration
+// (lib/db/local.ts); this in-memory LRU replaces it. Blobs live only for the
+// tab session and are evicted at MAX_THUMBNAILS. Each hook instance mints (and
+// revokes) its own object URL from the shared Blob, so caching the Blob — not a
+// URL — is safe across many mounted tiles.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Module-level concurrency semaphore
@@ -234,6 +249,46 @@ export const __thumbnailBatchTestUtils =
  * @param thumbnail  B2 key string, base64 data URI, or undefined.
  * @param decryptionKey  CryptoKey used to decrypt `enc:` thumbnails (optional).
  */
+let nextCryptoKeyId = 0;
+const cryptoKeyIds = new WeakMap<CryptoKey, number>();
+
+function thumbnailCacheIdentity(
+  thumbnail: string,
+  userId: string | undefined,
+  decryptionKey: CryptoKey | null,
+): string {
+  let keyScope = "unencrypted";
+  if (decryptionKey) {
+    let keyId = cryptoKeyIds.get(decryptionKey);
+    if (!keyId) {
+      keyId = ++nextCryptoKeyId;
+      cryptoKeyIds.set(decryptionKey, keyId);
+    }
+    keyScope = `key-${keyId}`;
+  }
+  return `${userId ?? "public"}\u0000${keyScope}\u0000${thumbnail}`;
+}
+
+async function decodeDownloadedThumbnail(
+  data: ArrayBuffer,
+  decryptionKey: CryptoKey | null,
+): Promise<Blob | null> {
+  const prefix = new TextDecoder().decode(data.slice(0, 8));
+  if (!prefix.startsWith("enc:")) {
+    return new Blob([data], { type: "image/jpeg" });
+  }
+  if (!decryptionKey) return null;
+  const fullText = new TextDecoder().decode(data);
+  const { decryptThumbnail } = await import("@/lib/crypto/fileEncryption");
+  const decryptedDataUrl = await decryptThumbnail(fullText, decryptionKey);
+  const blob = await (await fetch(decryptedDataUrl)).blob();
+  return blob.type.startsWith("image/") ? blob : null;
+}
+export const __thumbnailDecodeTestUtils =
+  process.env.NODE_ENV === "test"
+    ? { decodeDownloadedThumbnail }
+    : undefined;
+
 export function useThumbnail(
   thumbnail: string | undefined,
   decryptionKey: CryptoKey | null = null,
@@ -242,6 +297,9 @@ export function useThumbnail(
   const { data: session } = useSession();
   const workspace = useOptionalWorkspace();
   const userId = session?.user?.id;
+  const thumbnailCacheKey = thumbnail
+    ? thumbnailCacheIdentity(thumbnail, userId, decryptionKey)
+    : null;
 
   // Track the current object URL in a ref so we can revoke it when replaced
   // or on unmount, WITHOUT revoking it during intermediate effect cleanups
@@ -253,6 +311,17 @@ export function useThumbnail(
   const loadedKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
+    return onThumbnailMemoryCacheCleared(() => {
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+      loadedKeyRef.current = null;
+      setUrl(null);
+    });
+  }, []);
+
+  useEffect(() => {
     // When thumbnail is undefined (item scrolled out of view), abort any
     // in-flight work but DON'T clear the displayed URL.  The user may
     // scroll back and the cached thumbnail should still be visible.
@@ -261,14 +330,14 @@ export function useThumbnail(
     }
 
     // Skip re-loading if the current URL already belongs to this key.
-    if (loadedKeyRef.current === thumbnail && objectUrlRef.current) {
+    if (loadedKeyRef.current === thumbnailCacheKey && objectUrlRef.current) {
       return;
     }
 
     // Legacy base64 thumbnails — serve immediately, no fetch needed.
     if (thumbnail.startsWith("data:")) {
       setUrl(thumbnail);
-      loadedKeyRef.current = thumbnail;
+      loadedKeyRef.current = thumbnailCacheKey;
       return;
     }
 
@@ -276,25 +345,21 @@ export function useThumbnail(
     // AbortController cancels the in-flight GET /api/files/ fetch when the
     // tile scrolls out of view or thumbnail prop changes before download completes.
     const abortCtrl = new AbortController();
+    const cacheGeneration = getThumbnailCacheGeneration();
 
     async function loadThumbnail() {
       const isPublicShareThumbnail = thumbnail!.startsWith("shares/");
       if (!userId && !isPublicShareThumbnail) return; // wait for session
 
-      const db = userId ? getDb(userId) : null;
-
       try {
-        // ── 1. Dexie LRU cache ───────────────────────────────────────────
-        const cached = db ? await db.thumbnailCache.get(thumbnail!) : null;
-        if (cached) {
-          db!.thumbnailCache
-            .update(thumbnail!, { lastAccessed: Date.now() })
-            .catch(() => {});
+        // ── 1. In-memory LRU cache (ephemeral — never touches disk) ──────
+        const cachedBlob = getCachedThumbnail(thumbnailCacheKey!);
+        if (cachedBlob) {
           if (!cancelled) {
             // Revoke previous object URL before creating new one
             if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
-            objectUrlRef.current = URL.createObjectURL(cached.blob);
-            loadedKeyRef.current = thumbnail!;
+            objectUrlRef.current = URL.createObjectURL(cachedBlob);
+            loadedKeyRef.current = thumbnailCacheKey;
             setUrl(objectUrlRef.current);
           }
           return;
@@ -327,43 +392,21 @@ export function useThumbnail(
         if (cancelled) return;
 
         // ── 4. Decrypt if the blob starts with "enc:" ────────────────────
-        let blob: Blob;
-        const text = new TextDecoder().decode(data.slice(0, 8)); // peek prefix
-        if (text.startsWith("enc:") && decryptionKey) {
-          const fullText = new TextDecoder().decode(data);
-          const { decryptThumbnail } = await import(
-            "@/lib/crypto/fileEncryption"
-          );
-          const decryptedB64 = await decryptThumbnail(fullText, decryptionKey);
-          const response = await fetch(decryptedB64);
-          blob = await response.blob();
-        } else {
-          blob = new Blob([data], { type: "image/jpeg" });
-        }
+        const blob = await decodeDownloadedThumbnail(data, decryptionKey);
+        if (!blob) return;
 
         if (cancelled) return;
 
-        // ── 5. Store in Dexie with LRU eviction ──────────────────────────
-        if (db) {
-          const count = await db.thumbnailCache.count();
-          if (count >= MAX_THUMBNAILS) {
-            const oldest = await db.thumbnailCache
-              .orderBy("lastAccessed")
-              .first();
-            if (oldest) await db.thumbnailCache.delete(oldest.id);
-          }
-          await db.thumbnailCache.put({
-            id: thumbnail!,
-            blob,
-            lastAccessed: Date.now(),
-          });
+        // ── 5. Store in the in-memory LRU (no disk persistence) ──────────
+        if (!putCachedThumbnail(thumbnailCacheKey!, blob, cacheGeneration)) {
+          return;
         }
 
         if (!cancelled) {
           // Revoke previous object URL before creating new one
           if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
           objectUrlRef.current = URL.createObjectURL(blob);
-          loadedKeyRef.current = thumbnail!;
+          loadedKeyRef.current = thumbnailCacheKey;
           setUrl(objectUrlRef.current);
         }
       } catch (err) {
@@ -385,7 +428,7 @@ export function useThumbnail(
       // stay valid so the already-rendered <img> doesn't flash/break.
       abortCtrl.abort();
     };
-  }, [thumbnail, decryptionKey, userId, workspace]);
+  }, [thumbnail, thumbnailCacheKey, decryptionKey, userId, workspace]);
 
   // Revoke the object URL only on full component unmount.
   useEffect(() => {

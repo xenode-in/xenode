@@ -483,12 +483,6 @@ export default function SharedFilePage() {
       updateKey();
       window.addEventListener("hashchange", updateKey);
 
-      // Pre-register Service Worker for high-performance streaming
-      if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.register("/sw.js").catch((err) => {
-          console.warn("Service Worker registration failed:", err);
-        });
-      }
 
       return () => window.removeEventListener("hashchange", updateKey);
     }

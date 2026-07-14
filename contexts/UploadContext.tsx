@@ -20,13 +20,10 @@ import {
   encryptThumbnail,
 } from "@/lib/crypto/fileEncryption";
 import { failClosedOnEncryptionError } from "@/lib/crypto/encryptionPolicy";
-import { extractMetadata } from "@/lib/metadata/extractor";
 import type { FileMetadata } from "@/lib/metadata/types";
+import { extractFileMetadata } from "@/lib/metadata/metadataClient";
 import { optimizeVideoForStreaming } from "@/lib/video/faststart";
-import { generatePreview } from "@/lib/images/optimizer";
 import { upsertLocalObject } from "@/lib/db/object-cache";
-import { extractSubtitleToVTT } from "@/lib/video/demuxer";
-import { extractAudioTrack } from "@/lib/video/audio-extractor";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 import type { UploadRecord } from "@/lib/db/local";
@@ -227,219 +224,6 @@ const isImageFile = (file: File): boolean =>
 
 const isVideoFile = (file: File): boolean =>
   file.type.startsWith("video/") || VIDEO_EXTENSIONS.has(fileExtension(file));
-
-type ThumbnailResult = { thumbnail: string; aspectRatio: number };
-
-const generateThumbnail = (
-  file: File,
-): Promise<ThumbnailResult | undefined> => {
-  const work = new Promise<
-    { thumbnail: string; aspectRatio: number } | undefined
-  >((resolve) => {
-    // Handle images (existing logic)
-    if (isImageFile(file)) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement("canvas");
-          const aspectRatio = img.width / img.height;
-          let width = img.width;
-          let height = img.height;
-
-          if (width > height) {
-            if (width > THUMB_MAX_SIZE) {
-              height *= THUMB_MAX_SIZE / width;
-              width = THUMB_MAX_SIZE;
-            }
-          } else {
-            if (height > THUMB_MAX_SIZE) {
-              width *= THUMB_MAX_SIZE / height;
-              height = THUMB_MAX_SIZE;
-            }
-          }
-
-          canvas.width = width;
-          canvas.height = height;
-          const ctx = canvas.getContext("2d");
-          if (ctx) {
-            ctx.imageSmoothingEnabled = true;
-            ctx.imageSmoothingQuality = "high";
-            ctx.drawImage(img, 0, 0, width, height);
-            resolve({
-              thumbnail: canvas.toDataURL("image/jpeg", 0.8),
-              aspectRatio,
-            });
-          } else {
-            resolve(undefined);
-          }
-        };
-        img.onerror = () => resolve(undefined);
-        img.src = e.target?.result as string;
-      };
-      reader.onerror = () => resolve(undefined);
-      reader.readAsDataURL(file);
-      return;
-    }
-
-    // Handle videos
-    if (isVideoFile(file)) {
-      const video = document.createElement("video");
-      const url = URL.createObjectURL(file);
-      let settled = false;
-      let drawAttempts = 0;
-
-      const finish = (
-        result: { thumbnail: string; aspectRatio: number } | undefined,
-      ) => {
-        if (settled) return;
-        settled = true;
-        video.removeAttribute("src");
-        video.load();
-        URL.revokeObjectURL(url);
-        resolve(result);
-      };
-
-      const drawFrame = () => {
-        if (settled) return;
-        try {
-          const sourceWidth = video.videoWidth;
-          const sourceHeight = video.videoHeight;
-
-          if (!sourceWidth || !sourceHeight || video.readyState < 2) {
-            drawAttempts += 1;
-            if (drawAttempts < 12) {
-              requestAnimationFrame(drawFrame);
-            } else {
-              finish(undefined);
-            }
-            return;
-          }
-
-          const canvas = document.createElement("canvas");
-          let width = sourceWidth;
-          let height = sourceHeight;
-
-          if (width > height) {
-            if (width > THUMB_MAX_SIZE) {
-              height *= THUMB_MAX_SIZE / width;
-              width = THUMB_MAX_SIZE;
-            }
-          } else if (height > THUMB_MAX_SIZE) {
-            width *= THUMB_MAX_SIZE / height;
-            height = THUMB_MAX_SIZE;
-          }
-
-          canvas.width = Math.max(1, Math.round(width));
-          canvas.height = Math.max(1, Math.round(height));
-          const ctx = canvas.getContext("2d");
-
-          if (!ctx) {
-            finish(undefined);
-            return;
-          }
-
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          finish({
-            thumbnail: canvas.toDataURL("image/jpeg", 0.8),
-            aspectRatio: sourceWidth / sourceHeight,
-          });
-        } catch {
-          drawAttempts += 1;
-          if (drawAttempts < 12) {
-            requestAnimationFrame(drawFrame);
-          } else {
-            finish(undefined);
-          }
-        }
-      };
-
-      const scheduleDraw = () => {
-        if (typeof video.requestVideoFrameCallback === "function") {
-          let frameSettled = false;
-          const fallbackId = setTimeout(() => {
-            if (frameSettled) return;
-            frameSettled = true;
-            requestAnimationFrame(() => drawFrame());
-          }, VIDEO_FRAME_TIMEOUT_MS);
-
-          video.requestVideoFrameCallback(() => {
-            if (frameSettled) return;
-            frameSettled = true;
-            clearTimeout(fallbackId);
-            drawFrame();
-          });
-        } else {
-          requestAnimationFrame(() => drawFrame());
-        }
-      };
-
-      video.muted = true;
-      video.playsInline = true;
-      video.preload = "auto";
-
-      video.addEventListener("loadedmetadata", () => {
-        // Seek to 10% of duration or 1s, whichever is smaller.
-        // iOS can be finicky here, so we fall back to the first decoded frame
-        // if seeking never lands.
-        const duration = Number.isFinite(video.duration) ? video.duration : 0;
-        const seekTo = duration > 0 ? Math.min(1, duration * 0.1) : 0;
-        try {
-          video.currentTime = seekTo;
-        } catch {
-          scheduleDraw();
-        }
-
-        setTimeout(() => {
-          if (!settled) scheduleDraw();
-        }, 1500);
-      });
-
-      video.addEventListener("loadeddata", () => {
-        scheduleDraw();
-      });
-
-      video.addEventListener("canplay", () => {
-        scheduleDraw();
-      });
-
-      video.addEventListener("seeked", () => {
-        scheduleDraw();
-      });
-
-      video.addEventListener("error", () => {
-        finish(undefined); // Resolve undefined, don't reject — thumbnail is optional
-      });
-
-      setTimeout(() => {
-        if (!settled) {
-          console.warn("[Thumbnail] Video thumbnail timed out, skipping");
-          finish(undefined);
-        }
-      }, THUMB_TIMEOUT_MS);
-
-      video.src = url;
-      video.load();
-
-      return;
-    }
-
-    resolve(undefined);
-  });
-
-  let settled = false;
-
-  return Promise.race([
-    work.then((result) => { settled = true; return result; }),
-    new Promise<undefined>((resolve) =>
-      setTimeout(() => {
-        if (settled) return;
-        console.warn("[Thumbnail] Timed out, skipping thumbnail");
-        resolve(undefined);
-      }, THUMB_TIMEOUT_MS),
-    ),
-  ]);
-};
 
 /**
  * Compute chunk size based on file type and size.
@@ -644,16 +428,21 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
    *  1. Vault is unlocked (publicKey in memory), AND
    *  2. User has opted in via User Model preference (session.user.encryptByDefault)
    */
-  function shouldEncryptNow(): boolean {
+  function shouldEncryptNow(): true {
     if (isWorkspaceEncryptedRef.current) {
       if (!workspaceRawSpaceKeyRef.current || !workspaceMetadataKeyRef.current) {
-        throw new Error("Workspace encryption key is not available");
+        throw new Error(
+          "Upload blocked: unlock the workspace encryption keys first.",
+        );
       }
       return true;
     }
-    if (!cryptoPublicKeyRef.current) return false;
-    // @ts-expect-error additionalFields
-    return sessionRef.current?.user?.encryptByDefault || false;
+    if (!cryptoPublicKeyRef.current || !cryptoMetadataKeyRef.current) {
+      throw new Error(
+        "Upload blocked: unlock your Xenode encryption vault first.",
+      );
+    }
+    return true;
   }
 
   function currentMetadataKey(): CryptoKey | null {
@@ -743,65 +532,26 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
       try {
         let uploadFile = task.file;
-        let thumbResultPromise: Promise<ThumbnailResult | undefined> | undefined;
+        let rawThumbnail: string | undefined;
+        let aspectRatio: number | undefined;
+        let thumbnail: string | undefined;
 
-        if (isVideoFile(task.file)) {
-          setTasks((prev) =>
-            prev.map((t) =>
-              t.id === task.id ? { ...t, statusText: "Generating preview…" } : t,
-            ),
-          );
-          thumbResultPromise = generateThumbnail(task.file).catch(
-            () => undefined,
-          );
-        }
-
-        // Step 1: Optimize video for streaming (Faststart)
-        if (isVideoFile(task.file)) {
+        // Relocate the MP4 `moov` atom to the front (pure-JS box rewrite, no
+        // transcode) so the encrypted video streams from its first chunks
+        // instead of forcing a full download. Fail-safe: returns the original
+        // file for non-MP4, fragmented, already-faststart, or malformed input.
+        if (isVideoFile(uploadFile)) {
           setTasks((prev) =>
             prev.map((t) =>
               t.id === task.id
-                ? {
-                    ...t,
-                    status: "uploading",
-                    progress: 0,
-                    statusText: "Optimizing video for streaming…",
-                  }
+                ? { ...t, statusText: "Optimizing video for streaming…" }
                 : t,
             ),
           );
-          const optResult = await optimizeVideoForStreaming(task.file);
-          uploadFile = optResult.file;
-          console.log(`[Upload] ✅ Faststart step done (${task.file.name}, same file: ${uploadFile === task.file})`);
-        }
-
-        setTasks((prev) =>
-          prev.map((t) =>
-            t.id === task.id ? { ...t, statusText: "Generating preview…" } : t,
-          ),
-        );
-        let thumbResult = thumbResultPromise
-          ? await thumbResultPromise
-          : await generateThumbnail(uploadFile).catch(() => undefined);
-        if (!thumbResult?.thumbnail && uploadFile !== task.file && isVideoFile(uploadFile)) {
-          console.warn(
-            `[Upload] Thumbnail generation failed for original video, retrying optimized video (${task.file.name})`,
+          const opt = await optimizeVideoForStreaming(uploadFile).catch(
+            () => null,
           );
-          thumbResult = await generateThumbnail(uploadFile).catch(
-            () => undefined,
-          );
-        }
-        const rawThumbnail = thumbResult?.thumbnail;
-        const aspectRatio = thumbResult?.aspectRatio;
-        console.log(`[Upload] ✅ Thumbnail step done (${task.file.name}, generated: ${!!rawThumbnail}, aspectRatio: ${aspectRatio ?? "n/a"})`);
-        let thumbnail: string | undefined;
-        if (rawThumbnail && currentMetadataKey() && shouldEncryptNow()) {
-          thumbnail = await encryptThumbnail(
-            rawThumbnail,
-            currentMetadataKey()!,
-          ).catch(() => undefined);
-        } else {
-          thumbnail = rawThumbnail;
+          if (opt?.file) uploadFile = opt.file;
         }
 
         const chunkSize = getAdaptiveChunkSize(
@@ -827,16 +577,18 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 t.id === task.id ? { ...t, statusText: "Reading file info…" } : t,
               ),
             );
-            // Extract all metadata sources
-            metadata = await extractMetadata(uploadFile, {
-              thumbnail: rawThumbnail,
-              aspectRatio,
-              chunkSize,
-              chunkCount,
-              chunkIvs: JSON.parse(chunkIvs || "[]"),
-            });
-
-            console.log(`[Upload] ✅ Metadata extracted (${task.file.name}):`, metadata);
+            // Extract metadata + preview off the main thread (hardened worker).
+            const extracted = await extractFileMetadata(uploadFile);
+            metadata = extracted.metadata;
+            rawThumbnail = extracted.rawThumbnail;
+            aspectRatio = extracted.aspectRatio;
+            metadata.thumbnail = rawThumbnail ?? null;
+            if (rawThumbnail && currentMetadataKey()) {
+              thumbnail = await encryptThumbnail(
+                rawThumbnail,
+                currentMetadataKey()!,
+              ).catch(() => undefined);
+            }
 
             /*
             // Handle Subtitle Extraction & Sidecar Upload
@@ -1352,21 +1104,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     );
 
     try {
-      const thumbResult = await generateThumbnail(task.file).catch(
-        () => undefined,
-      );
-      const rawThumbnail = thumbResult?.thumbnail;
-      const aspectRatioFromThumb = thumbResult?.aspectRatio;
-
+      let rawThumbnail: string | undefined;
       let thumbnail: string | undefined;
-      if (rawThumbnail && currentMetadataKey() && shouldEncryptNow()) {
-        thumbnail = await encryptThumbnail(
-          rawThumbnail,
-          currentMetadataKey()!,
-        ).catch(() => undefined);
-      } else {
-        thumbnail = rawThumbnail;
-      }
 
       // Step 1: Get presigned URL from server. Stable filename so a re-presign
       // (URL expiry during a long pause) reuses the same B2 key.
@@ -1400,72 +1139,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       let uploadUrl: string = mainPresign.uploadUrl;
       const mainSessionId: string | undefined = mainPresign.sessionId;
 
-      // Step 2: Generate preview for images
-      let optimizedFile: File | null = null;
-      let optimizedObjectKey: string | undefined;
-      let optimizedUploadUrl: string | undefined;
-      let aspectRatio = aspectRatioFromThumb;
+      let aspectRatio: number | undefined;
 
-      if (
-        task.file.type.startsWith("image/") ||
-        [
-          "heic",
-          "heif",
-          "cr2",
-          "cr3",
-          "nef",
-          "nrw",
-          "arw",
-          "srf",
-          "dng",
-          "raf",
-          "rw2",
-          "orf",
-          "pef",
-        ].includes(task.file.name.split(".").pop()?.toLowerCase() ?? "")
-      ) {
-        try {
-          const { preview, original, aspectRatio: previewAR } = await generatePreview(
-            task.file,
-          );
-          if (previewAR) aspectRatio = previewAR;
-
-          if (preview !== original && preview.size < task.file.size) {
-            optimizedFile = preview;
-
-            const optPresignRes = await scopedFetchRef.current("/api/objects/presign-upload", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                fileName: shouldEncryptNow()
-                  ? crypto.randomUUID()
-                  : optimizedFile.name,
-                fileSize: optimizedFile.size,
-                fileType: shouldEncryptNow()
-                  ? "application/octet-stream"
-                  : optimizedFile.type,
-                bucketId: task.bucketId,
-                prefix: task.prefix,
-                // Attach this blob to the main upload's cleanup session.
-                sessionFileId: objectKey,
-              }),
-            });
-
-            if (optPresignRes.ok) {
-              const optData = await optPresignRes.json();
-              optimizedObjectKey = optData.objectKey;
-              optimizedUploadUrl = optData.uploadUrl;
-            }
-          }
-        } catch (err) {
-          console.warn(
-            "[Preview] Generation failed, skipping optimized version",
-            err,
-          );
-        }
-      }
-
-      // Step 3: Encrypt file if vault is unlocked, otherwise upload plaintext
+      // Step 3: Encrypt the original file bytes before upload
       let uploadBody: File | Blob = task.file;
       let uploadContentType = task.file.type || "application/octet-stream";
       let encryptedDEK: string | undefined;
@@ -1485,10 +1161,18 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             task.file.type.startsWith("video/") ||
             task.file.type.startsWith("audio/");
 
-          // Common Metadata Extraction
-          const metadata = await extractMetadata(task.file, {
-            thumbnail: rawThumbnail,
-          });
+          // Metadata + preview extraction off the main thread (hardened worker).
+          const extracted = await extractFileMetadata(task.file);
+          const metadata = extracted.metadata;
+          rawThumbnail = extracted.rawThumbnail;
+          aspectRatio = extracted.aspectRatio;
+          metadata.thumbnail = rawThumbnail ?? null;
+          if (rawThumbnail && currentMetadataKey()) {
+            thumbnail = await encryptThumbnail(
+              rawThumbnail,
+              currentMetadataKey()!,
+            ).catch(() => undefined);
+          }
 
           if (isStreamable) {
             const enc = isWorkspaceEncryptedRef.current
@@ -1555,30 +1239,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         );
       }
 
-      // Step 5: Encrypt the optimized version (if any) so we can journal + PUT it.
-      let optimizedIV: string | undefined;
-      let optimizedSize: number | undefined;
-      let optimizedEncryptedDEK: string | undefined;
-      let optimizedSpaceKeyWrapIv: string | undefined;
-      let optBody: Blob | undefined;
-
-      if (optimizedFile && optimizedUploadUrl && optimizedObjectKey) {
-        optBody = optimizedFile;
-        optimizedSize = optimizedFile.size;
-        if (shouldEncryptNow()) {
-          const enc = isWorkspaceEncryptedRef.current
-            ? await encryptFileForSpace(
-                optimizedFile,
-                workspaceRawSpaceKeyRef.current!,
-              )
-            : await encryptFile(optimizedFile, cryptoPublicKeyRef.current!);
-          optBody = enc.ciphertext;
-          optimizedIV = enc.iv;
-          optimizedEncryptedDEK = enc.encryptedDEK;
-          optimizedSpaceKeyWrapIv = enc.spaceKeyWrapIv;
-        }
-      }
-
       const userId = sessionRef.current?.user?.id;
       const mainSize =
         uploadBody instanceof Blob ? uploadBody.size : task.file.size;
@@ -1590,9 +1250,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               currentMetadataKey()!,
             )
           : undefined;
-      const optContentType = shouldEncryptNow()
-        ? "application/octet-stream"
-        : optimizedFile?.type || "application/octet-stream";
 
       // Journal for reload-resume (persist bytes only under the cap).
       if (userId) {
@@ -1621,41 +1278,14 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           encryptedMetadata,
           thumbnail: thumbnailKey || thumbnail,
           thumbnailKey,
-          optimizedKey: optimizedObjectKey,
-          optimizedIV,
-          optimizedEncryptedDEK,
-          optimizedSize,
-          optimizedContentType: optimizedFile?.type,
           bytesPersisted: withinCap,
           mainBytes: withinCap ? (uploadBody as Blob) : undefined,
-          optimizedBytes: withinCap ? optBody : undefined,
         }).catch(() => {});
       }
 
       const xhrSet = xhrSetFor(task.id);
       const isCancelled = () => cancelledIds.current.has(task.id);
       const isPausedNow = () => pausedRef.current;
-
-      // Step 5b: Upload optimized version (best-effort — a failure here must not
-      // kill the main upload; we just drop the preview reference).
-      if (optBody && optimizedUploadUrl && optimizedObjectKey) {
-        try {
-          await putWithRetry(optBody, optContentType, {
-            getUrl: () => optimizedUploadUrl!,
-            xhrSet,
-            isCancelled,
-            isPaused: isPausedNow,
-            waitWhilePaused,
-          });
-        } catch (e) {
-          if (isCancelled()) throw e;
-          console.warn("[Upload] optimized upload failed, continuing without it", e);
-          optimizedObjectKey = undefined;
-          optimizedIV = undefined;
-          optimizedEncryptedDEK = undefined;
-          optimizedSize = undefined;
-        }
-      }
 
       // Step 6: Upload the main file (retryable, pause-aware, progress-tracked).
       await putWithRetry(uploadBody as Blob, uploadContentType, {
@@ -1701,12 +1331,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           chunkCount,
           chunkIvs,
           encryptedMetadata,
-          optimizedKey: optimizedObjectKey,
-          optimizedSize,
-          optimizedContentType: optimizedFile?.type,
-          optimizedIV,
-          optimizedEncryptedDEK,
-          optimizedSpaceKeyWrapIv,
           aspectRatio,
         }),
       });

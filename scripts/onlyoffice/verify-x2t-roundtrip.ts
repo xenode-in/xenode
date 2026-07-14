@@ -18,6 +18,7 @@ import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import JSZip from "jszip";
 import {
   adaptRawModule,
   ensureWorkDirs,
@@ -46,9 +47,6 @@ if (!fs.existsSync(X2T_JS)) {
   fail(`x2t not built: ${X2T_JS}. Run npm run onlyoffice:build-x2t first.`);
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const XLSX: any = require("xlsx");
-
 type X2tModule = RawX2tModule & {
   onRuntimeInitialized?: () => void;
   calledRun?: boolean;
@@ -56,14 +54,7 @@ type X2tModule = RawX2tModule & {
 const x2t = require(X2T_JS) as X2tModule;
 
 function makeFixtureXlsx(): Buffer {
-  const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.aoa_to_sheet([
-    ["Item", "Qty", "Price", "Total"],
-    ["Widget", 3, 2.5, 7.5],
-    ["Gadget", 5, 4, 20],
-  ]);
-  XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
-  return XLSX.write(wb, { type: "buffer", bookType: "xlsx" }) as Buffer;
+  return Buffer.from("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", "base64");
 }
 
 function collectFonts(dir: string, out: string[]): void {
@@ -103,31 +94,30 @@ function runRoundTrip(): void {
       console.log(`  → Editor.bin: ${bin.length} bytes`);
       return engine.convert({ input: bin, inputName: "Editor.bin", outputName: "out.xlsx" });
     })
-    .then((outXlsx) => {
+    .then(async (outXlsx) => {
       if (outXlsx[0] !== 0x50 || outXlsx[1] !== 0x4b) {
         fail("round-tripped output is not a ZIP/xlsx package");
       }
       console.log(`  → out.xlsx: ${outXlsx.length} bytes`);
 
-      // Verify every cell value survived (by value, not A1 position — see note).
-      const wb = XLSX.read(Buffer.from(outXlsx), { type: "buffer" });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const cellKeys = Object.keys(ws).filter((k) => !k.startsWith("!"));
-      const values = new Set(cellKeys.map((k) => String(ws[k].v)));
+      const zip = await JSZip.loadAsync(outXlsx);
+      const paths = Object.keys(zip.files).filter((name) =>
+        /^xl\/(worksheets\/.*|sharedStrings)\.xml$/i.test(name),
+      );
+      if (!paths.length) fail("round-tripped workbook has no readable cell XML");
+      const cellXml = (
+        await Promise.all(paths.map((name) => zip.file(name)!.async("text")))
+      ).join("\n");
       for (const expected of EXPECTED_VALUES) {
-        if (!values.has(expected)) {
+        const escaped = expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const pattern = new RegExp(
+          `<(?:t|v)(?:\\s[^>]*)?>\\s*${escaped}\\s*</(?:t|v)>`,
+        );
+        if (!pattern.test(cellXml)) {
           fail(`value "${expected}" not preserved through round trip`);
         }
       }
-      console.log(`  data preserved: all ${values.size} distinct cell values survived`);
-
-      if (ws["A1"] === undefined && ws["A2"] !== undefined) {
-        console.log(
-          "  ⚠ fidelity note: x2t output places cells one row below their <row r> " +
-            "element and omits <dimension>; strict readers (SheetJS) see a +1 row " +
-            "shift. Non-accumulating. Resolve at the round-trip corpus / sdkjs-open gate.",
-        );
-      }
+      console.log(`  data preserved: all ${EXPECTED_VALUES.length} expected values survived`);
       console.log("✓ x2t round-trip xlsx → Editor.bin → xlsx passed (via engine.ts)");
       process.exit(0);
     })

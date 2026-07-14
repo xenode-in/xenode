@@ -9,9 +9,9 @@ describe("browser x2t script URL", () => {
     const resolved = resolveX2tScriptUrl(baseUrl);
     const url = new URL(resolved);
 
-    expect(url.origin).toBe(new URL(baseUrl).origin);
+    expect(url.origin).toBe("https://edit.xenode.in");
     expect(url.pathname).toMatch(
-      /^\/internal-editors\/onlyoffice\/[^/]+\/x2t\/x2t\.js$/,
+      /^\/onlyoffice\/[^/]+\/x2t\/x2t\.js$/,
     );
   });
 });

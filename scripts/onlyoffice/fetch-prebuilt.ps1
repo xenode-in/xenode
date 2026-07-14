@@ -70,9 +70,14 @@ try {
   New-Item -ItemType Directory -Force -Path "$dest\xenode" | Out-Null
   Copy-Item (Join-Path $projectRoot "tools\onlyoffice\host\host.html") "$dest\xenode\host.html" -Force
   Copy-Item (Join-Path $projectRoot "tools\onlyoffice\host\xenode-frame.js") "$dest\xenode\xenode-frame.js" -Force
-  # Dev-only empirical harnesses for the editor protocol (see host/lab*.html).
-  Copy-Item (Join-Path $projectRoot "tools\onlyoffice\host\lab.html") "$dest\xenode\lab.html" -Force
-  Copy-Item (Join-Path $projectRoot "tools\onlyoffice\host\lab-parent.html") "$dest\xenode\lab-parent.html" -Force
+  & node (Join-Path $projectRoot "scripts\onlyoffice\sanitize-client.mjs") $dest
+  if ($LASTEXITCODE -ne 0) {
+    throw "ONLYOFFICE client sanitization failed with exit code $LASTEXITCODE"
+  }
+  & node (Join-Path $projectRoot "scripts\onlyoffice\verify-client.mjs") $dest
+  if ($LASTEXITCODE -ne 0) {
+    throw "ONLYOFFICE client verification failed with exit code $LASTEXITCODE"
+  }
 
   Write-Host "Assembled CryptPad editor artifact: $dest"
 }

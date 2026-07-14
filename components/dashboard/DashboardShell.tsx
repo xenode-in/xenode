@@ -114,12 +114,6 @@ export function DashboardShell({
   useEffect(() => {
     // Defer to avoid cascading render lint error
     const timer = setTimeout(() => setMounted(true), 0);
-    // Pre-register Service Worker for high-performance streaming across the dashboard
-    if (typeof window !== "undefined" && "serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch((err) => {
-        console.warn("Dashboard Service Worker registration failed:", err);
-      });
-    }
     return () => clearTimeout(timer);
   }, []);
 

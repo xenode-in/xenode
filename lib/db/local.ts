@@ -6,11 +6,6 @@ export interface MetadataCache {
   plaintext: string; // The decrypted name or tag
 }
 
-export interface ThumbnailCache {
-  id: string; // The thumbnail key
-  blob: Blob; // The decrypted thumbnail blob
-  lastAccessed: number; // For LRU eviction
-}
 
 /**
  * A durable snapshot of an in-flight upload, so it can resume after a page
@@ -144,7 +139,6 @@ export interface SpreadsheetV2DraftRecord {
 export class XenodeDatabase extends Dexie {
   files!: Table<LocalFile, string>;
   metadataCache!: Table<MetadataCache, string>;
-  thumbnailCache!: Table<ThumbnailCache, string>;
   uploads!: Table<UploadRecord, string>;
   spreadsheetDrafts!: Table<SpreadsheetDraftRecord, string>;
   spreadsheetRecents!: Table<SpreadsheetRecentRecord, string>;
@@ -172,6 +166,11 @@ export class XenodeDatabase extends Dexie {
     // snapshot format.
     this.version(4).stores({
       spreadsheetV2Drafts: "id, objectId, workspaceId, updatedAt",
+    });
+    // Remove the durable decrypted-thumbnail cache. Isolated thumbnails will
+    // be ephemeral transferable ImageBitmaps.
+    this.version(5).stores({
+      thumbnailCache: null,
     });
   }
 }

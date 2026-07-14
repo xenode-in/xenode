@@ -21,6 +21,7 @@ import {
   ScrollText,
   MessageSquare,
   RefreshCcw,
+  ShieldAlert,
 } from "lucide-react";
 
 interface AdminSidebarProps {
@@ -45,6 +46,12 @@ const navItems = [
     href: "/admin/dashboard/admins",
     label: "Admins",
     icon: ShieldCheck,
+    roles: ["super_admin"],
+  },
+  {
+    href: "/admin/dashboard/security/file-renderers",
+    label: "File Security",
+    icon: ShieldAlert,
     roles: ["super_admin"],
   },
   {

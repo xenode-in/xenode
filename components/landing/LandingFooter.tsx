@@ -6,7 +6,6 @@ const links = [
   { label: "Pricing", href: "/pricing" },
   { label: "Blog", href: "/blog" },
   { label: "Changelog", href: "/changelog" },
-  { label: "Docs", href: "/docs" },
 ];
 
 const legal = [

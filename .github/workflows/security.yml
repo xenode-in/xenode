@@ -1,0 +1,41 @@
+name: Security gates
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run lint:security
+      - run: npm run test
+      - run: npm run build
+        env:
+          MONGODB_URI: mongodb://127.0.0.1:27017/xenode-ci
+          BETTER_AUTH_SECRET: ci-only-not-a-production-secret
+          ADMIN_JWT_SECRET: ci-only-admin-secret-at-least-32-characters
+          SAFE_PREVIEW_GLOBAL_ENABLED: "false"
+          ONLYOFFICE_V2_ENABLED: "false"
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4

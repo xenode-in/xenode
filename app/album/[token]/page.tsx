@@ -67,10 +67,7 @@ function ThumbnailTile({
 
   useEffect(() => {
     let cancelled = false;
-    if (!item.thumbnailUrl || !shareKey) {
-      setFailed(true);
-      return;
-    }
+    if (!item.thumbnailUrl || !shareKey) return;
     (async () => {
       try {
         const text = await (await fetch(item.thumbnailUrl!)).text();
@@ -98,7 +95,7 @@ function ThumbnailTile({
           alt={item.name}
           className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
         />
-      ) : failed ? (
+      ) : failed || !item.thumbnailUrl || !shareKey ? (
         <div className="flex h-full w-full items-center justify-center">
           <ImageOff className="h-7 w-7 text-muted-foreground/40" />
         </div>
@@ -142,9 +139,6 @@ export default function SharedAlbumPage() {
     };
     read();
     window.addEventListener("hashchange", read);
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => {});
-    }
     return () => window.removeEventListener("hashchange", read);
   }, []);
 

@@ -201,7 +201,7 @@ export function PreviewSection({
           <VideoCard
             video={featuredVideo}
             decryptedName={decryptedNames[featuredVideo.id]}
-            onClick={() => openPreview(featuredVideo)}
+            onClick={() => openPreview(featuredVideo, { sourceContext: "owned", intent: "preview" })}
           />
         )}
 
@@ -215,7 +215,7 @@ export function PreviewSection({
                   key={img.id}
                   image={img}
                   decryptedName={decryptedNames[img.id]}
-                  onClick={() => openPreview(img)}
+                  onClick={() => openPreview(img, { sourceContext: "owned", intent: "preview" })}
                 />
               ))}
             </div>
@@ -224,7 +224,7 @@ export function PreviewSection({
           {/* Audio waveform row */}
           {featuredAudio && (
             <div
-              onClick={() => openPreview(featuredAudio)}
+              onClick={() => openPreview(featuredAudio, { sourceContext: "owned", intent: "preview" })}
               className="bg-card border border-border rounded-xl px-4 py-3 flex items-center gap-3 cursor-pointer hover:border-primary/40 transition-colors"
             >
               <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">

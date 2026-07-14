@@ -31,6 +31,11 @@ if ($LASTEXITCODE -ne 0) {
   throw "ONLYOFFICE client build failed with exit code $LASTEXITCODE"
 }
 
+& node (Join-Path $projectRoot "scripts\onlyoffice\sanitize-client.mjs") $outputPath
+if ($LASTEXITCODE -ne 0) {
+  throw "ONLYOFFICE client sanitization failed with exit code $LASTEXITCODE"
+}
+
 & node (Join-Path $projectRoot "scripts\onlyoffice\verify-client.mjs") $outputPath
 if ($LASTEXITCODE -ne 0) {
   throw "ONLYOFFICE client verification failed with exit code $LASTEXITCODE"

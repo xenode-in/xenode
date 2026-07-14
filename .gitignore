@@ -48,3 +48,5 @@ next-env.d.ts
 # Transient x2t WASM build context + build log.
 /tools/onlyoffice/.x2t-build-context/
 /x2t-build.log
+# Restricted malicious-file corpus is fetched and deleted by CI.
+/.security-corpus/

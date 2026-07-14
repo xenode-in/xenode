@@ -1,0 +1,24 @@
+[submodule "vendor/onlyoffice/build_tools"]
+	path = vendor/onlyoffice/build_tools
+	url = https://github.com/ONLYOFFICE/build_tools.git
+[submodule "vendor/onlyoffice/core"]
+	path = vendor/onlyoffice/core
+	url = https://github.com/ONLYOFFICE/core.git
+[submodule "vendor/onlyoffice/core-fonts"]
+	path = vendor/onlyoffice/core-fonts
+	url = https://github.com/ONLYOFFICE/core-fonts.git
+[submodule "vendor/onlyoffice/dictionaries"]
+	path = vendor/onlyoffice/dictionaries
+	url = https://github.com/ONLYOFFICE/dictionaries.git
+[submodule "vendor/onlyoffice/document-server"]
+	path = vendor/onlyoffice/document-server
+	url = https://github.com/ONLYOFFICE/DocumentServer.git
+[submodule "vendor/onlyoffice/sdkjs"]
+	path = vendor/onlyoffice/sdkjs
+	url = https://github.com/ONLYOFFICE/sdkjs.git
+[submodule "vendor/onlyoffice/server"]
+	path = vendor/onlyoffice/server
+	url = https://github.com/ONLYOFFICE/server.git
+[submodule "vendor/onlyoffice/web-apps"]
+	path = vendor/onlyoffice/web-apps
+	url = https://github.com/ONLYOFFICE/web-apps.git

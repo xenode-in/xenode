@@ -159,7 +159,11 @@ export default function StarredPage() {
     // PreviewContext reads `.id`; our objects carry `_id`.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const asLegacy = (o: StarredObject) => ({ ...o, id: o._id }) as any;
-    openPreview(asLegacy(item), items.map(asLegacy));
+    openPreview(asLegacy(item), {
+      sourceContext: "owned",
+      intent: "preview",
+      fileList: items.map(asLegacy),
+    });
   };
 
   return (

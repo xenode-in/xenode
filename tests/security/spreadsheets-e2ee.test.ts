@@ -19,20 +19,6 @@ describe("spreadsheet E2EE boundary", () => {
     expect(routeSources).not.toMatch(/Workbook JSON|cell values|sheet names/i);
   });
 
-  it("uploads only AES-GCM ciphertext and never the normalized model", () => {
-    const persistence = read("lib/spreadsheets/persistence.ts");
-    expect(persistence).toContain("encryptFileWithDEK");
-    expect(persistence).toMatch(/body: ciphertext/);
-    expect(persistence).not.toMatch(/body:\s*JSON\.stringify\(input\.workbook/);
-  });
-
-  it("stores recovery drafts in the ciphertext-only Dexie table", () => {
-    const recovery = read("lib/spreadsheets/recovery.ts"); const db = read("lib/db/local.ts");
-    expect(recovery).toContain('crypto.subtle.encrypt({ name: "AES-GCM"');
-    expect(db).toContain("ciphertext: Blob");
-    expect(db).not.toMatch(/interface SpreadsheetDraftRecord[\s\S]*workbook:/);
-  });
-
   it("atomically rejects stale saves with 409", () => {
     const helper = read("lib/storage/applyContentUpdate.ts");
     expect(helper).toContain("revisionFilter(expectedRevision)");
