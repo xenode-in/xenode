@@ -6,28 +6,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Privacy-first, **end-to-end encrypted** cloud storage. Files are encrypted in the browser with a per-file AES-256-GCM key, which is wrapped by the user's RSA-4096 public key before upload. The server only ever sees ciphertext. Built on Next.js 16 (App Router) + React 19 + MongoDB + Backblaze B2.
 
-## Commands
+## Monorepo layout
+
+This is an **npm-workspaces + Turborepo** monorepo. The Next.js app lives in
+`apps/platform-web/` (workspace `@xenode/platform-web`). Shared config packages
+are in `packages/tsconfig` and `packages/eslint-config`. ONLYOFFICE build tooling
+(`vendor/`, `tools/`, `scripts/onlyoffice/`) and deploy infra (`deploy/`,
+`docker-compose*`, `Dockerfile.cron`) stay at the repo root. There is **no
+background worker** (removed). Future apps: `apps/accounts`, `apps/photos`.
+
+## Commands (run from repo root; delegate via Turborepo/workspaces)
 
 ```bash
-npm run dev          # Next.js dev server (localhost:3000)
-npm run build        # production build
+npm run dev          # dev server (delegates to @xenode/platform-web, localhost:3000)
+npm run build        # turbo run build
 npm run start        # serve production build
-npm run lint         # eslint (uses eslint.config.mjs)
-npm run test         # vitest run
-npm run test:watch   # vitest watch
-npm run test:coverage
-npm run dev:worker   # tsx watch worker/index.ts  (BullMQ background worker)
+npm run lint         # turbo run lint
+npm run typecheck    # turbo run typecheck  (tsc --noEmit per workspace)
+npm run test         # turbo run test (vitest)
+npm run test:security # lint:security gate
 
 # Cron helpers — reads CRON_SECRET from .env.local automatically
 npm run cron:expire  # hits /api/cron/expire-plans
 npm run cron:charge  # hits the legacy PayU recurring-charge endpoint
 
-# Run a single test:
-npx vitest run path/to/file.test.ts
-npx vitest run -t "test name pattern"
+# App-scoped commands (run inside apps/platform-web or with -w):
+npm run test:watch -w @xenode/platform-web
+npx vitest run path/to/file.test.ts        # cd apps/platform-web first
 ```
 
-There is **no `typecheck` script** — run `npx tsc --noEmit` directly. TypeScript errors aren't part of `npm run build` either; build relies on tsc emitting via Next's compiler. Always run `npx tsc --noEmit` after non-trivial edits.
+Run **`npm run typecheck`** (root) after non-trivial edits — or `npx tsc --noEmit`
+from inside `apps/platform-web/` (the tsconfig lives there and extends
+`packages/tsconfig/nextjs.json`). TypeScript errors aren't part of `next build`.
 
 ## High-level architecture
 
@@ -83,10 +93,10 @@ Coupons (user enters a code) and Campaigns (auto-applied) both ultimately store 
 - All other cycle changes (Monthly→Yearly, same-cycle plan changes) accept either `immediate` or `period_end`.
 - The PATCH to Razorpay uses `schedule_change_at: "now"` or `"cycle_end"`.
 
-### Workers & cron
+### Cron (no background worker)
 
-- `worker/` runs BullMQ background jobs (Redis-backed). Started via `npm run dev:worker`. Separate Dockerfile: `Dockerfile.worker`.
-- Cron jobs are HTTP endpoints under `app/api/cron/**`, guarded by `Authorization: Bearer ${CRON_SECRET}`. The main one is `/api/cron/expire-plans` — daily midnight UTC.
+- There is **no BullMQ background worker** (removed in the monorepo migration; `bullmq`/`googleapis`/`Dockerfile.worker` deleted). Redis is used **only** for realtime Socket.IO pub/sub.
+- Cron jobs are HTTP endpoints under `app/api/cron/**`, guarded by `Authorization: Bearer ${CRON_SECRET}`. The main one is `/api/cron/expire-plans` — daily midnight UTC. Separate `Dockerfile.cron`.
 
 ### Email
 

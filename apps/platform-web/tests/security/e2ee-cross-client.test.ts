@@ -16,9 +16,9 @@ import {
   encryptFile as encryptMobileFile,
   encryptFileChunked as encryptMobileChunked,
   encryptMetadataString as encryptMobileMetadata,
-} from "../../../xenode-expo/src/lib/crypto/fileEncryption";
+} from "../../../../../xenode-expo/src/lib/crypto/fileEncryption";
 import { deriveKey as deriveWebKey } from "@/lib/crypto/utils";
-import { deriveKey as deriveMobileKey } from "../../../xenode-expo/src/lib/crypto/utils";
+import { deriveKey as deriveMobileKey } from "../../../../../xenode-expo/src/lib/crypto/utils";
 
 const RSA_PARAMS: RsaHashedKeyGenParams = {
   name: "RSA-OAEP",

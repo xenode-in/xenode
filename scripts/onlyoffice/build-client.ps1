@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$outputRoot = Join-Path $projectRoot "public\internal-editors\onlyoffice"
+$outputRoot = Join-Path $projectRoot "apps/platform-web/public/internal-editors/onlyoffice"
 $outputPath = Join-Path $outputRoot $ArtifactVersion
 $dockerfile = Join-Path $projectRoot "tools\onlyoffice\Dockerfile.client"
 

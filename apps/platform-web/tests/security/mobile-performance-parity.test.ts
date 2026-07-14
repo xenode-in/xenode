@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-const repoRoot = path.resolve(__dirname, "../../..");
+const repoRoot = path.resolve(__dirname, "../../../../..");
 const expoRoot = path.join(repoRoot, "xenode-expo");
 
 describe("Mobile manifest and foreground performance parity", () => {

@@ -54,7 +54,7 @@ services:
   app:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: apps/platform-web/Dockerfile
     restart: always
     ports:
       - "3000:3000"

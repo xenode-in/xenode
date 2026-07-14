@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -11,14 +11,17 @@
 !.yarn/versions
 
 # testing
-/coverage
+coverage/
 
 # next.js
-/.next/
-/out/
+.next/
+out/
+
+# turbo
+.turbo/
 
 # production
-/build
+build/
 
 # misc
 .DS_Store
@@ -42,8 +45,8 @@ next-env.d.ts
 
 /agency-agents-main
 # Generated ONLYOFFICE browser artifacts. Source stays under vendor/onlyoffice.
-/public/internal-editors/onlyoffice/*
-!/public/internal-editors/onlyoffice/README.md
+apps/platform-web/public/internal-editors/onlyoffice/*
+!apps/platform-web/public/internal-editors/onlyoffice/README.md
 /.artifacts/onlyoffice/
 # Transient x2t WASM build context + build log.
 /tools/onlyoffice/.x2t-build-context/

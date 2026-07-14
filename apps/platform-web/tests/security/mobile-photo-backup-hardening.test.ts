@@ -2,12 +2,12 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { SyncQueue } from "../../../xenode-expo/src/sync/SyncQueue";
+import { SyncQueue } from "../../../../../xenode-expo/src/sync/SyncQueue";
 import {
   getSyncBlockReason,
   isRetryableSyncError,
-} from "../../../xenode-expo/src/sync/errorPolicy";
-import type { SyncItem } from "../../../xenode-expo/src/sync/types";
+} from "../../../../../xenode-expo/src/sync/errorPolicy";
+import type { SyncItem } from "../../../../../xenode-expo/src/sync/types";
 
 const mobileRoot = path.resolve(__dirname, "../../../xenode-expo");
 

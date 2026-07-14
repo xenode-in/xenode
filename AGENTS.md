@@ -16,7 +16,6 @@ npm run lint         # eslint (uses eslint.config.mjs)
 npm run test         # vitest run
 npm run test:watch   # vitest watch
 npm run test:coverage
-npm run dev:worker   # tsx watch worker/index.ts  (BullMQ background worker)
 
 # Cron helpers — reads CRON_SECRET from .env.local automatically
 npm run cron:expire  # hits /api/cron/expire-plans
@@ -83,10 +82,10 @@ Coupons (user enters a code) and Campaigns (auto-applied) both ultimately store 
 - All other cycle changes (Monthly→Yearly, same-cycle plan changes) accept either `immediate` or `period_end`.
 - The PATCH to Razorpay uses `schedule_change_at: "now"` or `"cycle_end"`.
 
-### Workers & cron
+### Cron (no background worker)
 
-- `worker/` runs BullMQ background jobs (Redis-backed). Started via `npm run dev:worker`. Separate Dockerfile: `Dockerfile.worker`.
-- Cron jobs are HTTP endpoints under `app/api/cron/**`, guarded by `Authorization: Bearer ${CRON_SECRET}`. The main one is `/api/cron/expire-plans` — daily midnight UTC.
+- There is **no BullMQ background worker** (removed in the monorepo migration; `bullmq`/`googleapis`/`Dockerfile.worker` deleted). Redis is used **only** for realtime Socket.IO pub/sub.
+- Cron jobs are HTTP endpoints under `app/api/cron/**`, guarded by `Authorization: Bearer ${CRON_SECRET}`. The main one is `/api/cron/expire-plans` — daily midnight UTC. Separate `Dockerfile.cron`.
 
 ### Email
 

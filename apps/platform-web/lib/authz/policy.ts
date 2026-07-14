@@ -9,10 +9,10 @@ import { systemWorkspaceBucketName } from "@/lib/storage/workspaceBucket";
 /**
  * Actions a caller may attempt on a resource.
  *
- * Today, under `personal` scope, ownership implies all actions — `action` is
- * carried through but not yet branched on. When Organizations land, this union
- * maps onto better-auth access-control statements so org roles (owner/admin/
- * member/viewer) can be enforced per action without touching call sites.
+ * Under `personal` scope, ownership implies all actions. Under organization/team
+ * scope, `assertScopeAction` below branches on the caller's role. (The upcoming
+ * Space model, plan PR4/PR13, replaces this with spaceId-based authorization and
+ * removes the `manager` role.)
  */
 export type Action = "read" | "write" | "delete" | "share" | "manage";
 
@@ -45,10 +45,9 @@ function assertPersonalStorageScope(ctx: AccessContext): void {
  * ── The ownership seam ───────────────────────────────────────────────────────
  * These builders return the Mongoose filter that scopes a query to what the
  * caller may access. Routes compose them with their own conditions (soft-delete,
- * projections, .lean(), etc.), so adopting them is low-risk and behavior-
- * preserving. When orgs arrive, ONLY these two functions change:
- *   personal:     { userId: ctx.userId }
- *   organization: { $or: [{ userId: ctx.userId }, { orgId: ctx.scope.orgId }] }
+ * projections, .lean(), etc.). Personal scope filters by `userId`; org/team scope
+ * is handled by `objectOwnershipClause`/`bucketOwnershipClause` below. (Plan PR4
+ * replaces both scope fields and these clauses with a single `spaceId`.)
  */
 
 /**

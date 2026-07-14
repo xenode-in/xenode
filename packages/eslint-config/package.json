@@ -1,0 +1,13 @@
+{
+  "name": "@xenode/eslint-config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "dependencies": {
+    "eslint-config-next": "^16.2.10"
+  }
+}

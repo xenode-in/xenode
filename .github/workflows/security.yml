@@ -19,8 +19,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx tsc --noEmit
-      - run: npm run lint:security
+      - run: npm run typecheck
+      - run: npm run test:security
       - run: npm run test
       - run: npm run build
         env:

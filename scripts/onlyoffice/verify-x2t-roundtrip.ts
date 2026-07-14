@@ -30,7 +30,7 @@ const require = createRequire(import.meta.url);
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const VERSION =
   process.env.NEXT_PUBLIC_ONLYOFFICE_ARTIFACT_VERSION ?? "9.3.0.140-cryptpad.2-xenode.1";
-const ARTIFACT = path.join(root, "public/internal-editors/onlyoffice", VERSION);
+const ARTIFACT = path.join(root, "apps/platform-web/public/internal-editors/onlyoffice", VERSION);
 const X2T_JS = path.join(ARTIFACT, "x2t", "x2t.js");
 const FONTS_SRC = path.join(ARTIFACT, "fonts");
 const MAX_FONTS = 25;

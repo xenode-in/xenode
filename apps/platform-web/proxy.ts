@@ -29,18 +29,6 @@ const ADMIN_HOSTNAMES = [
   "admin.localhost:3000",
 ];
 
-const DOCS_HOSTNAMES = [
-  "docs.xenode.in",
-  "docs.localhost",
-  "docs.localhost:3000",
-];
-
-const SHEETS_HOSTNAMES = [
-  "sheets.xenode.in",
-  "sheets.localhost",
-  "sheets.localhost:3000",
-];
-
 const SHEETS_V2_HOSTNAMES = [
   "sheets-v2.xenode.in",
   "sheets-v2.localhost",
@@ -50,8 +38,6 @@ const SHEETS_V2_HOSTNAMES = [
 const FILE_RUNTIME_HOSTNAMES = [
   "preview.xenode.in",
   "edit.xenode.in",
-  "docs.xenode.in",
-  "sheets.xenode.in",
   "sheets-v2.xenode.in",
 ];
 
@@ -160,43 +146,6 @@ export function proxy(req: NextRequest) {
     return NextResponse.rewrite(rewriteUrl);
   }
 
-  const isDocsHost = DOCS_HOSTNAMES.some(
-    (h) => hostname === h || hostname.startsWith(h),
-  );
-
-  // ── Docs subdomain ──────────────────────────────────────────────────────
-  if (isDocsHost) {
-    if (pathname.startsWith("/api/")) {
-      return NextResponse.next();
-    }
-    if (pathname.startsWith("/docs")) {
-      return NextResponse.next();
-    }
-    const rewriteUrl = req.nextUrl.clone();
-    rewriteUrl.pathname = `/docs${pathname === "/" ? "" : pathname}`;
-    return NextResponse.rewrite(rewriteUrl);
-  }
-
-  const isSheetsHost = SHEETS_HOSTNAMES.some(
-    (h) => hostname === h || hostname.startsWith(h),
-  );
-
-  // Sheets subdomain: shared APIs pass through; UI is rooted at /sheets.
-  if (isSheetsHost) {
-    if (pathname.startsWith("/api/")) {
-      return NextResponse.next();
-    }
-    if (pathname.startsWith("/sheets")) {
-      const gated = authGate(req);
-      return gated ?? NextResponse.next();
-    }
-    const gated = authGate(req);
-    if (gated) return gated;
-    const rewriteUrl = req.nextUrl.clone();
-    rewriteUrl.pathname = "/sheets" + (pathname === "/" ? "" : pathname);
-    return NextResponse.rewrite(rewriteUrl);
-  }
-
   const isSheetsV2Host = SHEETS_V2_HOSTNAMES.some(
     (h) => hostname === h || hostname.startsWith(h),
   );
@@ -221,11 +170,7 @@ export function proxy(req: NextRequest) {
     return NextResponse.rewrite(rewriteUrl);
   }
 
-  if (
-    pathname === "/sync" ||
-    pathname.startsWith("/docs") ||
-    pathname.startsWith("/sheets")
-  ) {
+  if (pathname === "/sync") {
     const url = req.nextUrl.clone();
     url.pathname = "/404";
     return NextResponse.rewrite(url);

@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { isCachedKeyOwner } from "../../../xenode-expo/src/lib/crypto/keyOwnership";
-import { isSyncConfigOwner } from "../../../xenode-expo/src/sync/accountScope";
+import { isCachedKeyOwner } from "../../../../../xenode-expo/src/lib/crypto/keyOwnership";
+import { isSyncConfigOwner } from "../../../../../xenode-expo/src/sync/accountScope";
 
 const mobileRoot = path.resolve(__dirname, "../../../xenode-expo");
 

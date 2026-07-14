@@ -4,25 +4,30 @@
 // The metadata worker (lib/metadata/workers/metadata.worker.ts) is a classic
 // worker and pulls exifr from same-origin /exifr/exifr.js at runtime, so the
 // bundler never touches it.
+//
+// In the monorepo, node_modules is hoisted to the workspace root, so we resolve
+// the exifr bundle via Node module resolution rather than a fixed relative path.
 
 import { mkdirSync, copyFileSync, existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const require = createRequire(import.meta.url);
+const appRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-const assets = [
-  {
-    from: resolve(root, "node_modules/exifr/dist/full.umd.js"),
-    to: resolve(root, "public/exifr/exifr.js"),
-  },
-];
+let from = null;
+try {
+  from = require.resolve("exifr/dist/full.umd.js");
+} catch {
+  from = null;
+}
 
-for (const { from, to } of assets) {
-  if (!existsSync(from)) {
-    console.warn(`[copy-worker-assets] source missing, skipping: ${from}`);
-    continue;
-  }
+const to = resolve(appRoot, "public/exifr/exifr.js");
+
+if (!from || !existsSync(from)) {
+  console.warn("[copy-worker-assets] exifr UMD bundle not found, skipping");
+} else {
   mkdirSync(dirname(to), { recursive: true });
   copyFileSync(from, to);
   console.log(`[copy-worker-assets] ${from} -> ${to}`);

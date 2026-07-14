@@ -10,7 +10,7 @@ param(
 $ErrorActionPreference = "Stop"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $hostSrc = Join-Path $projectRoot "tools\onlyoffice\host"
-$artifactPath = Join-Path $projectRoot "public\internal-editors\onlyoffice\$ArtifactVersion"
+$artifactPath = Join-Path $projectRoot "apps/platform-web/public/internal-editors/onlyoffice/$ArtifactVersion"
 $hostDest = Join-Path $artifactPath "xenode"
 
 if (-not (Test-Path -LiteralPath $artifactPath)) {

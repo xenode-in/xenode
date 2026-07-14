@@ -1,9 +1,16 @@
-# TEST
-
-Dockerfile
-.dockerignore
-node_modules
-npm-debug.log
-README.md
-.next
+# Docker build context is the monorepo root.
+**/node_modules
+**/.next
+**/npm-debug.log
 .git
+.github
+.claude
+.vscode
+.agents
+agents
+vendor
+docs
+security-corpus
+Dockerfile*
+.dockerignore
+docker-compose*.yaml

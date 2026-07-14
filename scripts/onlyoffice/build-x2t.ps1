@@ -11,7 +11,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$artifactPath = Join-Path $projectRoot "public\internal-editors\onlyoffice\$ArtifactVersion"
+$artifactPath = Join-Path $projectRoot "apps/platform-web/public/internal-editors/onlyoffice/$ArtifactVersion"
 $x2tPath = Join-Path $artifactPath "x2t"
 $dockerfile = Join-Path $projectRoot "tools\onlyoffice\Dockerfile.x2t"
 $coreDir = Join-Path $projectRoot "vendor\onlyoffice\core"

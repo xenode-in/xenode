@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { matchesDriveSearch } from "../../../xenode-expo/src/lib/driveSearch";
+import { matchesDriveSearch } from "../../../../../xenode-expo/src/lib/driveSearch";
 import {
   mergeRecentSearch,
   recentSearchesKey,
-} from "../../../xenode-expo/src/lib/recentSearches";
+} from "../../../../../xenode-expo/src/lib/recentSearches";
 
 const mobileRoot = path.resolve(__dirname, "../../../xenode-expo");
 

@@ -1,9 +1,20 @@
-# Organizations & Team Workspaces — Build Reference (Phase 2, Q1 2027)
+# Organizations & Team Workspaces — Build Reference (SUPERSEDED)
 
-> **This is the go-to reference for building Organizations.** It inventories what
+> **⚠️ STALE — DO NOT USE AS SOURCE OF TRUTH.** Organizations are **already
+> implemented** at HEAD (org/member/invitation/team plugin wired, ~45
+> `app/api/orgs/**` routes, `OrgKeyGrant`/`OrgUsage`/`OrgDomain` models,
+> key-grant rotation on member removal, domain verification). This document
+> predates that work and describes it as future. The authoritative forward plan
+> is now the **Modular Monorepo Migration plan** (Space model in PR4, role-set
+> normalization + `manager` removal + `SpaceProductKey` in PR13). The remaining
+> genuine gap it flagged — server-side share `accessType` enforcement — is
+> tracked in that plan (F-SHAREROLE, PR13). Kept for historical context only.
+>
+> **Original (stale) preface below.**
+>
+> **This was the go-to reference for building Organizations.** It inventories what
 > already exists and can be reused, what must be built, and the exact design
-> decisions (especially E2EE for shared spaces) that the build depends on. No code
-> is implemented here — this is the plan that the implementation PRs follow.
+> decisions (especially E2EE for shared spaces) that the build depends on.
 >
 > **Goal:** Launch Xenode for SMBs — organizations, team workspaces, roles, shared
 > drives, team billing/seats, shared quotas, activity logs, and an org admin

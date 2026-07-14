@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { recoverPassword as recoverMobilePassword } from "../../../xenode-expo/src/lib/crypto/forgotPassword";
+import { recoverPassword as recoverMobilePassword } from "../../../../../xenode-expo/src/lib/crypto/forgotPassword";
 import { buildVaultPassphrase } from "@/lib/crypto/keySetup";
 import { deriveKey, fromB64, toB64 } from "@/lib/crypto/utils";
 

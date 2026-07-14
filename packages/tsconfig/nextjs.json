@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "display": "Xenode Next.js app",
+  "extends": "./base.json",
+  "compilerOptions": {
+    "plugins": [
+      { "name": "next" }
+    ]
+  }
+}

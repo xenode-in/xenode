@@ -16,13 +16,13 @@ import {
   patchChunkOffsets,
   type ByteReader,
   type Mp4Box,
-} from "../../../xenode-expo/src/lib/streaming/mp4Boxes";
-import { planChunks, GCM_TAG_BYTES } from "../../../xenode-expo/src/lib/streaming/chunkPlan";
+} from "../../../../../xenode-expo/src/lib/streaming/mp4Boxes";
+import { planChunks, GCM_TAG_BYTES } from "../../../../../xenode-expo/src/lib/streaming/chunkPlan";
 import {
   albumSourceRef,
   deriveAlbumRefKey,
   normalizeAlbumTitle,
-} from "../../../xenode-expo/src/lib/crypto/albumRef";
+} from "../../../../../xenode-expo/src/lib/crypto/albumRef";
 
 // ── MP4 fixture builders ────────────────────────────────────────────────────
 
