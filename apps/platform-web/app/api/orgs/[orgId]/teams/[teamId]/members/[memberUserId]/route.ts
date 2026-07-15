@@ -9,13 +9,17 @@ import {
 import dbConnect from "@/lib/mongodb";
 import { assertOrgMemberRole, assertTeamInOrg } from "@/lib/orgs/access";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
-import OrgKeyGrant from "@/models/OrgKeyGrant";
 import {
   AuditEvent,
   ProductSession,
-  SpaceProductKey,
 } from "@xenode/database/models";
 import { teamSpaceId } from "@xenode/spaces/ids";
+import {
+  latestProductKeyVersion,
+  putMemberProductKey,
+  retireOlderProductKeys,
+  revokeMemberProductKeys,
+} from "@xenode/spaces/product-keys";
 import { publishSyncEvent } from "@/lib/realtime/publish";
 
 export const dynamic = "force-dynamic";
@@ -140,14 +144,15 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       .map((tm) => tm.userId as string)
       .filter((id) => id !== memberUserId);
 
-    const currentGrant = await OrgKeyGrant.findOne({ orgId, teamId })
-      .sort({ keyVersion: -1 })
-      .select("keyVersion")
-      .lean<{ keyVersion: number }>();
+    const spaceId = teamSpaceId(orgId, teamId);
+    const currentKeyVersion = await latestProductKeyVersion({
+      spaceId,
+      productId: "drive",
+    });
 
     const nextKeyVersion = validateTeamRotation({
       remainingMemberIds,
-      currentMaxKeyVersion: currentGrant?.keyVersion ?? 0,
+      currentMaxKeyVersion: currentKeyVersion,
       rotationGrants,
     });
 
@@ -157,8 +162,8 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         .collection("teamMember")
         .deleteOne({ teamId, userId: memberUserId }, { session: mongoSession });
 
-      const spaceId = teamSpaceId(orgId, teamId);
       await ProductSession.updateMany(
+
         {
           accountId: memberUserId,
           productId: { $in: ["drive", "photos", "mobile", "office-editor"] },
@@ -167,56 +172,40 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         { $set: { revokedAt: now }, $inc: { sessionVersion: 1 } },
         { session: mongoSession },
       );
-      await SpaceProductKey.updateMany(
-        { spaceId, memberAccountId: memberUserId, status: "active" },
-        { $set: { status: "revoked" } },
-        { session: mongoSession },
-      );
-
-      // Revoke the removed member's legacy team grants until key creation is cut over.
-      await OrgKeyGrant.updateMany(
-        { orgId, teamId, memberUserId, revokedAt: { $exists: false } },
-        { $set: { revokedAt: now, rotationReason: "member_removed" } },
-        { session: mongoSession },
-      );
+      await revokeMemberProductKeys({
+        spaceIds: spaceId,
+        memberAccountId: memberUserId,
+        productIds: [
+          "accounts",
+          "drive",
+          "photos",
+          "mobile",
+          "office-editor",
+        ],
+        rotationReason: "member_removed",
+        session: mongoSession,
+      });
 
       if (nextKeyVersion) {
-        // Revoke pre-rotation grants for remaining members.
-        await OrgKeyGrant.updateMany(
-          {
-            orgId,
-            teamId,
-            memberUserId: { $in: remainingMemberIds },
-            keyVersion: { $lt: nextKeyVersion },
-            revokedAt: { $exists: false },
-          },
-          { $set: { revokedAt: now, rotationReason: "member_removed" } },
-          { session: mongoSession },
-        );
-        // Install the new-version grants.
+        await retireOlderProductKeys({
+          spaceId,
+          productId: "drive",
+          memberAccountIds: remainingMemberIds,
+          keyVersion: nextKeyVersion,
+          rotationReason: "member_removed",
+          session: mongoSession,
+        });
         for (const grant of rotationGrants) {
-          await OrgKeyGrant.findOneAndUpdate(
-            { orgId, teamId, memberUserId: grant.memberUserId, keyVersion: grant.keyVersion },
-            {
-              $set: {
-                orgId,
-                teamId,
-                memberUserId: grant.memberUserId,
-                wrappedSpaceKey: grant.wrappedSpaceKey,
-                keyVersion: grant.keyVersion,
-                wrappedByUserId: ctx.userId,
-                createdBy: ctx.userId,
-                rotationReason: "member_removed",
-              },
-              $unset: { revokedAt: "" },
-            },
-            {
-              new: true,
-              upsert: true,
-              setDefaultsOnInsert: true,
-              session: mongoSession,
-            },
-          );
+          await putMemberProductKey({
+            spaceId,
+            productId: "drive",
+            memberAccountId: grant.memberUserId,
+            wrappedKey: grant.wrappedSpaceKey,
+            keyVersion: grant.keyVersion,
+            createdByAccountId: ctx.accountId,
+            rotationReason: "member_removed",
+            session: mongoSession,
+          });
         }
       }
     });

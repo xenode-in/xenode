@@ -16,7 +16,7 @@ interface InvitationRecord {
   role: string;
   status: "pending" | "accepted" | "rejected" | "canceled";
   expiresAt: Date;
-  wrappedSpaceKey?: string | null;
+  productKeyReady?: boolean;
 }
 
 /** Mask an email for display: `santhosh@acme.com` → `s•••@acme.com`. */
@@ -67,7 +67,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
         // expected — same as GitHub/Slack invite links.
         email: invitation.email,
         emailHint: maskEmail(invitation.email),
-        spaceKeyReady: !!invitation.wrappedSpaceKey,
+        spaceKeyReady: !!invitation.productKeyReady,
       },
     });
   } catch (error) {

@@ -27,6 +27,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
+import { getPublicProductRegistry } from "@xenode/config/client";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { useSession } from "@/lib/auth/client";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -127,8 +128,8 @@ interface RecipientLookup {
   publicKey: string;
 }
 
-interface SpaceKeyGrant {
-  wrappedSpaceKey: string;
+interface SpaceProductKey {
+  wrappedKey: string;
   keyVersion: number;
 }
 
@@ -223,6 +224,12 @@ async function compressImageToLimit(
 }
 
 export function OrganizationsClient({ user }: { user: SessionUser }) {
+  const accountsOrganizationsUrl = new URL(
+    "/organizations",
+    getPublicProductRegistry({
+      NEXT_PUBLIC_ACCOUNTS_ORIGIN: process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN,
+    }).accounts.origin,
+  ).toString();
   const router = useRouter();
   const { data: session } = useSession();
   const { isUnlocked, publicKey, privateKey, setModalOpen } = useCrypto();
@@ -429,15 +436,15 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
       throw new Error("Unlock your vault before inviting encrypted members");
     }
 
-    const data = await readJson<{ grants: SpaceKeyGrant[] }>(
+    const data = await readJson<{ keys: SpaceProductKey[] }>(
       await fetch(`/api/orgs/${orgId}/keys`),
     );
-    const grant = data.grants[0];
+    const grant = data.keys[0];
     if (!grant) {
       throw new Error("Your organization space key is not available");
     }
     const rawSpaceKey = await unwrapSpaceKeyGrant({
-      wrappedSpaceKey: grant.wrappedSpaceKey,
+      wrappedSpaceKey: grant.wrappedKey,
       privateKey,
     });
     return { rawSpaceKey, keyVersion: grant.keyVersion };
@@ -563,7 +570,11 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
           {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ wrappedSpaceKey, keyVersion }),
+            body: JSON.stringify({
+              wrappedSpaceKey,
+              keyVersion,
+              memberAccountId: recipient.userId,
+            }),
           },
         ),
       );
@@ -605,10 +616,10 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
           throw new Error("Unlock your vault before rotating organization keys");
         }
 
-        const keyData = await readJson<{ grants: SpaceKeyGrant[] }>(
+        const keyData = await readJson<{ keys: SpaceProductKey[] }>(
           await fetch(`/api/orgs/${manageOrg.id}/keys`),
         );
-        const nextKeyVersion = (keyData.grants[0]?.keyVersion ?? 0) + 1;
+        const nextKeyVersion = (keyData.keys[0]?.keyVersion ?? 0) + 1;
         const nextSpaceKey = generateOrgSpaceKey();
         const remainingKeyMembers = members.filter(
           (candidate) =>
@@ -1104,10 +1115,10 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
                   </Link>
                 </Button>
                 <Button asChild variant="outline" size="sm">
-                  <Link href={`/organizations/${manageOrg.id}/settings`}>
+                  <a href={accountsOrganizationsUrl}>
                     <Settings className="h-4 w-4" />
-                    Settings
-                  </Link>
+                    Account settings
+                  </a>
                 </Button>
               </div>
             )}

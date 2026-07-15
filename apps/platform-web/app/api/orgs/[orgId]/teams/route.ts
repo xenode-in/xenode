@@ -9,8 +9,9 @@ import {
   type TeamRecord,
 } from "@/lib/orgs/access";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
-import OrgKeyGrant from "@/models/OrgKeyGrant";
 import { ensureTeamSpace } from "@xenode/spaces/repository";
+import { deleteSpaceProductKeys, putMemberProductKey } from "@xenode/spaces/product-keys";
+import { teamSpaceId } from "@xenode/spaces/ids";
 
 export const dynamic = "force-dynamic";
 
@@ -117,20 +118,19 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         userId: ctx.userId,
         createdAt: now,
       });
-      await ensureTeamSpace({
+      const teamSpace = await ensureTeamSpace({
         accountId: ctx.accountId,
         organizationId: orgId,
         teamId: team.id,
       });
       if (ownerWrappedTeamKey) {
-        await OrgKeyGrant.create({
-          orgId,
-          teamId: team.id,
-          memberUserId: ctx.userId,
-          wrappedSpaceKey: ownerWrappedTeamKey,
+        await putMemberProductKey({
+          spaceId: teamSpace._id,
+          productId: "drive",
+          memberAccountId: ctx.accountId,
+          wrappedKey: ownerWrappedTeamKey,
           keyVersion,
-          wrappedByUserId: ctx.userId,
-          createdBy: ctx.userId,
+          createdByAccountId: ctx.accountId,
           rotationReason: "initial",
         });
       }
@@ -139,7 +139,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       await mongoose.connection
         .collection("teamMember")
         .deleteMany({ teamId: team.id });
-      await OrgKeyGrant.deleteMany({ orgId, teamId: team.id });
+      await deleteSpaceProductKeys({ spaceId: teamSpaceId(orgId, team.id) });
       throw error;
     }
 

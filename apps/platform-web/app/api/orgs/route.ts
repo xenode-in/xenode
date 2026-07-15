@@ -14,8 +14,8 @@ import dbConnect from "@/lib/mongodb";
 import { listUserOrgs } from "@/lib/orgs/listUserOrgs";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { ensureSystemWorkspaceBucketRecord } from "@/lib/storage/workspaceBucket";
-import OrgKeyGrant from "@/models/OrgKeyGrant";
 import { ensureOrganizationSpace } from "@xenode/spaces/repository";
+import { putMemberProductKey } from "@xenode/spaces/product-keys";
 
 export const dynamic = "force-dynamic";
 
@@ -240,19 +240,18 @@ export async function POST(request: NextRequest) {
     try {
       await organizations.insertOne(org);
       await members.insertOne(member);
-      if (ownerWrappedSpaceKey) {
-      await ensureOrganizationSpace({
+      const organizationSpace = await ensureOrganizationSpace({
         accountId: ctx.accountId,
         organizationId: org.id,
       });
-        await OrgKeyGrant.create({
-          orgId: org.id,
-          teamId: null,
-          memberUserId: ctx.userId,
-          wrappedSpaceKey: ownerWrappedSpaceKey,
+      if (ownerWrappedSpaceKey) {
+        await putMemberProductKey({
+          spaceId: organizationSpace._id,
+          productId: "drive",
+          memberAccountId: ctx.accountId,
+          wrappedKey: ownerWrappedSpaceKey,
           keyVersion,
-          wrappedByUserId: ctx.userId,
-          createdBy: ctx.userId,
+          createdByAccountId: ctx.accountId,
           rotationReason: "initial",
         });
       }

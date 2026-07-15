@@ -64,7 +64,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ orgId, joined: true, alreadyMember: true });
     }
 
-    // Guests hold no space key, so no OrgKeyGrant is created.
+    // Guests hold no space key, so no SpaceProductKey envelope is created.
     await members.insertOne({
       id: `mem_${randomBytes(12).toString("hex")}`,
       organizationId: orgId,

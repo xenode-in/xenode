@@ -17,14 +17,19 @@ import { syncSeatsUsed } from "@/lib/orgs/billing/seats";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { recordMembershipDeparture } from "@/lib/orgs/membershipHistory";
 import { emitNotification } from "@/lib/notifications/emit";
-import OrgKeyGrant from "@/models/OrgKeyGrant";
 import {
   AuditEvent,
   ProductSession,
   Space,
-  SpaceProductKey,
 } from "@xenode/database/models";
 import { publishSyncEvent } from "@/lib/realtime/publish";
+import { organizationSpaceId } from "@xenode/spaces/ids";
+import {
+  latestProductKeyVersion,
+  putMemberProductKey,
+  retireOlderProductKeys,
+  revokeMemberProductKeys,
+} from "@xenode/spaces/product-keys";
 
 export const dynamic = "force-dynamic";
 
@@ -183,14 +188,15 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     await dbConnect();
     const membersCollection =
       mongoose.connection.collection<OrgMemberRecord>("member");
-    const [targetMember, allMembers, currentGrant] = await Promise.all([
+    const [targetMember, allMembers] = await Promise.all([
       membersCollection.findOne({ organizationId: orgId, userId: memberUserId }),
       membersCollection.find({ organizationId: orgId }).toArray(),
-      OrgKeyGrant.findOne({ orgId })
-        .sort({ keyVersion: -1 })
-        .select("keyVersion")
-        .lean<{ keyVersion: number }>(),
     ]);
+    const orgSpaceId = organizationSpaceId(orgId);
+    const currentKeyVersion = await latestProductKeyVersion({
+      spaceId: orgSpaceId,
+      productId: "drive",
+    });
 
     if (!targetMember) {
       throw new AuthzError(404, "member_not_found", "Member not found");
@@ -214,7 +220,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const remainingKeyMembers = remainingMembers.filter(nonGuest);
     const nextKeyVersion = validateRotation({
       targetRole,
-      currentMaxKeyVersion: currentGrant?.keyVersion ?? 0,
+      currentMaxKeyVersion: currentKeyVersion,
       remainingKeyMembers,
       rotationGrants,
     });
@@ -262,83 +268,43 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         { $set: { revokedAt: now }, $inc: { sessionVersion: 1 } },
         { session: mongoSession },
       );
-      await SpaceProductKey.updateMany(
-        {
-          spaceId: { $in: affectedSpaceIds },
-          memberAccountId: memberUserId,
-          status: "active",
-        },
-        { $set: { status: "revoked" } },
-        { session: mongoSession },
-      );
-
-      await OrgKeyGrant.updateMany(
-        { orgId, memberUserId, revokedAt: { $exists: false } },
-        {
-          $set: {
-            revokedAt: now,
-            rotationReason: "member_removed",
-          },
-        },
-        { session: mongoSession },
-      );
+      await revokeMemberProductKeys({
+        spaceIds: affectedSpaceIds,
+        memberAccountId: memberUserId,
+        productIds: [
+          "accounts",
+          "drive",
+          "photos",
+          "mobile",
+          "office-editor",
+        ],
+        rotationReason: "member_removed",
+        session: mongoSession,
+      });
 
       if (nextKeyVersion) {
         const remainingIds = remainingKeyMembers.map((member) => member.userId);
-        if (remainingIds.length > 0) {
-          await OrgKeyGrant.updateMany(
-            {
-              orgId,
-              memberUserId: { $in: remainingIds },
-              keyVersion: { $lt: nextKeyVersion },
-              revokedAt: { $exists: false },
-              $or: [
-                { teamId: { $exists: false } },
-                { teamId: null },
-                { teamId: "" },
-              ],
-            },
-            {
-              $set: {
-                revokedAt: now,
-                rotationReason: "member_removed",
-              },
-            },
-            { session: mongoSession },
-          );
-        }
-
+        await retireOlderProductKeys({
+          spaceId: orgSpaceId,
+          productId: "drive",
+          memberAccountIds: remainingIds,
+          keyVersion: nextKeyVersion,
+          rotationReason: "member_removed",
+          session: mongoSession,
+        });
         for (const grant of rotationGrants) {
-          await OrgKeyGrant.findOneAndUpdate(
-            {
-              orgId,
-              teamId: null,
-              memberUserId: grant.memberUserId,
-              keyVersion: grant.keyVersion,
-            },
-            {
-              $set: {
-                orgId,
-                teamId: null,
-                memberUserId: grant.memberUserId,
-                wrappedSpaceKey: grant.wrappedSpaceKey,
-                keyVersion: grant.keyVersion,
-                wrappedByUserId: ctx.userId,
-                createdBy: ctx.userId,
-                rotationReason: "member_removed",
-              },
-              $unset: { revokedAt: "" },
-            },
-            {
-              new: true,
-              upsert: true,
-              setDefaultsOnInsert: true,
-              session: mongoSession,
-            },
-          );
+          await putMemberProductKey({
+            spaceId: orgSpaceId,
+            productId: "drive",
+            memberAccountId: grant.memberUserId,
+            wrappedKey: grant.wrappedSpaceKey,
+            keyVersion: grant.keyVersion,
+            createdByAccountId: ctx.accountId,
+            rotationReason: "member_removed",
+            session: mongoSession,
+          });
         }
-      }
-    });
+      }    });
 
     // Refresh the cached seat count now that a member is gone (best-effort).
     await syncSeatsUsed(orgId).catch(() => {});
@@ -403,9 +369,6 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 }
 
 const ASSIGNABLE_ROLES: OrgRole[] = ["admin", "member", "guest"];
-const ORG_GRANT_SCOPE = {
-  $or: [{ teamId: { $exists: false } }, { teamId: null }, { teamId: "" }],
-};
 
 /**
  * PATCH /api/orgs/[orgId]/members/[memberUserId] — change a member's role.
@@ -440,14 +403,15 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     await dbConnect();
     const membersCol = mongoose.connection.collection<OrgMemberRecord>("member");
-    const [target, allMembers, currentGrant] = await Promise.all([
+    const [target, allMembers] = await Promise.all([
       membersCol.findOne({ organizationId: orgId, userId: memberUserId }),
       membersCol.find({ organizationId: orgId }).toArray(),
-      OrgKeyGrant.findOne({ orgId })
-        .sort({ keyVersion: -1 })
-        .select("keyVersion")
-        .lean<{ keyVersion: number }>(),
     ]);
+    const orgSpaceId = organizationSpaceId(orgId);
+    const currentKeyVersion = await latestProductKeyVersion({
+      spaceId: orgSpaceId,
+      productId: "drive",
+    });
 
     if (!target) {
       throw new AuthzError(404, "member_not_found", "Member not found");
@@ -466,7 +430,6 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     const wasNonGuest = currentRole !== "guest";
     const willBeNonGuest = newRole !== "guest";
-    const now = new Date();
     let rotated = false;
 
     if (wasNonGuest && !willBeNonGuest) {
@@ -477,7 +440,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       );
       const nextKeyVersion = validateRotation({
         targetRole: "member",
-        currentMaxKeyVersion: currentGrant?.keyVersion ?? 0,
+        currentMaxKeyVersion: currentKeyVersion,
         remainingKeyMembers,
         rotationGrants,
       });
@@ -489,45 +452,36 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
           { $set: { role: newRole } },
           { session: mongoSession },
         );
-        await OrgKeyGrant.updateMany(
-          { orgId, memberUserId, revokedAt: { $exists: false }, ...ORG_GRANT_SCOPE },
-          { $set: { revokedAt: now, rotationReason: "member_removed" } },
-          { session: mongoSession },
-        );
+        await revokeMemberProductKeys({
+          spaceIds: orgSpaceId,
+          memberAccountId: memberUserId,
+          productId: "drive",
+          rotationReason: "member_removed",
+          session: mongoSession,
+        });
         if (nextKeyVersion) {
           const remainingIds = remainingKeyMembers.map((m) => m.userId);
-          await OrgKeyGrant.updateMany(
-            {
-              orgId,
-              memberUserId: { $in: remainingIds },
-              keyVersion: { $lt: nextKeyVersion },
-              revokedAt: { $exists: false },
-              ...ORG_GRANT_SCOPE,
-            },
-            { $set: { revokedAt: now, rotationReason: "member_removed" } },
-            { session: mongoSession },
-          );
+          await retireOlderProductKeys({
+            spaceId: orgSpaceId,
+            productId: "drive",
+            memberAccountIds: remainingIds,
+            keyVersion: nextKeyVersion,
+            rotationReason: "member_removed",
+            session: mongoSession,
+          });
           for (const grant of rotationGrants) {
-            await OrgKeyGrant.findOneAndUpdate(
-              { orgId, teamId: null, memberUserId: grant.memberUserId, keyVersion: grant.keyVersion },
-              {
-                $set: {
-                  orgId,
-                  teamId: null,
-                  memberUserId: grant.memberUserId,
-                  wrappedSpaceKey: grant.wrappedSpaceKey,
-                  keyVersion: grant.keyVersion,
-                  wrappedByUserId: ctx.userId,
-                  createdBy: ctx.userId,
-                  rotationReason: "member_removed",
-                },
-                $unset: { revokedAt: "" },
-              },
-              { new: true, upsert: true, setDefaultsOnInsert: true, session: mongoSession },
-            );
+            await putMemberProductKey({
+              spaceId: orgSpaceId,
+              productId: "drive",
+              memberAccountId: grant.memberUserId,
+              wrappedKey: grant.wrappedSpaceKey,
+              keyVersion: grant.keyVersion,
+              createdByAccountId: ctx.accountId,
+              rotationReason: "member_removed",
+              session: mongoSession,
+            });
           }
-        }
-      });
+        }      });
     } else if (!wasNonGuest && willBeNonGuest) {
       // Promotion into key access → requires a fresh wrapped grant (no bump).
       const wrappedSpaceKey =
@@ -546,24 +500,16 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
           { $set: { role: newRole } },
           { session: mongoSession },
         );
-        await OrgKeyGrant.findOneAndUpdate(
-          { orgId, teamId: null, memberUserId, keyVersion },
-          {
-            $set: {
-              orgId,
-              teamId: null,
-              memberUserId,
-              wrappedSpaceKey,
-              keyVersion,
-              wrappedByUserId: ctx.userId,
-              createdBy: ctx.userId,
-              rotationReason: "member_added",
-            },
-            $unset: { revokedAt: "" },
-          },
-          { new: true, upsert: true, setDefaultsOnInsert: true, session: mongoSession },
-        );
-      });
+        await putMemberProductKey({
+          spaceId: orgSpaceId,
+          productId: "drive",
+          memberAccountId: memberUserId,
+          wrappedKey: wrappedSpaceKey,
+          keyVersion,
+          createdByAccountId: ctx.accountId,
+          rotationReason: "member_added",
+          session: mongoSession,
+        });      });
     } else {
       // Lateral non-guest change — no key implications.
       await membersCol.updateOne(

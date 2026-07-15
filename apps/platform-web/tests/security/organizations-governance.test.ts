@@ -13,7 +13,9 @@ import { assertNotSoleOwner } from "@/lib/orgs/access";
 import { listUserOrgs } from "@/lib/orgs/listUserOrgs";
 import Bucket from "@/models/Bucket";
 import OrgUsage from "@/models/OrgUsage";
-import OrgKeyGrant from "@/models/OrgKeyGrant";
+import { createTestProductKey, SpaceProductKey } from "@/tests/helpers/spaceProductKeys";
+import { organizationSpaceId } from "@xenode/spaces/ids";
+import { ensureOrganizationSpace } from "@xenode/spaces/repository";
 import OrgDomain from "@/models/OrgDomain";
 import mongoose from "mongoose";
 
@@ -148,13 +150,16 @@ describe("organization governance", () => {
     await createOrg("org_1", { deletedAt: past, scheduledPurgeAt: past });
     await addMember("owner_1", "owner");
     await OrgUsage.create({ orgId: "org_1", seats: 3 });
-    await OrgKeyGrant.create({
-      orgId: "org_1",
-      memberUserId: "owner_1",
-      wrappedSpaceKey: "k",
+    await ensureOrganizationSpace({
+      accountId: "owner_1",
+      organizationId: "org_1",
+    });
+    await createTestProductKey({
+      spaceId: organizationSpaceId("org_1"),
+      memberAccountId: "owner_1",
+      wrappedKey: "k",
       keyVersion: 1,
-      wrappedByUserId: "owner_1",
-      createdBy: "owner_1",
+      createdByAccountId: "owner_1",
     });
     await Bucket.create({
       userId: "org:org_1",
@@ -177,7 +182,7 @@ describe("organization governance", () => {
       mongoose.connection.collection("organization").countDocuments({ id: "org_1" }),
     ).resolves.toBe(0);
     await expect(OrgUsage.countDocuments({ orgId: "org_1" })).resolves.toBe(0);
-    await expect(OrgKeyGrant.countDocuments({ orgId: "org_1" })).resolves.toBe(0);
+    await expect(SpaceProductKey.countDocuments({ spaceId: organizationSpaceId("org_1") })).resolves.toBe(0);
     await expect(Bucket.countDocuments({ orgId: "org_1" })).resolves.toBe(0);
   });
 
@@ -197,7 +202,7 @@ describe("organization governance", () => {
     expect(err.code).toBe("space_key_rotation_required");
   });
 
-  it("requires a wrapped key to promote a guest to member, allows lateral change", async () => {
+  it("requires a wrapped key for guest promotion and rejects the removed manager role", async () => {
     process.env.ORGS_ENABLED = "true";
     mockSession("owner_1");
     await createOrg();
@@ -212,16 +217,25 @@ describe("organization governance", () => {
     );
     expect(promote.status).toBe(400);
 
-    // member -> manager is lateral, no key needed.
+    // member -> admin is lateral and does not rotate the product key.
     const lateral = await rolePATCH(
-      body("PATCH", { role: "manager" }),
+      body("PATCH", { role: "admin" }),
       { params: Promise.resolve({ orgId: "org_1", memberUserId: "member_3" }) },
     );
     expect(lateral.status).toBe(200);
     const m = await mongoose.connection
       .collection("member")
       .findOne({ organizationId: "org_1", userId: "member_3" });
-    expect(m?.role).toBe("manager");
+    expect(m?.role).toBe("admin");
+
+    const removedRole = await rolePATCH(
+      body("PATCH", { role: "manager" }),
+      { params: Promise.resolve({ orgId: "org_1", memberUserId: "member_3" }) },
+    );
+    expect(removedRole.status).toBe(400);
+    await expect(removedRole.json()).resolves.toMatchObject({
+      code: "invalid_role",
+    });
   });
 
   it("cancels a pending invitation", async () => {

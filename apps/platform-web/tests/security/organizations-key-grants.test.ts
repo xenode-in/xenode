@@ -2,8 +2,12 @@ import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET, POST } from "@/app/api/orgs/[orgId]/keys/route";
 import { getServerSession } from "@/lib/auth/session";
-import OrgKeyGrant from "@/models/OrgKeyGrant";
 import Bucket from "@/models/Bucket";
+import {
+  createTestProductKey,
+  SpaceProductKey,
+} from "@/tests/helpers/spaceProductKeys";
+import { organizationSpaceId, teamSpaceId } from "@xenode/spaces/ids";
 
 const mockedGetServerSession = vi.mocked(getServerSession);
 
@@ -76,14 +80,14 @@ function postRequest(body: unknown) {
   });
 }
 
-describe("organization key grants", () => {
+describe("organization product keys", () => {
   afterEach(() => {
     delete process.env.ORGS_ENABLED;
     delete process.env.NEXT_PUBLIC_ORGS_ENABLED;
     mockedGetServerSession.mockReset();
   });
 
-  it("hides key grants while organizations are disabled", async () => {
+  it("hides product keys while organizations are disabled", async () => {
     mockSession("user_1");
 
     const response = await GET(
@@ -98,39 +102,31 @@ describe("organization key grants", () => {
     });
   });
 
-  it("returns only the current member's active wrapped grants", async () => {
+  it("returns only the current member's active wrapped keys", async () => {
     process.env.ORGS_ENABLED = "true";
     mockSession("user_1");
     await createOrg();
     await addMember("user_1", "member");
     await addMember("user_2", "member");
-    await OrgKeyGrant.create({
-      orgId: "org_1",
-      teamId: null,
-      memberUserId: "user_1",
-      wrappedSpaceKey: "wrapped-for-user-1",
+    const spaceId = organizationSpaceId("org_1");
+    await createTestProductKey({
+      spaceId,
+      memberAccountId: "user_1",
+      wrappedKey: "wrapped-for-user-1",
       keyVersion: 2,
-      wrappedByUserId: "admin_1",
-      createdBy: "admin_1",
     });
-    await OrgKeyGrant.create({
-      orgId: "org_1",
-      teamId: null,
-      memberUserId: "user_2",
-      wrappedSpaceKey: "wrapped-for-user-2",
+    await createTestProductKey({
+      spaceId,
+      memberAccountId: "user_2",
+      wrappedKey: "wrapped-for-user-2",
       keyVersion: 2,
-      wrappedByUserId: "admin_1",
-      createdBy: "admin_1",
     });
-    await OrgKeyGrant.create({
-      orgId: "org_1",
-      teamId: null,
-      memberUserId: "user_1",
-      wrappedSpaceKey: "revoked",
+    await createTestProductKey({
+      spaceId,
+      memberAccountId: "user_1",
+      wrappedKey: "revoked",
       keyVersion: 1,
-      wrappedByUserId: "admin_1",
-      createdBy: "admin_1",
-      revokedAt: new Date(),
+      status: "revoked",
     });
 
     const response = await GET(
@@ -140,12 +136,14 @@ describe("organization key grants", () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.grants).toHaveLength(1);
-    expect(body.grants[0].wrappedSpaceKey).toBe("wrapped-for-user-1");
-    expect(body.grants[0].keyVersion).toBe(2);
+    expect(body.keys).toHaveLength(1);
+    expect(body.keys[0].wrappedKey).toBe("wrapped-for-user-1");
+    expect(body.keys[0].memberAccountId).toBe("user_1");
+    expect(body.keys[0].keyVersion).toBe(2);
+    expect(body.keys[0].algorithm).toBe("RSA-OAEP-256");
   });
 
-  it("allows owners and admins to store ciphertext grants for org members", async () => {
+  it("allows owners and admins to store ciphertext keys for org members", async () => {
     process.env.ORGS_ENABLED = "true";
     mockSession("owner_1");
     await createOrg();
@@ -154,8 +152,8 @@ describe("organization key grants", () => {
 
     const response = await POST(
       postRequest({
-        memberUserId: "user_1",
-        wrappedSpaceKey: "ciphertext-only",
+        memberAccountId: "user_1",
+        wrappedKey: "ciphertext-only",
         keyVersion: 1,
         rotationReason: "initial",
       }),
@@ -164,12 +162,12 @@ describe("organization key grants", () => {
     const body = await response.json();
 
     expect(response.status).toBe(201);
-    expect(body.grant.memberUserId).toBe("user_1");
-    expect(body.grant.wrappedSpaceKey).toBe("ciphertext-only");
-    expect(await OrgKeyGrant.countDocuments()).toBe(1);
+    expect(body.key.memberAccountId).toBe("user_1");
+    expect(body.key.wrappedKey).toBe("ciphertext-only");
+    expect(await SpaceProductKey.countDocuments()).toBe(1);
   });
 
-  it("does not let members create grants", async () => {
+  it("does not let members create product keys", async () => {
     process.env.ORGS_ENABLED = "true";
     mockSession("user_1");
     await createOrg();
@@ -177,8 +175,8 @@ describe("organization key grants", () => {
 
     const response = await POST(
       postRequest({
-        memberUserId: "user_1",
-        wrappedSpaceKey: "ciphertext-only",
+        memberAccountId: "user_1",
+        wrappedKey: "ciphertext-only",
         keyVersion: 1,
       }),
       params(),
@@ -189,10 +187,30 @@ describe("organization key grants", () => {
       error: "Forbidden",
       code: "organization_admin_required",
     });
-    expect(await OrgKeyGrant.countDocuments()).toBe(0);
+    expect(await SpaceProductKey.countDocuments()).toBe(0);
   });
 
-  it("requires target team membership for team key grants", async () => {
+  it("does not issue product keys to guests", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("owner_1");
+    await createOrg();
+    await addMember("owner_1", "owner");
+    await addMember("guest_1", "guest");
+
+    const response = await POST(
+      postRequest({
+        memberAccountId: "guest_1",
+        wrappedKey: "must-not-persist",
+        keyVersion: 1,
+      }),
+      params(),
+    );
+
+    expect(response.status).toBe(403);
+    expect(await SpaceProductKey.countDocuments()).toBe(0);
+  });
+
+  it("requires target team membership for team product keys", async () => {
     process.env.ORGS_ENABLED = "true";
     mockSession("admin_1");
     await createOrg();
@@ -200,15 +218,13 @@ describe("organization key grants", () => {
     await addMember("user_1", "member");
     await addTeam("team_1");
 
-    const response = await POST(
-      postRequest({
-        memberUserId: "user_1",
-        teamId: "team_1",
-        wrappedSpaceKey: "team-ciphertext",
-        keyVersion: 1,
-      }),
-      params(),
-    );
+    const requestBody = {
+      memberAccountId: "user_1",
+      teamId: "team_1",
+      wrappedKey: "team-ciphertext",
+      keyVersion: 1,
+    };
+    const response = await POST(postRequest(requestBody), params());
 
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
@@ -217,17 +233,15 @@ describe("organization key grants", () => {
     });
 
     await addTeamMember("user_1", "team_1");
-    const secondResponse = await POST(
-      postRequest({
-        memberUserId: "user_1",
-        teamId: "team_1",
-        wrappedSpaceKey: "team-ciphertext",
-        keyVersion: 1,
-      }),
-      params(),
-    );
+    const secondResponse = await POST(postRequest(requestBody), params());
 
     expect(secondResponse.status).toBe(201);
-    expect(await OrgKeyGrant.countDocuments({ teamId: "team_1" })).toBe(1);
+    expect(
+      await SpaceProductKey.countDocuments({
+        spaceId: teamSpaceId("org_1", "team_1"),
+        memberAccountId: "user_1",
+        status: "active",
+      }),
+    ).toBe(1);
   });
 });

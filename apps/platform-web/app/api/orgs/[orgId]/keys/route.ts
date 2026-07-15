@@ -11,7 +11,13 @@ import {
   assertTeamMember,
 } from "@/lib/orgs/access";
 import dbConnect from "@/lib/mongodb";
-import OrgKeyGrant from "@/models/OrgKeyGrant";
+import { organizationSpaceId, teamSpaceId } from "@xenode/spaces/ids";
+import type { SpaceProductKeyRecord } from "@xenode/database/models";
+import {
+  listMemberProductKeys,
+  putMemberProductKey,
+  type KeyRotationReason,
+} from "@xenode/spaces/product-keys";
 
 export const dynamic = "force-dynamic";
 
@@ -19,61 +25,43 @@ interface RouteParams {
   params: Promise<{ orgId: string }>;
 }
 
-type RotationReason = "initial" | "member_added" | "member_removed" | "manual";
-
-function serializeGrant(grant: Record<string, any>) {
+function serializeKey(key: SpaceProductKeyRecord) {
   return {
-    _id: String(grant._id),
-    orgId: grant.orgId,
-    teamId: grant.teamId ?? null,
-    memberUserId: grant.memberUserId,
-    wrappedSpaceKey: grant.wrappedSpaceKey,
-    keyVersion: grant.keyVersion,
-    wrappedByUserId: grant.wrappedByUserId,
-    createdBy: grant.createdBy,
-    revokedAt: grant.revokedAt ?? null,
-    rotationReason: grant.rotationReason ?? null,
-    createdAt: grant.createdAt,
-    updatedAt: grant.updatedAt,
+    _id: String(key._id),
+    spaceId: key.spaceId,
+    productId: key.productId,
+    memberAccountId: key.memberAccountId,
+    wrappedKey: key.ciphertext,
+    keyVersion: key.keyVersion,
+    formatVersion: key.formatVersion,
+    algorithm: key.algorithm,
+    status: key.status,
+    rotationReason: key.rotationReason ?? null,
+    createdByAccountId: key.createdByAccountId,
+    createdAt: key.createdAt,
+    updatedAt: key.updatedAt,
   };
 }
 
-function activeGrantScope(teamId: string | null) {
-  return teamId
-    ? { teamId }
-    : {
-        $or: [
-          { teamId: { $exists: false } },
-          { teamId: null },
-          { teamId: "" },
-        ],
-      };
-}
-
 function normalizeBody(body: Record<string, unknown>) {
-  const memberUserId =
-    typeof body.memberUserId === "string" ? body.memberUserId.trim() : "";
-  const wrappedSpaceKey =
-    typeof body.wrappedSpaceKey === "string" ? body.wrappedSpaceKey.trim() : "";
+  const memberAccountId =
+    typeof body.memberAccountId === "string" ? body.memberAccountId.trim() : "";
+  const wrappedKey =
+    typeof body.wrappedKey === "string" ? body.wrappedKey.trim() : "";
   const keyVersion = Number(body.keyVersion);
-  const teamId = typeof body.teamId === "string" && body.teamId.trim()
-    ? body.teamId.trim()
-    : null;
+  const teamId =
+    typeof body.teamId === "string" && body.teamId.trim()
+      ? body.teamId.trim()
+      : null;
   const rotationReason =
     body.rotationReason === "member_added" ||
     body.rotationReason === "member_removed" ||
     body.rotationReason === "manual" ||
     body.rotationReason === "initial"
-      ? (body.rotationReason as RotationReason)
+      ? (body.rotationReason as KeyRotationReason)
       : undefined;
 
-  return {
-    memberUserId,
-    wrappedSpaceKey,
-    keyVersion,
-    teamId,
-    rotationReason,
-  };
+  return { memberAccountId, wrappedKey, keyVersion, teamId, rotationReason };
 }
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
@@ -88,24 +76,20 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     await dbConnect();
-    const grants = await OrgKeyGrant.find({
-      orgId,
-      memberUserId: ctx.userId,
-      revokedAt: { $exists: false },
-      ...activeGrantScope(teamId),
-    })
-      .sort({ keyVersion: -1, createdAt: -1 })
-      .lean<Array<Record<string, any>>>();
-
-    return NextResponse.json({
-      grants: grants.map(serializeGrant),
+    const spaceId = teamId
+      ? teamSpaceId(orgId, teamId)
+      : organizationSpaceId(orgId);
+    const keys = await listMemberProductKeys({
+      spaceId,
+      productId: "drive",
+      memberAccountId: ctx.accountId,
     });
+
+    return NextResponse.json({ keys: keys.map(serializeKey) });
   } catch (error) {
-    if (isAuthzError(error)) {
-      return toJsonResponse(error);
-    }
+    if (isAuthzError(error)) return toJsonResponse(error);
     const message =
-      error instanceof Error ? error.message : "Failed to load key grants";
+      error instanceof Error ? error.message : "Failed to load product keys";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
@@ -115,62 +99,55 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const ctx = await requireAccessContext(request);
     const { orgId } = await params;
     const body = await request.json().catch(() => ({}));
-    const {
-      memberUserId,
-      wrappedSpaceKey,
-      keyVersion,
-      teamId,
-      rotationReason,
-    } = normalizeBody(body);
+    const { memberAccountId, wrappedKey, keyVersion, teamId, rotationReason } =
+      normalizeBody(body);
 
-    if (!memberUserId || !wrappedSpaceKey || !Number.isInteger(keyVersion) || keyVersion < 1) {
+    if (!memberAccountId || !wrappedKey || !Number.isInteger(keyVersion) || keyVersion < 1) {
       return NextResponse.json(
         {
           error:
-            "memberUserId, wrappedSpaceKey, and positive integer keyVersion are required",
+            "memberAccountId, wrappedKey, and positive integer keyVersion are required",
         },
         { status: 400 },
       );
     }
 
-    const membership = await assertOrgMember({ userId: ctx.userId, orgId });
-    assertOrgAdminRole(membership.role);
-    await assertMemberInOrg({ userId: memberUserId, orgId });
+    const actorMembership = await assertOrgMember({ userId: ctx.userId, orgId });
+    assertOrgAdminRole(actorMembership.role);
+    const targetMembership = await assertMemberInOrg({
+      userId: memberAccountId,
+      orgId,
+    });
+    if (targetMembership.role === "guest") {
+      return NextResponse.json(
+        { error: "Guests cannot receive organization product keys" },
+        { status: 403 },
+      );
+    }
     if (teamId) {
-      await assertTeamMember({ userId: memberUserId, orgId, teamId });
+      await assertTeamMember({ userId: memberAccountId, orgId, teamId });
     }
 
     await dbConnect();
-    const grant = await OrgKeyGrant.findOneAndUpdate(
-      {
-        orgId,
-        memberUserId,
-        keyVersion,
-        teamId: teamId ?? null,
-      },
-      {
-        $set: {
-          orgId,
-          memberUserId,
-          wrappedSpaceKey,
-          keyVersion,
-          wrappedByUserId: ctx.userId,
-          createdBy: ctx.userId,
-          teamId,
-          ...(rotationReason ? { rotationReason } : {}),
-        },
-        $unset: { revokedAt: "" },
-      },
-      { new: true, upsert: true, setDefaultsOnInsert: true },
-    ).lean<Record<string, any>>();
+    const spaceId = teamId
+      ? teamSpaceId(orgId, teamId)
+      : organizationSpaceId(orgId);
+    const key = await putMemberProductKey({
+      spaceId,
+      productId: "drive",
+      memberAccountId,
+      wrappedKey,
+      keyVersion,
+      createdByAccountId: ctx.accountId,
+      rotationReason,
+    });
 
-    return NextResponse.json({ grant: serializeGrant(grant) }, { status: 201 });
+    if (!key) throw new Error("Failed to persist product key");
+    return NextResponse.json({ key: serializeKey(key) }, { status: 201 });
   } catch (error) {
-    if (isAuthzError(error)) {
-      return toJsonResponse(error);
-    }
+    if (isAuthzError(error)) return toJsonResponse(error);
     const message =
-      error instanceof Error ? error.message : "Failed to save key grant";
+      error instanceof Error ? error.message : "Failed to save product key";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

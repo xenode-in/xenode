@@ -20,6 +20,8 @@ import { findLastDeparture } from "@/lib/orgs/membershipHistory";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { emitNotification } from "@/lib/notifications/emit";
 import { enforceRateLimit } from "@/lib/ratelimit/limiter";
+import { organizationSpaceId } from "@xenode/spaces/ids";
+import { latestProductKeyVersion, putMemberProductKey } from "@xenode/spaces/product-keys";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +42,7 @@ interface InvitationRecord {
   createdAt: Date;
   updatedAt?: Date;
   recipientUserId?: string | null;
-  wrappedSpaceKey?: string | null;
+  productKeyReady?: boolean;
   keyVersion?: number | null;
   recipientReadyAt?: Date | null;
   previouslyMember?: boolean;
@@ -92,9 +94,9 @@ function serializeInvitation(invitation: InvitationRecord) {
     createdAt: invitation.createdAt,
     updatedAt: invitation.updatedAt ?? null,
     recipientUserId: invitation.recipientUserId ?? null,
-    spaceKeyReady: !!invitation.wrappedSpaceKey,
+    spaceKeyReady: !!invitation.productKeyReady,
     awaitingRecipientKey:
-      invitation.role !== "guest" && !invitation.wrappedSpaceKey,
+      invitation.role !== "guest" && !invitation.productKeyReady,
     recipientReadyAt: invitation.recipientReadyAt ?? null,
     previouslyMember: !!invitation.previouslyMember,
     lastRemovedAt: invitation.lastRemovedAt ?? null,
@@ -164,6 +166,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    if (role === "guest" && wrappedSpaceKey) {
+      return NextResponse.json(
+        { error: "Guest invitations cannot include a product key" },
+        { status: 400 },
+      );
+    }
     const membership = await assertOrgMember({ userId: ctx.userId, orgId });
     if (membership.role !== "owner" && membership.role !== "admin") {
       throw new AuthzError(403, "organization_admin_required", "Forbidden");
@@ -256,7 +264,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       createdAt: now,
       updatedAt: now,
       recipientUserId: resolvedRecipientUserId,
-      wrappedSpaceKey,
+      productKeyReady: !!wrappedSpaceKey,
       keyVersion: wrappedSpaceKey ? keyVersion : null,
       recipientReadyAt: null,
       previouslyMember: !!priorDeparture,
@@ -267,6 +275,41 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       .collection<InvitationRecord>("invitation")
       .insertOne(invitation);
 
+    if (wrappedSpaceKey && resolvedRecipientUserId) {
+      try {
+        const currentKeyVersion = await latestProductKeyVersion({
+          spaceId: organizationSpaceId(orgId),
+          productId: "drive",
+        });
+        if (currentKeyVersion > 0 && keyVersion !== currentKeyVersion) {
+          await mongoose.connection
+            .collection<InvitationRecord>("invitation")
+            .deleteOne({ id: invitation.id });
+          return NextResponse.json(
+            {
+              error: "Stale space key version — reload and invite again",
+              code: "stale_key_version",
+            },
+            { status: 409 },
+          );
+        }
+        await putMemberProductKey({
+          spaceId: organizationSpaceId(orgId),
+          productId: "drive",
+          memberAccountId: resolvedRecipientUserId,
+          wrappedKey: wrappedSpaceKey,
+          keyVersion,
+          createdByAccountId: ctx.accountId,
+          rotationReason: "member_added",
+          status: "pending",
+        });
+      } catch (error) {
+        await mongoose.connection
+          .collection<InvitationRecord>("invitation")
+          .deleteOne({ id: invitation.id });
+        throw error;
+      }
+    }
     await notifyOrganizationInvitation({
       to: email,
       inviterName: ctx.session.user.name ?? ctx.session.user.email ?? "A Xenode user",

@@ -1,11 +1,21 @@
 import mongoose from "mongoose";
 import { NextRequest, NextResponse } from "next/server";
-import { AuthzError, isAuthzError, requireAccessContext, toJsonResponse } from "@/lib/authz";
+import {
+  AuthzError,
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import { assertOrgMemberRole } from "@/lib/orgs/access";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { emitNotification } from "@/lib/notifications/emit";
-import OrgKeyGrant from "@/models/OrgKeyGrant";
+import { organizationSpaceId } from "@xenode/spaces/ids";
+import {
+  latestProductKeyVersion,
+  putMemberProductKey,
+  setMemberProductKeyStatus,
+} from "@xenode/spaces/product-keys";
 
 export const dynamic = "force-dynamic";
 
@@ -20,18 +30,44 @@ interface InvitationRecord {
   role: string;
   status: "pending" | "accepted" | "rejected" | "canceled";
   recipientUserId?: string | null;
-  wrappedSpaceKey?: string | null;
+  productKeyReady?: boolean;
   keyVersion?: number | null;
   expiresAt?: Date;
 }
 
-/**
- * DELETE /api/orgs/[orgId]/invitations/[invitationId] — cancel a pending invite.
- *
- * Owner/admin (invitation:cancel). Marks the invitation "canceled" so
- * its wrapped space key is never delivered. No key rotation is needed: a pending
- * invite holds a wrapped key but no live grant has been issued.
- */
+interface UserRecord {
+  _id?: unknown;
+  id?: string;
+  email?: string | null;
+}
+
+function userIdLookup(userId: string) {
+  const clauses: Array<Record<string, unknown>> = [{ id: userId }];
+  if (mongoose.Types.ObjectId.isValid(userId)) {
+    clauses.push({ _id: new mongoose.Types.ObjectId(userId) });
+  }
+  return { $or: clauses };
+}
+
+async function revokePendingInvitationKey(invitation: InvitationRecord) {
+  if (
+    !invitation.productKeyReady ||
+    !invitation.recipientUserId ||
+    !Number.isInteger(invitation.keyVersion) ||
+    Number(invitation.keyVersion) < 1
+  ) {
+    return;
+  }
+  await setMemberProductKeyStatus({
+    spaceId: organizationSpaceId(invitation.organizationId),
+    productId: "drive",
+    memberAccountId: invitation.recipientUserId,
+    keyVersion: Number(invitation.keyVersion),
+    status: "revoked",
+    rotationReason: "member_added",
+  });
+}
+
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     const ctx = await requireAccessContext(request);
@@ -60,9 +96,16 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    await revokePendingInvitationKey(invitation);
     await invitations.updateOne(
       { id: invitationId, organizationId: orgId, status: "pending" },
-      { $set: { status: "canceled", updatedAt: new Date() } },
+      {
+        $set: {
+          status: "canceled",
+          productKeyReady: false,
+          updatedAt: new Date(),
+        },
+      },
     );
 
     await emitActivity({
@@ -83,15 +126,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 }
 
 /**
- * PATCH /api/orgs/[orgId]/invitations/[invitationId] — grant the deferred space
- * key to a pending invitee whose vault now exists.
- *
- * Owner/admin only (they hold the space key). The client loads the current raw
- * space key, wraps it for the recipient's now-available public key, and PATCHes
- * `{ wrappedSpaceKey, keyVersion }` here. We store it on the invitation; the
- * recipient then accepts via the normal accept endpoint, which installs the
- * member row + OrgKeyGrant from this wrapped key. The server never sees the raw
- * key — this only persists ciphertext.
+ * Stores a pending RSA-wrapped Drive key for an invitee whose account and vault
+ * now exist. Ciphertext lives only in SpaceProductKey; the invitation stores
+ * readiness and version metadata.
  */
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
@@ -106,10 +143,12 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const body = await request.json().catch(() => ({}));
     const wrappedSpaceKey =
       typeof body.wrappedSpaceKey === "string" ? body.wrappedSpaceKey.trim() : "";
+    const memberAccountId =
+      typeof body.memberAccountId === "string" ? body.memberAccountId.trim() : "";
     const keyVersion = Number(body.keyVersion);
-    if (!wrappedSpaceKey) {
+    if (!wrappedSpaceKey || !memberAccountId) {
       return NextResponse.json(
-        { error: "wrappedSpaceKey is required" },
+        { error: "wrappedSpaceKey and memberAccountId are required" },
         { status: 400 },
       );
     }
@@ -150,14 +189,26 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     ) {
       throw new AuthzError(410, "invitation_expired", "Invitation has expired");
     }
+    if (
+      invitation.recipientUserId &&
+      invitation.recipientUserId !== memberAccountId
+    ) {
+      throw new AuthzError(403, "invitation_recipient_mismatch", "Forbidden");
+    }
 
-    // The wrapped key must target the org's current key version so acceptance
-    // installs a grant consistent with the live space key.
-    const currentGrant = await OrgKeyGrant.findOne({ orgId })
-      .sort({ keyVersion: -1 })
-      .select("keyVersion")
-      .lean<{ keyVersion: number }>();
-    if (currentGrant && keyVersion !== currentGrant.keyVersion) {
+    const recipient = await mongoose.connection
+      .collection<UserRecord>("user")
+      .findOne(userIdLookup(memberAccountId));
+    if (!recipient || recipient.email?.trim().toLowerCase() !== invitation.email) {
+      throw new AuthzError(403, "invitation_email_mismatch", "Forbidden");
+    }
+
+    const spaceId = organizationSpaceId(orgId);
+    const currentKeyVersion = await latestProductKeyVersion({
+      spaceId,
+      productId: "drive",
+    });
+    if (currentKeyVersion > 0 && keyVersion !== currentKeyVersion) {
       return NextResponse.json(
         {
           error: "Stale space key version — reload and grant again",
@@ -167,11 +218,44 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       );
     }
 
+    await putMemberProductKey({
+      spaceId,
+      productId: "drive",
+      memberAccountId,
+      wrappedKey: wrappedSpaceKey,
+      keyVersion,
+      createdByAccountId: ctx.accountId,
+      rotationReason: "member_added",
+      status: "pending",
+    });
+
     const now = new Date();
-    await invitations.updateOne(
+    const result = await invitations.updateOne(
       { id: invitationId, organizationId: orgId, status: "pending" },
-      { $set: { wrappedSpaceKey, keyVersion, updatedAt: now } },
+      {
+        $set: {
+          recipientUserId: memberAccountId,
+          productKeyReady: true,
+          keyVersion,
+          updatedAt: now,
+        },
+      },
     );
+    if (result.matchedCount !== 1) {
+      await setMemberProductKeyStatus({
+        spaceId,
+        productId: "drive",
+        memberAccountId,
+        keyVersion,
+        status: "revoked",
+        rotationReason: "member_added",
+      });
+      throw new AuthzError(
+        409,
+        "invitation_not_pending",
+        "Invitation is no longer pending",
+      );
+    }
 
     await emitActivity({
       orgId,
@@ -180,17 +264,14 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       target: { type: "invitation", id: invitationId },
       metadata: { role: invitation.role, keyGranted: true },
     });
-
-    if (invitation.recipientUserId) {
-      await emitNotification({
-        userId: invitation.recipientUserId,
-        type: "invite_ready",
-        title: "Your encrypted access is ready",
-        body: "Open the invitation to join the organization.",
-        orgId,
-        metadata: { invitationId, role: invitation.role },
-      });
-    }
+    await emitNotification({
+      userId: memberAccountId,
+      type: "invite_ready",
+      title: "Your encrypted access is ready",
+      body: "Open the invitation to join the organization.",
+      orgId,
+      metadata: { invitationId, role: invitation.role },
+    });
 
     return NextResponse.json({
       invitationId,

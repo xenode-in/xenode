@@ -100,3 +100,35 @@ export async function openEnvelope(
   );
   return new Uint8Array(plaintext);
 }
+
+export async function openRsaOaepProductSpaceKey(
+  ciphertext: string,
+  privateKeyPkcs8: Uint8Array,
+): Promise<Uint8Array> {
+  const privateKey = await crypto.subtle.importKey(
+    "pkcs8",
+    privateKeyPkcs8 as BufferSource,
+    { name: "RSA-OAEP", hash: "SHA-256" },
+    false,
+    ["decrypt"],
+  );
+  let plaintext: Uint8Array;
+  try {
+    plaintext = new Uint8Array(
+      await crypto.subtle.decrypt(
+        { name: "RSA-OAEP" },
+        privateKey,
+        decodeBase64Url(ciphertext) as BufferSource,
+      ),
+    );
+  } catch (error) {
+    throw new Error("RSA product-space-key decryption failed", {
+      cause: error,
+    });
+  }
+  if (plaintext.length !== 32) {
+    plaintext.fill(0);
+    throw new Error("ProductSpaceKey must be 256 bits");
+  }
+  return plaintext;
+}

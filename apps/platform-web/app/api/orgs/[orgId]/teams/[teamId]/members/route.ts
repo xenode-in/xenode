@@ -12,7 +12,8 @@ import {
 } from "@/lib/orgs/access";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { enforceRateLimit } from "@/lib/ratelimit/limiter";
-import OrgKeyGrant from "@/models/OrgKeyGrant";
+import { teamSpaceId } from "@xenode/spaces/ids";
+import { putMemberProductKey } from "@xenode/spaces/product-keys";
 
 export const dynamic = "force-dynamic";
 
@@ -113,8 +114,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Team members must already be org members (guests can't hold a team key).
-    await assertMemberInOrg({ userId: memberUserId, orgId });
+    // Team members must already be non-guest organization members.
+    const targetMembership = await assertMemberInOrg({
+      userId: memberUserId,
+      orgId,
+    });
+    if (targetMembership.role === "guest") {
+      return NextResponse.json(
+        { error: "Guests cannot receive team product keys" },
+        { status: 403 },
+      );
+    }
 
     await dbConnect();
     const existing = await mongoose.connection
@@ -135,23 +145,22 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       createdAt: now,
     });
 
-    await OrgKeyGrant.findOneAndUpdate(
-      { orgId, teamId, memberUserId, keyVersion },
-      {
-        $set: {
-          orgId,
-          teamId,
-          memberUserId,
-          wrappedSpaceKey: wrappedTeamKey,
-          keyVersion,
-          wrappedByUserId: ctx.userId,
-          createdBy: ctx.userId,
-          rotationReason: "member_added",
-        },
-        $unset: { revokedAt: "" },
-      },
-      { new: true, upsert: true, setDefaultsOnInsert: true },
-    );
+    try {
+      await putMemberProductKey({
+        spaceId: teamSpaceId(orgId, teamId),
+        productId: "drive",
+        memberAccountId: memberUserId,
+        wrappedKey: wrappedTeamKey,
+        keyVersion,
+        createdByAccountId: ctx.accountId,
+        rotationReason: "member_added",
+      });
+    } catch (error) {
+      await mongoose.connection
+        .collection("teamMember")
+        .deleteOne({ teamId, userId: memberUserId });
+      throw error;
+    }
 
     await emitActivity({
       orgId,

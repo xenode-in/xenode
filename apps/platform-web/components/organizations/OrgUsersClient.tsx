@@ -117,13 +117,13 @@ export function OrgUsersClient({ orgId, role }: { orgId: string; role: OrgRole }
       setModalOpen(true);
       throw new Error("Unlock your vault first");
     }
-    const data = await readJson<{ grants: { wrappedSpaceKey: string; keyVersion: number }[] }>(
+    const data = await readJson<{ keys: { wrappedKey: string; keyVersion: number }[] }>(
       await fetch(`/api/orgs/${orgId}/keys`),
     );
-    const grant = data.grants[0];
+    const grant = data.keys[0];
     if (!grant) throw new Error("Your organization space key is not available");
     return {
-      rawSpaceKey: await unwrapSpaceKeyGrant({ wrappedSpaceKey: grant.wrappedSpaceKey, privateKey }),
+      rawSpaceKey: await unwrapSpaceKeyGrant({ wrappedSpaceKey: grant.wrappedKey, privateKey }),
       keyVersion: grant.keyVersion,
     };
   }, [orgId, privateKey, setModalOpen]);
@@ -268,7 +268,11 @@ export function OrgUsersClient({ orgId, role }: { orgId: string; role: OrgRole }
         await fetch(`/api/orgs/${orgId}/invitations/${inv.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ wrappedSpaceKey, keyVersion }),
+          body: JSON.stringify({
+              wrappedSpaceKey,
+              keyVersion,
+              memberAccountId: recipient.userId,
+            }),
         }),
       );
       toast.success("Access granted — they can now join");

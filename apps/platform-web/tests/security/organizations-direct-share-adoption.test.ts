@@ -119,7 +119,7 @@ describe("organization direct-share route adoption", () => {
 
     const response = await POST(
       request(shareBody(String(object._id)), {
-        "x-xenode-drive-scope": "organization",
+        "x-xenode-space-id": "space_org_org_1",
       }),
     );
     const body = await response.json();

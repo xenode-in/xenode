@@ -53,12 +53,12 @@ export function useWorkspaceSpaceKey(): WorkspaceSpaceKeyState {
         if (!res.ok) {
           throw new Error(data.error || "Failed to load workspace key");
         }
-        const grant = Array.isArray(data.grants) ? data.grants[0] : null;
+        const grant = Array.isArray(data.keys) ? data.keys[0] : null;
         if (!grant?.wrappedSpaceKey || !grant?.keyVersion) {
           throw new Error("Workspace encryption key is not available");
         }
         const raw = await unwrapSpaceKeyGrant({
-          wrappedSpaceKey: grant.wrappedSpaceKey,
+          wrappedSpaceKey: grant.wrappedKey,
           privateKey,
         });
         if (!cancelled) {

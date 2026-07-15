@@ -41,7 +41,7 @@ async function addOrgMember(userId = "user_1") {
 
 function orgRequest(path: string) {
   return new NextRequest(`http://localhost${path}`, {
-    headers: { "x-xenode-drive-scope": "organization" },
+    headers: { "x-xenode-space-id": "space_org_org_1" },
   });
 }
 

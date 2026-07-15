@@ -24,7 +24,7 @@ interface InvitationRecord {
   createdAt: Date;
   updatedAt?: Date;
   recipientUserId?: string | null;
-  wrappedSpaceKey?: string | null;
+  productKeyReady?: boolean;
   recipientReadyAt?: Date | null;
 }
 
@@ -43,9 +43,9 @@ function serializeInvitation(
     createdAt: invitation.createdAt,
     updatedAt: invitation.updatedAt ?? null,
     recipientUserId: invitation.recipientUserId ?? null,
-    spaceKeyReady: !!invitation.wrappedSpaceKey,
+    spaceKeyReady: !!invitation.productKeyReady,
     awaitingRecipientKey:
-      invitation.role !== "guest" && !invitation.wrappedSpaceKey,
+      invitation.role !== "guest" && !invitation.productKeyReady,
     recipientReadyAt: invitation.recipientReadyAt ?? null,
     organization: organization
       ? {

@@ -116,7 +116,7 @@ describe("organization object route adoption", () => {
     const response = await metadataGET(
       new NextRequest(
         `http://localhost/api/objects/metadata?bucketId=${bucket._id}`,
-        { headers: { "x-xenode-drive-scope": "organization" } },
+        { headers: { "x-xenode-space-id": "space_org_org_1" } },
       ),
     );
 
@@ -140,7 +140,7 @@ describe("organization object route adoption", () => {
         }),
         headers: {
           "content-type": "application/json",
-          "x-xenode-drive-scope": "organization",
+          "x-xenode-space-id": "space_org_org_1",
         },
       }),
     );
@@ -164,7 +164,7 @@ describe("organization object route adoption", () => {
         }),
         headers: {
           "content-type": "application/json",
-          "x-xenode-drive-scope": "organization",
+          "x-xenode-space-id": "space_org_org_1",
         },
       }),
     );
@@ -188,7 +188,7 @@ describe("organization object route adoption", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-xenode-drive-scope": "organization",
+          "x-xenode-space-id": "space_org_org_1",
         },
         body: JSON.stringify({
           bucketId: String(bucket._id),
@@ -244,8 +244,7 @@ describe("organization object route adoption", () => {
       new NextRequest(`http://localhost/api/objects/${object._id}`, {
         method: "DELETE",
         headers: {
-          "x-xenode-drive-scope": "team",
-          "x-xenode-team-id": "team_1",
+          "x-xenode-space-id": "space_team_org_1_team_1",
         },
       }),
       { params: Promise.resolve({ id: object._id.toString() }) },
@@ -261,7 +260,7 @@ describe("organization object route adoption", () => {
   it("allows org managers to delete team drive objects", async () => {
     process.env.ORGS_ENABLED = "true";
     mockSession("manager_1");
-    await addOrgMember("manager_1", "manager");
+    await addOrgMember("member_1", "member");
     await addTeamMember("manager_1");
     const bucket = await Bucket.create({
       userId: "system",
@@ -290,8 +289,7 @@ describe("organization object route adoption", () => {
       new NextRequest(`http://localhost/api/objects/${object._id}`, {
         method: "DELETE",
         headers: {
-          "x-xenode-drive-scope": "team",
-          "x-xenode-team-id": "team_1",
+          "x-xenode-space-id": "space_team_org_1_team_1",
         },
       }),
       { params: Promise.resolve({ id: object._id.toString() }) },

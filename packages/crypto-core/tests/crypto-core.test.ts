@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   derivePurposeKey,
+  encodeBase64Url,
   generateAccountRootKey,
   generateMetadataKey,
   openEnvelope,
+  openRsaOaepProductSpaceKey,
   sealEnvelope,
   type EnvelopeContext,
 } from "../src";
@@ -51,5 +53,39 @@ describe("Vault v2 envelopes", () => {
     expect(drive).toEqual(driveAgain);
     expect(drive).not.toEqual(photos);
     expect(drive).not.toEqual(ark);
+  });
+  it("unwraps RSA organization product keys with the Vault sharing key", async () => {
+    const sharingPair = (await crypto.subtle.generateKey(
+      {
+        name: "RSA-OAEP",
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: "SHA-256",
+      },
+      true,
+      ["encrypt", "decrypt"],
+    )) as CryptoKeyPair;
+    const productSpaceKey = generateMetadataKey();
+    const [privateKeyPkcs8, ciphertext] = await Promise.all([
+      crypto.subtle.exportKey("pkcs8", sharingPair.privateKey),
+      crypto.subtle.encrypt(
+        { name: "RSA-OAEP" },
+        sharingPair.publicKey,
+        productSpaceKey as BufferSource,
+      ),
+    ]);
+
+    expect(
+      await openRsaOaepProductSpaceKey(
+        encodeBase64Url(new Uint8Array(ciphertext)),
+        new Uint8Array(privateKeyPkcs8),
+      ),
+    ).toEqual(productSpaceKey);
+    await expect(
+      openRsaOaepProductSpaceKey(
+        encodeBase64Url(new Uint8Array(ciphertext)),
+        new Uint8Array(32),
+      ),
+    ).rejects.toThrow();
   });
 });

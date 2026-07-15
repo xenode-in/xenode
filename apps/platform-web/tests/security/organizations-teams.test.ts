@@ -8,7 +8,8 @@ import { POST as teamCompletePOST } from "@/app/api/orgs/[orgId]/teams/[teamId]/
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
-import OrgKeyGrant from "@/models/OrgKeyGrant";
+import { SpaceProductKey } from "@/tests/helpers/spaceProductKeys";
+import { teamSpaceId } from "@xenode/spaces/ids";
 import OrgUsage from "@/models/OrgUsage";
 import mongoose from "mongoose";
 
@@ -108,7 +109,11 @@ describe("organization teams & team drives", () => {
       Bucket.countDocuments({ ownerScope: "team", orgId: "org_1", teamId, name: "workspace" }),
     ).resolves.toBe(0);
     await expect(
-      OrgKeyGrant.countDocuments({ orgId: "org_1", teamId, memberUserId: "owner_1" }),
+      SpaceProductKey.countDocuments({
+        spaceId: teamSpaceId("org_1", teamId),
+        memberAccountId: "owner_1",
+        status: "active",
+      }),
     ).resolves.toBe(1);
   });
 
@@ -141,7 +146,11 @@ describe("organization teams & team drives", () => {
     );
     expect(res.status).toBe(201);
     await expect(
-      OrgKeyGrant.countDocuments({ orgId: "org_1", teamId, memberUserId: "member_2" }),
+      SpaceProductKey.countDocuments({
+        spaceId: teamSpaceId("org_1", teamId),
+        memberAccountId: "member_2",
+        status: "active",
+      }),
     ).resolves.toBe(1);
   });
 
@@ -251,7 +260,9 @@ describe("organization teams & team drives", () => {
     await expect(
       Bucket.countDocuments({ ownerScope: "team", teamId }),
     ).resolves.toBe(0);
-    await expect(OrgKeyGrant.countDocuments({ teamId })).resolves.toBe(0);
+    await expect(
+      SpaceProductKey.countDocuments({ spaceId: teamSpaceId("org_1", teamId) }),
+    ).resolves.toBe(0);
   });
 
   it("lists teams with membership + counts", async () => {

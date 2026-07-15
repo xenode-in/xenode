@@ -115,12 +115,12 @@ export function OrgObjectList({ orgId, scope }: { orgId: string; scope: Scope })
     (async () => {
       try {
         const data = await readJson<{
-          grants: { wrappedSpaceKey: string; keyVersion: number }[];
+          keys: { wrappedKey: string; keyVersion: number }[];
         }>(await fetch(`/api/orgs/${orgId}/keys`));
-        const grant = data.grants?.[0];
-        if (!grant?.wrappedSpaceKey) return;
+        const grant = data.keys?.[0];
+        if (!grant?.wrappedKey) return;
         const raw = await unwrapSpaceKeyGrant({
-          wrappedSpaceKey: grant.wrappedSpaceKey,
+          wrappedSpaceKey: grant.wrappedKey,
           privateKey,
         });
         const key = await crypto.subtle.importKey(

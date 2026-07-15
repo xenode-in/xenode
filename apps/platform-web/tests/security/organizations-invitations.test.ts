@@ -10,7 +10,8 @@ import { PATCH as invitationGrantPATCH } from "@/app/api/orgs/[orgId]/invitation
 import { POST as invitationClaimPOST } from "@/app/api/orgs/invitations/[invitationId]/claim/route";
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
-import OrgKeyGrant from "@/models/OrgKeyGrant";
+import { createTestProductKey, SpaceProductKey } from "@/tests/helpers/spaceProductKeys";
+import { organizationSpaceId } from "@xenode/spaces/ids";
 import OrgMembershipHistory from "@/models/OrgMembershipHistory";
 import UserKeyVault from "@/models/UserKeyVault";
 
@@ -81,6 +82,8 @@ async function addInvitation(args: {
   keyVersion?: number | null;
   expiresAt?: Date;
 }) {
+  const recipientUserId = args.recipientUserId ?? null;
+  const keyVersion = args.keyVersion ?? null;
   await Bucket.db.collection("invitation").insertOne({
     id: args.id ?? "inv_1",
     organizationId: "org_1",
@@ -88,13 +91,24 @@ async function addInvitation(args: {
     role: args.role ?? "member",
     status: args.status ?? "pending",
     inviterId: "owner_1",
-    recipientUserId: args.recipientUserId ?? null,
-    wrappedSpaceKey: args.wrappedSpaceKey ?? null,
-    keyVersion: args.keyVersion ?? null,
+    recipientUserId,
+    productKeyReady: !!args.wrappedSpaceKey,
+    keyVersion,
     expiresAt: args.expiresAt ?? new Date(Date.now() + 60_000),
     createdAt: new Date(),
     updatedAt: new Date(),
   });
+  if (args.wrappedSpaceKey && recipientUserId && keyVersion) {
+    await createTestProductKey({
+      spaceId: organizationSpaceId("org_1"),
+      memberAccountId: recipientUserId,
+      wrappedKey: args.wrappedSpaceKey,
+      keyVersion,
+      createdByAccountId: "owner_1",
+      rotationReason: "member_added",
+      status: "pending",
+    });
+  }
 }
 
 function orgParams(orgId = "org_1") {
@@ -231,11 +245,11 @@ describe("organization invitations", () => {
     });
   });
 
-  it("lets managers and admins list organization invitations", async () => {
+  it("lets owners and admins list organization invitations", async () => {
     process.env.ORGS_ENABLED = "true";
-    mockSession("manager_1", "manager@example.com");
+    mockSession("admin_1", "admin@example.com");
     await createOrg();
-    await addMember("manager_1", "manager");
+    await addMember("admin_1", "admin");
     await addInvitation({
       id: "inv_1",
       email: "invitee@example.com",
@@ -342,11 +356,12 @@ describe("organization invitations", () => {
       userId: "user_1",
       role: "member",
     })).toBe(1);
-    expect(await OrgKeyGrant.countDocuments({
-      orgId: "org_1",
-      memberUserId: "user_1",
-      wrappedSpaceKey: "wrapped-for-invitee",
+    expect(await SpaceProductKey.countDocuments({
+      spaceId: organizationSpaceId("org_1"),
+      memberAccountId: "user_1",
+      ciphertext: "wrapped-for-invitee",
       keyVersion: 3,
+      status: "active",
     })).toBe(1);
   });
 
@@ -400,7 +415,7 @@ describe("organization invitations", () => {
       userId: "guest_1",
       role: "guest",
     })).toBe(1);
-    expect(await OrgKeyGrant.countDocuments()).toBe(0);
+    expect(await SpaceProductKey.countDocuments()).toBe(0);
   });
 
   it("lets invitees reject pending invitations", async () => {
@@ -476,16 +491,15 @@ describe("organization invitations", () => {
     mockSession("owner_1", "owner@example.com");
     await createOrg();
     await addMember("owner_1", "owner");
-    await OrgKeyGrant.create({
-      orgId: "org_1",
-      teamId: null,
-      memberUserId: "owner_1",
-      wrappedSpaceKey: "owner-key",
+    await createTestProductKey({
+      spaceId: organizationSpaceId("org_1"),
+      memberAccountId: "owner_1",
+      wrappedKey: "owner-key",
       keyVersion: 1,
-      wrappedByUserId: "owner_1",
-      createdBy: "owner_1",
+      createdByAccountId: "owner_1",
       rotationReason: "initial",
     });
+    await addUser("nh_1", "newhire@example.com");
     await addInvitation({
       email: "newhire@example.com",
       role: "member",
@@ -495,7 +509,11 @@ describe("organization invitations", () => {
     });
 
     const response = await invitationGrantPATCH(
-      patchGrant({ wrappedSpaceKey: "wrapped-for-nh", keyVersion: 1 }),
+      patchGrant({
+        wrappedSpaceKey: "wrapped-for-nh",
+        keyVersion: 1,
+        memberAccountId: "nh_1",
+      }),
       orgInvitationParams(),
     );
     const body = await response.json();
@@ -505,8 +523,15 @@ describe("organization invitations", () => {
     const invitation = await Bucket.db
       .collection("invitation")
       .findOne({ id: "inv_1" });
-    expect(invitation?.wrappedSpaceKey).toBe("wrapped-for-nh");
+    expect(invitation?.productKeyReady).toBe(true);
+    expect(invitation?.wrappedSpaceKey).toBeUndefined();
     expect(invitation?.keyVersion).toBe(1);
+    expect(await SpaceProductKey.countDocuments({
+      spaceId: organizationSpaceId("org_1"),
+      memberAccountId: "nh_1",
+      ciphertext: "wrapped-for-nh",
+      status: "pending",
+    })).toBe(1);
   });
 
   it("rejects granting a stale key version", async () => {
@@ -514,16 +539,15 @@ describe("organization invitations", () => {
     mockSession("owner_1", "owner@example.com");
     await createOrg();
     await addMember("owner_1", "owner");
-    await OrgKeyGrant.create({
-      orgId: "org_1",
-      teamId: null,
-      memberUserId: "owner_1",
-      wrappedSpaceKey: "owner-key",
+    await createTestProductKey({
+      spaceId: organizationSpaceId("org_1"),
+      memberAccountId: "owner_1",
+      wrappedKey: "owner-key",
       keyVersion: 2,
-      wrappedByUserId: "owner_1",
-      createdBy: "owner_1",
+      createdByAccountId: "owner_1",
       rotationReason: "initial",
     });
+    await addUser("nh_1", "newhire@example.com");
     await addInvitation({
       email: "newhire@example.com",
       role: "member",
@@ -531,7 +555,11 @@ describe("organization invitations", () => {
     });
 
     const response = await invitationGrantPATCH(
-      patchGrant({ wrappedSpaceKey: "wrapped", keyVersion: 1 }),
+      patchGrant({
+        wrappedSpaceKey: "wrapped",
+        keyVersion: 1,
+        memberAccountId: "nh_1",
+      }),
       orgInvitationParams(),
     );
 

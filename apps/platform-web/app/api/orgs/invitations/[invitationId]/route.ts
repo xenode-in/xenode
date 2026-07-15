@@ -12,7 +12,11 @@ import { assertOrganizationsEnabled } from "@/lib/orgs/access";
 import { syncSeatsUsed } from "@/lib/orgs/billing/seats";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { emitNotification } from "@/lib/notifications/emit";
-import OrgKeyGrant from "@/models/OrgKeyGrant";
+import { organizationSpaceId } from "@xenode/spaces/ids";
+import {
+  getMemberProductKey,
+  setMemberProductKeyStatus,
+} from "@xenode/spaces/product-keys";
 
 export const dynamic = "force-dynamic";
 
@@ -33,7 +37,7 @@ interface InvitationRecord {
   acceptedAt?: Date;
   rejectedAt?: Date;
   recipientUserId?: string | null;
-  wrappedSpaceKey?: string | null;
+  productKeyReady?: boolean;
   keyVersion?: number | null;
 }
 
@@ -55,7 +59,7 @@ function serializeInvitation(invitation: InvitationRecord) {
     acceptedAt: invitation.acceptedAt ?? null,
     rejectedAt: invitation.rejectedAt ?? null,
     recipientUserId: invitation.recipientUserId ?? null,
-    spaceKeyReady: !!invitation.wrappedSpaceKey,
+    spaceKeyReady: !!invitation.productKeyReady,
   };
 }
 
@@ -84,6 +88,7 @@ function ensureInvitationCanBeUsed(args: {
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
   let createdMembership = false;
+  let activatedKey = false;
 
   try {
     const ctx = await requireAccessContext(request);
@@ -107,13 +112,31 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       email: ctx.session.user.email,
     });
 
+    const spaceId = organizationSpaceId(invitation.organizationId);
+    const hasProductKey =
+      invitation.role !== "guest" &&
+      invitation.productKeyReady === true &&
+      Number.isInteger(invitation.keyVersion) &&
+      Number(invitation.keyVersion) > 0;
+
     if (action === "reject") {
+      if (hasProductKey) {
+        await setMemberProductKeyStatus({
+          spaceId,
+          productId: "drive",
+          memberAccountId: ctx.accountId,
+          keyVersion: Number(invitation.keyVersion),
+          status: "revoked",
+          rotationReason: "member_added",
+        });
+      }
       const now = new Date();
       await invitations.updateOne(
         { id: invitation.id, status: "pending" },
         {
           $set: {
             status: "rejected",
+            productKeyReady: false,
             rejectedAt: now,
             updatedAt: now,
           },
@@ -132,23 +155,36 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         invitation: serializeInvitation({
           ...invitation,
           status: "rejected",
+          productKeyReady: false,
           rejectedAt: now,
           updatedAt: now,
         }),
       });
     }
 
-    if (
-      invitation.role !== "guest" &&
-      (!invitation.wrappedSpaceKey ||
-        !Number.isInteger(invitation.keyVersion) ||
-        Number(invitation.keyVersion) < 1)
-    ) {
+    if (invitation.role !== "guest" && !hasProductKey) {
       throw new AuthzError(
         409,
         "space_key_grant_required",
-        "Encrypted organization access requires a wrapped space key",
+        "Encrypted organization access requires a pending product key",
       );
+    }
+
+    if (hasProductKey) {
+      const pendingKey = await getMemberProductKey({
+        spaceId,
+        productId: "drive",
+        memberAccountId: ctx.accountId,
+        keyVersion: Number(invitation.keyVersion),
+        statuses: ["pending"],
+      });
+      if (!pendingKey) {
+        throw new AuthzError(
+          409,
+          "product_key_not_pending",
+          "Invitation product key is unavailable or already consumed",
+        );
+      }
     }
 
     const now = new Date();
@@ -171,32 +207,22 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     createdMembership = memberResult.upsertedCount > 0;
 
     try {
-      if (invitation.wrappedSpaceKey && invitation.keyVersion) {
-        await OrgKeyGrant.findOneAndUpdate(
-          {
-            orgId: invitation.organizationId,
-            teamId: null,
-            memberUserId: ctx.userId,
-            keyVersion: invitation.keyVersion,
-          },
-          {
-            $set: {
-              orgId: invitation.organizationId,
-              teamId: null,
-              memberUserId: ctx.userId,
-              wrappedSpaceKey: invitation.wrappedSpaceKey,
-              keyVersion: invitation.keyVersion,
-              wrappedByUserId: invitation.inviterId,
-              createdBy: invitation.inviterId,
-              rotationReason: "member_added",
-            },
-            $unset: { revokedAt: "" },
-          },
-          { new: true, upsert: true, setDefaultsOnInsert: true },
-        );
+      if (hasProductKey) {
+        const activated = await setMemberProductKeyStatus({
+          spaceId,
+          productId: "drive",
+          memberAccountId: ctx.accountId,
+          keyVersion: Number(invitation.keyVersion),
+          status: "active",
+          rotationReason: "member_added",
+        });
+        if (!activated) {
+          throw new Error("Failed to activate invitation product key");
+        }
+        activatedKey = true;
       }
 
-      await invitations.updateOne(
+      const result = await invitations.updateOne(
         { id: invitation.id, status: "pending" },
         {
           $set: {
@@ -207,7 +233,24 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           },
         },
       );
+      if (result.matchedCount !== 1) {
+        throw new AuthzError(
+          409,
+          "invitation_not_pending",
+          "Invitation is no longer pending",
+        );
+      }
     } catch (error) {
+      if (activatedKey) {
+        await setMemberProductKeyStatus({
+          spaceId,
+          productId: "drive",
+          memberAccountId: ctx.accountId,
+          keyVersion: Number(invitation.keyVersion),
+          status: "pending",
+          rotationReason: "member_added",
+        }).catch(() => {});
+      }
       if (createdMembership) {
         await mongoose.connection.collection("member").deleteOne({
           organizationId: invitation.organizationId,
@@ -217,7 +260,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       throw error;
     }
 
-    // A newly accepted non-guest member consumes a seat (best-effort cache).
     if (invitation.role !== "guest") {
       await syncSeatsUsed(invitation.organizationId).catch(() => {});
     }
@@ -247,12 +289,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         recipientUserId: ctx.userId,
       }),
       memberCreated: createdMembership,
-      spaceKeyReady: !!invitation.wrappedSpaceKey,
+      spaceKeyReady: hasProductKey,
     });
   } catch (error) {
-    if (isAuthzError(error)) {
-      return toJsonResponse(error);
-    }
+    if (isAuthzError(error)) return toJsonResponse(error);
     const message =
       error instanceof Error ? error.message : "Failed to update invitation";
     return NextResponse.json({ error: message }, { status: 500 });

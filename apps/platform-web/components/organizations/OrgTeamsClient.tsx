@@ -120,14 +120,14 @@ export function OrgTeamsClient({
         setModalOpen(true);
         throw new Error("Unlock your vault first");
       }
-      const data = await readJson<{ grants: { wrappedSpaceKey: string; keyVersion: number }[] }>(
+      const data = await readJson<{ keys: { wrappedKey: string; keyVersion: number }[] }>(
         await fetch(`/api/orgs/${orgId}/keys?teamId=${teamId}`),
       );
-      const grant = data.grants[0];
+      const grant = data.keys[0];
       if (!grant) throw new Error("Your team space key is not available");
       return {
         rawSpaceKey: await unwrapSpaceKeyGrant({
-          wrappedSpaceKey: grant.wrappedSpaceKey,
+          wrappedSpaceKey: grant.wrappedKey,
           privateKey,
         }),
         keyVersion: grant.keyVersion,

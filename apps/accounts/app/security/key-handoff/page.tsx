@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import {
   derivePasswordWrappingKey,
   openEnvelope,
+  openRsaOaepProductSpaceKey,
   type Argon2idParams,
   type CryptoEnvelope,
 } from "@xenode/crypto-core";
@@ -18,7 +19,10 @@ import { deriveArgon2id } from "@/lib/argon2";
 type VaultEnvelope = CryptoEnvelope & { kdfParams: Argon2idParams };
 type VaultResponse = {
   accountId: string;
-  vault: { passwordEnvelope: VaultEnvelope } | null;
+  vault: {
+    passwordEnvelope: VaultEnvelope;
+    wrappedSharingPrivateKey: CryptoEnvelope;
+  } | null;
 };
 type ProductKeyResponse = {
   key: {
@@ -26,9 +30,9 @@ type ProductKeyResponse = {
     productId: string;
     memberAccountId: string;
     keyVersion: number;
-    algorithm: "AES-256-GCM";
+    algorithm: "AES-256-GCM" | "RSA-OAEP-256";
     ciphertext: string;
-    iv: string;
+    iv?: string;
     aadVersion: 1;
     status: "active" | "retired" | "revoked";
     createdAt: string;
@@ -154,29 +158,52 @@ export default function KeyHandoffBrokerPage() {
       ) {
         throw new Error("Product key binding mismatch.");
       }
-      const productEnvelope: CryptoEnvelope = {
-        accountId: stored.memberAccountId,
-        spaceId: stored.spaceId,
-        productId: stored.productId,
-        keyId: `${stored.spaceId}:${stored.productId}`,
-        keyVersion: stored.keyVersion,
-        formatVersion: 2,
-        algorithm: stored.algorithm,
-        ciphertext: stored.ciphertext,
-        iv: stored.iv,
-        aadVersion: stored.aadVersion,
-        status: stored.status,
-        createdAt: new Date(stored.createdAt).toISOString(),
-        type: "product-space-key",
-      };
-      productSpaceKey = await openEnvelope(productEnvelope, accountRootKey, {
-        accountId: binding.accountId,
-        spaceId: binding.spaceId,
-        productId: binding.productId,
-        keyId: `${binding.spaceId}:${binding.productId}`,
-        keyVersion: stored.keyVersion,
-        type: "product-space-key",
-      });
+      if (stored.algorithm === "AES-256-GCM") {
+        if (!stored.iv) throw new Error("Product key envelope is missing its IV.");
+        const productEnvelope: CryptoEnvelope = {
+          accountId: stored.memberAccountId,
+          spaceId: stored.spaceId,
+          productId: stored.productId,
+          keyId: `${stored.spaceId}:${stored.productId}`,
+          keyVersion: stored.keyVersion,
+          formatVersion: 2,
+          algorithm: stored.algorithm,
+          ciphertext: stored.ciphertext,
+          iv: stored.iv,
+          aadVersion: stored.aadVersion,
+          status: stored.status,
+          createdAt: new Date(stored.createdAt).toISOString(),
+          type: "product-space-key",
+        };
+        productSpaceKey = await openEnvelope(productEnvelope, accountRootKey, {
+          accountId: binding.accountId,
+          spaceId: binding.spaceId,
+          productId: binding.productId,
+          keyId: `${binding.spaceId}:${binding.productId}`,
+          keyVersion: stored.keyVersion,
+          type: "product-space-key",
+        });
+      } else {
+        let sharingPrivateKey: Uint8Array | undefined;
+        try {
+          sharingPrivateKey = await openEnvelope(
+            vault.vault.wrappedSharingPrivateKey,
+            accountRootKey,
+            {
+              accountId: binding.accountId,
+              keyId: "sharing-private-key",
+              keyVersion: 1,
+              type: "sharing-private-key",
+            },
+          );
+          productSpaceKey = await openRsaOaepProductSpaceKey(
+            stored.ciphertext,
+            sharingPrivateKey,
+          );
+        } finally {
+          sharingPrivateKey?.fill(0);
+        }
+      }
       const sealed = await sealProductSpaceKey(
         productSpaceKey,
         destinationPublicKey,

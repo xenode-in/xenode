@@ -182,7 +182,7 @@ describe("photo backup sync-check contract", () => {
         }),
         headers: {
           "content-type": "application/json",
-          "x-xenode-drive-scope": "organization",
+          "x-xenode-space-id": "space_org_org_1",
         },
       }),
     );

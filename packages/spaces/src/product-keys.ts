@@ -105,6 +105,57 @@ export async function listMemberProductKeys(args: {
     .lean<SpaceProductKeyRecord[]>();
 }
 
+export async function getMemberProductKey(args: {
+  spaceId: string;
+  memberAccountId: string;
+  keyVersion: number;
+  productId?: ProductSlug;
+  statuses?: MemberKeyStatus[];
+}): Promise<SpaceProductKeyRecord | null> {
+  return SpaceProductKey.findOne({
+    _id: spaceProductKeyEnvelopeId({
+      spaceId: args.spaceId,
+      productId: args.productId ?? "drive",
+      memberAccountId: args.memberAccountId,
+      keyVersion: args.keyVersion,
+    }),
+    status: { $in: args.statuses ?? ["pending", "active"] },
+  }).lean<SpaceProductKeyRecord>();
+}
+
+export async function setMemberProductKeyStatus(args: {
+  spaceId: string;
+  memberAccountId: string;
+  keyVersion: number;
+  status: MemberKeyStatus;
+  productId?: ProductSlug;
+  rotationReason?: KeyRotationReason;
+  session?: ClientSession;
+}): Promise<SpaceProductKeyRecord | null> {
+  return SpaceProductKey.findOneAndUpdate(
+    {
+      _id: spaceProductKeyEnvelopeId({
+        spaceId: args.spaceId,
+        productId: args.productId ?? "drive",
+        memberAccountId: args.memberAccountId,
+        keyVersion: args.keyVersion,
+      }),
+    },
+    {
+      $set: {
+        status: args.status,
+        ...(args.rotationReason
+          ? { rotationReason: args.rotationReason }
+          : {}),
+      },
+    },
+    {
+      new: true,
+      runValidators: true,
+      ...(args.session ? { session: args.session } : {}),
+    },
+  ).lean<SpaceProductKeyRecord>();
+}
 export async function latestProductKeyVersion(args: {
   spaceId: string;
   productId?: ProductSlug;
@@ -124,13 +175,16 @@ export async function revokeMemberProductKeys(args: {
   spaceIds: string | string[];
   memberAccountId: string;
   productId?: ProductSlug;
+  productIds?: ProductSlug[];
   rotationReason?: KeyRotationReason;
   session?: ClientSession;
 }) {
   return SpaceProductKey.updateMany(
     {
       spaceId: { $in: Array.isArray(args.spaceIds) ? args.spaceIds : [args.spaceIds] },
-      productId: args.productId ?? "drive",
+      productId: args.productIds?.length
+        ? { $in: args.productIds }
+        : (args.productId ?? "drive"),
       memberAccountId: args.memberAccountId,
       status: { $in: ["pending", "active"] },
     },

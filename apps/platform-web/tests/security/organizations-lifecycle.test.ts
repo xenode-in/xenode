@@ -4,7 +4,8 @@ import { GET as orgsGET, POST as orgsPOST } from "@/app/api/orgs/route";
 import { GET as membersGET } from "@/app/api/orgs/[orgId]/members/route";
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
-import OrgKeyGrant from "@/models/OrgKeyGrant";
+import { SpaceProductKey } from "@/tests/helpers/spaceProductKeys";
+import { organizationSpaceId } from "@xenode/spaces/ids";
 
 const mockedGetServerSession = vi.mocked(getServerSession);
 
@@ -139,10 +140,12 @@ describe("organization lifecycle API", () => {
       name: "xenode-organization-dev",
       b2BucketId: "xenode-organization-dev",
     })).resolves.toBe(1);
-    expect(await OrgKeyGrant.countDocuments({
-      orgId: body.organization.id,
-      memberUserId: "owner_1",
-      wrappedSpaceKey: "wrapped-for-owner",
+    expect(await SpaceProductKey.countDocuments({
+      spaceId: organizationSpaceId(body.organization.id),
+      memberAccountId: "owner_1",
+      ciphertext: "wrapped-for-owner",
+      algorithm: "RSA-OAEP-256",
+      status: "active",
     })).toBe(1);
   });
 

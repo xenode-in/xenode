@@ -26,7 +26,7 @@ interface InvitationRecord {
   status: "pending" | "accepted" | "rejected" | "canceled";
   expiresAt: Date;
   recipientUserId?: string | null;
-  wrappedSpaceKey?: string | null;
+  productKeyReady?: boolean;
   recipientReadyAt?: Date | null;
 }
 
@@ -82,7 +82,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     // Encrypted role already has a wrapped key → recipient can accept now.
-    if (invitation.wrappedSpaceKey) {
+    if (invitation.productKeyReady) {
       return NextResponse.json({ ready: true, needsKey: false });
     }
 

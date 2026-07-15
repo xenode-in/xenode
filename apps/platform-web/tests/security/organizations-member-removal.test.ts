@@ -3,7 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { DELETE as memberDELETE } from "@/app/api/orgs/[orgId]/members/[memberUserId]/route";
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
-import OrgKeyGrant from "@/models/OrgKeyGrant";
+import { createTestProductKey, SpaceProductKey } from "@/tests/helpers/spaceProductKeys";
+import { organizationSpaceId } from "@xenode/spaces/ids";
+import { ensureOrganizationSpace } from "@xenode/spaces/repository";
 
 const mockedGetServerSession = vi.mocked(getServerSession);
 
@@ -38,6 +40,10 @@ async function createOrg() {
     createdAt: new Date(),
     updatedAt: new Date(),
   });
+  await ensureOrganizationSpace({
+    accountId: "owner_1",
+    organizationId: "org_1",
+  });
 }
 
 async function addMember(userId: string, role = "member") {
@@ -62,15 +68,13 @@ async function addSession(userId: string) {
   });
 }
 
-async function addGrant(userId: string, keyVersion = 1) {
-  await OrgKeyGrant.create({
-    orgId: "org_1",
-    teamId: null,
-    memberUserId: userId,
-    wrappedSpaceKey: `wrapped-${userId}-v${keyVersion}`,
+async function addProductKey(userId: string, keyVersion = 1) {
+  await createTestProductKey({
+    spaceId: organizationSpaceId("org_1"),
+    memberAccountId: userId,
+    wrappedKey: `wrapped-${userId}-v${keyVersion}`,
     keyVersion,
-    wrappedByUserId: "owner_1",
-    createdBy: "owner_1",
+    createdByAccountId: "owner_1",
     rotationReason: "initial",
   });
 }
@@ -96,9 +100,9 @@ describe("organization member removal", () => {
 
   it("requires admins to remove members", async () => {
     process.env.ORGS_ENABLED = "true";
-    mockSession("manager_1");
+    mockSession("member_1");
     await createOrg();
-    await addMember("manager_1", "manager");
+    await addMember("member_1", "member");
     await addMember("user_1", "member");
 
     const response = await memberDELETE(deleteRequest(), params("user_1"));
@@ -116,8 +120,8 @@ describe("organization member removal", () => {
     await createOrg();
     await addMember("owner_1", "owner");
     await addMember("user_1", "member");
-    await addGrant("owner_1", 1);
-    await addGrant("user_1", 1);
+    await addProductKey("owner_1", 1);
+    await addProductKey("user_1", 1);
 
     const response = await memberDELETE(deleteRequest(), params("user_1"));
 
@@ -127,7 +131,7 @@ describe("organization member removal", () => {
       code: "space_key_rotation_required",
     });
     expect(await Bucket.db.collection("member").countDocuments()).toBe(2);
-    expect(await OrgKeyGrant.countDocuments({ revokedAt: { $exists: true } })).toBe(0);
+    expect(await SpaceProductKey.countDocuments({ status: "revoked" })).toBe(0);
   });
 
   it("removes a member, revokes old grants, and stores rotated grants", async () => {
@@ -138,9 +142,9 @@ describe("organization member removal", () => {
     await addMember("admin_1", "admin");
     await addMember("user_1", "member");
     await addMember("guest_1", "guest");
-    await addGrant("owner_1", 1);
-    await addGrant("admin_1", 1);
-    await addGrant("user_1", 1);
+    await addProductKey("owner_1", 1);
+    await addProductKey("admin_1", 1);
+    await addProductKey("user_1", 1);
     await addSession("user_1");
     await Bucket.db.collection("team").insertOne({
       id: "team_1",
@@ -189,15 +193,15 @@ describe("organization member removal", () => {
     });
     expect(removedSession?.activeOrganizationId).toBeUndefined();
     expect(removedSession?.activeTeamId).toBeUndefined();
-    expect(await OrgKeyGrant.countDocuments({
-      orgId: "org_1",
-      memberUserId: "user_1",
-      revokedAt: { $exists: true },
+    expect(await SpaceProductKey.countDocuments({
+      spaceId: organizationSpaceId("org_1"),
+      memberAccountId: "user_1",
+      status: "revoked",
     })).toBe(1);
-    expect(await OrgKeyGrant.countDocuments({
-      orgId: "org_1",
+    expect(await SpaceProductKey.countDocuments({
+      spaceId: organizationSpaceId("org_1"),
       keyVersion: 2,
-      revokedAt: { $exists: false },
+      status: "active",
     })).toBe(2);
   });
 

@@ -147,7 +147,7 @@ describe("organization share-link route adoption", () => {
 
     const response = await POST(
       request(shareBody(String(object._id)), {
-        "x-xenode-drive-scope": "organization",
+        "x-xenode-space-id": "space_org_org_1",
       }),
     );
     const body = await response.json();
@@ -169,7 +169,7 @@ describe("organization share-link route adoption", () => {
 
     const response = await POST(
       request(shareBody(String(object._id)), {
-        "x-xenode-drive-scope": "organization",
+        "x-xenode-space-id": "space_org_org_1",
       }),
     );
     const body = await response.json();
@@ -192,7 +192,7 @@ describe("organization share-link route adoption", () => {
 
     const missingPassword = await POST(
       request({ ...shareBody(String(object._id)), expiresIn: 24 }, {
-        "x-xenode-drive-scope": "organization",
+        "x-xenode-space-id": "space_org_org_1",
       }),
     );
     expect(missingPassword.status).toBe(400);
@@ -202,7 +202,7 @@ describe("organization share-link route adoption", () => {
 
     const missingExpiry = await POST(
       request({ ...shareBody(String(object._id)), password: "secret" }, {
-        "x-xenode-drive-scope": "organization",
+        "x-xenode-space-id": "space_org_org_1",
       }),
     );
     expect(missingExpiry.status).toBe(400);
@@ -213,7 +213,7 @@ describe("organization share-link route adoption", () => {
     const allowed = await POST(
       request(
         { ...shareBody(String(object._id)), password: "secret", expiresIn: 24 },
-        { "x-xenode-drive-scope": "organization" },
+        { "x-xenode-space-id": "space_org_org_1" },
       ),
     );
     expect(allowed.status).toBe(200);
