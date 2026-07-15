@@ -1,11 +1,26 @@
+import type { ProductSlug } from "@xenode/contracts";
+
+export const REALTIME_CHANNEL = "xenode:sync:events";
+export const REALTIME_TICKET_MAX_TTL_SECONDS = 60;
+
 export interface RealtimeTicketClaims {
   ticketId: string;
   accountId: string;
-  productId: string;
+  productId: ProductSlug;
   spaceId: string;
   sessionId: string;
   issuedAt: number;
   expiresAt: number;
+}
+
+export interface ProductSessionRevokedEvent {
+  id: string;
+  type: "SESSION_REVOKED";
+  userId: string;
+  productId: ProductSlug;
+  sessionId: string;
+  expiresAt: string;
+  occurredAt: string;
 }
 
 export interface TicketReplayStore {
@@ -49,12 +64,42 @@ async function hmac(secret: string, payload: string): Promise<string> {
   );
 }
 
+function constantTimeEqual(left: string, right: string): boolean {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
+function nonEmpty(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function validClaims(value: unknown): value is RealtimeTicketClaims {
+  if (!value || typeof value !== "object") return false;
+  const claims = value as Partial<RealtimeTicketClaims>;
+  return (
+    nonEmpty(claims.ticketId) &&
+    nonEmpty(claims.accountId) &&
+    nonEmpty(claims.productId) &&
+    nonEmpty(claims.spaceId) &&
+    nonEmpty(claims.sessionId) &&
+    Number.isInteger(claims.issuedAt) &&
+    Number.isInteger(claims.expiresAt) &&
+    Number(claims.expiresAt) > Number(claims.issuedAt) &&
+    Number(claims.expiresAt) - Number(claims.issuedAt) <=
+      REALTIME_TICKET_MAX_TTL_SECONDS
+  );
+}
+
 export async function issueRealtimeTicket(
   claims: RealtimeTicketClaims,
   secret: string,
 ): Promise<string> {
-  if (claims.expiresAt <= claims.issuedAt || claims.expiresAt - claims.issuedAt > 60) {
-    throw new Error("Realtime tickets must expire within 60 seconds");
+  if (!validClaims(claims)) {
+    throw new Error("Realtime ticket claims are invalid or exceed 60 seconds");
   }
   const payload = base64Url(new TextEncoder().encode(JSON.stringify(claims)));
   return `${payload}.${await hmac(secret, payload)}`;
@@ -73,8 +118,18 @@ export async function verifyAndConsumeRealtimeTicket(
   const [payload, signature, extra] = ticket.split(".");
   if (!payload || !signature || extra) throw new Error("Invalid realtime ticket");
   const expectedSignature = await hmac(secret, payload);
-  if (signature !== expectedSignature) throw new Error("Invalid realtime ticket");
-  const claims = JSON.parse(new TextDecoder().decode(decode(payload))) as RealtimeTicketClaims;
+  if (!constantTimeEqual(signature, expectedSignature)) {
+    throw new Error("Invalid realtime ticket");
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(decode(payload)));
+  } catch {
+    throw new Error("Invalid realtime ticket");
+  }
+  if (!validClaims(parsed)) throw new Error("Invalid realtime ticket");
+  const claims = parsed;
   if (
     claims.expiresAt <= nowSeconds ||
     claims.issuedAt > nowSeconds + 5 ||
@@ -90,6 +145,44 @@ export async function verifyAndConsumeRealtimeTicket(
   return claims;
 }
 
-export function realtimeRoom(productId: string, spaceId: string): string {
+export function realtimeRoom(productId: ProductSlug, spaceId: string): string {
   return `product:${productId}:space:${spaceId}`;
+}
+
+export function realtimeAccountRoom(
+  productId: ProductSlug,
+  accountId: string,
+): string {
+  return `product:${productId}:account:${accountId}`;
+}
+
+export function realtimeRevokedSessionKey(sessionId: string): string {
+  return `realtime:revoked-session:${sessionId}`;
+}
+
+export function realtimeRevokedAccessKey(
+  accountId: string,
+  productId: ProductSlug,
+  spaceId: string,
+): string {
+  return `realtime:revoked-access:${accountId}:${productId}:${spaceId}`;
+}
+
+export function createProductSessionRevokedEvent(args: {
+  eventId: string;
+  accountId: string;
+  productId: ProductSlug;
+  sessionId: string;
+  sessionExpiresAt: Date;
+  occurredAt?: Date;
+}): ProductSessionRevokedEvent {
+  return {
+    id: args.eventId,
+    type: "SESSION_REVOKED",
+    userId: args.accountId,
+    productId: args.productId,
+    sessionId: args.sessionId,
+    expiresAt: args.sessionExpiresAt.toISOString(),
+    occurredAt: (args.occurredAt ?? new Date()).toISOString(),
+  };
 }

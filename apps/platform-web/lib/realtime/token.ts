@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ProductSlug } from "@xenode/contracts";
 import { issueRealtimeTicket } from "@xenode/realtime";
 
 const TICKET_TTL_SECONDS = 60;
@@ -8,12 +9,18 @@ function ticketSecret(): string {
   if (!value || Buffer.byteLength(value) < 32) {
     throw new Error("REALTIME_TICKET_SECRET must be configured with at least 32 bytes");
   }
+  if (
+    value === process.env.BETTER_AUTH_SECRET ||
+    value === process.env.CDN_SIGNING_SECRET
+  ) {
+    throw new Error("REALTIME_TICKET_SECRET must be independent");
+  }
   return value;
 }
 
 export async function createRealtimeToken(args: {
   accountId: string;
-  productId: "drive";
+  productId: ProductSlug;
   spaceId: string;
   sessionId: string;
 }): Promise<{ token: string; expiresAt: string }> {

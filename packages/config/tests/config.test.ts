@@ -3,6 +3,16 @@ import { cookieNames, createProductRegistry, readFeatureFlag } from "../src";
 import { getServerEnv } from "../src/server";
 import { resolveSystemBucketConfig } from "../src/storage";
 
+const validServerEnv = {
+  MONGODB_URI: "mongodb://localhost/test",
+  BETTER_AUTH_SECRET: "a".repeat(48),
+  ADMIN_JWT_SECRET: "b".repeat(48),
+  REALTIME_TICKET_SECRET: "r".repeat(48),
+  CDN_SIGNING_SECRET: "c".repeat(48),
+  REALTIME_ALLOWED_ORIGIN:
+    "https://xenode.in,https://photos.xenode.in",
+};
+
 describe("shared config", () => {
   it("uses host-only product cookie names", () => {
     expect(cookieNames.accountsSession.startsWith("__Host-")).toBe(true);
@@ -24,6 +34,31 @@ describe("shared config", () => {
     expect(() =>
       getServerEnv({ MONGODB_URI: "mongodb://localhost/test" }),
     ).toThrow();
+    expect(getServerEnv(validServerEnv)).toMatchObject({
+      REALTIME_TICKET_SECRET: validServerEnv.REALTIME_TICKET_SECRET,
+      CDN_SIGNING_SECRET: validServerEnv.CDN_SIGNING_SECRET,
+    });
+  });
+
+  it("rejects secret reuse and non-origin realtime allowlists", () => {
+    expect(() =>
+      getServerEnv({
+        ...validServerEnv,
+        REALTIME_TICKET_SECRET: validServerEnv.BETTER_AUTH_SECRET,
+      }),
+    ).toThrow("must not reuse");
+    expect(() =>
+      getServerEnv({
+        ...validServerEnv,
+        CDN_SIGNING_SECRET: validServerEnv.REALTIME_TICKET_SECRET,
+      }),
+    ).toThrow("must not reuse");
+    expect(() =>
+      getServerEnv({
+        ...validServerEnv,
+        REALTIME_ALLOWED_ORIGIN: "https://xenode.in/path",
+      }),
+    ).toThrow("exact http(s) origins");
   });
 
   it("resolves one cached system bucket shape", () => {

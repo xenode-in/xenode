@@ -378,8 +378,10 @@ Socket.IO is hosted by `server.mjs` beside Next.js on port 3000. Required:
 
 ```text
 REDIS_URL
-BETTER_AUTH_SECRET or REALTIME_TOKEN_SECRET
-REALTIME_ALLOWED_ORIGIN (optional comma-separated web origins)
+BETTER_AUTH_SECRET
+REALTIME_TICKET_SECRET (mandatory, at least 32 bytes, distinct)
+CDN_SIGNING_SECRET (mandatory, at least 32 bytes, distinct)
+REALTIME_ALLOWED_ORIGIN (mandatory comma-separated exact web origins)
 ```
 
 The Socket.IO path is `/api/socket.io`.

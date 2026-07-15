@@ -3,6 +3,15 @@ import { createServer } from "node:http";
 import Redis from "ioredis";
 import next from "next";
 import { Server } from "socket.io";
+import {
+  isRealtimeProduct,
+  parseRealtimeEvent,
+  productAccountRoom,
+  productSpaceRoom,
+  revokedAccessKey,
+  revokedSessionKey,
+  shouldDisconnectRealtimeSocket,
+} from "./lib/realtime/server-events.mjs";
 
 const dev = !process.argv.includes("--prod");
 const hostname = process.env.HOSTNAME || "0.0.0.0";
@@ -10,16 +19,43 @@ const port = Number(process.env.PORT || 3000);
 const socketPath = "/api/socket.io";
 const realtimeChannel = "xenode:sync:events";
 const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+const ticketMaxTtlSeconds = 60;
 
-const ticketSecret = process.env.REALTIME_TICKET_SECRET;
-if (!ticketSecret || Buffer.byteLength(ticketSecret) < 32) {
-  throw new Error("REALTIME_TICKET_SECRET must be configured with at least 32 bytes");
+function requiredIndependentSecret(name) {
+  const value = process.env[name];
+  if (!value || Buffer.byteLength(value) < 32) {
+    throw new Error(`${name} must be configured with at least 32 bytes`);
+  }
+  return value;
 }
-const allowedOrigins = process.env.REALTIME_ALLOWED_ORIGIN
-  ?.split(",")
+
+const ticketSecret = requiredIndependentSecret("REALTIME_TICKET_SECRET");
+const cdnSigningSecret = requiredIndependentSecret("CDN_SIGNING_SECRET");
+if (
+  ticketSecret === cdnSigningSecret ||
+  ticketSecret === process.env.BETTER_AUTH_SECRET ||
+  cdnSigningSecret === process.env.BETTER_AUTH_SECRET
+) {
+  throw new Error(
+    "REALTIME_TICKET_SECRET, CDN_SIGNING_SECRET, and BETTER_AUTH_SECRET must be distinct",
+  );
+}
+
+const allowedOrigins = (process.env.REALTIME_ALLOWED_ORIGIN ?? "")
+  .split(",")
   .map((origin) => origin.trim())
-  .filter(Boolean);
-if (!allowedOrigins?.length) {
+  .filter(Boolean)
+  .map((origin) => {
+    const parsed = new URL(origin);
+    if (
+      (parsed.protocol !== "https:" && parsed.protocol !== "http:") ||
+      parsed.origin !== origin
+    ) {
+      throw new Error("REALTIME_ALLOWED_ORIGIN entries must be exact http(s) origins");
+    }
+    return parsed.origin;
+  });
+if (allowedOrigins.length === 0) {
   throw new Error("REALTIME_ALLOWED_ORIGIN must contain at least one product origin");
 }
 
@@ -27,6 +63,10 @@ const ticketRedis = new Redis(redisUrl, { maxRetriesPerRequest: null });
 ticketRedis.on("error", (error) => {
   console.warn("[realtime] Redis ticket-store error", error.message);
 });
+
+function nonEmpty(value) {
+  return typeof value === "string" && value.length > 0;
+}
 
 async function verifyAndConsumeTicket(token) {
   if (typeof token !== "string") return null;
@@ -49,20 +89,31 @@ async function verifyAndConsumeTicket(token) {
     const claims = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
     const now = Math.floor(Date.now() / 1000);
     if (
-      typeof claims.ticketId !== "string" ||
-      typeof claims.accountId !== "string" ||
-      claims.productId !== "drive" ||
-      typeof claims.spaceId !== "string" ||
-      typeof claims.sessionId !== "string" ||
-      typeof claims.issuedAt !== "number" ||
-      typeof claims.expiresAt !== "number" ||
+      !nonEmpty(claims.ticketId) ||
+      !nonEmpty(claims.accountId) ||
+      !isRealtimeProduct(claims.productId) ||
+      !nonEmpty(claims.spaceId) ||
+      !nonEmpty(claims.sessionId) ||
+      !Number.isInteger(claims.issuedAt) ||
+      !Number.isInteger(claims.expiresAt) ||
       claims.expiresAt <= now ||
       claims.issuedAt > now + 5 ||
       claims.expiresAt <= claims.issuedAt ||
-      claims.expiresAt - claims.issuedAt > 60
+      claims.expiresAt - claims.issuedAt > ticketMaxTtlSeconds
     ) {
       return null;
     }
+
+    const revoked = await ticketRedis.mget(
+      revokedSessionKey(claims.sessionId),
+      revokedAccessKey(
+        claims.accountId,
+        claims.productId,
+        claims.spaceId,
+      ),
+    );
+    if (revoked.some(Boolean)) return null;
+
     const ttl = Math.max(1, claims.expiresAt - now);
     const consumed = await ticketRedis.set(
       `realtime:ticket:${claims.ticketId}`,
@@ -109,9 +160,10 @@ io.use(async (socket, nextMiddleware) => {
 });
 
 io.on("connection", (socket) => {
-  void socket.join(
-    `product:${socket.data.productId}:space:${socket.data.spaceId}`,
-  );
+  void socket.join([
+    productSpaceRoom(socket.data.productId, socket.data.spaceId),
+    productAccountRoom(socket.data.productId, socket.data.accountId),
+  ]);
   socket.emit("sync:event", {
     id: `connect:${socket.id}:${Date.now()}`,
     type: "SYNC_REQUIRED",
@@ -126,27 +178,34 @@ io.on("connection", (socket) => {
 const subscriber = new Redis(redisUrl, { maxRetriesPerRequest: null });
 subscriber.on("error", (error) => {
   console.warn("[realtime] Redis subscriber error", error.message);
+  io.disconnectSockets(true);
+});
+subscriber.on("end", () => {
+  console.warn("[realtime] Redis subscriber disconnected; closing sockets");
+  io.disconnectSockets(true);
 });
 await subscriber.subscribe(realtimeChannel);
-subscriber.on("message", (channel, rawEvent) => {
+subscriber.on("message", async (channel, rawEvent) => {
   if (channel !== realtimeChannel) return;
   try {
-    const event = JSON.parse(rawEvent);
-    if (
-      typeof event.userId !== "string" ||
-      typeof event.productId !== "string" ||
-      typeof event.spaceId !== "string"
-    ) {
-      return;
+    const parsed = parseRealtimeEvent(rawEvent);
+    if (!parsed) return;
+    if (parsed.markerKey && parsed.markerTtl) {
+      await ticketRedis.set(
+        parsed.markerKey,
+        "1",
+        "EX",
+        parsed.markerTtl,
+      );
     }
-    const room = `product:${event.productId}:space:${event.spaceId}`;
-    io.to(room).emit("sync:event", event);
-    if (event.type === "ACCESS_REVOKED") {
-      void io.in(room).fetchSockets().then((sockets) => {
-        for (const socket of sockets) {
-          if (socket.data.accountId === event.userId) socket.disconnect(true);
-        }
-      });
+    io.to(parsed.room).emit("sync:event", parsed.event);
+    if (parsed.kind === "sync") return;
+
+    const sockets = await io.in(parsed.room).fetchSockets();
+    for (const socket of sockets) {
+      if (shouldDisconnectRealtimeSocket(parsed, socket.data)) {
+        socket.disconnect(true);
+      }
     }
   } catch (error) {
     console.warn("[realtime] Dropped invalid event", error);

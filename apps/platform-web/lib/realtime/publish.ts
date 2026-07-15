@@ -1,4 +1,9 @@
 import { randomUUID } from "node:crypto";
+import type { ProductSlug } from "@xenode/contracts";
+import {
+  REALTIME_TICKET_MAX_TTL_SECONDS,
+  realtimeRevokedAccessKey,
+} from "@xenode/realtime";
 import {
   folderVersionKey,
   recentCacheKey,
@@ -23,24 +28,37 @@ export function toSyncObjectSnapshot(value: unknown): SyncObjectSnapshot {
   return JSON.parse(JSON.stringify(value)) as SyncObjectSnapshot;
 }
 
-export async function publishSyncEvent(params: {
+export interface PublishSyncEventParams {
   userId: string;
+  productId?: ProductSlug;
   spaceId: string;
   type: SyncEventType;
   payload: SyncEventPayload;
   invalidatePrefixes?: string[];
   invalidateStorage?: boolean;
   invalidateRecent?: boolean;
-}): Promise<void> {
-  const event: SyncEventEnvelope = {
-    id: randomUUID(),
+}
+
+export function createSyncEvent(
+  params: PublishSyncEventParams,
+  eventId = randomUUID(),
+  occurredAt = new Date(),
+): SyncEventEnvelope {
+  return {
+    id: eventId,
     type: params.type,
     userId: params.userId,
-    productId: "drive",
+    productId: params.productId ?? "drive",
     spaceId: params.spaceId,
-    occurredAt: new Date().toISOString(),
+    occurredAt: occurredAt.toISOString(),
     payload: params.payload,
   };
+}
+
+export async function publishSyncEvent(
+  params: PublishSyncEventParams,
+): Promise<void> {
+  const event = createSyncEvent(params);
 
   await withRedis(async (redis) => {
     const pipeline = redis.multi();
@@ -60,6 +78,18 @@ export async function publishSyncEvent(params: {
     }
     if (params.invalidateRecent) {
       pipeline.del(recentCacheKey(params.userId));
+    }
+    if (event.type === "ACCESS_REVOKED") {
+      pipeline.set(
+        realtimeRevokedAccessKey(
+          event.userId,
+          event.productId,
+          event.spaceId,
+        ),
+        "1",
+        "EX",
+        REALTIME_TICKET_MAX_TTL_SECONDS,
+      );
     }
     pipeline.publish(REALTIME_CHANNEL, JSON.stringify(event));
     await pipeline.exec();

@@ -33,6 +33,13 @@ import {
 
 export const dynamic = "force-dynamic";
 
+const REALTIME_PRODUCTS = [
+  "drive",
+  "photos",
+  "mobile",
+  "office-editor",
+] as const;
+
 interface RouteParams {
   params: Promise<{ orgId: string; memberUserId: string }>;
 }
@@ -304,7 +311,8 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
             session: mongoSession,
           });
         }
-      }    });
+      }
+    });
 
     // Refresh the cached seat count now that a member is gone (best-effort).
     await syncSeatsUsed(orgId).catch(() => {});
@@ -329,13 +337,16 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     });
 
     await Promise.all(
-      affectedSpaceIds.map((spaceId) =>
-        publishSyncEvent({
-          userId: memberUserId,
-          spaceId,
-          type: "ACCESS_REVOKED",
-          payload: { reason: "organization_member_removed" },
-        }),
+      affectedSpaceIds.flatMap((spaceId) =>
+        REALTIME_PRODUCTS.map((productId) =>
+          publishSyncEvent({
+            userId: memberUserId,
+            productId,
+            spaceId,
+            type: "ACCESS_REVOKED",
+            payload: { reason: "organization_member_removed" },
+          }),
+        ),
       ),
     ).catch(() => undefined);
 
@@ -481,7 +492,8 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
               session: mongoSession,
             });
           }
-        }      });
+        }
+      });
     } else if (!wasNonGuest && willBeNonGuest) {
       // Promotion into key access → requires a fresh wrapped grant (no bump).
       const wrappedSpaceKey =

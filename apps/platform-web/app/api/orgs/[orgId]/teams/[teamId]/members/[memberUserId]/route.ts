@@ -24,6 +24,13 @@ import { publishSyncEvent } from "@/lib/realtime/publish";
 
 export const dynamic = "force-dynamic";
 
+const REALTIME_PRODUCTS = [
+  "drive",
+  "photos",
+  "mobile",
+  "office-editor",
+] as const;
+
 interface RouteParams {
   params: Promise<{ orgId: string; teamId: string; memberUserId: string }>;
 }
@@ -218,12 +225,17 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       metadata: { memberUserId, rotated: !!nextKeyVersion },
     });
 
-    await publishSyncEvent({
-      userId: memberUserId,
-      spaceId: teamSpaceId(orgId, teamId),
-      type: "ACCESS_REVOKED",
-      payload: { reason: "team_member_removed" },
-    }).catch(() => undefined);
+    await Promise.all(
+      REALTIME_PRODUCTS.map((productId) =>
+        publishSyncEvent({
+          userId: memberUserId,
+          productId,
+          spaceId: teamSpaceId(orgId, teamId),
+          type: "ACCESS_REVOKED",
+          payload: { reason: "team_member_removed" },
+        }),
+      ),
+    ).catch(() => undefined);
 
     await AuditEvent.create({
       accountId: memberUserId,

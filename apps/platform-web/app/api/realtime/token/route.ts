@@ -1,33 +1,36 @@
+import { readFeatureFlag } from "@xenode/config";
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
-import { requireAccessContext } from "@/lib/authz";
+import {
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import { createRealtimeToken } from "@/lib/realtime/token";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
+  if (!readFeatureFlag("REALTIME_TICKETS_V2_ENABLED", process.env)) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   try {
-    const [session, access] = await Promise.all([
-      requireAuth(request),
-      requireAccessContext(request),
-    ]);
-    return NextResponse.json(
+    const access = await requireAccessContext(request);
+    const response = NextResponse.json(
       await createRealtimeToken({
-        accountId: session.user.id,
-        productId: "drive",
+        accountId: access.accountId,
+        productId: access.productId,
         spaceId: access.spaceId,
-        sessionId: session.session.id,
+        sessionId: access.session.session.id,
       }),
     );
+    response.headers.set("Cache-Control", "no-store");
+    return response;
   } catch (error) {
-    if (error instanceof Error && error.message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    if (isAuthzError(error)) return toJsonResponse(error);
+    console.error("[realtime] Ticket creation failed", error);
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "Token creation failed",
-      },
+      { error: "Realtime ticket creation failed" },
       { status: 500 },
     );
   }

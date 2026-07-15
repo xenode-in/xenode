@@ -1,16 +1,34 @@
 import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
+import { generateFileToken, verifyFileToken } from "@/lib/b2/cdn";
 import {
+  createSyncEvent,
   parentPrefixForKey,
   toSyncObjectSnapshot,
 } from "@/lib/realtime/publish";
 import { createRealtimeToken } from "@/lib/realtime/token";
+import {
+  parseRealtimeEvent,
+  shouldDisconnectRealtimeSocket,
+} from "@/lib/realtime/server-events.mjs";
+
+const originalEnv = {
+  REALTIME_TICKET_SECRET: process.env.REALTIME_TICKET_SECRET,
+  CDN_SIGNING_SECRET: process.env.CDN_SIGNING_SECRET,
+  BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
+};
+
+function restore(name: keyof typeof originalEnv) {
+  const value = originalEnv[name];
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+}
 
 describe("realtime foundation", () => {
-  const previousSecret = process.env.REALTIME_TOKEN_SECRET;
-
   afterEach(() => {
-    process.env.REALTIME_TOKEN_SECRET = previousSecret;
+    restore("REALTIME_TICKET_SECRET");
+    restore("CDN_SIGNING_SECRET");
+    restore("BETTER_AUTH_SECRET");
   });
 
   it("derives the containing folder for files and folders", () => {
@@ -36,22 +54,158 @@ describe("realtime foundation", () => {
     expect(snapshot.createdAt).toBe("2026-06-20T10:00:00.000Z");
   });
 
-  it("issues a short-lived signed token bound to the user", () => {
-    process.env.REALTIME_TOKEN_SECRET = "test-realtime-secret";
-    const { token, expiresAt } = createRealtimeToken("user-123");
+  it("builds product and Space scoped events", () => {
+    expect(
+      createSyncEvent(
+        {
+          userId: "acct_1",
+          productId: "photos",
+          spaceId: "space_1",
+          type: "ACCESS_REVOKED",
+          payload: { reason: "membership_removed" },
+        },
+        "event_1",
+        new Date("2026-07-15T20:00:00.000Z"),
+      ),
+    ).toMatchObject({
+      id: "event_1",
+      userId: "acct_1",
+      productId: "photos",
+      spaceId: "space_1",
+      type: "ACCESS_REVOKED",
+    });
+  });
+
+  it("issues a 60-second ticket bound to account, product, Space, and session", async () => {
+    process.env.REALTIME_TICKET_SECRET = "r".repeat(48);
+    process.env.CDN_SIGNING_SECRET = "c".repeat(48);
+    process.env.BETTER_AUTH_SECRET = "a".repeat(48);
+    const { token, expiresAt } = await createRealtimeToken({
+      accountId: "acct_1",
+      productId: "drive",
+      spaceId: "space_1",
+      sessionId: "session_1",
+    });
     const [body, signature] = token.split(".");
-    const expected = createHmac("sha256", "test-realtime-secret")
+    const expected = createHmac("sha256", process.env.REALTIME_TICKET_SECRET)
       .update(body)
       .digest("base64url");
     const payload = JSON.parse(
       Buffer.from(body, "base64url").toString("utf8"),
-    );
+    ) as Record<string, unknown>;
 
     expect(signature).toBe(expected);
-    expect(payload.sub).toBe("user-123");
+    expect(payload).toMatchObject({
+      accountId: "acct_1",
+      productId: "drive",
+      spaceId: "space_1",
+      sessionId: "session_1",
+    });
+    expect(Number(payload.expiresAt) - Number(payload.issuedAt)).toBe(60);
     expect(new Date(expiresAt).getTime()).toBeGreaterThan(Date.now());
-    expect(payload.exp * 1000).toBeLessThanOrEqual(
-      Date.now() + 5 * 60 * 1000,
+  });
+
+  it("rejects missing, weak, or reused realtime and CDN secrets", async () => {
+    process.env.BETTER_AUTH_SECRET = "a".repeat(48);
+    process.env.CDN_SIGNING_SECRET = "c".repeat(48);
+    delete process.env.REALTIME_TICKET_SECRET;
+    await expect(
+      createRealtimeToken({
+        accountId: "acct_1",
+        productId: "drive",
+        spaceId: "space_1",
+        sessionId: "session_1",
+      }),
+    ).rejects.toThrow("32 bytes");
+
+    process.env.REALTIME_TICKET_SECRET = process.env.BETTER_AUTH_SECRET;
+    await expect(
+      createRealtimeToken({
+        accountId: "acct_1",
+        productId: "drive",
+        spaceId: "space_1",
+        sessionId: "session_1",
+      }),
+    ).rejects.toThrow("independent");
+
+    process.env.REALTIME_TICKET_SECRET = "r".repeat(48);
+    process.env.CDN_SIGNING_SECRET = process.env.REALTIME_TICKET_SECRET;
+    expect(() => generateFileToken("bucket", "key")).toThrow("independent");
+  });
+
+
+  it("propagates product-session revocation only to the matching session", () => {
+    const parsed = parseRealtimeEvent(
+      {
+        id: "event_1",
+        type: "SESSION_REVOKED",
+        userId: "acct_1",
+        productId: "photos",
+        sessionId: "session_1",
+        expiresAt: "2026-07-16T00:00:00.000Z",
+        occurredAt: "2026-07-15T23:00:00.000Z",
+      },
+      new Date("2026-07-15T23:30:00.000Z").getTime(),
     );
+    expect(parsed).toMatchObject({
+      kind: "session-revoked",
+      room: "product:photos:account:acct_1",
+      markerKey: "realtime:revoked-session:session_1",
+    });
+    expect(
+      shouldDisconnectRealtimeSocket(parsed!, {
+        accountId: "acct_1",
+        productId: "photos",
+        sessionId: "session_1",
+      }),
+    ).toBe(true);
+    expect(
+      shouldDisconnectRealtimeSocket(parsed!, {
+        accountId: "acct_1",
+        productId: "photos",
+        sessionId: "session_2",
+      }),
+    ).toBe(false);
+  });
+
+  it("propagates access revocation only within the bound product and Space", () => {
+    const parsed = parseRealtimeEvent({
+      id: "event_2",
+      type: "ACCESS_REVOKED",
+      userId: "acct_1",
+      productId: "drive",
+      spaceId: "space_1",
+      occurredAt: "2026-07-15T23:00:00.000Z",
+      payload: { reason: "member_removed" },
+    });
+    expect(parsed).toMatchObject({
+      kind: "access-revoked",
+      room: "product:drive:space:space_1",
+      markerKey: "realtime:revoked-access:acct_1:drive:space_1",
+      markerTtl: 60,
+    });
+    expect(
+      shouldDisconnectRealtimeSocket(parsed!, {
+        accountId: "acct_1",
+        productId: "drive",
+        spaceId: "space_1",
+      }),
+    ).toBe(true);
+    expect(
+      shouldDisconnectRealtimeSocket(parsed!, {
+        accountId: "acct_1",
+        productId: "photos",
+        spaceId: "space_1",
+      }),
+    ).toBe(false);
+    expect(parseRealtimeEvent("{invalid")).toBeNull();
+  });
+
+  it("signs CDN URLs only with the independent CDN secret", () => {
+    process.env.BETTER_AUTH_SECRET = "a".repeat(48);
+    process.env.REALTIME_TICKET_SECRET = "r".repeat(48);
+    process.env.CDN_SIGNING_SECRET = "c".repeat(48);
+    const { exp, sig } = generateFileToken("bucket", "key", 60);
+    expect(verifyFileToken("bucket", "key", exp, sig)).toBe(true);
   });
 });

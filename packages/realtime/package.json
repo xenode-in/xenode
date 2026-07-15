@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts" },
+  "dependencies": {
+    "@xenode/contracts": "*"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

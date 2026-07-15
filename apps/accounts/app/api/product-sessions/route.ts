@@ -1,9 +1,11 @@
+import { productSlugSchema } from "@xenode/contracts";
 import {
   AuditEvent,
   ProductSession,
   connectDatabase,
 } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
+import { publishProductSessionRevoked } from "@/lib/realtime";
 
 async function accountsSession(request: Request) {
   const auth = await getAccountsAuth();
@@ -66,19 +68,28 @@ export async function DELETE(request: Request) {
     return Response.json({ error: "Active product session not found" }, { status: 404 });
   }
 
-  await AuditEvent.create({
-    accountId: session.user.id,
-    productId: productSession.productId,
-    action: "product_session.revoked",
-    metadata: {
+  const productId = productSlugSchema.parse(productSession.productId);
+  await Promise.all([
+    AuditEvent.create({
+      accountId: session.user.id,
+      productId,
+      action: "product_session.revoked",
+      metadata: {
+        sessionId: productSession.sessionId,
+        sessionVersion: productSession.sessionVersion,
+      },
+    }).catch(() => undefined),
+    publishProductSessionRevoked({
+      accountId: session.user.id,
+      productId,
       sessionId: productSession.sessionId,
-      sessionVersion: productSession.sessionVersion,
-    },
-  }).catch(() => undefined);
+      sessionExpiresAt: productSession.expiresAt,
+    }),
+  ]);
 
   return Response.json({
     sessionId: productSession.sessionId,
-    productId: productSession.productId,
+    productId,
     sessionVersion: productSession.sessionVersion,
     revokedAt,
   });

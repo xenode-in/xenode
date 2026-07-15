@@ -1,4 +1,6 @@
-export const REALTIME_CHANNEL = "xenode:sync:events";
+import type { ProductSlug } from "@xenode/contracts";
+export { REALTIME_CHANNEL } from "@xenode/realtime";
+
 export const REALTIME_SOCKET_EVENT = "sync:event";
 
 export const syncEventTypes = [
@@ -66,7 +68,7 @@ export interface SyncEventEnvelope {
   id: string;
   type: SyncEventType;
   userId: string;
-  productId: "drive";
+  productId: ProductSlug;
   spaceId: string;
   occurredAt: string;
   payload: SyncEventPayload;

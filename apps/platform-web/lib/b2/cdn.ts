@@ -5,6 +5,12 @@ function signingSecret(): string {
   if (!value || Buffer.byteLength(value) < 32) {
     throw new Error("CDN_SIGNING_SECRET must be configured with at least 32 bytes");
   }
+  if (
+    value === process.env.BETTER_AUTH_SECRET ||
+    value === process.env.REALTIME_TICKET_SECRET
+  ) {
+    throw new Error("CDN_SIGNING_SECRET must be independent");
+  }
   return value;
 }
 /**

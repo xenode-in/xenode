@@ -201,7 +201,9 @@ Use a process manager such as systemd, PM2, Docker, or your platform's native pr
 
 ### Operational Notes
 
-- Use strong random secrets for `BETTER_AUTH_SECRET`, `ADMIN_JWT_SECRET`, `REALTIME_TOKEN_SECRET`, and `CRON_SECRET`.
+- Use strong random secrets for `BETTER_AUTH_SECRET`, `ADMIN_JWT_SECRET`,
+  `REALTIME_TICKET_SECRET`, `CDN_SIGNING_SECRET`, and `CRON_SECRET`. The
+  authentication, realtime, and CDN secrets must all be distinct.
 - Keep MongoDB, Redis, and object storage private wherever possible.
 - Configure bucket CORS rules so browser uploads and downloads work from your public app URL.
 - Run scheduled cron endpoints with the `CRON_SECRET` bearer token.
