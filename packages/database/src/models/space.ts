@@ -71,11 +71,13 @@ export interface SpaceProductKeyRecord {
   productId: ProductSlug;
   keyVersion: number;
   memberAccountId: string;
-  algorithm: "AES-256-GCM";
+  formatVersion: 2;
+  algorithm: "AES-256-GCM" | "RSA-OAEP-256";
   ciphertext: string;
-  iv: string;
+  iv?: string;
   aadVersion: number;
-  status: "active" | "retired" | "revoked";
+  status: "pending" | "active" | "retired" | "revoked";
+  rotationReason?: "initial" | "member_added" | "member_removed" | "manual";
   createdByAccountId: string;
   createdAt: Date;
   updatedAt: Date;
@@ -93,16 +95,25 @@ const spaceProductKeySchema = new Schema<SpaceProductKeyRecord>(
     },
     keyVersion: { type: Number, required: true, min: 1 },
     memberAccountId: { type: String, required: true, index: true },
-    algorithm: { type: String, enum: ["AES-256-GCM"], required: true },
+    formatVersion: { type: Number, enum: [2], required: true },
+    algorithm: {
+      type: String,
+      enum: ["AES-256-GCM", "RSA-OAEP-256"],
+      required: true,
+    },
     ciphertext: { type: String, required: true },
-    iv: { type: String, required: true },
+    iv: { type: String },
     aadVersion: { type: Number, required: true, min: 1 },
     status: {
       type: String,
-      enum: ["active", "retired", "revoked"],
+      enum: ["pending", "active", "retired", "revoked"],
       default: "active",
       required: true,
       index: true,
+    },
+    rotationReason: {
+      type: String,
+      enum: ["initial", "member_added", "member_removed", "manual"],
     },
     createdByAccountId: { type: String, required: true },
   },

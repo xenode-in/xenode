@@ -107,6 +107,7 @@ export async function PUT(request: Request) {
         productId: keyContext.productId,
         memberAccountId: keyContext.accountId,
         keyVersion,
+        formatVersion: 2,
         algorithm: "AES-256-GCM",
         ciphertext: body.ciphertext,
         iv: body.iv,

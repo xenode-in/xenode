@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./authorization": "./src/authorization.ts",
     "./ids": "./src/ids.ts",
-    "./repository": "./src/repository.ts"
+    "./repository": "./src/repository.ts",
+    "./product-keys": "./src/product-keys.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

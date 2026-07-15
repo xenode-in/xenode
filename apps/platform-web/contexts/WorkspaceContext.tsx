@@ -80,6 +80,7 @@ function withDriveScope(headers: HeadersInit | undefined, scope: DriveScope): He
     scope.type === "team"
       ? teamSpaceId(scope.orgId, scope.teamId)
       : organizationSpaceId(scope.orgId);
+  next.set("x-xenode-space-id", spaceId);
   return next;
 }
 
