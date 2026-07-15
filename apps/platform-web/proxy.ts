@@ -49,7 +49,7 @@ const FILE_RUNTIME_HOSTNAMES = [
  * the `x-better-auth-cookie` header sent by the expo() mobile plugin.
  *
  * Scope is deliberately conservative — only unambiguously-private resources.
- * Sharing families (/api/share, /api/direct-shares, /api/albums) and other-auth
+ * Sharing families (/api/share, /api/direct-shares) and other-auth
  * surfaces (/api/auth, /api/admin, /api/cron, payment webhooks) are NOT gated
  * here; they enforce their own (public-token / non-session) auth.
  */

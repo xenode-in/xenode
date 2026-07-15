@@ -13,7 +13,7 @@ interface RouteParams {
 }
 
 /**
- * PATCH — approve or deny an access request (owner/admin/manager). Approval is
+ * PATCH — approve or deny an access request (owner/admin). Approval is
  * a decision record + notification; the encrypted grant is issued through the
  * normal sharing flow afterwards (the server can't mint the key under E2EE).
  */
@@ -24,7 +24,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     await assertOrgMemberRole({
       userId: ctx.userId,
       orgId,
-      allowed: ["owner", "admin", "manager"],
+      allowed: ["owner", "admin"],
     });
 
     const body = await request.json().catch(() => ({}));

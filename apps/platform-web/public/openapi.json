@@ -577,37 +577,6 @@
       }
     },
 
-    "/api/objects/grid": {
-      "get": {
-        "tags": ["Grid"],
-        "summary": "Get grid-optimized object data",
-        "description": "Returns all fields needed to render the photo grid (thumbnail key, aspect ratio, dates, encryption status) in a single request — no pagination. ~55 KB gzipped for ~1,700 photos.",
-        "parameters": [
-          { "name": "bucketId", "in": "query", "required": true, "schema": { "type": "string" } },
-          { "name": "mediaCategory", "in": "query", "schema": { "type": "string" } }
-        ],
-        "responses": {
-          "200": {
-            "description": "Grid items",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "count": { "type": "integer" },
-                    "items": {
-                      "type": "array",
-                      "items": { "$ref": "#/components/schemas/GridItem" }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-
     "/api/objects/batch": {
       "post": {
         "tags": ["Grid"],

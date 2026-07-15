@@ -14,6 +14,9 @@
       "dependsOn": ["^build"]
     },
     "lint:security": {},
+    "check:boundaries": {
+      "cache": false
+    },
     "typecheck": {
       "dependsOn": ["^build"]
     },

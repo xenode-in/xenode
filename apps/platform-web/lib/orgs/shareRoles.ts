@@ -1,9 +1,8 @@
 /**
  * Direct-share permission roles (Viewer / Commenter / Editor).
  *
- * Historically `DirectShare.recipients[].accessType` was only `"view" | "download"`.
- * Those legacy values map to the read tier (`viewer`). Keep this the single source
- * of truth for role semantics so the API, UI, and enforcement stay in sync.
+ * Unknown or legacy values fail closed. Keep this the single source of truth
+ * for API, UI, and enforcement semantics.
  *
  * Capability nesting (each tier includes the ones before it):
  *   viewer    → preview + download
@@ -19,15 +18,12 @@ const RANK: Record<ShareRole, number> = {
   editor: 2,
 };
 
-/**
- * Coerce any stored/incoming accessType (including legacy `view`/`download`) to a
- * canonical ShareRole. Unknown values fall back to the least-privileged `viewer`.
- */
+/** Parse a canonical ShareRole, rejecting unknown or legacy values. */
 export function normalizeShareRole(value: unknown): ShareRole {
-  if (value === "commenter") return "commenter";
-  if (value === "editor") return "editor";
-  // legacy: "view", "download", anything else → viewer
-  return "viewer";
+  if (value === "viewer" || value === "commenter" || value === "editor") {
+    return value;
+  }
+  throw new Error("Invalid share role");
 }
 
 /** True if `role` is at least `required` in the capability hierarchy. */

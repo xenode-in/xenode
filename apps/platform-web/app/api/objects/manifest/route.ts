@@ -62,8 +62,8 @@ export async function GET(request: NextRequest) {
       _id: bucketId,
       ...bucketOwnershipClause(ctx),
     })
-      .select("_id userId")
-      .lean<{ _id: unknown; userId: string }>();
+      .select("_id systemKey")
+      .lean<{ _id: unknown; systemKey: "drive" }>();
 
     if (!bucket) {
       statusCode = 404;
@@ -74,7 +74,7 @@ export async function GET(request: NextRequest) {
     const userPrefix = `users/${userId}/`;
     if (
       requestedPrefix !== null &&
-      bucket.userId === "system" &&
+      bucket.systemKey === "drive" &&
       !requestedPrefix.startsWith(userPrefix)
     ) {
       statusCode = 403;
@@ -89,7 +89,7 @@ export async function GET(request: NextRequest) {
     };
 
     const prefix =
-      requestedPrefix ?? (bucket.userId === "system" ? userPrefix : null);
+      requestedPrefix ?? (bucket.systemKey === "drive" ? userPrefix : null);
     if (prefix !== null) {
       query.key = { $regex: `^${escapeRegex(prefix)}` };
     }

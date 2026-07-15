@@ -19,18 +19,16 @@ import {
 } from "@/lib/realtime/publish";
 import {
   orgObjectKeyPrefix,
-  orgStorageOwnerId,
   teamObjectKeyPrefix,
 } from "@/lib/orgs/storage";
 
 export const dynamic = "force-dynamic";
 
 function canDeleteInScope(ctx: Awaited<ReturnType<typeof requireAccessContext>>): boolean {
-  if (ctx.scope.type === "personal") return true;
+  if (ctx.spaceType === "personal") return true;
   return (
-    ctx.scope.role === "owner" ||
-    ctx.scope.role === "admin" ||
-    ctx.scope.role === "manager"
+    ctx.role === "owner" ||
+    ctx.role === "admin"
   );
 }
 
@@ -69,13 +67,13 @@ export async function POST(request: NextRequest) {
     }
 
     const allowedPrefix =
-      ctx.scope.type === "organization"
-        ? orgObjectKeyPrefix(ctx.scope.orgId)
-        : ctx.scope.type === "team"
-          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+      ctx.spaceType === "organization"
+        ? orgObjectKeyPrefix(ctx.organizationId!)
+        : ctx.spaceType === "team"
+          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
         : `users/${userId}/`;
 
-    if (bucket.userId === "system" && !prefix.startsWith(allowedPrefix)) {
+    if (bucket.systemKey === "drive" && !prefix.startsWith(allowedPrefix)) {
       return NextResponse.json({ error: "Access denied to this folder" }, { status: 403 });
     }
 
@@ -91,19 +89,8 @@ export async function POST(request: NextRequest) {
 
     const folder = await StorageObject.create({
       bucketId: bucket._id,
-      userId:
-        ctx.scope.type !== "personal"
-          ? orgStorageOwnerId(ctx.scope.orgId)
-          : userId,
-      ownerScope:
-        ctx.scope.type === "organization"
-          ? "organization"
-          : ctx.scope.type === "team"
-            ? "team"
-            : "personal",
-      orgId: ctx.scope.type !== "personal" ? ctx.scope.orgId : undefined,
-      teamId: ctx.scope.type === "team" ? ctx.scope.teamId : undefined,
-      createdBy: userId,
+      spaceId: ctx.spaceId,
+      createdByAccountId: ctx.accountId,
       key: fullKey,
       size: 0,
       contentType: "application/x-directory",
@@ -115,6 +102,7 @@ export async function POST(request: NextRequest) {
 
     await publishSyncEvent({
       userId,
+      spaceId: ctx.spaceId,
       type: "FOLDER_CREATED",
       payload: {
         bucketId: bucket._id.toString(),
@@ -165,13 +153,13 @@ export async function DELETE(request: NextRequest) {
     }
 
     const allowedPrefix =
-      ctx.scope.type === "organization"
-        ? orgObjectKeyPrefix(ctx.scope.orgId)
-        : ctx.scope.type === "team"
-          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+      ctx.spaceType === "organization"
+        ? orgObjectKeyPrefix(ctx.organizationId!)
+        : ctx.spaceType === "team"
+          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
         : `users/${userId}/`;
 
-    if (bucket.userId === "system" && !prefix.startsWith(allowedPrefix)) {
+    if (bucket.systemKey === "drive" && !prefix.startsWith(allowedPrefix)) {
       return NextResponse.json({ error: "Access denied to this folder" }, { status: 403 });
     }
 
@@ -199,6 +187,7 @@ export async function DELETE(request: NextRequest) {
 
     await publishSyncEvent({
       userId,
+      spaceId: ctx.spaceId,
       type: "FOLDER_DELETED",
       payload: {
         bucketId: bucket._id.toString(),

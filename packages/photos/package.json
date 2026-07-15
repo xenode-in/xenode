@@ -1,0 +1,25 @@
+{
+  "name": "@xenode/photos",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src tests"
+  },
+  "dependencies": {
+    "@xenode/media-processing": "*",
+    "@xenode/upload-engine": "^0.0.0"
+  },
+  "devDependencies": {
+    "@xenode/eslint-config": "*",
+    "@xenode/tsconfig": "*",
+    "eslint": "^9",
+    "typescript": "^5",
+    "vitest": "^4.0.18"
+  }
+}

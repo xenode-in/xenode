@@ -10,6 +10,13 @@ import dbConnect from "@/lib/mongodb";
 import { assertOrgMemberRole, assertTeamInOrg } from "@/lib/orgs/access";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
+import {
+  AuditEvent,
+  ProductSession,
+  SpaceProductKey,
+} from "@xenode/database/models";
+import { teamSpaceId } from "@xenode/spaces/ids";
+import { publishSyncEvent } from "@/lib/realtime/publish";
 
 export const dynamic = "force-dynamic";
 
@@ -112,7 +119,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     await assertOrgMemberRole({
       userId: ctx.userId,
       orgId,
-      allowed: ["owner", "admin", "manager"],
+      allowed: ["owner", "admin"],
     });
     await assertTeamInOrg({ orgId, teamId });
 
@@ -150,7 +157,23 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         .collection("teamMember")
         .deleteOne({ teamId, userId: memberUserId }, { session: mongoSession });
 
-      // Revoke the removed member's team grants.
+      const spaceId = teamSpaceId(orgId, teamId);
+      await ProductSession.updateMany(
+        {
+          accountId: memberUserId,
+          productId: { $in: ["drive", "photos", "mobile", "office-editor"] },
+          revokedAt: { $exists: false },
+        },
+        { $set: { revokedAt: now }, $inc: { sessionVersion: 1 } },
+        { session: mongoSession },
+      );
+      await SpaceProductKey.updateMany(
+        { spaceId, memberAccountId: memberUserId, status: "active" },
+        { $set: { status: "revoked" } },
+        { session: mongoSession },
+      );
+
+      // Revoke the removed member's legacy team grants until key creation is cut over.
       await OrgKeyGrant.updateMany(
         { orgId, teamId, memberUserId, revokedAt: { $exists: false } },
         { $set: { revokedAt: now, rotationReason: "member_removed" } },
@@ -205,6 +228,21 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       target: { type: "team", id: teamId },
       metadata: { memberUserId, rotated: !!nextKeyVersion },
     });
+
+    await publishSyncEvent({
+      userId: memberUserId,
+      spaceId: teamSpaceId(orgId, teamId),
+      type: "ACCESS_REVOKED",
+      payload: { reason: "team_member_removed" },
+    }).catch(() => undefined);
+
+    await AuditEvent.create({
+      accountId: memberUserId,
+      spaceId: teamSpaceId(orgId, teamId),
+      productId: "accounts",
+      action: "organization.team_member_removed",
+      metadata: { organizationId: orgId, teamId, removedBy: ctx.userId },
+    }).catch(() => undefined);
 
     return NextResponse.json({
       removedMemberUserId: memberUserId,

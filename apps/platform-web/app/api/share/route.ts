@@ -114,9 +114,9 @@ export async function POST(req: NextRequest) {
       objectIds.map((id) => assertObjectAccess(ctx, id!, "share")),
     );
     const object = objects[0];
-    if (ctx.scope.type === "organization" || ctx.scope.type === "team") {
+    if (ctx.spaceType === "organization" || ctx.spaceType === "team") {
       const policyResponse = await enforceOrganizationSharePolicy({
-        orgId: ctx.scope.orgId,
+        orgId: ctx.organizationId!,
         hasPassword: !!password,
         hasExpiry: !!expiresIn,
       });

@@ -1,5 +1,8 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
+    const { getServerEnv } = await import("@xenode/config/server");
+    getServerEnv();
+
     // Import the razorpay library to ensure it's initialized on server startup
     // This will throw an error early if environment variables are missing
     await import("@/lib/razorpay");

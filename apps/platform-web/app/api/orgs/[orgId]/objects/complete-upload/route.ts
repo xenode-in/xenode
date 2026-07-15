@@ -12,7 +12,6 @@ import {
   assertOrgObjectKey,
   loadOrgBucket,
   orgObjectClause,
-  orgStorageOwnerId,
   requireOrgStorageMembership,
 } from "@/lib/orgs/storage";
 import {
@@ -23,6 +22,7 @@ import {
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { sizeBucket } from "@/lib/posthog";
 import Bucket from "@/models/Bucket";
+import { organizationSpaceId } from "@xenode/spaces/ids";
 import StorageObject from "@/models/StorageObject";
 
 export const dynamic = "force-dynamic";
@@ -130,10 +130,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const mediaCategory = getMediaCategory(contentType);
     const objectUpdate = {
       bucketId: new mongoose.Types.ObjectId(bucketId),
-      userId: orgStorageOwnerId(orgId),
-      ownerScope: "organization" as const,
-      orgId,
-      createdBy: ctx.userId,
+      spaceId: organizationSpaceId(orgId),
+      createdByAccountId: ctx.accountId,
       key: objectKey,
       size,
       contentType,

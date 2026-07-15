@@ -63,8 +63,8 @@ import {
 } from "@/lib/orgs/spaceKeyClient";
 import { cn, formatDate } from "@/lib/utils";
 
-type OrgRole = "owner" | "admin" | "manager" | "member" | "guest";
-type InviteRole = "admin" | "manager" | "member" | "guest";
+type OrgRole = "owner" | "admin" | "member" | "guest";
+type InviteRole = "admin" | "member" | "guest";
 
 interface SessionUser {
   id: string;
@@ -132,7 +132,7 @@ interface SpaceKeyGrant {
   keyVersion: number;
 }
 
-const INVITE_ROLES: InviteRole[] = ["member", "manager", "admin", "guest"];
+const INVITE_ROLES: InviteRole[] = ["member", "admin", "guest"];
 const ADMIN_ROLES: OrgRole[] = ["owner", "admin"];
 
 async function readJson<T>(response: Response): Promise<T> {

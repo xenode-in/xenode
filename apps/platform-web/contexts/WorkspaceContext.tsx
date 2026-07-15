@@ -10,6 +10,10 @@ import {
   type ReactNode,
 } from "react";
 import type { WorkspaceNav } from "@/lib/navigation/sidebar-nav";
+import {
+  organizationSpaceId,
+  teamSpaceId,
+} from "@xenode/spaces/ids";
 
 export type DriveScope =
   | { type: "personal" }
@@ -68,17 +72,14 @@ function scopeFromWorkspace(workspace: WorkspaceNav): DriveScope {
 function withDriveScope(headers: HeadersInit | undefined, scope: DriveScope): Headers {
   const next = new Headers(headers);
   if (scope.type === "personal") {
-    next.delete("x-xenode-drive-scope");
-    next.delete("x-xenode-team-id");
+    next.delete("x-xenode-space-id");
     return next;
   }
 
-  next.set("x-xenode-drive-scope", scope.type);
-  if (scope.type === "team") {
-    next.set("x-xenode-team-id", scope.teamId);
-  } else {
-    next.delete("x-xenode-team-id");
-  }
+  const spaceId =
+    scope.type === "team"
+      ? teamSpaceId(scope.orgId, scope.teamId)
+      : organizationSpaceId(scope.orgId);
   return next;
 }
 

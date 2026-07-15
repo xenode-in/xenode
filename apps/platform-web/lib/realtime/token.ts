@@ -1,34 +1,35 @@
-import { createHmac } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { issueRealtimeTicket } from "@xenode/realtime";
 
-const TOKEN_TTL_SECONDS = 5 * 60;
+const TICKET_TTL_SECONDS = 60;
 
-function secret(): string {
-  const value =
-    process.env.REALTIME_TOKEN_SECRET || process.env.BETTER_AUTH_SECRET;
-  if (!value) {
-    throw new Error(
-      "REALTIME_TOKEN_SECRET or BETTER_AUTH_SECRET must be configured",
-    );
+function ticketSecret(): string {
+  const value = process.env.REALTIME_TICKET_SECRET;
+  if (!value || Buffer.byteLength(value) < 32) {
+    throw new Error("REALTIME_TICKET_SECRET must be configured with at least 32 bytes");
   }
   return value;
 }
 
-export function createRealtimeToken(userId: string): {
-  token: string;
-  expiresAt: string;
-} {
-  const expiresAtMs = Date.now() + TOKEN_TTL_SECONDS * 1000;
-  const body = Buffer.from(
-    JSON.stringify({
-      sub: userId,
-      exp: Math.floor(expiresAtMs / 1000),
-    }),
-  ).toString("base64url");
-  const signature = createHmac("sha256", secret())
-    .update(body)
-    .digest("base64url");
-  return {
-    token: `${body}.${signature}`,
-    expiresAt: new Date(expiresAtMs).toISOString(),
-  };
+export async function createRealtimeToken(args: {
+  accountId: string;
+  productId: "drive";
+  spaceId: string;
+  sessionId: string;
+}): Promise<{ token: string; expiresAt: string }> {
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const expiresAt = issuedAt + TICKET_TTL_SECONDS;
+  const token = await issueRealtimeTicket(
+    {
+      ticketId: randomUUID(),
+      accountId: args.accountId,
+      productId: args.productId,
+      spaceId: args.spaceId,
+      sessionId: args.sessionId,
+      issuedAt,
+      expiresAt,
+    },
+    ticketSecret(),
+  );
+  return { token, expiresAt: new Date(expiresAt * 1000).toISOString() };
 }

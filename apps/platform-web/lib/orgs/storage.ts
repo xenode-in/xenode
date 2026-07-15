@@ -7,11 +7,12 @@ import {
 } from "@/lib/orgs/access";
 import Bucket, { type IBucket } from "@/models/Bucket";
 import { systemWorkspaceBucketName } from "@/lib/storage/workspaceBucket";
+import { organizationSpaceId, teamSpaceId } from "@xenode/spaces/ids";
 
 export type OrgStorageAction = "read" | "write" | "manage" | "delete";
 
-const READ_WRITE_ROLES: OrgRole[] = ["owner", "admin", "manager", "member"];
-const MANAGE_ROLES: OrgRole[] = ["owner", "admin", "manager"];
+const READ_WRITE_ROLES: OrgRole[] = ["owner", "admin", "member"];
+const MANAGE_ROLES: OrgRole[] = ["owner", "admin"];
 const ADMIN_ROLES: OrgRole[] = ["owner", "admin"];
 
 export function orgStorageOwnerId(orgId: string): string {
@@ -25,19 +26,12 @@ export function orgObjectKeyPrefix(orgId: string): string {
 }
 
 export function orgBucketClause(orgId: string): Record<string, unknown> {
-  return {
-    ownerScope: "organization",
-    orgId,
-    teamId: { $in: [null, undefined, ""] },
-  };
+  void orgId;
+  return { userId: "system" };
 }
 
 export function orgObjectClause(orgId: string): Record<string, unknown> {
-  return {
-    ownerScope: "organization",
-    orgId,
-    teamId: { $in: [null, undefined, ""] },
-  };
+  return { spaceId: organizationSpaceId(orgId) };
 }
 
 export async function requireOrgStorageMembership(args: {
@@ -93,9 +87,8 @@ export async function loadOrgBucket(args: {
 }
 
 // ── Team drives ──────────────────────────────────────────────────────────────
-// A team drive is a Bucket with ownerScope:"team" + teamId, nested under the
-// org's key prefix so org-wide listing/containment still holds. Storage still
-// rolls up to OrgUsage (teams are an access boundary, not a billing boundary).
+// Team objects use their own Space while their physical keys remain nested
+// under the organization prefix. Usage still rolls up to the organization.
 
 export function teamObjectKeyPrefix(orgId: string, teamId: string): string {
   return `workspaces/${orgId}/teams/${teamId}/objects/`;
@@ -105,14 +98,16 @@ export function teamBucketClause(
   orgId: string,
   teamId: string,
 ): Record<string, unknown> {
-  return { ownerScope: "team", orgId, teamId };
+  void orgId;
+  void teamId;
+  return { userId: "system" };
 }
 
 export function teamObjectClause(
   orgId: string,
   teamId: string,
 ): Record<string, unknown> {
-  return { ownerScope: "team", orgId, teamId };
+  return { spaceId: teamSpaceId(orgId, teamId) };
 }
 
 export function assertTeamObjectKey(args: {

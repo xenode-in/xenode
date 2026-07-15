@@ -7,7 +7,6 @@ import dbConnect from "@/lib/mongodb";
 import {
   assertTeamObjectKey,
   loadTeamBucket,
-  orgStorageOwnerId,
   requireTeamStorageMembership,
   teamObjectClause,
 } from "@/lib/orgs/storage";
@@ -20,6 +19,7 @@ import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { sizeBucket } from "@/lib/posthog";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import { teamSpaceId } from "@xenode/spaces/ids";
 
 export const dynamic = "force-dynamic";
 
@@ -120,11 +120,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const mediaCategory = getMediaCategory(contentType);
     const objectUpdate = {
       bucketId: new mongoose.Types.ObjectId(bucketId),
-      userId: orgStorageOwnerId(orgId),
-      ownerScope: "team" as const,
-      orgId,
-      teamId,
-      createdBy: ctx.userId,
+      spaceId: teamSpaceId(orgId, teamId),
+      createdByAccountId: ctx.accountId,
       key: objectKey,
       size,
       contentType,

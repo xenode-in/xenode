@@ -56,7 +56,7 @@ export default async function UserDetailPage({ params }: RouteContext) {
       },
     ]),
     ApiKey.find({ userId }).sort({ lastUsedAt: -1 }).lean(),
-    Bucket.find({ userId }).sort({ totalSizeBytes: -1 }).limit(8).lean(),
+    Bucket.find({ systemKey: "drive" }).limit(1).lean(),
   ]);
 
   if (!user) notFound();

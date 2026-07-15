@@ -9,9 +9,9 @@ import {
 import { teamObjectClause } from "@/lib/orgs/storage";
 import { decrementOrgStorage } from "@/lib/orgs/billing/orgUsage";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
-import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
-import OrgKeyGrant from "@/models/OrgKeyGrant";
+import { Space, SpaceProductKey } from "@xenode/database/models";
+import { teamSpaceId } from "@xenode/spaces/ids";
 
 export const dynamic = "force-dynamic";
 
@@ -23,11 +23,11 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
     const ctx = await requireAccessContext(request);
     const { orgId, teamId } = await params;
-    // Rename is allowed for managers too (team:update).
+    // Team rename is restricted to organization owners and admins.
     await assertOrgMemberRole({
       userId: ctx.userId,
       orgId,
-      allowed: ["owner", "admin", "manager"],
+      allowed: ["owner", "admin"],
     });
     await assertTeamInOrg({ orgId, teamId });
 
@@ -80,14 +80,13 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       await StorageObject.deleteMany(teamObjectClause(orgId, teamId), {
         session: mongoSession,
       });
-      await Bucket.deleteMany(
-        { ownerScope: "team", orgId, teamId },
-        { session: mongoSession },
-      );
+      const spaceId = teamSpaceId(orgId, teamId);
+      await SpaceProductKey.deleteMany({ spaceId }, { session: mongoSession });
+      await Space.deleteOne({ _id: spaceId }, { session: mongoSession });
       await mongoose.connection
         .collection("teamMember")
         .deleteMany({ teamId }, { session: mongoSession });
-      await OrgKeyGrant.deleteMany({ orgId, teamId }, { session: mongoSession });
+      // Product key envelopes were revoked with the team Space above.
       await mongoose.connection
         .collection("team")
         .deleteOne({ id: teamId, organizationId: orgId }, { session: mongoSession });

@@ -1,16 +1,10 @@
 import mongoose, { Document, Model, Schema } from "mongoose";
 
-/**
- * Permission role. `viewer|commenter|editor` are canonical; `view|download` are
- * legacy values still present on old rows (both read as `viewer`). See
- * `lib/orgs/shareRoles.ts`.
- */
+/** Canonical server-enforced direct-share permission role. */
 export type DirectShareAccessType =
   | "viewer"
   | "commenter"
-  | "editor"
-  | "view"
-  | "download";
+  | "editor";
 
 export interface IDirectShareRecipient {
   recipientUserId: string;
@@ -44,8 +38,7 @@ const DirectShareRecipientSchema = new Schema<IDirectShareRecipient>(
     wrappedShareKey: { type: String, required: true },
     accessType: {
       type: String,
-      // Canonical roles + retained legacy values for back-compat with old rows.
-      enum: ["viewer", "commenter", "editor", "view", "download"],
+      enum: ["viewer", "commenter", "editor"],
       default: "viewer",
     },
     downloadCount: { type: Number, default: 0 },

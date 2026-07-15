@@ -9,6 +9,7 @@ import DirectShare from "@/models/DirectShare";
 import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
 import { getSignedFileUrl } from "@/lib/b2/cdn";
+import { canDownload, normalizeShareRole } from "@/lib/orgs/shareRoles";
 
 export const dynamic = "force-dynamic";
 
@@ -30,8 +31,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const recipient = share.recipients.find(
       (item) => item.recipientUserId === ctx.userId,
     );
-    if (!recipient) {
-      return NextResponse.json({ error: "You do not have access to this share" }, { status: 403 });
+    if (
+      !recipient ||
+      !canDownload(normalizeShareRole(recipient.accessType))
+    ) {
+      return NextResponse.json(
+        { error: "You do not have access to this share" },
+        { status: 403 },
+      );
     }
 
     const object = await StorageObject.findById(share.objectId).lean();

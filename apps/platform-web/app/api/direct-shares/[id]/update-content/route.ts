@@ -8,6 +8,7 @@ import dbConnect from "@/lib/mongodb";
 import DirectShare from "@/models/DirectShare";
 import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
+import { Space, type SpaceRecord } from "@xenode/database/models";
 import { canEdit, normalizeShareRole } from "@/lib/orgs/shareRoles";
 import { adjustStorageBytes } from "@/lib/metering/usage";
 import { adjustOrgStorage } from "@/lib/orgs/billing/orgUsage";
@@ -108,17 +109,33 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    // Attribute storage to the OWNER's workspace, not the recipient's.
-    const isOrgOwned =
-      object.ownerScope === "organization" || object.ownerScope === "team";
-    const newKeyPrefix =
-      isOrgOwned && object.orgId
-        ? orgObjectKeyPrefix(object.orgId)
-        : `users/${object.userId}/`;
+    // Attribute storage to the canonical Space owner, never the recipient.
+    const space = await Space.findById(object.spaceId).lean<SpaceRecord>();
+    if (!space || space.status !== "active") {
+      return NextResponse.json(
+        { error: "Owning Space is unavailable", code: "space_unavailable" },
+        { status: 409 },
+      );
+    }
+    const organizationId =
+      space.type === "organization" || space.type === "team"
+        ? space.organizationId
+        : undefined;
+    const ownerAccountId =
+      space.type === "personal" ? space.ownerAccountId : undefined;
+    if (!organizationId && !ownerAccountId) {
+      return NextResponse.json(
+        { error: "Owning Space is invalid", code: "space_invalid" },
+        { status: 409 },
+      );
+    }
+    const newKeyPrefix = organizationId
+      ? orgObjectKeyPrefix(organizationId)
+      : `users/${ownerAccountId}/`;
     const adjustWorkspaceStorage = (delta: number) =>
-      isOrgOwned && object.orgId
-        ? adjustOrgStorage(object.orgId, delta)
-        : adjustStorageBytes(object.userId, delta);
+      organizationId
+        ? adjustOrgStorage(organizationId, delta)
+        : adjustStorageBytes(ownerAccountId!, delta);
 
     const result = await applyContentUpdate({
       object,

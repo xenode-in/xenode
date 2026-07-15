@@ -10,6 +10,7 @@ import {
 } from "@/lib/orgs/access";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
+import { ensureTeamSpace } from "@xenode/spaces/repository";
 
 export const dynamic = "force-dynamic";
 
@@ -115,6 +116,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         teamId: team.id,
         userId: ctx.userId,
         createdAt: now,
+      });
+      await ensureTeamSpace({
+        accountId: ctx.accountId,
+        organizationId: orgId,
+        teamId: team.id,
       });
       if (ownerWrappedTeamKey) {
         await OrgKeyGrant.create({

@@ -119,15 +119,15 @@ export async function GET(request: NextRequest) {
     }
 
     const allowedSystemPrefix =
-      ctx.scope.type === "organization"
-        ? orgObjectKeyPrefix(ctx.scope.orgId)
-        : ctx.scope.type === "team"
-          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+      ctx.spaceType === "organization"
+        ? orgObjectKeyPrefix(ctx.organizationId!)
+        : ctx.spaceType === "team"
+          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
         : `users/${userId}/`;
 
     if (
       prefix !== null &&
-      bucket.userId === "system" &&
+      bucket.systemKey === "drive" &&
       !prefix.startsWith(allowedSystemPrefix)
     ) {
       statusCode = 403;
@@ -192,7 +192,7 @@ export async function GET(request: NextRequest) {
       ];
     }
 
-    if (bucket.userId === "system") {
+    if (bucket.systemKey === "drive") {
       query.key = { $gte: allowedSystemPrefix, $lt: allowedSystemPrefix + "\uffff" };
     }
 

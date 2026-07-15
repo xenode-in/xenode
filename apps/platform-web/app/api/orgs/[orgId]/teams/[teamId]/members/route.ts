@@ -77,7 +77,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
 /**
  * POST /api/orgs/[orgId]/teams/[teamId]/members — add an existing org member to
- * a team, granting them the (client-wrapped) team space key. Owner/admin/manager.
+ * a team, granting them the (client-wrapped) team space key. Owner/admin.
  */
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     await assertOrgMemberRole({
       userId: ctx.userId,
       orgId,
-      allowed: ["owner", "admin", "manager"],
+      allowed: ["owner", "admin"],
     });
     await assertTeamInOrg({ orgId, teamId });
     await enforceRateLimit({

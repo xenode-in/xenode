@@ -15,6 +15,7 @@ import { listUserOrgs } from "@/lib/orgs/listUserOrgs";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { ensureSystemWorkspaceBucketRecord } from "@/lib/storage/workspaceBucket";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
+import { ensureOrganizationSpace } from "@xenode/spaces/repository";
 
 export const dynamic = "force-dynamic";
 
@@ -240,6 +241,10 @@ export async function POST(request: NextRequest) {
       await organizations.insertOne(org);
       await members.insertOne(member);
       if (ownerWrappedSpaceKey) {
+      await ensureOrganizationSpace({
+        accountId: ctx.accountId,
+        organizationId: org.id,
+      });
         await OrgKeyGrant.create({
           orgId: org.id,
           teamId: null,

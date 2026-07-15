@@ -17,4 +17,9 @@ export const nextConfig = defineConfig([
   ]),
 ]);
 
+export const packageConfig = defineConfig([
+  ...nextTs,
+  globalIgnores(["dist/**", "build/**", "coverage/**"]),
+]);
+
 export default nextConfig;

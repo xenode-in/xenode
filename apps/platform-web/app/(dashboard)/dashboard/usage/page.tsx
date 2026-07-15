@@ -2,6 +2,7 @@ import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
 import StorageObject from "@/models/StorageObject";
+import { personalSpaceId } from "@xenode/spaces/ids";
 import { bytesToGB, formatBytes } from "@/lib/utils/format";
 import {
   Archive,
@@ -56,7 +57,7 @@ export default async function UsagePage() {
   const [usage, rawBreakdown] = await Promise.all([
     Usage.findOne({ userId }).lean(),
     StorageObject.aggregate<{ _id: string | null; bytes: number; count: number }>([
-      { $match: { userId } },
+      { $match: { spaceId: personalSpaceId(userId) } },
       {
         $group: {
           _id: "$mediaCategory",

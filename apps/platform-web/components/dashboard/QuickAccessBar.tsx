@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Image, Music, Video, FileText, FileSpreadsheet, Presentation, FileArchive, FileCode } from "lucide-react";
 
 const quickItems = [
-  { label: "Images", icon: Image, href: "/dashboard/photos" },
+  { label: "Images", icon: Image, href: "/dashboard/files?type=image" },
   { label: "Music", icon: Music, href: "/dashboard/files?type=audio" },
   { label: "Video", icon: Video, href: "/dashboard/files?type=video" },
   { label: "Docs", icon: FileText, href: "/dashboard/files?type=document" },

@@ -1,0 +1,35 @@
+{
+  "name": "@xenode/accounts",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint app lib",
+    "test": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.2.0",
+    "@xenode/config": "*",
+    "@xenode/crypto-core": "^0.0.0",
+    "@xenode/database": "*",
+    "@xenode/identity-core": "*",
+    "@xenode/key-handoff": "^0.0.0",
+    "@xenode/spaces": "^0.0.0",
+    "better-auth": "^1.6.23",
+    "next": "^16.1.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/react": "19.2.15",
+    "@types/react-dom": "19.2.3",
+    "@xenode/eslint-config": "*",
+    "@xenode/tsconfig": "*",
+    "eslint": "^9",
+    "typescript": "^5"
+  }
+}

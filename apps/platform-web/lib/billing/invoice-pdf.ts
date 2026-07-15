@@ -16,6 +16,7 @@ import { User } from "@/models/User";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getS3Client } from "@/lib/b2/client";
 import { uploadObject } from "@/lib/b2/objects";
+import { resolveSystemBucketConfig } from "@xenode/config/storage";
 
 const PLAN_DISPLAY_NAMES: Record<string, string> = {
   free: "Free Tier",
@@ -505,7 +506,7 @@ export async function generateInvoicePdfBuffer(
   if (subscription.userId !== userId)
     throw new Error("Unauthorized access to invoice");
 
-  const bucketName = process.env.S3_BUCKET_NAME || "xenode-drive-storage";
+  const bucketName = resolveSystemBucketConfig().bucketName;
   let s3Key = `invoices/${invoiceId}.pdf`;
 
   // 3. Serve cached PDF from B2 if present

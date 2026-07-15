@@ -1,6 +1,10 @@
 import { S3Client } from "@aws-sdk/client-s3";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import https from "https";
+import {
+  requireSystemBucketCredentials,
+  resolveSystemBucketConfig,
+} from "@xenode/config/storage";
 
 let _client: S3Client | null = null;
 let _publicClient: S3Client | null = null;
@@ -20,34 +24,21 @@ const _requestHandler = new NodeHttpHandler({ httpsAgent: _httpsAgent });
  */
 export function getS3Client(): S3Client {
   if (!_client) {
-    const S3_ENDPOINT =
-      process.env.S3_ENDPOINT || "https://s3.us-west-004.backblazeb2.com";
-    const S3_REGION = process.env.S3_REGION || "us-west-004";
-    const S3_KEY_ID = process.env.S3_KEY_ID;
-    const S3_APPLICATION_KEY = process.env.S3_APPLICATION_KEY;
-
-    if (!S3_KEY_ID || !S3_APPLICATION_KEY) {
-      throw new Error(
-        "S3_KEY_ID and S3_APPLICATION_KEY environment variables are required",
-      );
-    }
-
-    const keyId = S3_KEY_ID.trim();
-    const appKey = S3_APPLICATION_KEY.trim();
+    const storage = resolveSystemBucketConfig();
+    const credentials = requireSystemBucketCredentials(storage);
 
     console.log(`[B2] Initializing S3 Client with:`);
-    console.log(`[B2] Endpoint: ${S3_ENDPOINT}`);
-    console.log(`[B2] Region: ${S3_REGION}`);
-    console.log(`[B2] Key ID Length: ${keyId.length}`);
-    console.log(`[B2] App Key Length: ${appKey.length}`);
+    console.log(`[B2] Endpoint: ${storage.endpoint}`);
+    console.log(`[B2] Region: ${storage.region}`);
+    console.log(`[B2] Key ID Length: ${credentials.accessKeyId.length}`);
+    console.log(
+      `[B2] App Key Length: ${credentials.secretAccessKey.length}`,
+    );
 
     _client = new S3Client({
-      endpoint: S3_ENDPOINT,
-      region: S3_REGION,
-      credentials: {
-        accessKeyId: keyId,
-        secretAccessKey: appKey,
-      },
+      endpoint: storage.endpoint,
+      region: storage.region,
+      credentials,
       forcePathStyle: true,
       // requestHandler: _requestHandler,
     });
@@ -87,6 +78,5 @@ export function getPublicS3Client(): S3Client {
   return _publicClient;
 }
 
-export const getB2Region = () => process.env.S3_REGION || "us-west-004";
-export const getB2Endpoint = () =>
-  process.env.S3_ENDPOINT || "https://s3.us-west-004.backblazeb2.com";
+export const getB2Region = () => resolveSystemBucketConfig().region;
+export const getB2Endpoint = () => resolveSystemBucketConfig().endpoint;

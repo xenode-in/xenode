@@ -27,7 +27,7 @@ interface RouteParams {
   params: Promise<{ orgId: string }>;
 }
 
-type InvitationRole = "admin" | "manager" | "member" | "guest";
+type InvitationRole = "admin" | "member" | "guest";
 
 interface InvitationRecord {
   id: string;
@@ -47,7 +47,7 @@ interface InvitationRecord {
   lastRemovedAt?: Date | null;
 }
 
-const INVITABLE_ROLES: InvitationRole[] = ["admin", "manager", "member", "guest"];
+const INVITABLE_ROLES: InvitationRole[] = ["admin", "member", "guest"];
 
 function newPluginId(prefix: string): string {
   return `${prefix}_${randomBytes(12).toString("hex")}`;
@@ -109,7 +109,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     await assertOrgMemberRole({
       userId: ctx.userId,
       orgId,
-      allowed: ["owner", "admin", "manager"],
+      allowed: ["owner", "admin"],
     });
 
     await dbConnect();

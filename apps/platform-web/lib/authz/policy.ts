@@ -1,45 +1,33 @@
 import dbConnect from "@/lib/mongodb";
 import StorageObject, { type IStorageObject } from "@/models/StorageObject";
 import Bucket, { type IBucket } from "@/models/Bucket";
-import { type AccessContext } from "./context";
+import { type AccessContext } from "./space-context";
 import { AuthzError } from "./errors";
-import { orgObjectClause, teamObjectClause } from "@/lib/orgs/storage";
 import { systemWorkspaceBucketName } from "@/lib/storage/workspaceBucket";
 
 /**
  * Actions a caller may attempt on a resource.
  *
  * Under `personal` scope, ownership implies all actions. Under organization/team
- * scope, `assertScopeAction` below branches on the caller's role. (The upcoming
- * Space model, plan PR4/PR13, replaces this with spaceId-based authorization and
- * removes the `manager` role.)
+ * scope, `assertScopeAction` below branches on the server-derived Space role.
  */
 export type Action = "read" | "write" | "delete" | "share" | "manage";
 
 /** Enforce the role attached to an already authenticated tenancy scope. */
 export function assertScopeAction(ctx: AccessContext, action: Action): void {
-  if (ctx.scope.type === "personal" || action === "read") return;
-  const role = ctx.scope.role;
+  if (action === "read") return;
+  const role = ctx.role;
   const mayWrite =
     role === "owner" ||
     role === "admin" ||
-    role === "manager" ||
     role === "member";
-  const mayManage = role === "owner" || role === "admin" || role === "manager";
+  const mayManage = role === "owner" || role === "admin";
   if ((action === "write" && mayWrite) || (action !== "write" && mayManage)) {
     return;
   }
   throw new AuthzError(403, "workspace_role_required", "Forbidden");
 }
 
-function assertPersonalStorageScope(ctx: AccessContext): void {
-  if (ctx.scope.type === "personal") return;
-  throw new AuthzError(
-    501,
-    "organization_storage_not_ready",
-    "Organization storage is not enabled yet",
-  );
-}
 
 /**
  * ── The ownership seam ───────────────────────────────────────────────────────
@@ -56,18 +44,11 @@ function assertPersonalStorageScope(ctx: AccessContext): void {
  * scope today; org scope adds an $or on the future orgId field.
  */
 export function ownerClause(ctx: AccessContext): Record<string, unknown> {
-  assertPersonalStorageScope(ctx);
-  return { userId: ctx.userId };
+  return { spaceId: ctx.spaceId };
 }
 
 /** Ownership clause for a StorageObject query (excluding `_id`). */
 export function objectOwnershipClause(ctx: AccessContext): Record<string, unknown> {
-  if (ctx.scope.type === "organization") {
-    return orgObjectClause(ctx.scope.orgId);
-  }
-  if (ctx.scope.type === "team") {
-    return teamObjectClause(ctx.scope.orgId, ctx.scope.teamId);
-  }
   return ownerClause(ctx);
 }
 
@@ -86,15 +67,11 @@ export function objectFilter(
  * readable/usable by everyone (used for app-managed folders, migrations, etc.).
  */
 export function bucketOwnershipClause(ctx: AccessContext): Record<string, unknown> {
-  if (ctx.scope.type === "organization" || ctx.scope.type === "team") {
-    return {
-      userId: "system",
-      name: systemWorkspaceBucketName("ORGANIZATION"),
-      b2BucketId: systemWorkspaceBucketName("ORGANIZATION"),
-    };
-  }
-  assertPersonalStorageScope(ctx);
-  return { $or: [{ userId: ctx.userId }, { userId: "system" }] };
+  return {
+    systemKey: "drive",
+    name: systemWorkspaceBucketName("PERSONAL"),
+    b2BucketId: systemWorkspaceBucketName("PERSONAL"),
+  };
 }
 
 /** Full filter for a single Bucket the caller owns (or the system bucket). */

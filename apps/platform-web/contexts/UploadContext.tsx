@@ -8,6 +8,11 @@ import React, {
   useEffect,
   useRef,
 } from "react";
+import {
+  UploadEngine,
+  acceptAllUploadPolicy,
+  createMemoryCheckpointStore,
+} from "@xenode/upload-engine";
 import { useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
 import {
@@ -281,7 +286,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   sessionRef.current = session;
 
   const [tasks, setTasks] = useState<UploadTask[]>([]);
-  const [activeUploads, setActiveUploads] = useState(0);
+  const engineRef = useRef<UploadEngine | null>(null);
   const [isPaused, setIsPaused] = useState(false);
   const uploadingIds = useRef(new Set<string>());
   // All in-flight XHRs, grouped by task, so pause/cancel can abort every
@@ -326,6 +331,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const pauseAll = useCallback(() => {
     if (pausedRef.current) return;
     pausedRef.current = true;
+    engineRef.current?.pause();
     setIsPaused(true);
     // Abort every in-flight request; the retry loops re-queue on pause-abort.
     for (const taskId of xhrsByTask.current.keys()) abortTaskXhrs(taskId);
@@ -339,6 +345,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const resumeAll = useCallback(() => {
     if (!pausedRef.current) return;
     pausedRef.current = false;
+    engineRef.current?.resume();
     setIsPaused(false);
     const waiters = resumeWaitersRef.current;
     resumeWaitersRef.current = [];
@@ -1075,7 +1082,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         uploadingIds.current.delete(task.id);
         xhrsByTask.current.delete(task.id);
         cancelledIds.current.delete(task.id);
-        setActiveUploads((prev) => prev - 1);
       }
     },
     [uploadEncryptedThumbnail, waitWhilePaused, xhrSetFor],
@@ -1091,7 +1097,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       task.file.type.startsWith("video/") ||
       task.file.type.startsWith("audio/")
     ) {
-      uploadChunkedMediaDirectly(task);
+      await uploadChunkedMediaDirectly(task);
       return;
     }
 
@@ -1381,7 +1387,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       uploadingIds.current.delete(task.id);
       xhrsByTask.current.delete(task.id);
       cancelledIds.current.delete(task.id);
-      setActiveUploads((prev) => prev - 1);
     }
   }, [
     uploadChunkedMediaDirectly,
@@ -1389,6 +1394,39 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     waitWhilePaused,
     xhrSetFor,
   ]);
+
+  useEffect(() => {
+    const engine = new UploadEngine(
+      {
+        async upload(input) {
+          await uploadFileDirectly(input.source as UploadTask);
+          return input.id;
+        },
+      },
+      acceptAllUploadPolicy,
+      createMemoryCheckpointStore(),
+      { concurrency: MAX_CONCURRENT_UPLOADS, maxAttempts: 1 },
+    );
+    engineRef.current = engine;
+    return () => {
+      if (engineRef.current === engine) engineRef.current = null;
+    };
+  }, [uploadFileDirectly]);
+
+  const enqueueTask = useCallback((task: UploadTask) => {
+    const engine = engineRef.current;
+    if (!engine) {
+      setTimeout(() => enqueueTask(task), 0);
+      return;
+    }
+    void engine.enqueue({
+      id: task.id,
+      name: task.file.name,
+      size: task.file.size,
+      contentType: task.file.type || "application/octet-stream",
+      source: task,
+    });
+  }, []);
 
   // Records eligible for auto-resume after a reload, kept so retryTask can
   // re-drive them. Populated by the rehydrate effect below.
@@ -1695,23 +1733,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     [waitWhilePaused, xhrSetFor, uploadEncryptedThumbnail],
   );
 
-  const processQueue = useCallback(() => {
-    setTasks((currentTasks) => {
-      const pending = currentTasks.filter((t) => t.status === "pending");
-      const canStart = MAX_CONCURRENT_UPLOADS - activeUploads;
-
-      if (canStart > 0 && pending.length > 0) {
-        const toStart = pending.slice(0, canStart);
-        toStart.forEach((task) => {
-          setActiveUploads((prev) => prev + 1);
-          uploadFileDirectly(task);
-        });
-      }
-
-      return currentTasks;
-    });
-  }, [activeUploads, uploadFileDirectly]);
-
   const addTasks = useCallback(
     (files: File[], bucketId: string, prefix: string) => {
       const newTasks: UploadTask[] = files.map((file) => ({
@@ -1727,11 +1748,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       void requestPersistentStorage();
 
       setTasks((prev) => [...prev, ...newTasks]);
-
-      // Process queue after state update
-      setTimeout(processQueue, 0);
+      newTasks.forEach(enqueueTask);
     },
-    [processQueue],
+    [enqueueTask],
   );
 
   const removeTask = useCallback((id: string) => {
@@ -1744,6 +1763,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const cancelTask = useCallback(
     (id: string) => {
       cancelledIds.current.add(id);
+      engineRef.current?.cancel(id);
       abortTaskXhrs(id);
       resumeRecordsRef.current.delete(id);
       const uid = sessionRef.current?.user?.id;
@@ -1767,17 +1787,26 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         void resumeRecord(rec);
         return;
       }
-      // Live task whose File is still in memory — re-queue from scratch.
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === id && t.status === "failed" && !t.interrupted
-            ? { ...t, status: "pending", progress: 0, error: undefined }
-            : t,
-        ),
+      // Live task whose File is still in memory - re-queue from scratch.
+      const task = tasks.find(
+        (candidate) =>
+          candidate.id === id &&
+          candidate.status === "failed" &&
+          !candidate.interrupted,
       );
-      setTimeout(processQueue, 0);
+      if (!task) return;
+      const queued: UploadTask = {
+        ...task,
+        status: "pending",
+        progress: 0,
+        error: undefined,
+      };
+      setTasks((prev) =>
+        prev.map((candidate) => (candidate.id === id ? queued : candidate)),
+      );
+      enqueueTask(queued);
     },
-    [resumeRecord, processQueue],
+    [resumeRecord, tasks, enqueueTask],
   );
 
   const clearCompleted = useCallback(() => {
@@ -1837,13 +1866,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       for (const r of resumable) void resumeRecord(r);
     })();
   }, [session?.user?.id, resumeRecord]);
-
-  // Auto-process queue when active uploads decrease
-  React.useEffect(() => {
-    if (activeUploads < MAX_CONCURRENT_UPLOADS) {
-      processQueue();
-    }
-  }, [activeUploads, processQueue]);
 
   return (
     <UploadContext.Provider

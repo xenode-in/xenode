@@ -1,12 +1,13 @@
 import { createB2Bucket } from "@/lib/b2/buckets";
 import Bucket, { type IBucket } from "@/models/Bucket";
+import { resolveSystemBucketConfig } from "@xenode/config/storage";
 
 /**
- * Storage-bucket selector for the two-bucket model.
+ * Storage-bucket selector for the single-system-bucket model.
  *
- * Xenode uses exactly TWO shared Backblaze B2 buckets — one for all personal
- * workspaces, one for all organization workspaces — and isolates tenants by an
- * immutable `workspaces/{workspaceId}/...` key prefix, NOT by a bucket per org.
+ * Xenode uses one shared Backblaze B2 bucket and isolates tenants by immutable
+ * object-key prefixes. Workspace type remains an authorization concern, not a
+ * physical-bucket selector.
  * Never hardcode a bucket name; always resolve it here.
  */
 export type WorkspaceStorageType = "PERSONAL" | "ORGANIZATION";
@@ -16,9 +17,8 @@ export type WorkspaceStorageType = "PERSONAL" | "ORGANIZATION";
  * (B2's S3 API addresses buckets by name). Env-driven, with safe defaults.
  */
 export function getBucketForWorkspace(type: WorkspaceStorageType): string {
-  return type === "ORGANIZATION"
-    ? process.env.ORGANIZATION_STORAGE_BUCKET || "xenode-organization-dev"
-    : process.env.S3_BUCKET_NAME || "xenode-drive-storage";
+  void type;
+  return resolveSystemBucketConfig().bucketName;
 }
 
 export function systemWorkspaceBucketName(type: WorkspaceStorageType): string {
@@ -74,14 +74,11 @@ export async function ensureSystemWorkspaceBucketRecord(
 ): Promise<IBucket> {
   const bucketName = await ensureWorkspaceBucket(type);
   const existing = await Bucket.findOne({
-    $or: [
-      { userId: "system", name: bucketName },
-      { b2BucketId: bucketName },
-    ],
+    $or: [{ systemKey: "drive" }, { b2BucketId: bucketName }],
   });
   if (existing) {
     if (
-      existing.userId !== "system" ||
+      existing.systemKey !== "drive" ||
       existing.name !== bucketName ||
       existing.b2BucketId !== bucketName
     ) {
@@ -89,12 +86,17 @@ export async function ensureSystemWorkspaceBucketRecord(
         { _id: existing._id },
         {
           $set: {
-            userId: "system",
-            ownerScope: type === "ORGANIZATION" ? "organization" : "personal",
+            systemKey: "drive",
             name: bucketName,
             b2BucketId: bucketName,
           },
-          $unset: { orgId: "", teamId: "", createdBy: "" },
+          $unset: {
+            userId: "",
+            ownerScope: "",
+            orgId: "",
+            teamId: "",
+            createdBy: "",
+          },
         },
       );
       const normalized = await Bucket.findById(existing._id);
@@ -105,11 +107,10 @@ export async function ensureSystemWorkspaceBucketRecord(
 
   try {
     return await Bucket.create({
-      userId: "system",
-      ownerScope: type === "ORGANIZATION" ? "organization" : "personal",
+      systemKey: "drive",
       name: bucketName,
       b2BucketId: bucketName,
-      region: process.env.S3_REGION || "us-east-1",
+      region: resolveSystemBucketConfig().region,
     });
   } catch (err) {
     if (!isDuplicateKey(err)) throw err;

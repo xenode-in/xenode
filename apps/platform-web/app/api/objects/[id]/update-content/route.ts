@@ -42,9 +42,9 @@ export async function POST(
     assertScopeAction(ctx, "write");
     const userId = ctx.userId;
     const adjustWorkspaceStorage = (delta: number) =>
-      ctx.scope.type === "personal"
+      ctx.spaceType === "personal"
         ? adjustStorageBytes(userId, delta)
-        : adjustOrgStorage(ctx.scope.orgId, delta);
+        : adjustOrgStorage(ctx.organizationId!, delta);
     const baseRevision = parseBaseRevision(request.headers.get(REVISION_HEADER));
     if (Number.isNaN(baseRevision)) {
       return NextResponse.json(

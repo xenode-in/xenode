@@ -3,7 +3,7 @@ import DirectShare from "@/models/DirectShare";
 import type { IDirectShareRecipient } from "@/models/DirectShare";
 import type { IFileComment } from "@/models/FileComment";
 import { objectFilter } from "@/lib/authz";
-import type { AccessContext } from "@/lib/authz/context";
+import type { AccessContext } from "@/lib/authz/space-context";
 import {
   canComment as roleCanComment,
   normalizeShareRole,
@@ -58,7 +58,7 @@ export async function resolveCommentAccess(
     .lean();
   if (owned) {
     const canWrite =
-      ctx.scope.type === "personal" || ctx.scope.role !== "guest";
+      ctx.spaceType === "personal" || ctx.role !== "guest";
     return {
       via: "workspace",
       role: null,

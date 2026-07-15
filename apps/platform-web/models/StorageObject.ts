@@ -2,12 +2,9 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 
 export interface IStorageObject extends Document {
   _id: mongoose.Types.ObjectId;
+  spaceId: string;
+  createdByAccountId: string;
   bucketId: mongoose.Types.ObjectId;
-  userId: string;
-  ownerScope?: "personal" | "organization" | "team";
-  orgId?: string;
-  teamId?: string;
-  createdBy?: string;
   key: string;
   size: number;
   contentType: string;
@@ -77,8 +74,7 @@ export interface IStorageObject extends Document {
    * File version history — newest first, capped at MAX_VERSIONS_PER_OBJECT.
    * Each entry is a *previous* content snapshot living at its own B2 `key`
    * (the current content stays on the top-level fields). `createdBy` records the
-   * actor who produced that version — distinct from `userId` (the file owner) so
-   * the model is correct for org-shared files where teammates edit.
+   * actor who produced that version, so shared-space edits retain an audit trail.
    */
   versions?: IStorageObjectVersion[];
   /** Monotonic opaque-content revision used for optimistic concurrency. */
@@ -118,30 +114,14 @@ const StorageObjectSchema = new Schema<IStorageObject>(
       required: [true, "Bucket ID is required"],
       index: true,
     },
-    userId: {
+    spaceId: {
       type: String,
-      required: [true, "User ID is required"],
+      required: true,
       index: true,
     },
-    ownerScope: {
+    createdByAccountId: {
       type: String,
-      enum: ["personal", "organization", "team"],
-      default: "personal",
-      index: true,
-    },
-    orgId: {
-      type: String,
-      required: false,
-      index: true,
-    },
-    teamId: {
-      type: String,
-      required: false,
-      index: true,
-    },
-    createdBy: {
-      type: String,
-      required: false,
+      required: true,
       index: true,
     },
     key: {
@@ -390,11 +370,10 @@ const StorageObjectSchema = new Schema<IStorageObject>(
  * Indexes
  *
  * - bucketId:                single  – base bucket filter (kept)
- * - userId:                  single  – base ownership filter (kept)
  * - {bucketId, key}:         compound unique – prevents duplicate keys per bucket
- * - {bucketId, createdAt}:   compound – covers primary listing: find({bucketId}).sort({createdAt:-1})
- * - {userId, _id}:           compound – covers ownership checks: findOne({_id, userId})
- *                            and aggregate $match{userId} pipelines
+ * - {bucketId, createdAt}:   compound – covers primary listing
+ * - {spaceId, _id}:          compound – covers tenant-scoped ownership checks
+ * - {spaceId, createdAt}:    compound – covers space listings
  * - {key, bucketId}:         compound – enables range-prefix scans on key
  *                            (move, system-bucket folder filtering)
  * - {bucketId, position}:    compound – covers reorder queries that sort/filter by
@@ -403,11 +382,8 @@ const StorageObjectSchema = new Schema<IStorageObject>(
  */
 StorageObjectSchema.index({ bucketId: 1, key: 1 }, { unique: true });
 StorageObjectSchema.index({ bucketId: 1, createdAt: -1 });
-StorageObjectSchema.index({ userId: 1, _id: 1 });
-StorageObjectSchema.index({ ownerScope: 1, orgId: 1, _id: 1 });
-StorageObjectSchema.index({ ownerScope: 1, teamId: 1, _id: 1 });
-StorageObjectSchema.index({ ownerScope: 1, orgId: 1, bucketId: 1, createdAt: -1 });
-StorageObjectSchema.index({ ownerScope: 1, teamId: 1, bucketId: 1, createdAt: -1 });
+StorageObjectSchema.index({ spaceId: 1, _id: 1 });
+StorageObjectSchema.index({ spaceId: 1, createdAt: -1 });
 StorageObjectSchema.index({ key: 1, bucketId: 1 });
 StorageObjectSchema.index({ bucketId: 1, position: 1 });
 StorageObjectSchema.index({ tags: 1 });
@@ -453,7 +429,7 @@ StorageObjectSchema.index({ bucketId: 1, uploadSource: 1, mediaCategory: 1 });
 // Mobile sync dedup lookups — sparse so only fingerprinted (mobile-uploaded)
 // objects occupy the index. Covers the /api/objects/sync-check $in queries.
 StorageObjectSchema.index(
-  { bucketId: 1, syncContentFp: 1 },
+  { spaceId: 1, syncContentFp: 1 },
   { sparse: true },
 );
 // Atomic cross-device backup deduplication. The route still performs a cheap
@@ -461,7 +437,7 @@ StorageObjectSchema.index(
 // devices finalize the same fingerprint simultaneously. Deleted objects are
 // excluded so restoring/re-uploading after Bin deletion remains possible.
 StorageObjectSchema.index(
-  { bucketId: 1, syncContentFp: 1 },
+  { spaceId: 1, syncContentFp: 1 },
   {
     unique: true,
     partialFilterExpression: {
@@ -476,9 +452,8 @@ StorageObjectSchema.index(
   { sparse: true },
 );
 
-if (mongoose.models.StorageObject) {
-  delete mongoose.models.StorageObject;
-}
-const StorageObject: Model<IStorageObject> = mongoose.model<IStorageObject>("StorageObject", StorageObjectSchema);
+const StorageObject: Model<IStorageObject> =
+  (mongoose.models.StorageObject as Model<IStorageObject> | undefined) ??
+  mongoose.model<IStorageObject>("StorageObject", StorageObjectSchema);
 
 export default StorageObject;

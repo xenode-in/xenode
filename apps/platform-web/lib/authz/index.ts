@@ -1,9 +1,8 @@
 export {
-  type AccessScope,
   type AccessContext,
   getAccessContext,
   requireAccessContext,
-} from "./context";
+} from "./space-context";
 export {
   type Action,
   ownerClause,

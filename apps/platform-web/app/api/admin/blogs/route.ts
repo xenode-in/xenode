@@ -8,7 +8,6 @@ import { getPublicB2Url } from "@/lib/b2/cdn";
 import { getPublicS3Client } from "@/lib/b2/client";
 
 const PUBLIC_BUCKET_NAME = process.env.PUBLIC_S3_BUCKET || "xenopublic";
-const GLOBAL_BUCKET_NAME = process.env.S3_BUCKET_NAME || "xenode-drive-storage";
 
 function slugify(text: string): string {
   return text

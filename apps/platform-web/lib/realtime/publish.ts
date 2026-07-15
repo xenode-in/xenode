@@ -25,6 +25,7 @@ export function toSyncObjectSnapshot(value: unknown): SyncObjectSnapshot {
 
 export async function publishSyncEvent(params: {
   userId: string;
+  spaceId: string;
   type: SyncEventType;
   payload: SyncEventPayload;
   invalidatePrefixes?: string[];
@@ -35,6 +36,8 @@ export async function publishSyncEvent(params: {
     id: randomUUID(),
     type: params.type,
     userId: params.userId,
+    productId: "drive",
+    spaceId: params.spaceId,
     occurredAt: new Date().toISOString(),
     payload: params.payload,
   };

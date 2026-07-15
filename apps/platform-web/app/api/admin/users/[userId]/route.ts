@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/admin/session";
 import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
-import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import { personalSpaceId } from "@xenode/spaces/ids";
 import ShareLink from "@/models/ShareLink";
 import ApiKey from "@/models/ApiKey";
 import mongoose from "mongoose";
@@ -173,8 +173,7 @@ export async function DELETE(_req: NextRequest, { params }: RouteContext) {
       ],
     }),
     db.collection("session").deleteMany({ userId }),
-    Bucket.deleteMany({ userId }),
-    StorageObject.deleteMany({ userId }),
+    StorageObject.deleteMany({ spaceId: personalSpaceId(userId) }),
     ShareLink.deleteMany({ createdBy: userId }),
     ApiKey.deleteMany({ userId }),
     Usage.deleteOne({ userId }),

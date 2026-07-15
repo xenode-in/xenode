@@ -4,6 +4,7 @@ import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import Usage from "@/models/Usage";
+import { personalSpaceId } from "@xenode/spaces/ids";
 
 export async function GET(
   _req: NextRequest,
@@ -18,7 +19,7 @@ export async function GET(
   await dbConnect();
 
   const [buckets, usage] = await Promise.all([
-    Bucket.find({ userId }).lean(),
+    Bucket.find({ systemKey: "drive" }).lean(),
     Usage.findOne({ userId }).lean(),
   ]);
 
@@ -26,7 +27,12 @@ export async function GET(
 
   // Per-bucket object stats
   const objectStats = await StorageObject.aggregate([
-    { $match: { bucketId: { $in: bucketIds } } },
+    {
+      $match: {
+        bucketId: { $in: bucketIds },
+        spaceId: personalSpaceId(userId),
+      },
+    },
     {
       $group: {
         _id: "$bucketId",

@@ -1,0 +1,23 @@
+{
+  "name": "@xenode/crypto-react",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.tsx" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src tests"
+  },
+  "dependencies": {
+    "react": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.15",
+    "@xenode/eslint-config": "*",
+    "@xenode/tsconfig": "*",
+    "eslint": "^9",
+    "typescript": "^5",
+    "vitest": "^4.0.18"
+  }
+}

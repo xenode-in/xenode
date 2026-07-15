@@ -32,11 +32,10 @@ function errorMessage(error: unknown): string {
 }
 
 function canManageInScope(ctx: Awaited<ReturnType<typeof requireAccessContext>>): boolean {
-  if (ctx.scope.type === "personal") return true;
+  if (ctx.spaceType === "personal") return true;
   return (
-    ctx.scope.role === "owner" ||
-    ctx.scope.role === "admin" ||
-    ctx.scope.role === "manager"
+    ctx.role === "owner" ||
+    ctx.role === "admin"
   );
 }
 
@@ -76,14 +75,14 @@ export async function POST(request: NextRequest) {
     }
 
     const allowedPrefix =
-      ctx.scope.type === "organization"
-        ? orgObjectKeyPrefix(ctx.scope.orgId)
-        : ctx.scope.type === "team"
-          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+      ctx.spaceType === "organization"
+        ? orgObjectKeyPrefix(ctx.organizationId!)
+        : ctx.spaceType === "team"
+          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
         : `users/${userId}/`;
 
     if (
-      bucket.userId === "system" &&
+      bucket.systemKey === "drive" &&
       !destinationPrefix.startsWith(allowedPrefix)
     ) {
       return NextResponse.json(
@@ -154,7 +153,7 @@ export async function POST(request: NextRequest) {
 
     for (const sourceKey of Array.from(new Set(sourceKeys.map(String)))) {
       if (
-        bucket.userId === "system" &&
+        bucket.systemKey === "drive" &&
         !sourceKey.startsWith(allowedPrefix)
       ) {
         errors.push({ key: sourceKey, error: "Access denied to source" });
@@ -226,6 +225,7 @@ export async function POST(request: NextRequest) {
       );
       await publishSyncEvent({
         userId,
+        spaceId: ctx.spaceId,
         type: "FILE_MOVED",
         payload: {
           bucketId: bucket._id.toString(),

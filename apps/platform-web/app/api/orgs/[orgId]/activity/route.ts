@@ -40,7 +40,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     await assertOrgMemberRole({
       userId: ctx.userId,
       orgId,
-      allowed: ["owner", "admin", "manager", "member"],
+      allowed: ["owner", "admin", "member"],
     });
 
     await dbConnect();

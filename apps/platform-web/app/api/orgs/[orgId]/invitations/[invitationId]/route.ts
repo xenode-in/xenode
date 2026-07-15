@@ -28,7 +28,7 @@ interface InvitationRecord {
 /**
  * DELETE /api/orgs/[orgId]/invitations/[invitationId] — cancel a pending invite.
  *
- * Owner/admin/manager (invitation:cancel). Marks the invitation "canceled" so
+ * Owner/admin (invitation:cancel). Marks the invitation "canceled" so
  * its wrapped space key is never delivered. No key rotation is needed: a pending
  * invite holds a wrapped key but no live grant has been issued.
  */
@@ -39,7 +39,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     await assertOrgMemberRole({
       userId: ctx.userId,
       orgId,
-      allowed: ["owner", "admin", "manager"],
+      allowed: ["owner", "admin"],
     });
 
     await dbConnect();

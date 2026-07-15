@@ -41,12 +41,12 @@ function serialize(r: IAccessRequest) {
 async function orgAdminUserIds(orgId: string): Promise<string[]> {
   const admins = await mongoose.connection
     .collection("member")
-    .find({ organizationId: orgId, role: { $in: ["owner", "admin", "manager"] } })
+    .find({ organizationId: orgId, role: { $in: ["owner", "admin"] } })
     .toArray();
   return admins.map((m) => m.userId as string);
 }
 
-/** GET — admins/managers see all requests; members/guests see only their own. */
+/** GET — owners/admins see all requests; members/guests see only their own. */
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     const ctx = await requireAccessContext(request);
@@ -54,8 +54,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const membership = await assertOrgMember({ userId: ctx.userId, orgId });
     const isTriager =
       membership.role === "owner" ||
-      membership.role === "admin" ||
-      membership.role === "manager";
+      membership.role === "admin";
 
     await dbConnect();
     const filter: Record<string, unknown> = { orgId };

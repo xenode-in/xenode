@@ -1,9 +1,13 @@
-import { type AccessContext } from "@/lib/authz/context";
+import { type AccessContext } from "@/lib/authz/space-context";
 import {
   getBucketForWorkspace,
   type WorkspaceStorageType,
 } from "@/lib/storage/workspaceBucket";
-import { orgObjectKeyPrefix, orgStorageOwnerId } from "@/lib/orgs/storage";
+import {
+  orgObjectKeyPrefix,
+  orgStorageOwnerId,
+  teamObjectKeyPrefix,
+} from "@/lib/orgs/storage";
 
 /**
  * ── Workspace abstraction ────────────────────────────────────────────────────
@@ -39,21 +43,25 @@ export function personalWorkspaceId(userId: string): string {
  * already-resolved tenancy scope on `AccessContext`.
  */
 export function resolveWorkspace(ctx: AccessContext): ResolvedWorkspace {
-  const { scope } = ctx;
-
-  if (scope.type === "organization" || scope.type === "team") {
+  if (
+    (ctx.spaceType === "organization" || ctx.spaceType === "team") &&
+    ctx.organizationId
+  ) {
     return {
-      workspaceId: scope.orgId,
-      type: scope.type,
-      ownerId: orgStorageOwnerId(scope.orgId),
+      workspaceId: ctx.spaceId,
+      type: ctx.spaceType,
+      ownerId: orgStorageOwnerId(ctx.organizationId),
       bucketType: "ORGANIZATION",
       bucketName: getBucketForWorkspace("ORGANIZATION"),
-      keyPrefix: orgObjectKeyPrefix(scope.orgId),
+      keyPrefix:
+        ctx.spaceType === "team" && ctx.teamId
+          ? teamObjectKeyPrefix(ctx.organizationId, ctx.teamId)
+          : orgObjectKeyPrefix(ctx.organizationId),
     };
   }
 
   return {
-    workspaceId: personalWorkspaceId(ctx.userId),
+    workspaceId: ctx.spaceId,
     type: "personal",
     ownerId: ctx.userId,
     bucketType: "PERSONAL",

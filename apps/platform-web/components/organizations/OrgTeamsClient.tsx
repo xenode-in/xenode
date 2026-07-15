@@ -68,7 +68,7 @@ export function OrgTeamsClient({
   const currentUserId = session?.user?.id ?? "";
 
   const canManageTeams = role === "owner" || role === "admin";
-  const canManageMembers = role === "owner" || role === "admin" || role === "manager";
+  const canManageMembers = role === "owner" || role === "admin";
 
   const [teams, setTeams] = useState<Team[]>([]);
   const [loading, setLoading] = useState(true);

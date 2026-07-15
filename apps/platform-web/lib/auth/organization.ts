@@ -41,15 +41,7 @@ export const orgRoles = {
     file: ["read", "write", "delete", "share", "manage"],
     billing: ["read"],
   }),
-  manager: orgAccessControl.newRole({
-    organization: [],
-    member: [],
-    invitation: ["create", "cancel"],
-    team: ["update"],
-    ac: ["read"],
-    file: ["read", "write", "delete", "share"],
-    billing: [],
-  }),
+
   member: orgAccessControl.newRole({
     organization: [],
     member: [],
@@ -77,7 +69,6 @@ export function normalizeOrgRole(role: string | null | undefined): OrgRole {
   if (
     firstRole === "owner" ||
     firstRole === "admin" ||
-    firstRole === "manager" ||
     firstRole === "member" ||
     firstRole === "guest"
   ) {

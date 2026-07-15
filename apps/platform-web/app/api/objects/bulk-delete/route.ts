@@ -54,11 +54,10 @@ export const dynamic = "force-dynamic";
 const MAX_IDS = 10000;
 
 function canDeleteInScope(ctx: Awaited<ReturnType<typeof requireAccessContext>>): boolean {
-  if (ctx.scope.type === "personal") return true;
+  if (ctx.spaceType === "personal") return true;
   return (
-    ctx.scope.role === "owner" ||
-    ctx.scope.role === "admin" ||
-    ctx.scope.role === "manager"
+    ctx.role === "owner" ||
+    ctx.role === "admin"
   );
 }
 
@@ -181,7 +180,7 @@ export async function POST(request: NextRequest) {
     await DirectShare.deleteMany({ objectId: { $in: allDocIds } });
 
     // Drop them from any albums + album shares.
-    await removeObjectsFromAlbums(userId, allDocIds);
+    await removeObjectsFromAlbums(ctx.spaceId, userId, allDocIds);
 
     const keys = objects.map((object) => object.key);
     const affectedPrefixes = Array.from(
@@ -189,6 +188,7 @@ export async function POST(request: NextRequest) {
     );
     await publishSyncEvent({
       userId,
+      spaceId: ctx.spaceId,
       type: "FILE_DELETED",
       payload: {
         bucketId,

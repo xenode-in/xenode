@@ -16,6 +16,7 @@
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
     "test:security": "npm run lint:security --workspace @xenode/platform-web",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
     "cron:expire": "npm run cron:expire --workspace @xenode/platform-web",
     "cron:purge-bin": "npm run cron:purge-bin --workspace @xenode/platform-web",
     "cron:cleanup-orphans": "npm run cron:cleanup-orphans --workspace @xenode/platform-web",

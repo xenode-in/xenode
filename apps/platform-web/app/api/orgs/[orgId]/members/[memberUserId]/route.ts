@@ -18,6 +18,13 @@ import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { recordMembershipDeparture } from "@/lib/orgs/membershipHistory";
 import { emitNotification } from "@/lib/notifications/emit";
 import OrgKeyGrant from "@/models/OrgKeyGrant";
+import {
+  AuditEvent,
+  ProductSession,
+  Space,
+  SpaceProductKey,
+} from "@xenode/database/models";
+import { publishSyncEvent } from "@/lib/realtime/publish";
 
 export const dynamic = "force-dynamic";
 
@@ -212,6 +219,10 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       rotationGrants,
     });
 
+    const affectedSpaces = await Space.find({ organizationId: orgId })
+      .select("_id")
+      .lean<Array<{ _id: string }>>();
+    const affectedSpaceIds = affectedSpaces.map((space) => space._id);
     const now = new Date();
     await mongoSession.withTransaction(async () => {
       const teams = await mongoose.connection
@@ -239,6 +250,25 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
           $unset: { activeOrganizationId: "", activeTeamId: "" },
           $set: { updatedAt: now },
         },
+        { session: mongoSession },
+      );
+
+      await ProductSession.updateMany(
+        {
+          accountId: memberUserId,
+          productId: { $in: ["drive", "photos", "mobile", "office-editor"] },
+          revokedAt: { $exists: false },
+        },
+        { $set: { revokedAt: now }, $inc: { sessionVersion: 1 } },
+        { session: mongoSession },
+      );
+      await SpaceProductKey.updateMany(
+        {
+          spaceId: { $in: affectedSpaceIds },
+          memberAccountId: memberUserId,
+          status: "active",
+        },
+        { $set: { status: "revoked" } },
         { session: mongoSession },
       );
 
@@ -332,6 +362,25 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       reason: "removed",
     });
 
+    await Promise.all(
+      affectedSpaceIds.map((spaceId) =>
+        publishSyncEvent({
+          userId: memberUserId,
+          spaceId,
+          type: "ACCESS_REVOKED",
+          payload: { reason: "organization_member_removed" },
+        }),
+      ),
+    ).catch(() => undefined);
+
+    await AuditEvent.create({
+      accountId: memberUserId,
+      spaceId: affectedSpaceIds[0],
+      productId: "accounts",
+      action: "organization.member_removed",
+      metadata: { organizationId: orgId, removedBy: ctx.userId },
+    }).catch(() => undefined);
+
     return NextResponse.json({
       removedMemberUserId: memberUserId,
       rotated: !!nextKeyVersion,
@@ -353,7 +402,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-const ASSIGNABLE_ROLES: OrgRole[] = ["admin", "manager", "member", "guest"];
+const ASSIGNABLE_ROLES: OrgRole[] = ["admin", "member", "guest"];
 const ORG_GRANT_SCOPE = {
   $or: [{ teamId: { $exists: false } }, { teamId: null }, { teamId: "" }],
 };
@@ -365,7 +414,7 @@ const ORG_GRANT_SCOPE = {
  * E2EE: rotation is driven by crossing the guest boundary —
  *   - non-guest → guest: revoke their grant + rotate the space key (rotationGrants required)
  *   - guest → non-guest: install a fresh wrapped grant (no version bump)
- *   - admin ↔ manager ↔ member: no key change.
+ *   - admin ↔ member: no key change.
  */
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   const mongoSession = await mongoose.startSession();

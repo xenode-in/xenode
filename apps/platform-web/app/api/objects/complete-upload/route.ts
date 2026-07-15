@@ -26,7 +26,6 @@ import {
 } from "@/lib/orgs/billing/orgUsage";
 import {
   orgObjectKeyPrefix,
-  orgStorageOwnerId,
   teamObjectKeyPrefix,
 } from "@/lib/orgs/storage";
 import { completeUploadSession } from "@/lib/uploads/session";
@@ -108,6 +107,7 @@ async function emitObjectChange(
   const key = object.key;
   await publishSyncEvent({
     userId,
+    spaceId: object.spaceId,
     type,
     payload: {
       bucketId: object.bucketId.toString(),
@@ -170,10 +170,10 @@ export async function POST(request: NextRequest) {
     }
 
     const allowedPrefix =
-      ctx.scope.type === "organization"
-        ? orgObjectKeyPrefix(ctx.scope.orgId)
-        : ctx.scope.type === "team"
-          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+      ctx.spaceType === "organization"
+        ? orgObjectKeyPrefix(ctx.organizationId!)
+        : ctx.spaceType === "team"
+          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
         : `users/${userId}/`;
 
     if (!belongsToPrefix(objectKey, allowedPrefix)) {
@@ -194,7 +194,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (ctx.scope.type !== "personal") {
+    if (ctx.spaceType !== "personal") {
       const version = Number(spaceKeyVersion);
       if (
         isEncrypted !== true ||
@@ -297,8 +297,8 @@ export async function POST(request: NextRequest) {
     if (existingObject) {
       const sizeDiff = size - existingObject.size;
       if (sizeDiff !== 0) {
-        if (ctx.scope.type !== "personal") {
-          await adjustOrgStorage(ctx.scope.orgId, sizeDiff);
+        if (ctx.spaceType !== "personal") {
+          await adjustOrgStorage(ctx.organizationId!, sizeDiff);
         } else {
           await adjustStorageBytes(userId, sizeDiff);
         }
@@ -342,9 +342,9 @@ export async function POST(request: NextRequest) {
       } catch (error) {
         if (sizeDiff !== 0) {
           const rollback =
-            ctx.scope.type === "organization"
-            || ctx.scope.type === "team"
-              ? adjustOrgStorage(ctx.scope.orgId, -sizeDiff)
+            ctx.spaceType === "organization"
+            || ctx.spaceType === "team"
+              ? adjustOrgStorage(ctx.organizationId!, -sizeDiff)
               : adjustStorageBytes(userId, -sizeDiff);
           await rollback.catch((rollbackError) =>
             console.error(
@@ -402,21 +402,8 @@ export async function POST(request: NextRequest) {
     try {
       storageObject = await StorageObject.create({
         bucketId,
-        userId:
-          ctx.scope.type !== "personal"
-            ? orgStorageOwnerId(ctx.scope.orgId)
-            : userId,
-        ownerScope:
-          ctx.scope.type === "organization"
-            ? "organization"
-            : ctx.scope.type === "team"
-              ? "team"
-              : "personal",
-        orgId:
-          ctx.scope.type !== "personal" ? ctx.scope.orgId : undefined,
-        teamId:
-          ctx.scope.type === "team" ? ctx.scope.teamId : undefined,
-        createdBy: userId,
+        spaceId: ctx.spaceId,
+        createdByAccountId: ctx.accountId,
         key: objectKey,
         size,
         contentType:
@@ -473,8 +460,8 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      if (ctx.scope.type !== "personal") {
-        await incrementOrgStorage(ctx.scope.orgId, size);
+      if (ctx.spaceType !== "personal") {
+        await incrementOrgStorage(ctx.organizationId!, size);
       } else {
         await incrementStorage(userId, size, {
           contentType: originalContentType ?? contentType,

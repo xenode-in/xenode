@@ -2,7 +2,8 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 
 export interface IPhotoAlbum extends Document {
   _id: mongoose.Types.ObjectId;
-  userId: string;
+  spaceId: string;
+  createdByAccountId: string;
   slug: string;
   description?: string;
   /** E2EE album name: AES-GCM under the user's metadataKey. */
@@ -21,7 +22,12 @@ export interface IPhotoAlbum extends Document {
 
 const PhotoAlbumSchema = new Schema<IPhotoAlbum>(
   {
-    userId: {
+    spaceId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    createdByAccountId: {
       type: String,
       required: true,
       index: true,
@@ -65,15 +71,13 @@ const PhotoAlbumSchema = new Schema<IPhotoAlbum>(
   },
 );
 
-PhotoAlbumSchema.index({ userId: 1, updatedAt: -1 });
-// Slugs are unique per user so a slug resolves to exactly one album.
-PhotoAlbumSchema.index({ userId: 1, slug: 1 }, { unique: true });
-// One cloud album per device-album reference per user. Partial (not sparse):
-// a sparse compound index would still index every doc because userId is
-// always present; the partial filter restricts it to docs that have a
-// sourceRef, so albums created on the web (no sourceRef) never collide.
+PhotoAlbumSchema.index({ spaceId: 1, updatedAt: -1 });
+PhotoAlbumSchema.index({ spaceId: 1, slug: 1 }, { unique: true });
+// One cloud album per device-album reference per Space. The partial filter
+// restricts it to docs that have a sourceRef, so albums created on the web
+// (no sourceRef) never collide.
 PhotoAlbumSchema.index(
-  { userId: 1, sourceRef: 1 },
+  { spaceId: 1, sourceRef: 1 },
   {
     unique: true,
     partialFilterExpression: { sourceRef: { $type: "string" } },

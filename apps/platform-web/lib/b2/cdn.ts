@@ -1,5 +1,12 @@
 import { createHmac } from "crypto";
-const SECRET = process.env.BETTER_AUTH_SECRET || "changeme";
+
+function signingSecret(): string {
+  const value = process.env.CDN_SIGNING_SECRET;
+  if (!value || Buffer.byteLength(value) < 32) {
+    throw new Error("CDN_SIGNING_SECRET must be configured with at least 32 bytes");
+  }
+  return value;
+}
 /**
  * Generate a short-lived HMAC signature for a file proxy URL.
  * The signature covers: bucket + key + expiry timestamp.
@@ -21,7 +28,7 @@ export function generateFileToken(
   // The expiration is the start of this block + the duration
   const exp = currentBlockStart + expiresIn;
   const payload = `${bucketName}:${key}:${exp}${version ? ":" + version : ""}`;
-  const sig = createHmac("sha256", SECRET).update(payload).digest("hex");
+  const sig = createHmac("sha256", signingSecret()).update(payload).digest("hex");
 
   return { exp, sig };
 }
@@ -38,7 +45,7 @@ export function verifyFileToken(
   const now = Math.floor(Date.now() / 1000);
   if (now > exp) return false; // expired
   const payload = `${bucketName}:${key}:${exp}${version ? ":" + version : ""}`;
-  const expected = createHmac("sha256", SECRET).update(payload).digest("hex");
+  const expected = createHmac("sha256", signingSecret()).update(payload).digest("hex");
   // Constant-time comparison to prevent timing attacks
   if (expected.length !== sig.length) return false;
   let diff = 0;

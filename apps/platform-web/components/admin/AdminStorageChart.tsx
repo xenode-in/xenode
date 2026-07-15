@@ -104,7 +104,7 @@ export function AdminStorageChart() {
                 fontSize: "12px",
                 color: "#fff",
               }}
-              formatter={(value: number | undefined) => [
+              formatter={(value) => [
                 `${value} GB`,
                 "Storage",
               ]}

@@ -10,6 +10,7 @@ import DirectShare from "@/models/DirectShare";
 import type { IDirectShareRecipient } from "@/models/DirectShare";
 import ShareAccessRequest from "@/models/ShareAccessRequest";
 import StorageObject from "@/models/StorageObject";
+import { Space, type SpaceRecord } from "@xenode/database/models";
 import { normalizeShareRole, roleAtLeast } from "@/lib/orgs/shareRoles";
 import { emitNotificationToMany } from "@/lib/notifications/emit";
 
@@ -75,10 +76,15 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     const object = await StorageObject.findById(share.objectId)
-      .select("ownerScope orgId")
-      .lean<{ ownerScope?: string; orgId?: string }>();
+      .select("spaceId")
+      .lean<{ spaceId: string }>();
+    const space = object
+      ? await Space.findById(object.spaceId).lean<SpaceRecord>()
+      : null;
     const orgId =
-      object?.ownerScope === "organization" ? object.orgId ?? null : null;
+      space?.type === "organization" || space?.type === "team"
+        ? space.organizationId ?? null
+        : null;
 
     // Dedupe: one open pending request per recipient per share.
     const existing = await ShareAccessRequest.findOne({

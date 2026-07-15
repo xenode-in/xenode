@@ -24,7 +24,7 @@ export function slugify(value: string): string {
  * until no existing album collides.
  */
 export async function generateUniqueAlbumSlug(
-  userId: string,
+  spaceId: string,
   name: string,
 ): Promise<string> {
   const base = slugify(name);
@@ -32,7 +32,7 @@ export async function generateUniqueAlbumSlug(
   let suffix = 2;
   // Bounded loop — append an incrementing suffix until the slug is free.
   // eslint-disable-next-line no-await-in-loop
-  while (await PhotoAlbum.exists({ userId, slug: candidate })) {
+  while (await PhotoAlbum.exists({ spaceId, slug: candidate })) {
     candidate = `${base}-${suffix}`;
     suffix += 1;
   }
@@ -43,10 +43,10 @@ export async function generateUniqueAlbumSlug(
  * Build a Mongo filter that matches an album by either its ObjectId or its
  * slug, scoped to the owner. Lets API routes accept slug-or-id transparently.
  */
-export function albumIdentifierFilter(userId: string, identifier: string) {
+export function albumIdentifierFilter(spaceId: string, identifier: string) {
   const or: Array<Record<string, unknown>> = [{ slug: identifier }];
   if (Types.ObjectId.isValid(identifier)) {
     or.push({ _id: new Types.ObjectId(identifier) });
   }
-  return { userId, $or: or };
+  return { spaceId, $or: or };
 }

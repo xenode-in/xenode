@@ -32,10 +32,10 @@ export async function GET(request: NextRequest) {
     const userId = ctx?.userId ?? null;
 
     const workspacePrefix =
-      ctx?.scope.type === "organization"
-        ? orgObjectKeyPrefix(ctx.scope.orgId)
-        : ctx?.scope.type === "team"
-          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+      ctx?.spaceType === "organization"
+        ? orgObjectKeyPrefix(ctx.organizationId!)
+        : ctx?.spaceType === "team"
+          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
           : null;
 
     if (key.startsWith("shares/")) {

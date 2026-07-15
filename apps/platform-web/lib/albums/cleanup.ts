@@ -36,7 +36,7 @@ async function resolveUserB2Bucket(
       if (bucket) return bucket.b2BucketId;
     }
   }
-  const owned = await Bucket.findOne({ userId })
+  const owned = await Bucket.findOne({ systemKey: "drive" })
     .select("b2BucketId")
     .lean<{ b2BucketId: string } | null>();
   return owned?.b2BucketId ?? null;
@@ -72,7 +72,8 @@ export async function deleteAlbumShareThumbnails(
  * file-share behaviour where restore doesn't revive shares) — re-add manually.
  */
 export async function removeObjectsFromAlbums(
-  userId: string,
+  spaceId: string,
+  actorAccountId: string,
   objectIds: Array<string | Types.ObjectId>,
 ): Promise<void> {
   const ids = objectIds
@@ -89,7 +90,7 @@ export async function removeObjectsFromAlbums(
 
   // Delete the B2 thumbnail blobs for the items we're about to drop from shares.
   const affectedLinks = await AlbumShareLink.find({
-    createdBy: userId,
+    createdBy: actorAccountId,
     "items.objectId": { $in: ids },
   })
     .select("items")
@@ -98,11 +99,11 @@ export async function removeObjectsFromAlbums(
   const removedItems = affectedLinks
     .flatMap((l) => l.items)
     .filter((i) => idSet.has(String(i.objectId)));
-  await deleteAlbumShareThumbnails(userId, removedItems);
+  await deleteAlbumShareThumbnails(actorAccountId, removedItems);
 
   // 1. Drop the objects from every album that referenced them.
   await PhotoAlbum.updateMany(
-    { userId, objectIds: { $in: ids } },
+    { spaceId, objectIds: { $in: ids } },
     { $pull: { objectIds: { $in: ids } } },
   );
 
@@ -110,7 +111,7 @@ export async function removeObjectsFromAlbums(
   //    (null when the album is now empty). Pipeline update so we can read the
   //    freshly-pulled objectIds array.
   await PhotoAlbum.updateMany(
-    { userId, coverObjectId: { $in: ids } },
+    { spaceId, coverObjectId: { $in: ids } },
     [
       {
         $set: {
@@ -125,13 +126,13 @@ export async function removeObjectsFromAlbums(
 
   // 3. Drop the matching items from any active album share links.
   await AlbumShareLink.updateMany(
-    { createdBy: userId, "items.objectId": { $in: ids } },
+    { createdBy: actorAccountId, "items.objectId": { $in: ids } },
     { $pull: { items: { objectId: { $in: ids } } } },
   );
 
   // 4. Revoke album shares that are now empty.
   await AlbumShareLink.updateMany(
-    { createdBy: userId, isRevoked: false, items: { $size: 0 } },
+    { createdBy: actorAccountId, isRevoked: false, items: { $size: 0 } },
     { $set: { isRevoked: true } },
   );
 }

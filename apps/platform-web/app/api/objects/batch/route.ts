@@ -112,8 +112,8 @@ export async function POST(request: NextRequest) {
       _id: bucketId,
       ...bucketOwnershipClause(ctx),
     })
-      .select("_id userId b2BucketId")
-      .lean<{ _id: unknown; userId: string; b2BucketId: string }>();
+      .select("_id systemKey b2BucketId")
+      .lean<{ _id: unknown; systemKey: "drive"; b2BucketId: string }>();
 
     if (!bucket) {
       statusCode = 404;
@@ -128,7 +128,7 @@ export async function POST(request: NextRequest) {
       isSidecar: { $ne: true },
     };
 
-    if (bucket.userId === "system") {
+    if (bucket.systemKey === "drive") {
       const prefix = `users/${userId}/`;
       query.key = { $gte: prefix, $lt: prefix + "￿" };
     }

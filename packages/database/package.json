@@ -1,0 +1,32 @@
+{
+  "name": "@xenode/database",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./connection": "./src/connection.ts",
+    "./logs": "./src/logs.ts",
+    "./model": "./src/model.ts",
+    "./models": "./src/models/index.ts",
+    "./repositories": "./src/repositories/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src tests"
+  },
+  "dependencies": {
+    "@xenode/config": "*",
+    "@xenode/contracts": "*",
+    "mongoose": "^9.1.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@xenode/eslint-config": "*",
+    "@xenode/tsconfig": "*",
+    "eslint": "^9",
+    "typescript": "^5",
+    "vitest": "^4.0.18"
+  }
+}

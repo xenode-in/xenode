@@ -75,10 +75,10 @@ export async function DELETE(
     // Remove only blobs that are not still referenced by current/original data.
     await deleteObjects(bucket.b2BucketId, keysToDelete);
     if (freedBytes > 0) {
-      if (ctx.scope.type === "personal") {
+      if (ctx.spaceType === "personal") {
         await adjustStorageBytes(ctx.userId, -freedBytes);
       } else {
-        await adjustOrgStorage(ctx.scope.orgId, -freedBytes);
+        await adjustOrgStorage(ctx.organizationId!, -freedBytes);
       }
       await updateBucketStats(object.bucketId.toString(), 0, -freedBytes);
     }

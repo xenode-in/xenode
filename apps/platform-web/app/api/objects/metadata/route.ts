@@ -70,8 +70,8 @@ export async function GET(request: NextRequest) {
       _id: bucketId,
       ...bucketOwnershipClause(ctx),
     })
-      .select("_id userId")
-      .lean<{ _id: unknown; userId: string }>();
+      .select("_id systemKey")
+      .lean<{ _id: unknown; systemKey: "drive" }>();
 
     if (!bucket) {
       statusCode = 404;
@@ -86,7 +86,7 @@ export async function GET(request: NextRequest) {
     };
 
     // Mirror `/api/objects` "system bucket → scope to user's prefix" rule.
-    if (bucket.userId === "system") {
+    if (bucket.systemKey === "drive") {
       const prefix = `users/${userId}/`;
       query.key = { $gte: prefix, $lt: prefix + "￿" };
     }

@@ -160,6 +160,7 @@ export async function POST(request: NextRequest) {
     );
     await publishSyncEvent({
       userId,
+      spaceId: ctx.spaceId,
       type: "TRASH_UPDATED",
       payload: {
         bucketId,

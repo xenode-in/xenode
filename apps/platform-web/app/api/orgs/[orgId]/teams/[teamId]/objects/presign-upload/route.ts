@@ -87,9 +87,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       uploadUrl,
       objectKey,
       bucketId: bucket._id.toString(),
-      ownerScope: "team",
-      orgId,
-      teamId,
+      spaceId: ctx.spaceId,
+      spaceType: ctx.spaceType,
     });
   } catch (error) {
     if (isAuthzError(error)) return toJsonResponse(error);

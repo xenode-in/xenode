@@ -1,0 +1,30 @@
+{
+  "name": "@xenode/spaces",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./authorization": "./src/authorization.ts",
+    "./ids": "./src/ids.ts",
+    "./repository": "./src/repository.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint src tests"
+  },
+  "dependencies": {
+    "@xenode/contracts": "*",
+    "@xenode/database": "*",
+    "mongoose": "^9.1.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@xenode/eslint-config": "*",
+    "@xenode/tsconfig": "*",
+    "eslint": "^9",
+    "typescript": "^5",
+    "vitest": "^4.0.18"
+  }
+}

@@ -88,8 +88,8 @@ export async function POST(request: NextRequest) {
       _id: bucketId,
       ...bucketOwnershipClause(ctx),
     })
-      .select("_id userId")
-      .lean<{ _id: unknown; userId: string }>();
+      .select("_id systemKey")
+      .lean<{ _id: unknown; systemKey: "drive" }>();
 
     if (!bucket) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
 
     // System buckets are shared — scope to the caller's own prefix so one
     // user can't probe another's fingerprints. Matches the metadata route.
-    if (bucket.userId === "system") {
+    if (bucket.systemKey === "drive") {
       const prefix = `users/${userId}/`;
       query.key = { $gte: prefix, $lt: prefix + "￿" };
     }

@@ -40,8 +40,8 @@ import {
 import { formatDate } from "@/lib/utils";
 import type { OrgRole } from "@/lib/auth/organization";
 
-type InviteRole = "admin" | "manager" | "member" | "guest";
-const ASSIGNABLE: InviteRole[] = ["admin", "manager", "member", "guest"];
+type InviteRole = "admin" | "member" | "guest";
+const ASSIGNABLE: InviteRole[] = ["admin", "member", "guest"];
 
 interface Member {
   userId: string;

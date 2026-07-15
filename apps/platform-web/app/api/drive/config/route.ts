@@ -12,70 +12,31 @@ import {
   ensureSystemWorkspaceBucketRecord,
 } from "@/lib/storage/workspaceBucket";
 import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
-
-const GLOBAL_BUCKET_NAME = process.env.S3_BUCKET_NAME || "xenode-drive-storage";
+import { resolveSystemBucketConfig } from "@xenode/config/storage";
 
 export async function GET(request: NextRequest) {
   try {
     const ctx = await requireAccessContext(request);
     await dbConnect();
+    const storageConfig = resolveSystemBucketConfig();
+    const globalBucketName = storageConfig.bucketName;
 
-    if (ctx.scope.type === "organization") {
+    if (ctx.spaceType === "organization") {
       const bucket = await ensureSystemWorkspaceBucketRecord("ORGANIZATION");
       return NextResponse.json({
         bucket,
-        rootPrefix: orgObjectKeyPrefix(ctx.scope.orgId),
+        rootPrefix: orgObjectKeyPrefix(ctx.organizationId!),
       });
     }
-    if (ctx.scope.type === "team") {
+    if (ctx.spaceType === "team") {
       const bucket = await ensureSystemWorkspaceBucketRecord("ORGANIZATION");
       return NextResponse.json({
         bucket,
-        rootPrefix: teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId),
+        rootPrefix: teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!),
       });
     }
 
-    bucketOwnershipClause(ctx);
-    let bucket = await Bucket.findOne({ name: GLOBAL_BUCKET_NAME });
-
-    if (!bucket) {
-      try {
-        await createB2Bucket(GLOBAL_BUCKET_NAME);
-        bucket = await Bucket.create({
-          userId: "system",
-          name: GLOBAL_BUCKET_NAME,
-          b2BucketId: GLOBAL_BUCKET_NAME,
-          region: process.env.S3_REGION || "us-west-004",
-        });
-      } catch (err: any) {
-        if (
-          err.Code === "BucketAlreadyOwnedByYou" ||
-          err.name === "BucketAlreadyOwnedByYou"
-        ) {
-          bucket = await Bucket.create({
-            userId: "system",
-            name: GLOBAL_BUCKET_NAME,
-            b2BucketId: GLOBAL_BUCKET_NAME,
-            region: process.env.S3_REGION || "us-west-004",
-          });
-        } else if (
-          err.Code === "BucketAlreadyExists" ||
-          err.name === "BucketAlreadyExists"
-        ) {
-          return NextResponse.json(
-            {
-              error: `Storage bucket '${GLOBAL_BUCKET_NAME}' is already taken. Please set a unique S3_BUCKET_NAME.`,
-            },
-            { status: 500 },
-          );
-        } else {
-          return NextResponse.json(
-            { error: "Failed to initialize storage: " + err.message },
-            { status: 500 },
-          );
-        }
-      }
-    }
+    const bucket = await ensureSystemWorkspaceBucketRecord("PERSONAL");
 
     return NextResponse.json({
       bucket,

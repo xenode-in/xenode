@@ -210,7 +210,7 @@ export async function POST(request: NextRequest) {
     // 3. Belt-and-suspenders share cleanup (normally already revoked at bin).
     await ShareLink.deleteMany({ objectId: { $in: allDocIds } });
     await DirectShare.deleteMany({ objectId: { $in: allDocIds } });
-    await removeObjectsFromAlbums(userId, allDocIds);
+    await removeObjectsFromAlbums(ctx.spaceId, userId, allDocIds);
 
     // 4. Now — and only now — free the storage these bytes occupied.
     const totalSize = docs.reduce(

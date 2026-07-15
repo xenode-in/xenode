@@ -8,11 +8,9 @@ import {
   Share2,
   Users,
   CloudDownload,
-  Image,
   LifeBuoy,
   Trash2,
   Star,
-  Album,
   Building2,
   Home,
   Inbox,
@@ -27,7 +25,7 @@ import {
 } from "lucide-react";
 
 export type WorkspaceKind = "personal" | "organization";
-export type OrgRole = "owner" | "admin" | "manager" | "member" | "guest";
+export type OrgRole = "owner" | "admin" | "member" | "guest";
 
 export interface NavItem {
   label: string;
@@ -50,8 +48,6 @@ export interface WorkspaceNav {
 export const PERSONAL_NAV: NavItem[] = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { label: "My Files", href: "/dashboard/files", icon: FolderOpen },
-  { label: "Photos", href: "/dashboard/photos", icon: Image },
-  { label: "Albums", href: "/dashboard/albums", icon: Album },
   { label: "Migrations (Beta)", href: "/dashboard/migrations", icon: CloudDownload },
   { label: "Shared", href: "/dashboard/shared", icon: Share2 },
   { label: "Shared with me", href: "/dashboard/shared-with-me", icon: Users },
@@ -64,7 +60,7 @@ export const PERSONAL_NAV: NavItem[] = [
   { label: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 
-const MEMBERS: OrgRole[] = ["owner", "admin", "manager", "member"];
+const MEMBERS: OrgRole[] = ["owner", "admin", "member"];
 const ADMINS: OrgRole[] = ["owner", "admin"];
 
 /**

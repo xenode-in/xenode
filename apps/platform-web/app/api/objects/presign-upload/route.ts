@@ -95,10 +95,10 @@ export async function POST(request: NextRequest) {
     }
 
     const allowedPrefix =
-      ctx.scope.type === "organization"
-        ? orgObjectKeyPrefix(ctx.scope.orgId)
-        : ctx.scope.type === "team"
-          ? teamObjectKeyPrefix(ctx.scope.orgId, ctx.scope.teamId)
+      ctx.spaceType === "organization"
+        ? orgObjectKeyPrefix(ctx.organizationId!)
+        : ctx.spaceType === "team"
+          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
         : `users/${userId}/`;
     const basePrefix = typeof prefix === "string" && prefix ? prefix : allowedPrefix;
     if (!basePrefix.startsWith(allowedPrefix)) {

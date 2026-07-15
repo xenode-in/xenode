@@ -15,6 +15,7 @@ export const syncEventTypes = [
   "TRASH_UPDATED",
   "STORAGE_UPDATED",
   "SYNC_REQUIRED",
+  "ACCESS_REVOKED",
 ] as const;
 
 export type SyncEventType = (typeof syncEventTypes)[number];
@@ -65,6 +66,8 @@ export interface SyncEventEnvelope {
   id: string;
   type: SyncEventType;
   userId: string;
+  productId: "drive";
+  spaceId: string;
   occurredAt: string;
   payload: SyncEventPayload;
 }

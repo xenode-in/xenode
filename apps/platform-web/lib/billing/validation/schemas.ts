@@ -127,7 +127,15 @@ export const adminCampaignSchema = z.object({
   badge: z.string().trim().max(32).optional(),
   duration: z.enum(["forever", "limited"]).default("limited"),
   cycles: z.number().int().min(1).optional(),
-  targetAudience: z.string().default("all"),
+  targetAudience: z
+    .custom<"all" | "free_only" | `plan:${string}`>(
+      (value) =>
+        value === "all" ||
+        value === "free_only" ||
+        (typeof value === "string" && /^plan:[a-z0-9_-]+$/u.test(value)),
+      "targetAudience must be all, free_only, or plan:<slug>",
+    )
+    .default("all"),
   applicablePlans: z.array(planSlugSchema).default([]),
   applicableCycles: z.array(billingCycleSchema).default([]),
   razorpayOfferId: razorpayOfferIdSchema.optional().nullable(),

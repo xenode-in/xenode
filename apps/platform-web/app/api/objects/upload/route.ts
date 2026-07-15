@@ -75,9 +75,8 @@ export async function POST(request: NextRequest) {
 
     const storageObject = await StorageObject.create({
       bucketId: bucket._id,
-      userId,
-      ownerScope: "personal",
-      createdBy: userId,
+      spaceId: ctx.spaceId,
+      createdByAccountId: ctx.accountId,
       key: opaqueKey,
       size,
       contentType,

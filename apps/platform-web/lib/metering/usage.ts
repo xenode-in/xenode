@@ -2,6 +2,7 @@ import dbConnect from "@/lib/mongodb";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import { personalSpaceId } from "@xenode/spaces/ids";
 import {
   captureEvent,
   contentTypeCategory,
@@ -59,7 +60,7 @@ export async function recalculateUsage(userId: string) {
 
   const [storageAgg, objectCount, bucketCount] = await Promise.all([
     StorageObject.aggregate([
-      { $match: { userId } },
+      { $match: { spaceId: personalSpaceId(userId) } },
       {
         $group: {
           _id: null,
@@ -96,8 +97,8 @@ export async function recalculateUsage(userId: string) {
         },
       },
     ]),
-    StorageObject.countDocuments({ userId }),
-    Bucket.countDocuments({ userId }),
+    StorageObject.countDocuments({ spaceId: personalSpaceId(userId) }),
+    Bucket.countDocuments({ systemKey: "drive" }),
   ]);
 
   const totalStorageBytes =

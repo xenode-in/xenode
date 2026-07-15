@@ -659,8 +659,7 @@ export function FilesBrowser() {
   const canManageWorkspace =
     workspace.driveScope.type === "personal" ||
     workspace.driveScope.role === "owner" ||
-    workspace.driveScope.role === "admin" ||
-    workspace.driveScope.role === "manager";
+    workspace.driveScope.role === "admin";
   const { startDownload } = useDownload();
   const { openPreview, closePreview } = usePreview();
   const { data: session, isPending: sessionPending } = useSession();

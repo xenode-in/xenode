@@ -22,11 +22,10 @@ interface RouteParams {
 }
 
 function canDeleteInScope(ctx: Awaited<ReturnType<typeof requireAccessContext>>): boolean {
-  if (ctx.scope.type === "personal") return true;
+  if (ctx.spaceType === "personal") return true;
   return (
-    ctx.scope.role === "owner" ||
-    ctx.scope.role === "admin" ||
-    ctx.scope.role === "manager"
+    ctx.role === "owner" ||
+    ctx.role === "admin"
   );
 }
 
@@ -131,10 +130,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       size: sizeToUse,
       revision: object.revision ?? 0,
       updatedAt: object.updatedAt,
-      ownerScope: object.ownerScope ?? "personal",
-      orgId: object.orgId ?? null,
-      teamId: object.teamId ?? null,
-      canWrite: ctx.scope.type === "personal" || ctx.scope.role !== "guest",
+      spaceId: object.spaceId,
+      spaceType: ctx.spaceType,
+      canWrite: ctx.spaceType === "personal" || ctx.role !== "guest",
       chunkSize: object.chunkSize ?? null,
       chunkCount: object.chunkCount ?? null,
       chunkIvs: object.chunkIvs ?? null,
@@ -236,10 +234,11 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     await DirectShare.deleteMany({ objectId: object._id });
 
     // Drop it from any albums + album shares so it stops showing there.
-    await removeObjectsFromAlbums(userId, [object._id]);
+    await removeObjectsFromAlbums(ctx.spaceId, userId, [object._id]);
 
     await publishSyncEvent({
       userId,
+      spaceId: ctx.spaceId,
       type: "FILE_DELETED",
       payload: {
         bucketId: object.bucketId.toString(),
@@ -332,6 +331,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
           : "FILE_UPDATED";
     await publishSyncEvent({
       userId,
+      spaceId: ctx.spaceId,
       type: eventType,
       payload: {
         bucketId: object.bucketId.toString(),

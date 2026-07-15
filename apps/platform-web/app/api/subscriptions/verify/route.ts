@@ -10,6 +10,7 @@ import {
   createSubscriptionInvoiceIfMissing,
   syncUserSubscriptionState,
 } from "@/lib/subscriptions/service";
+import { billingCycleSchema } from "@/lib/billing/validation/schemas";
 import { BillingEventType, emitBillingEvent } from "@/lib/billing/events";
 import { captureEvent } from "@/lib/posthog";
 
@@ -94,7 +95,9 @@ export async function POST(request: NextRequest) {
         planSlug: rzpNotes.planSlug,
         status: "created",
         subscription_id: razorpay_subscription_id,
-        billingCycle: rzpNotes.billingCycle || "monthly",
+        billingCycle: billingCycleSchema
+          .catch("monthly")
+          .parse(rzpNotes.billingCycle),
         startDate: new Date(),
         endDate: new Date(),
         total_count: fetchedSubscription.total_count ?? 360,

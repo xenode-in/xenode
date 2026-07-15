@@ -109,10 +109,10 @@ export async function POST(
         await deleteObjects(bucket.b2BucketId, keysToDelete);
         const freedBytes = versionsTotalBytes(evicted);
         if (freedBytes > 0) {
-          if (ctx.scope.type === "personal") {
+          if (ctx.spaceType === "personal") {
             await adjustStorageBytes(ctx.userId, -freedBytes);
           } else {
-            await adjustOrgStorage(ctx.scope.orgId, -freedBytes);
+            await adjustOrgStorage(ctx.organizationId!, -freedBytes);
           }
           await updateBucketStats(object.bucketId.toString(), 0, -freedBytes);
         }
@@ -121,6 +121,7 @@ export async function POST(
 
     await publishSyncEvent({
       userId: ctx.userId,
+      spaceId: ctx.spaceId,
       type: "FILE_UPDATED",
       payload: {
         bucketId: object.bucketId.toString(),

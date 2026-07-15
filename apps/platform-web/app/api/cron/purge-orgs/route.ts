@@ -16,7 +16,7 @@ import mongoose from "mongoose";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
-import OrgKeyGrant from "@/models/OrgKeyGrant";
+import { Space, SpaceProductKey } from "@xenode/database/models";
 import OrgUsage from "@/models/OrgUsage";
 import OrganizationPolicy from "@/models/OrganizationPolicy";
 import OrgDomain from "@/models/OrgDomain";
@@ -60,7 +60,11 @@ export async function GET(req: NextRequest) {
 
       // 1. Delete encrypted blobs for every org + team object, grouped by the
       //    physical B2 bucket they live in.
-      const objects = await StorageObject.find({ orgId })
+      const spaces = await Space.find({ organizationId: orgId })
+        .select("_id")
+        .lean<Array<{ _id: string }>>();
+      const spaceIds = spaces.map((space) => space._id);
+      const objects = await StorageObject.find({ spaceId: { $in: spaceIds } })
         .select("key thumbnail optimizedKey versions bucketId")
         .lean<(OrgObjectDoc & { bucketId: mongoose.Types.ObjectId })[]>();
 
@@ -98,9 +102,9 @@ export async function GET(req: NextRequest) {
         .toArray();
       const teamIds = teams.map((t) => t.id as string);
 
-      await StorageObject.deleteMany({ orgId });
-      await Bucket.deleteMany({ orgId });
-      await OrgKeyGrant.deleteMany({ orgId });
+      await StorageObject.deleteMany({ spaceId: { $in: spaceIds } });
+      await SpaceProductKey.deleteMany({ spaceId: { $in: spaceIds } });
+      await Space.deleteMany({ _id: { $in: spaceIds } });
       await OrgUsage.deleteMany({ orgId });
       await OrganizationPolicy.deleteMany({ orgId });
       await OrgDomain.deleteMany({ orgId });
