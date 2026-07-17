@@ -161,13 +161,11 @@ describe("organization governance", () => {
       keyVersion: 1,
       createdByAccountId: "owner_1",
     });
-    await Bucket.create({
-      userId: "org:org_1",
-      ownerScope: "organization",
-      orgId: "org_1",
-      name: "workspace",
-      b2BucketId: "xenode-organization-dev",
-    });
+    await Bucket.findOneAndUpdate(
+      { systemKey: "drive" },
+      { $setOnInsert: { systemKey: "drive", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" } },
+      { upsert: true, new: true },
+    );
 
     const res = await purgeOrgsGET(
       new NextRequest("http://localhost/api/cron/purge-orgs", {

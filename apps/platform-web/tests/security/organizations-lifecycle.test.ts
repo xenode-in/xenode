@@ -135,11 +135,9 @@ describe("organization lifecycle API", () => {
 
     expect(org?.slug).toBe("acme-labs");
     expect(member?.role).toBe("owner");
-    await expect(Bucket.countDocuments({
-      userId: "system",
-      name: "xenode-organization-dev",
-      b2BucketId: "xenode-organization-dev",
-    })).resolves.toBe(1);
+    // Single-system-bucket model: all workspaces share one physical bucket keyed
+    // by `systemKey: "drive"` (no per-org bucket name / userId scoping anymore).
+    await expect(Bucket.countDocuments({ systemKey: "drive" })).resolves.toBe(1);
     expect(await SpaceProductKey.countDocuments({
       spaceId: organizationSpaceId(body.organization.id),
       memberAccountId: "owner_1",

@@ -5,6 +5,7 @@ import { GET as filesSyncGET } from "@/app/api/files/sync/route";
 import { GET as usageGET } from "@/app/api/usage/route";
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
+import { ensureOrganizationSpace } from "@xenode/spaces/repository";
 
 const mockedGetServerSession = vi.mocked(getServerSession);
 
@@ -39,17 +40,14 @@ async function addOrgMember(userId = "user_1") {
   });
 }
 
+async function seedOrgAccess(userId = "user_1") {
+  await addOrgMember(userId);
+  await ensureOrganizationSpace({ accountId: userId, organizationId: "org_1" });
+}
+
 function orgRequest(path: string) {
   return new NextRequest(`http://localhost${path}`, {
     headers: { "x-xenode-space-id": "space_org_org_1" },
-  });
-}
-
-async function expectOrgStorageClosed(response: Response) {
-  expect(response.status).toBe(501);
-  await expect(response.json()).resolves.toEqual({
-    error: "Organization storage is not enabled yet",
-    code: "organization_storage_not_ready",
   });
 }
 
@@ -60,31 +58,47 @@ describe("organization storage support route adoption", () => {
     mockedGetServerSession.mockReset();
   });
 
-  it("fails closed for explicit org drive config until org storage config exists", async () => {
+  it("serves org drive config from the shared system bucket under the org prefix", async () => {
+    // Org storage is now wired: the request resolves against the org Space and
+    // returns the single shared system bucket plus the immutable org key prefix.
+    // The old "fail closed / organization_storage_not_ready" path is gone.
     process.env.ORGS_ENABLED = "true";
     mockSession("user_1");
-    await addOrgMember("user_1");
+    await seedOrgAccess("user_1");
 
-    await expectOrgStorageClosed(
-      await driveConfigGET(orgRequest("/api/drive/config")),
-    );
+    const response = await driveConfigGET(orgRequest("/api/drive/config"));
+    const body = await response.json();
+
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(body.rootPrefix).toBe("workspaces/org_1/objects/");
+    expect(body.bucket?.systemKey).toBe("drive");
   });
 
-  it("fails closed for explicit org usage until org metering exists", async () => {
+  it("reports org usage scoped to the org space (no personal objects leak in)", async () => {
+    // Usage is metered under org scope now (200), and because no objects exist in
+    // the org space the category breakdown is empty rather than failing closed.
     process.env.ORGS_ENABLED = "true";
     mockSession("user_1");
-    await addOrgMember("user_1");
+    await seedOrgAccess("user_1");
 
-    await expectOrgStorageClosed(await usageGET(orgRequest("/api/usage")));
+    const response = await usageGET(orgRequest("/api/usage"));
+    const body = await response.json();
+
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(body.breakdown).toEqual([]);
   });
 
-  it("fails closed for explicit org file sync until org sync is enabled", async () => {
+  it("serves org file sync scoped to the org space (empty delta with no org files)", async () => {
+    // File sync resolves the org Space and returns objects scoped by spaceId.
+    // With no org-space objects the delta is empty; it no longer fails closed.
     process.env.ORGS_ENABLED = "true";
     mockSession("user_1");
-    await addOrgMember("user_1");
+    await seedOrgAccess("user_1");
 
-    await expectOrgStorageClosed(
-      await filesSyncGET(orgRequest("/api/files/sync")),
-    );
+    const response = await filesSyncGET(orgRequest("/api/files/sync"));
+    const body = await response.json();
+
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(body.files).toEqual([]);
   });
 });

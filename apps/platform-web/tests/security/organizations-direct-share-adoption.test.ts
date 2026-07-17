@@ -5,6 +5,7 @@ import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import DirectShare from "@/models/DirectShare";
 import StorageObject from "@/models/StorageObject";
+import { ensureOrganizationSpace } from "@xenode/spaces/repository";
 
 const mockedGetServerSession = vi.mocked(getServerSession);
 
@@ -38,18 +39,21 @@ function request(body: unknown, headers?: HeadersInit) {
   });
 }
 
-async function createObject(userId: string) {
-  const safeUserId = userId.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
-  const bucket = await Bucket.create({
-    userId,
-    name: `bucket-${safeUserId}`,
-    b2BucketId: `b2-${userId}`,
-  });
+async function createObject(
+  userId: string,
+  opts: { spaceId?: string; key?: string } = {},
+) {
+  const bucket = await Bucket.findOneAndUpdate(
+    { systemKey: "drive" },
+    { $setOnInsert: { systemKey: "drive", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" } },
+    { upsert: true, new: true },
+  );
 
   return StorageObject.create({
-    bucketId: bucket._id,
-    userId,
-    key: `users/${userId}/file`,
+    bucketId: bucket!._id,
+    spaceId: opts.spaceId ?? `space_personal_${userId}`,
+    createdByAccountId: userId,
+    key: opts.key ?? `users/${userId}/file`,
     size: 100,
     contentType: "application/octet-stream",
     mediaCategory: "other",
@@ -69,7 +73,7 @@ function shareBody(objectId: string) {
         recipientUserId: "recipient_1",
         recipientEmail: "recipient@example.com",
         wrappedShareKey: "wrapped-share-key",
-        accessType: "download",
+        accessType: "viewer",
       },
     ],
   };
@@ -106,15 +110,21 @@ describe("organization direct-share route adoption", () => {
     expect(await DirectShare.countDocuments()).toBe(0);
   });
 
-  it("fails closed for explicit org direct-share creation until org storage is enabled", async () => {
+  it("creates direct shares for org-space objects under org scope", async () => {
+    // Org storage is live: an org admin can direct-share an object that lives
+    // in the organization space.
     process.env.ORGS_ENABLED = "true";
     mockSession("user_1");
-    const object = await createObject("user_1");
     await Bucket.db.collection("member").insertOne({
       userId: "user_1",
       organizationId: "org_1",
       role: "admin",
       createdAt: new Date(),
+    });
+    await ensureOrganizationSpace({ accountId: "user_1", organizationId: "org_1" });
+    const object = await createObject("user_1", {
+      spaceId: "space_org_org_1",
+      key: "workspaces/org_1/objects/file",
     });
 
     const response = await POST(
@@ -124,11 +134,8 @@ describe("organization direct-share route adoption", () => {
     );
     const body = await response.json();
 
-    expect(response.status).toBe(501);
-    expect(body).toEqual({
-      error: "Organization storage is not enabled yet",
-      code: "organization_storage_not_ready",
-    });
-    expect(await DirectShare.countDocuments()).toBe(0);
+    expect(response.status).toBe(200);
+    expect(body.recipientCount).toBe(1);
+    expect(await DirectShare.countDocuments({ createdBy: "user_1" })).toBe(1);
   });
 });

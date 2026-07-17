@@ -12,6 +12,7 @@ export const dynamic = "force-dynamic";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 import { uploadObject } from "@/lib/b2/objects";
 import { incrementStorage, updateBucketStats } from "@/lib/metering/usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
@@ -58,7 +59,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    const opaqueKey = `users/${userId}/${randomBytes(16).toString("hex")}`;
+    const allowedSystemPrefix =
+      ctx.spaceType === "organization"
+        ? orgObjectKeyPrefix(ctx.organizationId!)
+        : ctx.spaceType === "team"
+          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
+          : `users/${ctx.userId}/`;
+    const opaqueKey = `${allowedSystemPrefix}${randomBytes(16).toString("hex")}`;
     const buffer = Buffer.from(await file.arrayBuffer());
     const size = buffer.length;
     const contentType = file.type || "application/octet-stream";

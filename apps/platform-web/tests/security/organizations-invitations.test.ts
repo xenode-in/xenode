@@ -383,7 +383,7 @@ describe("organization invitations", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toEqual({
-      error: "Encrypted organization access requires a wrapped space key",
+      error: "Encrypted organization access requires a pending product key",
       code: "space_key_grant_required",
     });
     expect(await Bucket.db.collection("member").countDocuments()).toBe(0);

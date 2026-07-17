@@ -5,17 +5,18 @@ import StorageObject from "@/models/StorageObject";
 import { snapshotCurrentAsVersion } from "@/lib/storage/versions";
 
 describe("organization storage scope model fields", () => {
-  it("defaults new bucket and object documents to personal scope", async () => {
+  it("scopes personal objects by their personal space id", async () => {
     const bucket = await Bucket.create({
-      userId: "user_1",
-      name: "personal-drive",
-      b2BucketId: "b2-personal",
+      systemKey: "drive",
+      name: "xenode-drive-storage",
+      b2BucketId: "xenode-drive-storage",
       region: "us-west-004",
     });
 
-    const object = await StorageObject.create({
+    await StorageObject.create({
       bucketId: bucket._id,
-      userId: "user_1",
+      spaceId: "space_personal_user_1",
+      createdByAccountId: "user_1",
       key: "users/user_1/file",
       size: 123,
       contentType: "text/plain",
@@ -25,33 +26,30 @@ describe("organization storage scope model fields", () => {
       encryptedDEK: "wrapped-user-dek",
     });
 
-    expect(bucket.ownerScope).toBe("personal");
-    expect(object.ownerScope).toBe("personal");
-    expect(object.orgId).toBeUndefined();
-    expect(object.teamId).toBeUndefined();
+    const object = await StorageObject.findOne({
+      spaceId: "space_personal_user_1",
+      key: "users/user_1/file",
+    }).lean();
+
+    expect(object).not.toBeNull();
+    expect(object?.spaceId).toBe("space_personal_user_1");
+    expect(object?.createdByAccountId).toBe("user_1");
   });
 
-  it("persists org/team scope fields and space-key wrap metadata", async () => {
+  it("persists team space id and space-key wrap metadata", async () => {
     const spaceKeyId = new mongoose.Types.ObjectId();
     const bucket = await Bucket.create({
-      userId: "creator_1",
-      ownerScope: "team",
-      orgId: "org_1",
-      teamId: "team_1",
-      createdBy: "creator_1",
-      name: "team-drive",
-      b2BucketId: "b2-team",
+      systemKey: "drive",
+      name: "xenode-drive-storage",
+      b2BucketId: "xenode-drive-storage",
       region: "us-west-004",
     });
 
-    const object = await StorageObject.create({
+    await StorageObject.create({
       bucketId: bucket._id,
-      userId: "creator_1",
-      ownerScope: "team",
-      orgId: "org_1",
-      teamId: "team_1",
-      createdBy: "creator_1",
-      key: "teams/team_1/file",
+      spaceId: "space_team_org_1_team_1",
+      createdByAccountId: "org:org_1",
+      key: "workspaces/org_1/teams/team_1/objects/file",
       size: 456,
       contentType: "application/octet-stream",
       mediaCategory: "other",
@@ -64,24 +62,25 @@ describe("organization storage scope model fields", () => {
       spaceKeyWrapIv: "space-wrap-iv",
     });
 
-    expect(bucket.ownerScope).toBe("team");
-    expect(bucket.orgId).toBe("org_1");
-    expect(bucket.teamId).toBe("team_1");
-    expect(object.ownerScope).toBe("team");
-    expect(object.orgId).toBe("org_1");
-    expect(object.teamId).toBe("team_1");
-    expect(object.wrappedBy).toBe("space");
-    expect(object.spaceKeyId?.toString()).toBe(spaceKeyId.toString());
-    expect(object.spaceKeyVersion).toBe(3);
+    const object = await StorageObject.findOne({
+      spaceId: "space_team_org_1_team_1",
+    }).lean();
+
+    expect(object).not.toBeNull();
+    expect(object?.spaceId).toBe("space_team_org_1_team_1");
+    expect(object?.createdByAccountId).toBe("org:org_1");
+    expect(object?.wrappedBy).toBe("space");
+    expect(object?.spaceKeyId?.toString()).toBe(spaceKeyId.toString());
+    expect(object?.spaceKeyVersion).toBe(3);
+    expect(object?.spaceKeyWrapIv).toBe("space-wrap-iv");
   });
 
   it("preserves space-key metadata when snapshotting versions", async () => {
     const spaceKeyId = new mongoose.Types.ObjectId();
     const object = new StorageObject({
       bucketId: new mongoose.Types.ObjectId(),
-      userId: "creator_1",
-      ownerScope: "organization",
-      orgId: "org_1",
+      spaceId: "space_org_org_1",
+      createdByAccountId: "creator_1",
       key: "workspaces/org_1/objects/file",
       size: 789,
       contentType: "application/octet-stream",

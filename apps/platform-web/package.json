@@ -3,9 +3,9 @@
   "version": "0.1.0-beta.1",
   "private": true,
   "scripts": {
-    "dev": "node server.mjs",
+    "dev": "node --env-file-if-exists=.env.local server.mjs",
     "build": "next build",
-    "start": "node server.mjs --prod",
+    "start": "node --env-file-if-exists=.env.local server.mjs --prod",
     "lint": "eslint",
     "lint:security": "eslint lib/file-security hooks/useRendererConfig.ts models/FileRendererConfig.ts models/FileRendererConfigEvent.ts app/api/file-security app/api/admin/security components/admin/FileRendererControls.tsx app/admin/dashboard/security tests/security/file-flags.test.ts tests/security/file-policy.test.ts tests/security/file-protocol.test.ts",
     "typecheck": "tsc --noEmit",

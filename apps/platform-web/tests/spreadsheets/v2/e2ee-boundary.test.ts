@@ -3,7 +3,15 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
-const read = (path: string) => readFileSync(join(root, path), "utf8");
+// Normalize CRLF→LF so assertions on multi-line snippets hold on Windows
+// checkouts (core.autocrlf) as well as LF.
+const readFile = (base: string, path: string) =>
+  readFileSync(join(base, path), "utf8").replace(/\r\n/g, "\n");
+const read = (path: string) => readFile(root, path);
+// ONLYOFFICE build tooling lives at the monorepo root (see CLAUDE.md), not
+// inside apps/platform-web, so resolve `tools/**` two levels up from cwd.
+const repoRoot = join(root, "..", "..");
+const readRepo = (path: string) => readFile(repoRoot, path);
 
 describe("Sheets v2 E2EE boundary", () => {
   it("binary persistence uploads AES-GCM ciphertext, never plaintext bytes", () => {
@@ -30,7 +38,7 @@ describe("Sheets v2 E2EE boundary", () => {
   });
 
   it("the frame host targets an exact parent origin, never a wildcard", () => {
-    const frame = read("tools/onlyoffice/host/xenode-frame.js");
+    const frame = readRepo("tools/onlyoffice/host/xenode-frame.js");
     expect(frame).toContain("parent.postMessage(envelope(body, requestId), PARENT_ORIGIN");
     expect(frame).not.toMatch(/postMessage\([^,]+,\s*["']\*["']/);
     // Inbound messages are origin- and source-checked.

@@ -6,6 +6,7 @@ import Bucket from "@/models/Bucket";
 import OrganizationPolicy from "@/models/OrganizationPolicy";
 import ShareLink from "@/models/ShareLink";
 import StorageObject from "@/models/StorageObject";
+import { ensureOrganizationSpace } from "@xenode/spaces/repository";
 
 const mockedGetServerSession = vi.mocked(getServerSession);
 
@@ -39,17 +40,22 @@ function request(body: unknown, headers?: HeadersInit) {
   });
 }
 
+async function systemBucket() {
+  const bucket = await Bucket.findOneAndUpdate(
+    { systemKey: "drive" },
+    { $setOnInsert: { systemKey: "drive", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" } },
+    { upsert: true, new: true },
+  );
+  return bucket!;
+}
+
 async function createObject(userId: string) {
-  const safeUserId = userId.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
-  const bucket = await Bucket.create({
-    userId,
-    name: `share-${safeUserId}`,
-    b2BucketId: `b2-${userId}`,
-  });
+  const bucket = await systemBucket();
 
   return StorageObject.create({
     bucketId: bucket._id,
-    userId,
+    spaceId: `space_personal_${userId}`,
+    createdByAccountId: userId,
     key: `users/${userId}/file`,
     size: 100,
     contentType: "application/octet-stream",
@@ -61,19 +67,13 @@ async function createObject(userId: string) {
 }
 
 async function createOrganizationObject(orgId = "org_1") {
-  const bucket = await Bucket.create({
-    userId: "system",
-    ownerScope: "organization",
-    orgId,
-    name: "xenode-organization-dev",
-    b2BucketId: "xenode-organization-dev",
-  });
+  const bucket = await systemBucket();
+  await ensureOrganizationSpace({ accountId: "user_1", organizationId: orgId });
 
   return StorageObject.create({
     bucketId: bucket._id,
-    userId: "system",
-    ownerScope: "organization",
-    orgId,
+    spaceId: `space_org_${orgId}`,
+    createdByAccountId: "user_1",
     key: `workspaces/${orgId}/objects/file`,
     size: 100,
     contentType: "application/octet-stream",

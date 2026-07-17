@@ -105,9 +105,8 @@ describe("organization teams & team drives", () => {
     await expect(
       mongoose.connection.collection("teamMember").countDocuments({ teamId, userId: "owner_1" }),
     ).resolves.toBe(1);
-    await expect(
-      Bucket.countDocuments({ ownerScope: "team", orgId: "org_1", teamId, name: "workspace" }),
-    ).resolves.toBe(0);
+    // Single-system-bucket model: creating a team provisions no physical bucket.
+    await expect(Bucket.countDocuments({})).resolves.toBe(0);
     await expect(
       SpaceProductKey.countDocuments({
         spaceId: teamSpaceId("org_1", teamId),
@@ -207,16 +206,15 @@ describe("organization teams & team drives", () => {
     await addOrgMember("owner_1", "owner");
     const { body } = await createTeam();
     const teamId = body.team.id;
-    const bucket = await Bucket.create({
-      userId: "system",
-      ownerScope: "organization",
-      name: "xenode-organization-dev",
-      b2BucketId: "xenode-organization-dev",
-    });
+    const bucket = await Bucket.findOneAndUpdate(
+      { systemKey: "drive" },
+      { $setOnInsert: { systemKey: "drive", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" } },
+      { upsert: true, new: true },
+    );
 
     const res = await teamCompletePOST(
       req(`/api/orgs/org_1/teams/${teamId}/objects/complete-upload`, {
-        bucketId: bucket._id.toString(),
+        bucketId: bucket!._id.toString(),
         objectKey: `workspaces/org_1/teams/${teamId}/objects/file.bin`,
         size: 500,
         contentType: "text/plain",
@@ -229,9 +227,12 @@ describe("organization teams & team drives", () => {
     );
     expect(res.status).toBe(201);
 
-    const obj = await StorageObject.findOne({ ownerScope: "team", teamId }).lean();
-    expect(obj?.orgId).toBe("org_1");
-    expect(obj?.userId).toBe("org:org_1");
+    const obj = await StorageObject.findOne({
+      spaceId: teamSpaceId("org_1", teamId),
+    }).lean();
+    expect(obj?.spaceId).toBe(teamSpaceId("org_1", teamId));
+    // The uploader is recorded as the creator; org rollup happens via OrgUsage.
+    expect(obj?.createdByAccountId).toBe("owner_1");
 
     const usage = await OrgUsage.findOne({ orgId: "org_1" }).lean();
     expect(usage?.totalStorageBytes).toBe(500);
@@ -257,9 +258,8 @@ describe("organization teams & team drives", () => {
     await expect(
       mongoose.connection.collection("teamMember").countDocuments({ teamId }),
     ).resolves.toBe(0);
-    await expect(
-      Bucket.countDocuments({ ownerScope: "team", teamId }),
-    ).resolves.toBe(0);
+    // No per-team physical bucket exists to clean up in the single-bucket model.
+    await expect(Bucket.countDocuments({})).resolves.toBe(0);
     await expect(
       SpaceProductKey.countDocuments({ spaceId: teamSpaceId("org_1", teamId) }),
     ).resolves.toBe(0);

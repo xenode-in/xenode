@@ -36,18 +36,15 @@ describe("getOrgHomeSummary", () => {
       status: "pending",
     });
 
-    const bucket = await Bucket.create({
-      userId: "org:org_1",
-      ownerScope: "organization",
-      orgId: "org_1",
-      name: "workspace",
-      b2BucketId: "xenode-organization-dev",
-    });
+    const bucket = await Bucket.findOneAndUpdate(
+      { systemKey: "drive" },
+      { $setOnInsert: { systemKey: "drive", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" } },
+      { upsert: true, new: true },
+    );
     await StorageObject.create({
-      bucketId: bucket._id,
-      userId: "org:org_1",
-      ownerScope: "organization",
-      orgId: "org_1",
+      bucketId: bucket!._id,
+      spaceId: "space_org_org_1",
+      createdByAccountId: "owner_1",
       key: "workspaces/org_1/objects/secret.bin",
       encryptedName: "ENCRYPTED_NAME_SHOULD_NOT_LEAK",
       size: 500,

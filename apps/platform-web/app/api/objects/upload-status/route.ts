@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/auth/session";
+import {
+  bucketOwnershipClause,
+  isAuthzError,
+  requireAccessContext,
+  toJsonResponse,
+} from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import { listObjects } from "@/lib/b2/objects";
+import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +25,7 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(request: NextRequest) {
   try {
-    const session = await requireAuth(request);
-    const userId = session.user.id;
+    const ctx = await requireAccessContext(request);
 
     const { searchParams } = new URL(request.url);
     const bucketId = searchParams.get("bucketId");
@@ -33,8 +38,14 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Ownership guard: the logical key must live under the caller's prefix.
-    if (!fileId.startsWith(`users/${userId}/`)) {
+    // Ownership guard: the logical key must live under the caller's space prefix.
+    const allowedSystemPrefix =
+      ctx.spaceType === "organization"
+        ? orgObjectKeyPrefix(ctx.organizationId!)
+        : ctx.spaceType === "team"
+          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
+          : `users/${ctx.userId}/`;
+    if (!fileId.startsWith(allowedSystemPrefix)) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
@@ -42,7 +53,7 @@ export async function GET(request: NextRequest) {
 
     const bucket = await Bucket.findOne({
       _id: bucketId,
-      $or: [{ userId }, { userId: "system" }],
+      ...bucketOwnershipClause(ctx),
     });
     if (!bucket) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
@@ -83,8 +94,12 @@ export async function GET(request: NextRequest) {
       completedChunks,
     });
   } catch (error) {
+    if (isAuthzError(error)) {
+      return toJsonResponse(error);
+    }
     const message =
       error instanceof Error ? error.message : "Failed to read upload status";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const statusCode = message === "Unauthorized" ? 401 : 500;
+    return NextResponse.json({ error: message }, { status: statusCode });
   }
 }

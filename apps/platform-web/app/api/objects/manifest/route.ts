@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   bucketOwnershipClause,
   isAuthzError,
+  objectOwnershipClause,
   requireAccessContext,
   toJsonResponse,
 } from "@/lib/authz";
@@ -20,6 +21,7 @@ import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -71,11 +73,16 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    const userPrefix = `users/${userId}/`;
+    const allowedSystemPrefix =
+      ctx.spaceType === "organization"
+        ? orgObjectKeyPrefix(ctx.organizationId!)
+        : ctx.spaceType === "team"
+          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
+          : `users/${ctx.userId}/`;
     if (
       requestedPrefix !== null &&
       bucket.systemKey === "drive" &&
-      !requestedPrefix.startsWith(userPrefix)
+      !requestedPrefix.startsWith(allowedSystemPrefix)
     ) {
       statusCode = 403;
       errorMessage = "Access denied to this folder";
@@ -84,12 +91,14 @@ export async function GET(request: NextRequest) {
 
     const query: Record<string, unknown> = {
       bucketId,
+      ...objectOwnershipClause(ctx),
       deletedAt: { $exists: false },
       isSidecar: { $ne: true },
     };
 
     const prefix =
-      requestedPrefix ?? (bucket.systemKey === "drive" ? userPrefix : null);
+      requestedPrefix ??
+      (bucket.systemKey === "drive" ? allowedSystemPrefix : null);
     if (prefix !== null) {
       query.key = { $regex: `^${escapeRegex(prefix)}` };
     }

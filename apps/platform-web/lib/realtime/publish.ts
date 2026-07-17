@@ -41,7 +41,7 @@ export interface PublishSyncEventParams {
 
 export function createSyncEvent(
   params: PublishSyncEventParams,
-  eventId = randomUUID(),
+  eventId: string = randomUUID(),
   occurredAt = new Date(),
 ): SyncEventEnvelope {
   return {

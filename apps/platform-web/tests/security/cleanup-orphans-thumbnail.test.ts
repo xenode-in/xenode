@@ -31,11 +31,14 @@ function cronRequest() {
 }
 
 async function seedBucket(userId: string, suffix: string) {
-  return Bucket.create({
-    userId,
-    name: `orphans-${suffix}`,
-    b2BucketId: `b2-orphans-${suffix}`,
-  });
+  void userId;
+  void suffix;
+  const bucket = await Bucket.findOneAndUpdate(
+    { systemKey: "drive" },
+    { $setOnInsert: { systemKey: "drive", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" } },
+    { upsert: true, new: true },
+  );
+  return bucket!;
 }
 
 /** A session already past its 24h grace window. */
@@ -59,7 +62,8 @@ describe("cleanup-orphans: thumbnail protection", () => {
     // Live, fully-uploaded file whose thumbnail lives at thumbKey.
     await StorageObject.create({
       bucketId: bucket._id,
-      userId,
+      spaceId: `space_personal_${userId}`,
+      createdByAccountId: userId,
       key: mainKey,
       thumbnail: thumbKey,
       size: 1000,
@@ -96,7 +100,8 @@ describe("cleanup-orphans: thumbnail protection", () => {
 
     await StorageObject.create({
       bucketId: bucket._id,
-      userId,
+      spaceId: `space_personal_${userId}`,
+      createdByAccountId: userId,
       key: mainKey,
       optimizedKey: optKey,
       size: 1000,

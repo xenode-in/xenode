@@ -46,11 +46,14 @@ function request(body: unknown) {
 }
 
 async function createBucket(userId: string, suffix: string) {
-  return Bucket.create({
-    userId,
-    name: `finalize-${suffix}`,
-    b2BucketId: `b2-finalize-${suffix}`,
-  });
+  void userId;
+  void suffix;
+  const bucket = await Bucket.findOneAndUpdate(
+    { systemKey: "drive" },
+    { $setOnInsert: { systemKey: "drive", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" } },
+    { upsert: true, new: true },
+  );
+  return bucket!;
 }
 
 function encryptedUpload(userId: string, bucketId: string) {
@@ -112,7 +115,8 @@ describe("photo backup complete-upload finalization", () => {
     const body = encryptedUpload(userId, String(bucket._id));
     await StorageObject.create({
       bucketId: bucket._id,
-      userId,
+      spaceId: `space_personal_${userId}`,
+      createdByAccountId: userId,
       key: body.objectKey,
       size: 500,
       contentType: "image/jpeg",
@@ -145,7 +149,8 @@ describe("photo backup complete-upload finalization", () => {
     const body = encryptedUpload(userId, String(bucket._id));
     await StorageObject.create({
       bucketId: bucket._id,
-      userId,
+      spaceId: `space_personal_${userId}`,
+      createdByAccountId: userId,
       key: body.objectKey,
       size: 500,
       contentType: "image/jpeg",
@@ -197,7 +202,8 @@ describe("photo backup complete-upload finalization", () => {
 
     const base = {
       bucketId: bucket._id,
-      userId,
+      spaceId: `space_personal_${userId}`,
+      createdByAccountId: userId,
       size: 100,
       contentType: "application/octet-stream",
       b2FileId: "b2-file",
@@ -226,7 +232,8 @@ describe("photo backup complete-upload finalization", () => {
     await StorageObject.init();
     const base = {
       bucketId: bucket._id,
-      userId,
+      spaceId: `space_personal_${userId}`,
+      createdByAccountId: userId,
       size: 100,
       contentType: "application/octet-stream",
       b2FileId: "b2-file",

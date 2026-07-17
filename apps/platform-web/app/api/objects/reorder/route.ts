@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   bucketOwnershipClause,
   isAuthzError,
+  objectOwnershipClause,
   requireAccessContext,
   toJsonResponse,
 } from "@/lib/authz";
@@ -32,7 +33,11 @@ export async function PATCH(request: NextRequest) {
 
     const operations = items.map((item: { id: string; position: number }) => ({
       updateOne: {
-        filter: { _id: item.id, bucketId: bucket._id },
+        filter: {
+          _id: item.id,
+          bucketId: bucket._id,
+          ...objectOwnershipClause(ctx),
+        },
         update: { $set: { position: item.position } },
       },
     }));

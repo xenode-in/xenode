@@ -7,6 +7,7 @@ import { POST as presignPOST } from "@/app/api/orgs/[orgId]/objects/presign-uplo
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import { ensureOrganizationSpace } from "@xenode/spaces/repository";
 
 vi.mock("@/lib/b2/buckets", () => ({
   createB2Bucket: vi.fn(async (name: string) => `b2-${name}`),
@@ -69,13 +70,12 @@ async function addMember(userId: string, role = "member", orgId = "org_1") {
 async function createOrgBucket(orgId = "org_1") {
   await createOrg(orgId).catch(() => {});
   return Bucket.findOneAndUpdate(
-    { userId: "system", name: "xenode-organization-dev" },
+    { systemKey: "drive" },
     {
       $setOnInsert: {
-        userId: "system",
-        ownerScope: "organization",
-        name: "xenode-organization-dev",
-        b2BucketId: "xenode-organization-dev",
+        systemKey: "drive",
+        name: "xenode-drive-storage",
+        b2BucketId: "xenode-drive-storage",
       },
     },
     { new: true, upsert: true },
@@ -122,10 +122,9 @@ describe("organization storage API", () => {
     expect(listResponse.status).toBe(200);
     expect(listBody.buckets).toHaveLength(1);
     expect(listBody.buckets[0]).toMatchObject({
-      userId: "system",
-      ownerScope: "organization",
-      name: "xenode-organization-dev",
-      b2BucketId: "xenode-organization-dev",
+      systemKey: "drive",
+      name: "xenode-drive-storage",
+      b2BucketId: "xenode-drive-storage",
     });
   });
 
@@ -183,14 +182,22 @@ describe("organization storage API", () => {
     mockSession("member_1");
     await createOrg();
     await addMember("member_1", "member");
+    await ensureOrganizationSpace({ accountId: "member_1", organizationId: "org_1" });
     const bucket = await createOrgBucket();
 
     const response = await presignPOST(
-      request("/api/orgs/org_1/objects/presign-upload", "POST", {
-        bucketId: bucket!._id.toString(),
-        fileName: "../leaky-name.txt",
-        fileType: "text/plain",
-        prefix: "users/member_1/",
+      new NextRequest("http://localhost/api/orgs/org_1/objects/presign-upload", {
+        method: "POST",
+        body: JSON.stringify({
+          bucketId: bucket!._id.toString(),
+          fileName: "../leaky-name.txt",
+          fileType: "text/plain",
+          prefix: "users/member_1/",
+        }),
+        headers: {
+          "content-type": "application/json",
+          "x-xenode-space-id": "space_org_org_1",
+        },
       }),
       params(),
     );
@@ -203,7 +210,8 @@ describe("organization storage API", () => {
     expect(body.uploadUrl).toBe("https://upload.example.test/presigned");
     expect(body.objectKey).toMatch(/^workspaces\/org_1\/objects\//);
     expect(body.objectKey).not.toContain("users/member_1");
-    expect(body.ownerScope).toBe("organization");
+    expect(body.spaceType).toBe("organization");
+    expect(body.spaceId).toBe("space_org_org_1");
   });
 
   it("finalizes a space-wrapped org object and lists only that org's objects", async () => {
@@ -217,10 +225,8 @@ describe("organization storage API", () => {
 
     await StorageObject.create({
       bucketId: otherBucket!._id,
-      userId: "org:org_2",
-      ownerScope: "organization",
-      orgId: "org_2",
-      createdBy: "other",
+      spaceId: "space_org_org_2",
+      createdByAccountId: "other",
       key: "workspaces/org_2/objects/other.txt",
       size: 20,
       contentType: "text/plain",
@@ -250,9 +256,8 @@ describe("organization storage API", () => {
 
     expect(completeResponse.status).toBe(201);
     expect(completeBody.object).toMatchObject({
-      userId: "org:org_1",
-      ownerScope: "organization",
-      orgId: "org_1",
+      spaceId: "space_org_org_1",
+      createdByAccountId: "member_1",
       key: "workspaces/org_1/objects/file.txt",
       wrappedBy: "space",
       spaceKeyVersion: 2,

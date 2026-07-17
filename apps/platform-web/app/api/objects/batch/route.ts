@@ -35,6 +35,7 @@ import { Types } from "mongoose";
 import {
   bucketOwnershipClause,
   isAuthzError,
+  objectOwnershipClause,
   requireAccessContext,
   toJsonResponse,
 } from "@/lib/authz";
@@ -43,6 +44,7 @@ import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -121,16 +123,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
+    const allowedSystemPrefix =
+      ctx.spaceType === "organization"
+        ? orgObjectKeyPrefix(ctx.organizationId!)
+        : ctx.spaceType === "team"
+          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
+          : `users/${ctx.userId}/`;
+
     const query: Record<string, unknown> = {
       _id: { $in: objectIds },
       bucketId,
+      ...objectOwnershipClause(ctx),
       deletedAt: { $exists: false },
       isSidecar: { $ne: true },
     };
 
     if (bucket.systemKey === "drive") {
-      const prefix = `users/${userId}/`;
-      query.key = { $gte: prefix, $lt: prefix + "￿" };
+      query.key = { $gte: allowedSystemPrefix, $lt: allowedSystemPrefix + "￿" };
     }
 
     const docs = await StorageObject.find(query)

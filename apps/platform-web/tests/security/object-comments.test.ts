@@ -18,20 +18,17 @@ function mockSession(userId: string) {
   } as unknown as Awaited<ReturnType<typeof getServerSession>>);
 }
 
-let bucketSeq = 0;
 async function makeObject() {
-  bucketSeq += 1;
-  const bucket = await Bucket.create({
-    userId: "owner_1",
-    ownerScope: "personal",
-    name: `drive-${bucketSeq}`,
-    b2BucketId: `b2-drive-${bucketSeq}`,
-  });
+  const bucket = await Bucket.findOneAndUpdate(
+    { systemKey: "drive" },
+    { $setOnInsert: { systemKey: "drive", name: "drive", b2BucketId: "b2-drive" } },
+    { upsert: true, new: true },
+  );
   return StorageObject.create({
-    bucketId: bucket._id,
-    userId: "owner_1",
-    ownerScope: "personal",
-    key: "users/owner_1/a.bin",
+    bucketId: bucket!._id,
+    spaceId: "space_personal_owner_1",
+    createdByAccountId: "owner_1",
+    key: `users/owner_1/${new mongoose.Types.ObjectId().toHexString()}.bin`,
     size: 100,
     contentType: "text/plain",
     mediaCategory: "document",
@@ -44,7 +41,7 @@ async function makeObject() {
 async function makeShare(
   objId: mongoose.Types.ObjectId,
   bucketId: mongoose.Types.ObjectId,
-  role = "viewer",
+  role: "viewer" | "commenter" | "editor" = "viewer",
 ) {
   return DirectShare.create({
     objectId: objId,

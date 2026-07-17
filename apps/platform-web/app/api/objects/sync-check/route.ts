@@ -25,12 +25,14 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   bucketOwnershipClause,
   isAuthzError,
+  objectOwnershipClause,
   requireAccessContext,
   toJsonResponse,
 } from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +43,6 @@ const MAX_FINGERPRINTS = 1000;
 export async function POST(request: NextRequest) {
   try {
     const ctx = await requireAccessContext(request);
-    const userId = ctx.userId;
 
     const body = await request.json();
     const bucketId: unknown = body?.bucketId;
@@ -97,17 +98,24 @@ export async function POST(request: NextRequest) {
 
     const field = kind === "content" ? "syncContentFp" : "syncMetaFp";
 
+    const allowedSystemPrefix =
+      ctx.spaceType === "organization"
+        ? orgObjectKeyPrefix(ctx.organizationId!)
+        : ctx.spaceType === "team"
+          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
+          : `users/${ctx.userId}/`;
+
     const query: Record<string, unknown> = {
       bucketId,
+      ...objectOwnershipClause(ctx),
       deletedAt: { $exists: false },
       [field]: { $in: wanted },
     };
 
-    // System buckets are shared — scope to the caller's own prefix so one
-    // user can't probe another's fingerprints. Matches the metadata route.
+    // System buckets are shared — scope to the caller's own space so one
+    // tenant can't probe another's fingerprints. Matches the metadata route.
     if (bucket.systemKey === "drive") {
-      const prefix = `users/${userId}/`;
-      query.key = { $gte: prefix, $lt: prefix + "￿" };
+      query.key = { $gte: allowedSystemPrefix, $lt: allowedSystemPrefix + "￿" };
     }
 
     const docs = await StorageObject.find(query)

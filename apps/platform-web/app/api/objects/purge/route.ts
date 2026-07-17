@@ -17,7 +17,11 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
-import { requireAccessContext, bucketOwnershipClause } from "@/lib/authz";
+import {
+  requireAccessContext,
+  bucketOwnershipClause,
+  objectOwnershipClause,
+} from "@/lib/authz";
 import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
@@ -140,7 +144,7 @@ export async function POST(request: NextRequest) {
       // Empty bin: every binned doc in this bucket (primaries + sidecars).
       docs = await StorageObject.find({
         bucketId,
-        userId,
+        ...objectOwnershipClause(ctx),
         deletedAt: { $exists: true },
       })
         .select(PURGE_PROJECTION)
@@ -149,7 +153,7 @@ export async function POST(request: NextRequest) {
       const primaries = await StorageObject.find({
         _id: { $in: ids },
         bucketId,
-        userId,
+        ...objectOwnershipClause(ctx),
         deletedAt: { $exists: true },
       })
         .select(PURGE_PROJECTION)
@@ -172,7 +176,7 @@ export async function POST(request: NextRequest) {
       if (folderPrefixes.length > 0) {
         const folderChildren = await StorageObject.find({
           bucketId,
-          userId,
+          ...objectOwnershipClause(ctx),
           deletedAt: { $exists: true },
           $or: folderPrefixes.map((prefix) => ({
             key: { $regex: `^${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}` }
@@ -186,7 +190,7 @@ export async function POST(request: NextRequest) {
 
       const sidecars = await StorageObject.find({
         parentObjectId: { $in: allDocs.map((p) => p._id) },
-        userId,
+        ...objectOwnershipClause(ctx),
         deletedAt: { $exists: true },
       })
         .select(PURGE_PROJECTION)

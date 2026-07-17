@@ -6,6 +6,10 @@ import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import { makeUserId } from "../helpers/factories";
+import {
+  ensureOrganizationSpace,
+  ensurePersonalSpace,
+} from "@xenode/spaces/repository";
 
 const mockedGetServerSession = vi.mocked(getServerSession);
 
@@ -32,24 +36,29 @@ function mockSession(userId: string) {
 }
 
 async function createBucket(userId: string, suffix: string) {
-  return Bucket.create({
-    userId,
-    name: `sync-${suffix}`,
-    b2BucketId: `b2-${suffix}`,
-  });
+  void userId;
+  void suffix;
+  const bucket = await Bucket.findOneAndUpdate(
+    { systemKey: "drive" },
+    { $setOnInsert: { systemKey: "drive", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" } },
+    { upsert: true, new: true },
+  );
+  return bucket!;
 }
 
 async function createObject(args: {
   bucketId: string;
   userId: string;
   key: string;
+  spaceId?: string;
   contentFp?: string;
   metaFp?: string;
   deletedAt?: Date;
 }) {
   return StorageObject.create({
     bucketId: args.bucketId,
-    userId: args.userId,
+    spaceId: args.spaceId ?? `space_personal_${args.userId}`,
+    createdByAccountId: args.userId,
     key: args.key,
     size: 100,
     contentType: "application/octet-stream",
@@ -108,11 +117,21 @@ describe("photo backup sync-check contract", () => {
     });
   });
 
-  it("does not allow a user to probe another user's bucket", async () => {
+  it("does not surface another user's fingerprints under caller's space", async () => {
+    // The physical bucket is shared (single system bucket); isolation is now
+    // enforced per-object by spaceId. A caller probing a fingerprint that only
+    // exists in ANOTHER user's space must get an empty result, never a match.
     const ownerId = makeUserId();
     const callerId = makeUserId();
     mockSession(callerId);
     const bucket = await createBucket(ownerId, "foreign");
+    await ensurePersonalSpace(callerId);
+    await createObject({
+      bucketId: String(bucket._id),
+      userId: ownerId,
+      key: `users/${ownerId}/photo`,
+      metaFp: "opaque-fingerprint",
+    });
 
     const response = await POST(
       request({
@@ -122,10 +141,8 @@ describe("photo backup sync-check contract", () => {
       }),
     );
 
-    expect(response.status).toBe(404);
-    await expect(response.json()).resolves.toEqual({
-      error: "Bucket not found",
-    });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ matches: [] });
   });
 
   it("scopes shared system buckets to the caller's prefix", async () => {
@@ -160,7 +177,7 @@ describe("photo backup sync-check contract", () => {
     });
   });
 
-  it("fails closed for explicit org-scope fingerprint probes until org storage is enabled", async () => {
+  it("scopes org-scope fingerprint probes to the org space", async () => {
     process.env.ORGS_ENABLED = "true";
     const callerId = makeUserId();
     mockSession(callerId);
@@ -171,6 +188,26 @@ describe("photo backup sync-check contract", () => {
       role: "admin",
       createdAt: new Date(),
     });
+    await ensureOrganizationSpace({
+      accountId: callerId,
+      organizationId: "org_1",
+    });
+
+    // An object in the org space and one in the caller's personal space that
+    // share a fingerprint. Probing under org scope must find only the org one.
+    const orgObject = await createObject({
+      bucketId: String(bucket._id),
+      userId: callerId,
+      spaceId: "space_org_org_1",
+      key: "workspaces/org_1/objects/photo",
+      contentFp: "shared-fp",
+    });
+    await createObject({
+      bucketId: String(bucket._id),
+      userId: callerId,
+      key: `users/${callerId}/photo`,
+      contentFp: "shared-fp",
+    });
 
     const response = await POST(
       new NextRequest("http://localhost/api/objects/sync-check", {
@@ -178,7 +215,7 @@ describe("photo backup sync-check contract", () => {
         body: JSON.stringify({
           bucketId: String(bucket._id),
           kind: "content",
-          fingerprints: ["opaque-fingerprint"],
+          fingerprints: ["shared-fp"],
         }),
         headers: {
           "content-type": "application/json",
@@ -187,10 +224,9 @@ describe("photo backup sync-check contract", () => {
       }),
     );
 
-    expect(response.status).toBe(501);
+    expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
-      error: "Organization storage is not enabled yet",
-      code: "organization_storage_not_ready",
+      matches: [{ fp: "shared-fp", id: String(orgObject._id) }],
     });
   });
 });

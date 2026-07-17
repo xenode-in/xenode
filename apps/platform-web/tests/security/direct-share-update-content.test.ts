@@ -28,6 +28,7 @@ import { REVISION_HEADER } from "@/lib/storage/revisions";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import DirectShare from "@/models/DirectShare";
+import { ensurePersonalSpace, ensureOrganizationSpace } from "@xenode/spaces/repository";
 import mongoose from "mongoose";
 
 const mockedGetServerSession = vi.mocked(getServerSession);
@@ -40,16 +41,21 @@ function mockSession(userId: string) {
 }
 
 async function makeObject(overrides: Record<string, unknown> = {}) {
-  const bucket = await Bucket.create({
-    userId: "owner_1",
-    ownerScope: "personal",
-    name: "drive",
-    b2BucketId: "b2-drive",
-  });
+  const bucket = await Bucket.findOneAndUpdate(
+    { systemKey: "drive" },
+    { $setOnInsert: { systemKey: "drive", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" } },
+    { upsert: true, new: true },
+  );
+  const spaceId = (overrides.spaceId as string | undefined) ?? "space_personal_owner_1";
+  if (spaceId.startsWith("space_org_")) {
+    await ensureOrganizationSpace({ accountId: "owner_1", organizationId: "org_1" });
+  } else {
+    await ensurePersonalSpace("owner_1");
+  }
   return StorageObject.create({
-    bucketId: bucket._id,
-    userId: "owner_1",
-    ownerScope: "personal",
+    bucketId: bucket!._id,
+    spaceId,
+    createdByAccountId: "owner_1",
     key: "users/owner_1/sheet.bin",
     size: 100,
     contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -65,7 +71,7 @@ async function makeObject(overrides: Record<string, unknown> = {}) {
 async function makeShare(
   objId: mongoose.Types.ObjectId,
   bucketId: mongoose.Types.ObjectId,
-  role = "viewer",
+  role: "viewer" | "commenter" | "editor" = "viewer",
 ) {
   return DirectShare.create({
     objectId: objId,
@@ -202,8 +208,7 @@ describe("direct-share update-content role enforcement", () => {
 
   it("attributes quota to the org for org-owned objects", async () => {
     const obj = await makeObject({
-      ownerScope: "organization",
-      orgId: "org_1",
+      spaceId: "space_org_org_1",
       key: "workspaces/org_1/objects/sheet.bin",
     });
     const share = await makeShare(obj._id, obj.bucketId, "editor");

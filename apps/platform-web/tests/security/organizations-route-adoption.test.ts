@@ -50,33 +50,20 @@ describe("organization route adoption", () => {
     mockedGetServerSession.mockReset();
   });
 
-  it("keeps bucket listing scoped to the personal user by default", async () => {
+  it("returns the single shared system bucket", async () => {
+    // Buckets were consolidated into one system bucket; GET returns exactly it.
     mockSession("user_1");
-    await Bucket.create({
-      userId: "user_1",
-      name: "mine",
-      b2BucketId: "b2-mine",
-    });
-    await Bucket.create({
-      userId: "user_2",
-      name: "theirs",
-      b2BucketId: "b2-theirs",
-    });
-    await Bucket.create({
-      userId: "system",
-      name: "system",
-      b2BucketId: "b2-system",
-    });
 
     const response = await GET(request("http://localhost/api/buckets"));
     const body = await response.json();
 
     expect(response.status).toBe(200);
     expect(body.buckets).toHaveLength(1);
-    expect(body.buckets[0].name).toBe("mine");
+    expect(body.buckets[0].systemKey).toBe("drive");
   });
 
-  it("creates personal buckets with scope metadata", async () => {
+  it("rejects custom bucket creation with 410", async () => {
+    // Physical buckets are now system-managed; POST is no longer supported.
     mockSession("user_1");
 
     const response = await POST(
@@ -88,13 +75,17 @@ describe("organization route adoption", () => {
     );
     const body = await response.json();
 
-    expect(response.status).toBe(201);
-    expect(body.bucket.ownerScope).toBe("personal");
-    expect(body.bucket.createdBy).toBe("user_1");
-    expect(createB2Bucket).toHaveBeenCalledWith("xn-user_1-docs");
+    expect(response.status).toBe(410);
+    expect(body).toEqual({
+      error: "Custom buckets are no longer supported",
+      code: "system_bucket_only",
+    });
+    expect(createB2Bucket).not.toHaveBeenCalled();
   });
 
-  it("fails closed for explicit org bucket access until storage policy is enabled", async () => {
+  it("returns the system bucket regardless of a legacy scope query param", async () => {
+    // The old ?scope=organization 501 path is gone; the route serves the
+    // single system bucket and ignores the legacy query param.
     process.env.ORGS_ENABLED = "true";
     mockSession("user_1");
     await Bucket.db.collection("member").insertOne({
@@ -109,10 +100,8 @@ describe("organization route adoption", () => {
     );
     const body = await response.json();
 
-    expect(response.status).toBe(501);
-    expect(body).toEqual({
-      error: "Organization storage is not enabled yet",
-      code: "organization_storage_not_ready",
-    });
+    expect(response.status).toBe(200);
+    expect(body.buckets).toHaveLength(1);
+    expect(body.buckets[0].systemKey).toBe("drive");
   });
 });

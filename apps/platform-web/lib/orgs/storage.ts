@@ -6,7 +6,6 @@ import {
   type OrgMembership,
 } from "@/lib/orgs/access";
 import Bucket, { type IBucket } from "@/models/Bucket";
-import { systemWorkspaceBucketName } from "@/lib/storage/workspaceBucket";
 import { organizationSpaceId, teamSpaceId } from "@xenode/spaces/ids";
 
 export type OrgStorageAction = "read" | "write" | "manage" | "delete";
@@ -27,7 +26,9 @@ export function orgObjectKeyPrefix(orgId: string): string {
 
 export function orgBucketClause(orgId: string): Record<string, unknown> {
   void orgId;
-  return { userId: "system" };
+  // Single-system-bucket model (A8): all workspaces share one physical bucket;
+  // tenant isolation is enforced on objects via `spaceId`, not per-bucket.
+  return { systemKey: "drive" };
 }
 
 export function orgObjectClause(orgId: string): Record<string, unknown> {
@@ -75,9 +76,7 @@ export async function loadOrgBucket(args: {
 }): Promise<IBucket> {
   const bucket = await Bucket.findOne({
     _id: args.bucketId,
-    userId: "system",
-    name: systemWorkspaceBucketName("ORGANIZATION"),
-    b2BucketId: systemWorkspaceBucketName("ORGANIZATION"),
+    systemKey: "drive",
   });
 
   if (!bucket) {
@@ -100,7 +99,7 @@ export function teamBucketClause(
 ): Record<string, unknown> {
   void orgId;
   void teamId;
-  return { userId: "system" };
+  return { systemKey: "drive" };
 }
 
 export function teamObjectClause(
@@ -151,9 +150,7 @@ export async function loadTeamBucket(args: {
 }): Promise<IBucket> {
   const bucket = await Bucket.findOne({
     _id: args.bucketId,
-    userId: "system",
-    name: systemWorkspaceBucketName("ORGANIZATION"),
-    b2BucketId: systemWorkspaceBucketName("ORGANIZATION"),
+    systemKey: "drive",
   });
 
   if (!bucket) {

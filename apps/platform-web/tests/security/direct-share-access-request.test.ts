@@ -7,6 +7,7 @@ import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import DirectShare from "@/models/DirectShare";
 import ShareAccessRequest from "@/models/ShareAccessRequest";
+import { ensurePersonalSpace } from "@xenode/spaces/repository";
 import mongoose from "mongoose";
 
 const mockedGetServerSession = vi.mocked(getServerSession);
@@ -19,16 +20,16 @@ function mockSession(userId: string) {
 }
 
 async function makeObject(overrides: Record<string, unknown> = {}) {
-  const bucket = await Bucket.create({
-    userId: "owner_1",
-    ownerScope: "personal",
-    name: "drive",
-    b2BucketId: "b2-drive",
-  });
+  const bucket = await Bucket.findOneAndUpdate(
+    { systemKey: "drive" },
+    { $setOnInsert: { systemKey: "drive", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" } },
+    { upsert: true, new: true },
+  );
+  await ensurePersonalSpace("owner_1");
   return StorageObject.create({
-    bucketId: bucket._id,
-    userId: "owner_1",
-    ownerScope: "personal",
+    bucketId: bucket!._id,
+    spaceId: "space_personal_owner_1",
+    createdByAccountId: "owner_1",
     key: "users/owner_1/a.bin",
     size: 100,
     contentType: "text/plain",
@@ -40,7 +41,7 @@ async function makeObject(overrides: Record<string, unknown> = {}) {
   });
 }
 
-async function makeShare(objId: mongoose.Types.ObjectId, bucketId: mongoose.Types.ObjectId, role = "viewer") {
+async function makeShare(objId: mongoose.Types.ObjectId, bucketId: mongoose.Types.ObjectId, role: "viewer" | "commenter" | "editor" = "viewer") {
   return DirectShare.create({
     objectId: objId,
     bucketId,

@@ -27,12 +27,15 @@ async function addMember(userId: string, role = "member", orgId = "org_1") {
 }
 
 async function makeObject(overrides: Record<string, unknown> = {}) {
-  const bucket = await Bucket.create({ userId: "org:org_1", ownerScope: "organization", orgId: "org_1", name: "workspace", b2BucketId: "xenode-organization-dev" });
+  const bucket = await Bucket.findOneAndUpdate(
+    { systemKey: "drive" },
+    { $setOnInsert: { systemKey: "drive", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" } },
+    { upsert: true, new: true },
+  );
   return StorageObject.create({
-    bucketId: bucket._id,
-    userId: "org:org_1",
-    ownerScope: "organization",
-    orgId: "org_1",
+    bucketId: bucket!._id,
+    spaceId: "space_org_org_1",
+    createdByAccountId: "member_1",
     key: "workspaces/org_1/objects/a.bin",
     size: 100,
     contentType: "text/plain",
@@ -119,7 +122,7 @@ describe("org collaboration browse + star", () => {
       bucketId: obj.bucketId,
       createdBy: "owner_1",
       recipients: [
-        { recipientUserId: "guest_1", recipientEmail: "g@e.com", wrappedShareKey: "k", accessType: "view", downloadCount: 0 },
+        { recipientUserId: "guest_1", recipientEmail: "g@e.com", wrappedShareKey: "k", accessType: "viewer", downloadCount: 0 },
       ],
       isRevoked: false,
     });
@@ -129,7 +132,7 @@ describe("org collaboration browse + star", () => {
     expect(res.status).toBe(200); // guests may view what's shared with them
     expect(body.shares).toHaveLength(1);
     expect(body.shares[0].type).toBe("direct");
-    // Legacy "view" normalizes to the "viewer" role.
+    // The "viewer" access type surfaces as the "viewer" role.
     expect(body.shares[0].role).toBe("viewer");
     // The recipient gets their OWN wrapped share key (RSA-encrypted to them) so
     // the client can decrypt the file — same contract as /api/direct-shares/[id].

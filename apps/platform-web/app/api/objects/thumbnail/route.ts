@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
     await dbConnect();
 
     const bucket = await Bucket.findOne(
-      ctx ? bucketOwnershipClause(ctx) : { userId: "system" },
+      ctx ? bucketOwnershipClause(ctx) : { systemKey: "drive" },
     );
 
     if (!bucket) {

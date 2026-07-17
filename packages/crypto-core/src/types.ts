@@ -25,6 +25,8 @@ export interface CryptoEnvelope extends EnvelopeContext {
   ciphertext: string;
   iv: string;
   aadVersion: 1;
+  /** KDF parameters for password/recovery envelopes (e.g. Argon2id); persisted alongside the envelope. */
+  kdfParams?: Argon2idParams | Record<string, unknown>;
   createdAt: string;
   status: "active" | "retired" | "revoked";
 }

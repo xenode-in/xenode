@@ -26,6 +26,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   bucketOwnershipClause,
   isAuthzError,
+  objectOwnershipClause,
   requireAccessContext,
   toJsonResponse,
 } from "@/lib/authz";
@@ -33,6 +34,7 @@ import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -79,16 +81,23 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
+    const allowedSystemPrefix =
+      ctx.spaceType === "organization"
+        ? orgObjectKeyPrefix(ctx.organizationId!)
+        : ctx.spaceType === "team"
+          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
+          : `users/${ctx.userId}/`;
+
     const query: Record<string, unknown> = {
       bucketId,
+      ...objectOwnershipClause(ctx),
       deletedAt: { $exists: false },
       isSidecar: { $ne: true },
     };
 
-    // Mirror `/api/objects` "system bucket → scope to user's prefix" rule.
+    // Mirror `/api/objects` "system bucket → scope to space prefix" rule.
     if (bucket.systemKey === "drive") {
-      const prefix = `users/${userId}/`;
-      query.key = { $gte: prefix, $lt: prefix + "￿" };
+      query.key = { $gte: allowedSystemPrefix, $lt: allowedSystemPrefix + "￿" };
     }
 
     if (mediaCategoryFilter) {

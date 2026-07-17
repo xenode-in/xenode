@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
         (workspacePrefix && key.startsWith(workspacePrefix)),
     );
     const bucket = await Bucket.findOne(
-      ctx && hasScopedKeys ? bucketOwnershipClause(ctx) : { userId: "system" },
+      ctx && hasScopedKeys ? bucketOwnershipClause(ctx) : { systemKey: "drive" },
     )
       .select("b2BucketId")
       .lean<{ b2BucketId: string }>();
