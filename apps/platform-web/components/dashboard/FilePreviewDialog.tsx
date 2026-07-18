@@ -1975,7 +1975,7 @@ export function FilePreviewDialog({
     window.location.assign(editorPath + "?" + params.toString());
   };
   const openInIsolatedOfficeEditor = () =>
-    openInXenodeSheetsAt("/sheets-v2/editor");
+    openInXenodeSheetsAt("/office-editor/editor");
   const renderContent = () => {
     let innerContent = null;
 

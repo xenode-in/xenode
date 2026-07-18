@@ -250,7 +250,7 @@ export default function SharedWithMeDetailPage() {
                   setModalOpen(true);
                   return;
                 }
-                window.location.assign(`/sheets-v2/editor?shareId=${shareId}`);
+                window.location.assign(`/office-editor/editor?shareId=${shareId}`);
               }}
             >
               <Table2 className="mr-2 h-4 w-4" />

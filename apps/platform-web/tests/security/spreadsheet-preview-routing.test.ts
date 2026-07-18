@@ -21,7 +21,7 @@ describe("spreadsheet preview routing", () => {
     expect(dialog).toContain("ZoomableImage");
     expect(dialog).toContain("SafePdfPreview");
     expect(dialog).toContain("SafeTextPreview");
-    expect(dialog).toContain("/sheets-v2/editor");
+    expect(dialog).toContain("/office-editor/editor");
     expect(dialog).not.toContain("<iframe");
     expect(dialog).not.toContain("<object");
     expect(dialog).not.toContain("<embed");
@@ -50,10 +50,10 @@ describe("spreadsheet preview routing", () => {
     expect(hdLoader).not.toContain("decryptedContentType || data.contentType");
   });
 
-  it("retains the isolated OnlyOffice v2 route", () => {
+  it("retains the isolated Office editor route", () => {
     expect(
       existsSync(
-        join(process.cwd(), "app/(sheets-v2)/sheets-v2/editor/page.tsx"),
+        join(process.cwd(), "app/(office-editor)/office-editor/editor/page.tsx"),
       ),
     ).toBe(true);
   });

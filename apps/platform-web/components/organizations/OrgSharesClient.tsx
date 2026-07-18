@@ -252,7 +252,7 @@ function SharedWithMe({ orgId }: { orgId: string }) {
       return;
     }
     if (row.object?.mediaCategory === "excel") {
-      window.location.assign(`/sheets-v2/editor?shareId=${row.id}`);
+      window.location.assign(`/office-editor/editor?shareId=${row.id}`);
       return;
     }
     setPreview(row);
@@ -343,7 +343,7 @@ function SharedWithMe({ orgId }: { orgId: string }) {
                         setModalOpen(true);
                         return;
                       }
-                      window.location.assign(`/sheets-v2/editor?shareId=${row.id}`);
+                      window.location.assign(`/office-editor/editor?shareId=${row.id}`);
                     }}
                     aria-label="Open in Xenode Sheets"
                     title="Open in Xenode Sheets"

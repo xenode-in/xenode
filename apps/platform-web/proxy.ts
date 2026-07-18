@@ -30,16 +30,14 @@ const ADMIN_HOSTNAMES = [
   "admin.localhost:3000",
 ];
 
-const SHEETS_V2_HOSTNAMES = [
+const RETIRED_HOSTNAMES = [
   "sheets-v2.xenode.in",
   "sheets-v2.localhost",
-  "sheets-v2.localhost:3000",
 ];
 
 const FILE_RUNTIME_HOSTNAMES = [
   "preview.xenode.in",
   "edit.xenode.in",
-  "sheets-v2.xenode.in",
 ];
 
 /**
@@ -55,7 +53,7 @@ const FILE_RUNTIME_HOSTNAMES = [
  * surfaces (/api/admin, /api/cron, payment webhooks) are NOT gated
  * here; they enforce their own (public-token / non-session) auth.
  */
-const PROTECTED_PAGE_PREFIXES = ["/dashboard", "/sync", "/sheets", "/sheets-v2"];
+const PROTECTED_PAGE_PREFIXES = ["/dashboard", "/sync"];
 const PROTECTED_API_PREFIXES = [
   "/api/objects",
   "/api/buckets",
@@ -98,9 +96,14 @@ function authGate(req: NextRequest): NextResponse | null {
 
 export function proxy(req: NextRequest) {
   const hostname = req.headers.get("host") || "";
+  const hostnameWithoutPort = hostname.split(":")[0];
   const { pathname } = req.nextUrl;
 
-  if (FILE_RUNTIME_HOSTNAMES.includes(hostname.split(":")[0])) {
+  if (RETIRED_HOSTNAMES.includes(hostnameWithoutPort)) {
+    return new NextResponse("Not Found", { status: 404 });
+  }
+
+  if (FILE_RUNTIME_HOSTNAMES.includes(hostnameWithoutPort)) {
     return new NextResponse("Not Found", { status: 404 });
   }
 
@@ -144,30 +147,6 @@ export function proxy(req: NextRequest) {
     //    /dashboard →  /admin/dashboard
     const rewriteUrl = req.nextUrl.clone();
     rewriteUrl.pathname = `/admin${pathname === "/" ? "" : pathname}`;
-    return NextResponse.rewrite(rewriteUrl);
-  }
-
-  const isSheetsV2Host = SHEETS_V2_HOSTNAMES.some(
-    (h) => hostname === h || hostname.startsWith(h),
-  );
-
-  // Sheets v2 subdomain: the current /sheets editor is never rewritten here.
-  if (isSheetsV2Host) {
-    if (
-      pathname.startsWith("/api/") ||
-      pathname.startsWith("/internal-editors/")
-    ) {
-      return NextResponse.next();
-    }
-    if (pathname.startsWith("/sheets-v2")) {
-      const gated = authGate(req);
-      return gated ?? NextResponse.next();
-    }
-    const gated = authGate(req);
-    if (gated) return gated;
-    const rewriteUrl = req.nextUrl.clone();
-    rewriteUrl.pathname =
-      "/sheets-v2" + (pathname === "/" ? "" : pathname);
     return NextResponse.rewrite(rewriteUrl);
   }
 
