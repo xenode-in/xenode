@@ -12,8 +12,8 @@ import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import { createTestProductKey, SpaceProductKey } from "@/tests/helpers/spaceProductKeys";
 import { organizationSpaceId } from "@xenode/spaces/ids";
+import { UserVault } from "@xenode/database";
 import OrgMembershipHistory from "@/models/OrgMembershipHistory";
-import UserKeyVault from "@/models/UserKeyVault";
 
 const mockedGetServerSession = vi.mocked(getServerSession);
 
@@ -142,15 +142,26 @@ function postClaim() {
 }
 
 async function addVault(userId: string, publicKey = `pub-${userId}`) {
-  await UserKeyVault.create({
-    userId,
-    publicKey,
-    encryptedPrivateKey: "x",
-    pbkdf2Salt: "x",
-    iv: "x",
-    encryptedRecoveryWords: "x",
-    recoveryIv: "x",
-    recoverySalt: "x",
+  const envelope = (type: "password" | "recovery" | "sharing-private-key") => ({
+    formatVersion: 2,
+    algorithm: "AES-256-GCM",
+    keyId: type === "sharing-private-key" ? type : "ark",
+    keyVersion: 1,
+    ciphertext: "ciphertext-for-test",
+    iv: "test-initial-vector",
+    aadVersion: 1,
+    createdAt: new Date(),
+    status: "active",
+  });
+  await UserVault.create({
+    accountId: userId,
+    vaultRevision: 1,
+    passwordEnvelope: envelope("password"),
+    recoveryEnvelope: envelope("recovery"),
+    deviceEnvelopes: [],
+    sharingPublicKey: publicKey,
+    wrappedSharingPrivateKey: envelope("sharing-private-key"),
+    formatVersion: 2,
   });
 }
 

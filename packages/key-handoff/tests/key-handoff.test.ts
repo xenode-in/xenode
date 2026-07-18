@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   consumeProductSpaceKey,
+  consumeProductKeyBundle,
   createProductHandoffRequest,
   exportHandoffPublicKey,
   generateHandoffKeyPair,
   parseSealedHandoff,
   sealProductSpaceKey,
+  sealProductKeyBundle,
   type HandoffBinding,
   type HandoffStore,
 } from "../src";
@@ -83,6 +85,50 @@ describe("encrypted key handoff", () => {
         ),
       ).rejects.toThrow("binding");
     }
+  });
+
+  it("delivers the Drive product and subordinate sharing keys only to the bound Space", async () => {
+    const destination = await generateHandoffKeyPair();
+    const driveBinding: HandoffBinding = {
+      ...binding,
+      clientId: "xenode-drive-web",
+      productId: "drive",
+      destinationOrigin: "https://drive.xenode.in",
+    };
+    const bundle = {
+      productSpaceKey: crypto.getRandomValues(new Uint8Array(32)),
+      sharingPrivateKeyPkcs8: crypto.getRandomValues(new Uint8Array(2_400)),
+      sharingPublicKeySpki: crypto.getRandomValues(new Uint8Array(550)),
+    };
+    const sealed = await sealProductKeyBundle(
+      bundle,
+      await exportHandoffPublicKey(destination.publicKey),
+      driveBinding,
+      new Date(Date.now() + 60_000),
+    );
+    const serialized = JSON.stringify(sealed);
+    expect(serialized).not.toContain(
+      Buffer.from(bundle.productSpaceKey).toString("base64url"),
+    );
+    expect(serialized).not.toContain(
+      Buffer.from(bundle.sharingPrivateKeyPkcs8).toString("base64url"),
+    );
+
+    const opened = await consumeProductKeyBundle(
+      sealed,
+      destination.privateKey,
+      driveBinding,
+      oneTimeStore(),
+    );
+    expect(opened).toEqual(bundle);
+    await expect(
+      consumeProductKeyBundle(
+        sealed,
+        destination.privateKey,
+        { ...driveBinding, spaceId: "space_2" },
+        oneTimeStore(),
+      ),
+    ).rejects.toThrow("binding");
   });
 
   it("creates a fully bound broker request and rejects malformed payloads", async () => {

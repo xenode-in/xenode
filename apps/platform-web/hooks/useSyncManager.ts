@@ -1,11 +1,32 @@
 import { useEffect, useCallback, useState, useRef } from "react";
 import { getDb, searchIndex, LocalFile } from "@/lib/db/local";
 import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
-import { loadCachedKeys } from "@/lib/crypto/keyCache";
 import { useSession } from "@/lib/auth/client";
+import { useCrypto } from "@/contexts/CryptoContext";
+
+interface SyncFile {
+  _id: unknown;
+  key: string;
+  size: number;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+  bucketId: unknown;
+  deletedAt?: string | Date | null;
+  encryptedName?: string | null;
+  encryptedDisplayName?: string | null;
+  encryptedContentType?: string | null;
+  contentType?: string;
+  isEncrypted?: boolean;
+  tags?: string[];
+  thumbnail?: string;
+  mediaCategory?: string;
+  uploadSource?: LocalFile["uploadSource"];
+  syncContentFp?: string;
+}
 
 export function useSyncManager() {
   const { data: session } = useSession();
+  const { metadataKey } = useCrypto();
   const userId = session?.user?.id;
   const [isSyncing, setIsSyncing] = useState(false);
   const syncLock = useRef(false);
@@ -22,12 +43,11 @@ export function useSyncManager() {
       let hasMore = true;
 
       while (hasMore) {
-        const keys = await loadCachedKeys();
         const res = await fetch(`/api/files/sync?lastSync=${lastSync}`);
         if (!res.ok) break;
 
-        const data = await res.json();
-        const files: any[] = data.files;
+        const data = (await res.json()) as { files?: SyncFile[] };
+        const files = data.files;
         if (!files || files.length === 0) break;
 
         const toStore: LocalFile[] = [];
@@ -44,8 +64,8 @@ export function useSyncManager() {
             id: String(f._id),
             key: f.key,
             encryptedName: f.isEncrypted && f.encryptedName ? f.encryptedName : null,
-            encryptedDisplayName: f.encryptedDisplayName || null,
-            encryptedContentType: f.encryptedContentType || null,
+            encryptedDisplayName: f.encryptedDisplayName || undefined,
+            encryptedContentType: f.encryptedContentType || undefined,
             // name is only used in the MiniSearch index; we'll fill it below
             name: fallbackName,
             size: f.size,
@@ -82,7 +102,6 @@ export function useSyncManager() {
 
       // Rebuild MiniSearch index in-memory with decrypted names
       // Dexie holds encryptedName; only RAM holds plaintext
-      const keys = await loadCachedKeys();
       const allFiles = await db.files.toArray();
 
       const indexEntries = await Promise.all(
@@ -91,7 +110,7 @@ export function useSyncManager() {
           const nameToDecrypt = f.encryptedDisplayName || f.encryptedName;
           if (f.isEncrypted && nameToDecrypt) {
             try {
-              name = await decryptMetadataString(nameToDecrypt, keys?.metadataKey || null);
+              name = await decryptMetadataString(nameToDecrypt, metadataKey);
             } catch {
               name = "Encrypted File";
             }
@@ -108,7 +127,7 @@ export function useSyncManager() {
       syncLock.current = false;
       setIsSyncing(false);
     }
-  }, [userId]);
+  }, [metadataKey, userId]);
 
   useEffect(() => {
     sync();

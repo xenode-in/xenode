@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { UserVault } from "@xenode/database";
 import {
   isAuthzError,
   requireAccessContext,
@@ -6,7 +7,6 @@ import {
 } from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import { User } from "@/models/User";
-import UserKeyVault from "@/models/UserKeyVault";
 
 export const dynamic = "force-dynamic";
 
@@ -34,11 +34,13 @@ export async function POST(request: NextRequest) {
       .lean();
 
     const userIds = users.map((user) => String(user._id));
-    const vaults = await UserKeyVault.find({ userId: { $in: userIds } })
-      .select("userId publicKey")
+    const vaults = await UserVault.find({ accountId: { $in: userIds } })
+      .select("accountId sharingPublicKey")
       .lean();
 
-    const vaultByUserId = new Map(vaults.map((vault) => [vault.userId, vault.publicKey]));
+    const vaultByUserId = new Map(
+      vaults.map((vault) => [vault.accountId, vault.sharingPublicKey]),
+    );
     const userByEmail = new Map(
       users.map((user) => [String(user.email).toLowerCase(), user]),
     );

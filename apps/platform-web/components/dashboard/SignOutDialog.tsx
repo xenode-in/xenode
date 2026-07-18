@@ -30,7 +30,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { LogOut, ShieldAlert } from "lucide-react";
 import { signOut } from "@/lib/auth/client";
-import { clearCachedKeys } from "@/lib/crypto/keyCache";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { useRouter } from "next/navigation";
 
@@ -41,7 +40,7 @@ interface SignOutDialogProps {
 
 export function SignOutDialog({ open, onOpenChange }: SignOutDialogProps) {
   const router = useRouter();
-  const { lock, logout } = useCrypto();
+  const { logout } = useCrypto();
   const [clearKeys, setClearKeys] = useState(false);
   const [loading, setLoading] = useState(false);
 
@@ -50,11 +49,6 @@ export function SignOutDialog({ open, onOpenChange }: SignOutDialogProps) {
     try {
       // Always log out (clears IDB if userId is present)
       await logout();
-
-      // Optionally wipe IDB cache too (redundant now if logout handles it, but kept for cache explicit clear)
-      if (clearKeys) {
-        await clearCachedKeys();
-      }
 
       await signOut();
       router.push("/auth/login");

@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { NextRequest, NextResponse } from "next/server";
+import { UserVault } from "@xenode/database";
 import {
   AuthzError,
   isAuthzError,
@@ -10,7 +11,6 @@ import dbConnect from "@/lib/mongodb";
 import { assertOrganizationsEnabled } from "@/lib/orgs/access";
 import { emitNotificationToMany } from "@/lib/notifications/emit";
 import type { OrganizationRecord } from "@/lib/orgs/access";
-import UserKeyVault from "@/models/UserKeyVault";
 
 export const dynamic = "force-dynamic";
 
@@ -88,10 +88,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     // Encrypted role, no key yet → require the recipient's vault to exist so an
     // admin can actually wrap the key for their public key.
-    const vault = await UserKeyVault.findOne({ userId: ctx.userId })
-      .select("publicKey")
-      .lean<{ publicKey?: string }>();
-    if (!vault?.publicKey) {
+    const vault = await UserVault.findOne({ accountId: ctx.userId })
+      .select("sharingPublicKey")
+      .lean<{ sharingPublicKey?: string }>();
+    if (!vault?.sharingPublicKey) {
       return NextResponse.json({ ready: false, needsVault: true });
     }
 

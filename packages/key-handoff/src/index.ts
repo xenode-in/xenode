@@ -286,6 +286,170 @@ export async function sealProductSpaceKey(
   };
 }
 
+export interface ProductKeyHandoffBundle {
+  productSpaceKey: Uint8Array;
+  sharingPrivateKeyPkcs8?: Uint8Array;
+  sharingPublicKeySpki?: Uint8Array;
+}
+
+type SerializedProductKeyHandoffBundle = {
+  version: 1;
+  productSpaceKey: string;
+  sharingPrivateKeyPkcs8?: string;
+  sharingPublicKeySpki?: string;
+};
+
+function serializeProductKeyBundle(bundle: ProductKeyHandoffBundle): Uint8Array {
+  if (bundle.productSpaceKey.length !== 32) {
+    throw new Error("ProductSpaceKey must be 256 bits");
+  }
+  const hasPrivate = bundle.sharingPrivateKeyPkcs8 !== undefined;
+  const hasPublic = bundle.sharingPublicKeySpki !== undefined;
+  if (hasPrivate !== hasPublic) {
+    throw new Error("Sharing key handoff requires both key halves");
+  }
+  if (
+    (bundle.sharingPrivateKeyPkcs8?.length ?? 0) > 8_192 ||
+    (bundle.sharingPublicKeySpki?.length ?? 0) > 2_048
+  ) {
+    throw new Error("Sharing key handoff is too large");
+  }
+  const serialized: SerializedProductKeyHandoffBundle = {
+    version: 1,
+    productSpaceKey: base64Url(bundle.productSpaceKey),
+    ...(bundle.sharingPrivateKeyPkcs8
+      ? { sharingPrivateKeyPkcs8: base64Url(bundle.sharingPrivateKeyPkcs8) }
+      : {}),
+    ...(bundle.sharingPublicKeySpki
+      ? { sharingPublicKeySpki: base64Url(bundle.sharingPublicKeySpki) }
+      : {}),
+  };
+  return new TextEncoder().encode(JSON.stringify(serialized));
+}
+
+function parseProductKeyBundle(plaintext: Uint8Array): ProductKeyHandoffBundle {
+  let value: Partial<SerializedProductKeyHandoffBundle>;
+  try {
+    value = JSON.parse(new TextDecoder().decode(plaintext)) as Partial<SerializedProductKeyHandoffBundle>;
+  } catch {
+    throw new Error("Invalid product key handoff bundle");
+  }
+  if (
+    value.version !== 1 ||
+    typeof value.productSpaceKey !== "string" ||
+    (value.sharingPrivateKeyPkcs8 === undefined) !==
+      (value.sharingPublicKeySpki === undefined)
+  ) {
+    throw new Error("Invalid product key handoff bundle");
+  }
+  const productSpaceKey = fromBase64Url(value.productSpaceKey);
+  if (productSpaceKey.length !== 32) {
+    throw new Error("ProductSpaceKey must be 256 bits");
+  }
+  return {
+    productSpaceKey,
+    ...(typeof value.sharingPrivateKeyPkcs8 === "string"
+      ? { sharingPrivateKeyPkcs8: fromBase64Url(value.sharingPrivateKeyPkcs8) }
+      : {}),
+    ...(typeof value.sharingPublicKeySpki === "string"
+      ? { sharingPublicKeySpki: fromBase64Url(value.sharingPublicKeySpki) }
+      : {}),
+  };
+}
+
+async function sealHandoffPayload(
+  plaintext: Uint8Array,
+  destinationPublicKey: JsonWebKey,
+  binding: HandoffBinding,
+  expiresAt: Date,
+): Promise<SealedHandoff> {
+  if (expiresAt.getTime() <= Date.now()) throw new Error("Handoff already expired");
+  const sender = await generateHandoffKeyPair();
+  const destination = await importPublicKey(destinationPublicKey);
+  const key = await deriveAesKey(sender.privateKey, destination, binding);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ciphertext = await crypto.subtle.encrypt(
+    {
+      name: "AES-GCM",
+      iv: iv as BufferSource,
+      additionalData: aad(binding) as BufferSource,
+      tagLength: 128,
+    },
+    key,
+    plaintext as BufferSource,
+  );
+  return {
+    binding: { ...binding },
+    senderPublicKey: await exportHandoffPublicKey(sender.publicKey),
+    destinationKeyFingerprint: await fingerprintHandoffPublicKey(destinationPublicKey),
+    iv: base64Url(iv),
+    ciphertext: base64Url(new Uint8Array(ciphertext)),
+    expiresAt: expiresAt.toISOString(),
+  };
+}
+
+async function consumeHandoffPayload(
+  sealed: SealedHandoff,
+  destinationPrivateKey: CryptoKey,
+  expected: HandoffBinding,
+  store: HandoffStore,
+  now = new Date(),
+): Promise<Uint8Array> {
+  if (
+    JSON.stringify(sealed.binding) !== JSON.stringify(expected) ||
+    new Date(sealed.expiresAt).getTime() <= now.getTime()
+  ) {
+    throw new Error("Handoff binding mismatch or expiry");
+  }
+  if (!(await store.consume(expected.transactionId, now))) {
+    throw new Error("Handoff already consumed");
+  }
+  const senderPublic = await importPublicKey(sealed.senderPublicKey);
+  const key = await deriveAesKey(destinationPrivateKey, senderPublic, expected);
+  try {
+    return new Uint8Array(
+      await crypto.subtle.decrypt(
+        {
+          name: "AES-GCM",
+          iv: fromBase64Url(sealed.iv) as BufferSource,
+          additionalData: aad(expected) as BufferSource,
+          tagLength: 128,
+        },
+        key,
+        fromBase64Url(sealed.ciphertext) as BufferSource,
+      ),
+    );
+  } catch (error) {
+    throw new Error("Handoff decryption failed", { cause: error });
+  }
+}
+
+export async function sealProductKeyBundle(
+  bundle: ProductKeyHandoffBundle,
+  destinationPublicKey: JsonWebKey,
+  binding: HandoffBinding,
+  expiresAt: Date,
+): Promise<SealedHandoff> {
+  return sealHandoffPayload(
+    serializeProductKeyBundle(bundle),
+    destinationPublicKey,
+    binding,
+    expiresAt,
+  );
+}
+
+export async function consumeProductKeyBundle(
+  sealed: SealedHandoff,
+  destinationPrivateKey: CryptoKey,
+  expected: HandoffBinding,
+  store: HandoffStore,
+  now = new Date(),
+): Promise<ProductKeyHandoffBundle> {
+  return parseProductKeyBundle(
+    await consumeHandoffPayload(sealed, destinationPrivateKey, expected, store, now),
+  );
+}
+
 export async function consumeProductSpaceKey(
   sealed: SealedHandoff,
   destinationPrivateKey: CryptoKey,

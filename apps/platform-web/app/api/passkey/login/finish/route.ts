@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { UserVault } from "@xenode/database";
 import { verifyAuthenticationResponse } from "@simplewebauthn/server";
 import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import PasskeyChallenge from "@/models/PasskeyChallenge";
 import Passkey from "@/models/Passkey";
-import UserKeyVault from "@/models/UserKeyVault";
 import {
   fromStoredCredentialId,
   toLegacyStoredCredentialId,
@@ -112,14 +112,14 @@ export async function POST(req: NextRequest) {
     await passkey.save();
 
     // 5. Return vault-unlock material — no session is minted here.
-    const vault = await UserKeyVault.findOne({ userId: passkey.userId });
+    const vault = await UserVault.findOne({ accountId: passkey.userId }).lean();
 
     const response = NextResponse.json({
       success: true,
       hasVault: !!vault,
       encryptedVaultKey: passkey.encryptedVaultKey,
       vaultKeyIV: passkey.vaultKeyIV,
-      publicKey: vault?.publicKey,
+      publicKey: vault?.sharingPublicKey,
     });
 
     // 6. Cleanup challenge

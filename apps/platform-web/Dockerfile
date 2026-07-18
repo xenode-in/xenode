@@ -46,9 +46,6 @@ COPY --from=builder --chown=nextjs:nodejs /repo/apps/platform-web/next.config.ts
 COPY --from=builder --chown=nextjs:nodejs /repo/apps/platform-web/server.mjs ./apps/platform-web/server.mjs
 COPY --from=builder --chown=nextjs:nodejs /repo/apps/platform-web/proxy.ts ./apps/platform-web/proxy.ts
 COPY --from=builder --chown=nextjs:nodejs /repo/apps/platform-web/instrumentation.ts ./apps/platform-web/instrumentation.ts
-# CLI upload script for server-side file uploads.
-COPY --from=builder --chown=nextjs:nodejs /repo/apps/platform-web/scripts/cli-upload.js ./apps/platform-web/scripts/cli-upload.js
-
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000

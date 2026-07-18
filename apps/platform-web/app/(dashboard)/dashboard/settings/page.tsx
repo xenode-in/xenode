@@ -2,8 +2,6 @@ import { requireAuth } from "@/lib/auth/session";
 import { Shield, User, Mail, Calendar, Palette, HardDrive, ExternalLink } from "lucide-react";
 import { ThemeSelector } from "@/components/settings/theme-selector";
 import { PreviewCacheSection } from "@/components/settings/PreviewCacheSection";
-import { VaultRecoverySection } from "@/components/settings/VaultRecoverySection";
-import { PasskeySettingsSection } from "@/components/settings/PasskeySettingsSection";
 
 const ACCOUNTS_ORIGIN =
   process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
@@ -76,8 +74,6 @@ export default async function SettingsPage() {
           Security
         </h3>
         <div className="space-y-4">
-          <VaultRecoverySection />
-          <PasskeySettingsSection />
           <div className="flex items-center justify-between py-3">
             <div>
               <p className="text-sm text-foreground">Account security</p>

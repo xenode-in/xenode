@@ -1,11 +1,24 @@
 import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ProductSession } from "@xenode/database";
+import { ProductSession, UserVault } from "@xenode/database";
 import { POST as activePOST } from "@/app/api/orgs/active/route";
 import { POST as recipientsPOST } from "@/app/api/orgs/recipients/route";
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
-import UserKeyVault from "@/models/UserKeyVault";
+
+function testEnvelope(type: "password" | "recovery" | "sharing-private-key") {
+  return {
+    formatVersion: 2,
+    algorithm: "AES-256-GCM",
+    keyId: type === "sharing-private-key" ? type : "ark",
+    keyVersion: 1,
+    ciphertext: "ciphertext-for-test",
+    iv: "test-initial-vector",
+    aadVersion: 1,
+    createdAt: new Date(),
+    status: "active",
+  };
+}
 
 const mockedGetServerSession = vi.mocked(getServerSession);
 type MockSession = NonNullable<Awaited<ReturnType<typeof getServerSession>>>;
@@ -112,15 +125,15 @@ describe("organization UI support APIs", () => {
     await addUser("owner_1", "owner@example.com");
     await addUser("user_1", "invitee@example.com");
     await addUser("user_2", "novault@example.com");
-    await UserKeyVault.create({
-      userId: "user_1",
-      publicKey: "recipient-public-key",
-      encryptedPrivateKey: "encrypted",
-      pbkdf2Salt: "salt",
-      iv: "iv",
-      encryptedRecoveryWords: "words",
-      recoveryIv: "recovery-iv",
-      recoverySalt: "recovery-salt",
+    await UserVault.create({
+      accountId: "user_1",
+      vaultRevision: 1,
+      passwordEnvelope: testEnvelope("password"),
+      recoveryEnvelope: testEnvelope("recovery"),
+      deviceEnvelopes: [],
+      sharingPublicKey: "recipient-public-key",
+      wrappedSharingPrivateKey: testEnvelope("sharing-private-key"),
+      formatVersion: 2,
     });
 
     const response = await recipientsPOST(

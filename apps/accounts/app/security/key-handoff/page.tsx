@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import {
   derivePasswordWrappingKey,
+  decodeBase64Url,
   openEnvelope,
   openRsaOaepProductSpaceKey,
   type Argon2idParams,
@@ -12,6 +13,7 @@ import { FIRST_PARTY_CLIENTS } from "@xenode/identity-core";
 import {
   decodeHandoffPublicKey,
   sealProductSpaceKey,
+  sealProductKeyBundle,
   type HandoffBinding,
 } from "@xenode/key-handoff";
 import { deriveArgon2id } from "@/lib/argon2";
@@ -21,6 +23,7 @@ type VaultResponse = {
   accountId: string;
   vault: {
     passwordEnvelope: VaultEnvelope;
+    sharingPublicKey: string;
     wrappedSharingPrivateKey: CryptoEnvelope;
   } | null;
 };
@@ -66,14 +69,9 @@ function parseBrokerRequest(): {
   } catch {
     throw new Error("Invalid destination origin.");
   }
-  const allowedOrigin =
-    client?.redirectUris.some(
-      (redirectUri) => new URL(redirectUri).origin === destinationOrigin,
-    ) ?? false;
   if (
     !client ||
     client.productId !== binding.productId ||
-    !allowedOrigin ||
     destinationOrigin !== binding.destinationOrigin ||
     !/^[A-Za-z0-9_-]{16,128}$/u.test(binding.transactionId) ||
     !binding.accountId ||
@@ -121,6 +119,7 @@ export default function KeyHandoffBrokerPage() {
     let passwordKey: Uint8Array | undefined;
     let accountRootKey: Uint8Array | undefined;
     let productSpaceKey: Uint8Array | undefined;
+    let sharingPrivateKey: Uint8Array | undefined;
     try {
       const { binding, destinationPublicKey } = parseBrokerRequest();
       const [vault, productKeyPayload] = await Promise.all([
@@ -158,6 +157,18 @@ export default function KeyHandoffBrokerPage() {
       ) {
         throw new Error("Product key binding mismatch.");
       }
+      if (binding.productId === "drive" || stored.algorithm === "RSA-OAEP-256") {
+        sharingPrivateKey = await openEnvelope(
+          vault.vault.wrappedSharingPrivateKey,
+          accountRootKey,
+          {
+            accountId: binding.accountId,
+            keyId: "sharing-private-key",
+            keyVersion: 1,
+            type: "sharing-private-key",
+          },
+        );
+      }
       if (stored.algorithm === "AES-256-GCM") {
         if (!stored.iv) throw new Error("Product key envelope is missing its IV.");
         const productEnvelope: CryptoEnvelope = {
@@ -184,32 +195,29 @@ export default function KeyHandoffBrokerPage() {
           type: "product-space-key",
         });
       } else {
-        let sharingPrivateKey: Uint8Array | undefined;
-        try {
-          sharingPrivateKey = await openEnvelope(
-            vault.vault.wrappedSharingPrivateKey,
-            accountRootKey,
-            {
-              accountId: binding.accountId,
-              keyId: "sharing-private-key",
-              keyVersion: 1,
-              type: "sharing-private-key",
-            },
-          );
-          productSpaceKey = await openRsaOaepProductSpaceKey(
-            stored.ciphertext,
-            sharingPrivateKey,
-          );
-        } finally {
-          sharingPrivateKey?.fill(0);
-        }
+        if (!sharingPrivateKey) throw new Error("Sharing private key is unavailable.");
+        productSpaceKey = await openRsaOaepProductSpaceKey(
+          stored.ciphertext,
+          sharingPrivateKey,
+        );
       }
-      const sealed = await sealProductSpaceKey(
-        productSpaceKey,
-        destinationPublicKey,
-        binding,
-        new Date(Date.now() + 90_000),
-      );
+      const sealed = binding.productId === "drive"
+        ? await sealProductKeyBundle(
+            {
+              productSpaceKey,
+              sharingPrivateKeyPkcs8: sharingPrivateKey,
+              sharingPublicKeySpki: decodeBase64Url(vault.vault.sharingPublicKey),
+            },
+            destinationPublicKey,
+            binding,
+            new Date(Date.now() + 90_000),
+          )
+        : await sealProductSpaceKey(
+            productSpaceKey,
+            destinationPublicKey,
+            binding,
+            new Date(Date.now() + 90_000),
+          );
       await responseJson<{ transactionId: string }>(
         await fetch("/api/key-handoffs", {
           method: "POST",
@@ -238,6 +246,7 @@ export default function KeyHandoffBrokerPage() {
       setStatus(error instanceof Error ? error.message : "Key handoff failed.");
     } finally {
       productSpaceKey?.fill(0);
+      sharingPrivateKey?.fill(0);
       accountRootKey?.fill(0);
       passwordKey?.fill(0);
       setBusy(false);
@@ -248,8 +257,8 @@ export default function KeyHandoffBrokerPage() {
     <main style={{ maxWidth: 640, margin: "0 auto", padding: 64 }}>
       <h1>Unlock product</h1>
       <p style={{ color: "#a1a1aa" }}>
-        Accounts will unwrap only the requested ProductSpaceKey. Your Account
-        Root Key never leaves this browser.
+        Accounts unwraps the requested ProductSpaceKey and, for Drive, its
+        subordinate sharing key. Your Account Root Key never leaves this browser.
       </p>
       <p><strong>Request:</strong> {requestLabel}</p>
       <label htmlFor="handoff-password">Vault password</label>

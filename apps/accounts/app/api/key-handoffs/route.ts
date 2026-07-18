@@ -1,6 +1,6 @@
 import { productSlugSchema, spaceIdSchema } from "@xenode/contracts";
 import { AuditEvent, KeyHandoff, connectDatabase } from "@xenode/database";
-import { FIRST_PARTY_CLIENTS } from "@xenode/identity-core";
+import { resolveFirstPartyClients } from "@xenode/identity-core";
 import { resolveSpaceAccess } from "@xenode/spaces";
 import { getAccountsAuth } from "@/lib/auth";
 
@@ -25,7 +25,10 @@ export async function POST(request: Request) {
 
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body) return Response.json({ error: "Invalid request" }, { status: 400 });
-  const client = FIRST_PARTY_CLIENTS.find(
+  const client = resolveFirstPartyClients({
+    drive: process.env.DRIVE_ORIGIN,
+    photos: process.env.PHOTOS_ORIGIN,
+  }).find(
     (candidate) => candidate.clientId === body.clientId,
   );
   const parsedSpaceId = spaceIdSchema.safeParse(body.spaceId);
