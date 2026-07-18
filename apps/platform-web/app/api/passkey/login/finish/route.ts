@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyAuthenticationResponse } from "@simplewebauthn/server";
-import { makeSignature } from "better-auth/crypto";
-import { getAuth } from "@/lib/auth";
+import { requireAuth } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import PasskeyChallenge from "@/models/PasskeyChallenge";
 import Passkey from "@/models/Passkey";
@@ -16,9 +15,20 @@ import {
   getPasskeyRpId,
 } from "@/lib/passkey-rp";
 
+/**
+ * Complete a passkey (PRF) assertion for VAULT UNLOCK.
+ *
+ * Post OIDC cutover, Drive no longer mints sessions of any kind — login
+ * lives at the Accounts hub. This ceremony now requires an existing Drive
+ * ProductSession and only proves possession of a passkey registered to that
+ * same account, returning the wrapped vault-key material for client-side
+ * unlock.
+ */
 export async function POST(req: NextRequest) {
   try {
-    const { credential, nonce, rememberMe } = await req.json();
+    const session = await requireAuth(req);
+
+    const { credential, nonce } = await req.json();
     if (!credential || !nonce) {
       return NextResponse.json(
         { error: "Missing required fields" },
@@ -63,6 +73,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Passkey not found" }, { status: 404 });
     }
 
+    // Vault unlock must not cross accounts: the asserted passkey has to
+    // belong to the caller's own Drive session.
+    if (passkey.userId !== session.user.id) {
+      return NextResponse.json({ error: "Passkey not found" }, { status: 404 });
+    }
+
     const verificationCredentialId = fromStoredCredentialId(
       passkey.credentialId,
     );
@@ -95,28 +111,7 @@ export async function POST(req: NextRequest) {
     passkey.counter = verification.authenticationInfo.newCounter;
     await passkey.save();
 
-    // 5. Create Better Auth session (Manually)
-    const auth = getAuth();
-    const ctx = await auth.$context;
-
-    // Create session using internal adapter
-    const session = await ctx.internalAdapter.createSession(
-      passkey.userId,
-      false,
-      {
-        userAgent: req.headers.get("user-agent") ?? undefined,
-        ipAddress: req.headers.get("x-forwarded-for") ?? undefined,
-      },
-    );
-
-    if (!session) {
-      return NextResponse.json(
-        { error: "Failed to create session" },
-        { status: 500 },
-      );
-    }
-
-    // 6. Get vault info to return
+    // 5. Return vault-unlock material — no session is minted here.
     const vault = await UserKeyVault.findOne({ userId: passkey.userId });
 
     const response = NextResponse.json({
@@ -127,35 +122,15 @@ export async function POST(req: NextRequest) {
       publicKey: vault?.publicKey,
     });
 
-    const sessionCookie = ctx.authCookies.sessionToken;
-    const signedToken = `${session.token}.${await makeSignature(
-      session.token,
-      ctx.secret,
-    )}`;
-
-    response.cookies.set({
-      name: sessionCookie.name,
-      value: signedToken,
-      httpOnly: sessionCookie.attributes.httpOnly,
-      sameSite: sessionCookie.attributes.sameSite?.toLowerCase() as
-        | "none"
-        | "lax"
-        | "strict"
-        | undefined,
-      secure: sessionCookie.attributes.secure,
-      path: sessionCookie.attributes.path,
-      domain: sessionCookie.attributes.domain,
-      ...(rememberMe === true
-        ? { maxAge: ctx.sessionConfig.expiresIn }
-        : {}),
-    });
-
-    // 7. Cleanup challenge
+    // 6. Cleanup challenge
     await PasskeyChallenge.deleteOne({ _id: challengeObj._id });
 
     return response;
   } catch (err: unknown) {
-    console.error("Login finish error:", err);
+    if (err instanceof Error && err.message === "Unauthorized") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    console.error("Passkey unlock finish error:", err);
     const message = err instanceof Error ? err.message : "Internal error";
     return NextResponse.json({ error: message }, { status: 500 });
   }

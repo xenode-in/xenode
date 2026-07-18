@@ -192,7 +192,7 @@ export default function PlansPageClient() {
   const handleSelect = (slug: string, name: string) => {
     if (!session) {
       toast.error("Please sign in first.");
-      router.push("/login");
+      router.push("/auth/login");
       return;
     }
     // Yearly users switching to monthly: deferred to period end. Open the

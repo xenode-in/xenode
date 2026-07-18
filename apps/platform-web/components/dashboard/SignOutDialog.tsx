@@ -57,11 +57,11 @@ export function SignOutDialog({ open, onOpenChange }: SignOutDialogProps) {
       }
 
       await signOut();
-      router.push("/login");
+      router.push("/auth/login");
     } catch {
       // Sign out anyway even if cleanup fails
       await signOut();
-      router.push("/login");
+      router.push("/auth/login");
     } finally {
       setLoading(false);
       onOpenChange(false);

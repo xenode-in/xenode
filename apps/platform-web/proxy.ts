@@ -21,7 +21,8 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { getSessionCookie } from "better-auth/cookies";
+
+const DRIVE_SESSION_COOKIE = "xenode_drive_session";
 
 const ADMIN_HOSTNAMES = [
   "admin.xenode.in",
@@ -45,12 +46,13 @@ const FILE_RUNTIME_HOSTNAMES = [
  * ── Defense-in-depth auth gate (main domain only) ────────────────────────────
  * A cheap, optimistic credential-presence check (no DB call) that bounces
  * unauthenticated traffic early. Route handlers + the dashboard layout remain
- * the real source of truth. Credential = a better-auth session cookie (web) OR
- * the `x-better-auth-cookie` header sent by the expo() mobile plugin.
+ * the real source of truth. Credential = the host-only Drive ProductSession
+ * cookie (web) OR an `Authorization: Bearer <sessionId>` header (non-browser
+ * clients; mobile re-integrates via the xenode-mobile OIDC client).
  *
  * Scope is deliberately conservative — only unambiguously-private resources.
  * Sharing families (/api/share, /api/direct-shares) and other-auth
- * surfaces (/api/auth, /api/admin, /api/cron, payment webhooks) are NOT gated
+ * surfaces (/api/admin, /api/cron, payment webhooks) are NOT gated
  * here; they enforce their own (public-token / non-session) auth.
  */
 const PROTECTED_PAGE_PREFIXES = ["/dashboard", "/sync", "/sheets", "/sheets-v2"];
@@ -58,7 +60,6 @@ const PROTECTED_API_PREFIXES = [
   "/api/objects",
   "/api/buckets",
   "/api/keys",
-  "/api/sessions",
   "/api/usage",
   "/api/billing",
   "/api/subscriptions",
@@ -67,13 +68,13 @@ const PROTECTED_API_PREFIXES = [
 ];
 
 function hasCredential(req: NextRequest): boolean {
-  if (getSessionCookie(req)) return true;
-  if (req.headers.get("x-better-auth-cookie")) return true;
+  if (req.cookies.get(DRIVE_SESSION_COOKIE)?.value) return true;
+  if (req.headers.get("authorization")?.startsWith("Bearer ")) return true;
   return false;
 }
 
 function authGate(req: NextRequest): NextResponse | null {
-  const { pathname, search } = req.nextUrl;
+  const { pathname } = req.nextUrl;
 
   const isProtectedApi = PROTECTED_API_PREFIXES.some(
     (p) => pathname === p || pathname.startsWith(`${p}/`),
@@ -88,10 +89,10 @@ function authGate(req: NextRequest): NextResponse | null {
   if (isProtectedApi) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  // Kick off the Accounts OIDC flow; it lands back on /dashboard.
   const loginUrl = req.nextUrl.clone();
-  loginUrl.pathname = "/login";
+  loginUrl.pathname = "/auth/login";
   loginUrl.search = "";
-  loginUrl.searchParams.set("next", pathname + search);
   return NextResponse.redirect(loginUrl);
 }
 

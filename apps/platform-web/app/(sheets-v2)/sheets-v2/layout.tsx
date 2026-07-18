@@ -12,7 +12,7 @@ export default async function SheetsV2Layout({
   children: React.ReactNode;
 }) {
   const session = await getServerSession();
-  if (!session) redirect(`/login?next=${encodeURIComponent("/sheets-v2")}`);
+  if (!session) redirect(`/auth/login?next=${encodeURIComponent("/sheets-v2")}`);
 
   return (
     <CryptoProvider initialUserId={session.user.id}>

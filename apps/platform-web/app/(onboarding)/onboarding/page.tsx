@@ -11,13 +11,10 @@ export default async function OnboardingPage() {
   const session = await getServerSession();
 
   if (!session) {
-    redirect("/login");
+    redirect("/auth/login");
   }
 
-  // Enforce email verification before onboarding
-  if (session.user.emailVerified === false) {
-    redirect("/verify-email");
-  }
+  // Email verification is enforced by the Accounts authority at sign-in.
 
   // If already onboarded, send them to dashboard
   if (session.user.onboarded) {

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Lock, ShieldCheck, ShieldOff, Loader2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { authClient, useSession } from "@/lib/auth/client";
+import { useSession } from "@/lib/auth/client";
 import { toast } from "sonner";
 
 export function EncryptionSettingsSection() {
@@ -12,19 +12,20 @@ export function EncryptionSettingsSection() {
   const { data: session } = useSession();
   const [isUpdating, setIsUpdating] = useState(false);
 
-  // @ts-expect-error additionalFields
   const enabled = session?.user?.encryptByDefault || false;
 
   async function handleToggle(checked: boolean) {
     setIsUpdating(true);
     try {
-      const { error } = await authClient.updateUser({
-        // @ts-expect-error additionalFields
-        encryptByDefault: checked,
+      const response = await fetch("/api/me", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ encryptByDefault: checked }),
       });
-
-      if (error) {
-        throw new Error(error.message || "Failed to update preference");
+      if (!response.ok) {
+        const failure = await response.json().catch(() => ({}));
+        throw new Error(failure.error || "Failed to update preference");
       }
 
       toast.success(

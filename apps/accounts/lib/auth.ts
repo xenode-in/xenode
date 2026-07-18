@@ -3,7 +3,7 @@ import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import { jwt, oidcProvider, username } from "better-auth/plugins";
 import { connectDatabase, getDatabase } from "@xenode/database";
 import {
-  FIRST_PARTY_CLIENTS,
+  resolveFirstPartyClients,
   validateUsername,
 } from "@xenode/identity-core";
 
@@ -40,7 +40,10 @@ async function createAccountsAuth() {
           useJWTPlugin: true,
           codeExpiresIn: 300,
           scopes: ["openid", "profile", "email", "offline_access"],
-          trustedClients: FIRST_PARTY_CLIENTS.map((client) => ({
+          trustedClients: resolveFirstPartyClients({
+            drive: process.env.DRIVE_ORIGIN,
+            photos: process.env.PHOTOS_ORIGIN,
+          }).map((client) => ({
             clientId: client.clientId,
             type: "public" as const,
             name: client.clientId,

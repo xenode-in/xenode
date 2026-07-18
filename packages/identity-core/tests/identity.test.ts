@@ -4,6 +4,7 @@ import {
   normalizeUsername,
   pkceS256,
   redeemAuthorizationCode,
+  resolveFirstPartyClients,
   validateAuthorizationRequest,
   validateIdTokenClaims,
   validateUsername,
@@ -101,5 +102,48 @@ describe("identity authority contracts", () => {
         },
       ),
     ).not.toThrow();
+  });
+
+  it("extends web-client redirect allowlists with deployment origins only", async () => {
+    const resolved = resolveFirstPartyClients({
+      drive: "http://localhost:3000",
+      photos: "https://staging-photos.xenode.in/some/path",
+    });
+    const drive = resolved.find((c) => c.clientId === "xenode-drive-web")!;
+    const photos = resolved.find((c) => c.clientId === "xenode-photos-web")!;
+    const mobile = resolved.find((c) => c.clientId === "xenode-mobile")!;
+
+    // Static production URIs stay; the env origin's callback is appended.
+    expect(drive.redirectUris).toEqual([
+      "https://xenode.in/auth/callback",
+      "http://localhost:3000/auth/callback",
+    ]);
+    // Origins are normalized — path segments never widen the allowlist.
+    expect(photos.redirectUris).toEqual([
+      "https://photos.xenode.in/auth/callback",
+      "https://staging-photos.xenode.in/auth/callback",
+    ]);
+    // Products without a supplied origin are untouched.
+    expect(mobile.redirectUris).toEqual(["in.xenode.app://auth/callback"]);
+
+    // Re-declaring the production origin dedupes instead of duplicating.
+    const deduped = resolveFirstPartyClients({ drive: "https://xenode.in" });
+    expect(
+      deduped.find((c) => c.clientId === "xenode-drive-web")!.redirectUris,
+    ).toEqual(["https://xenode.in/auth/callback"]);
+
+    // The registry itself is never mutated.
+    expect(
+      FIRST_PARTY_CLIENTS.find((c) => c.clientId === "xenode-drive-web")!
+        .redirectUris,
+    ).toEqual(["https://xenode.in/auth/callback"]);
+
+    // Non-URL and non-http(s) origins fail loudly.
+    expect(() => resolveFirstPartyClients({ drive: "not a url" })).toThrow(
+      /Invalid OIDC origin/u,
+    );
+    expect(() =>
+      resolveFirstPartyClients({ drive: "javascript:alert(1)" }),
+    ).toThrow(/Invalid OIDC origin/u);
   });
 });

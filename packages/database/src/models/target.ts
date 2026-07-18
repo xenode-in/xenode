@@ -117,6 +117,8 @@ export interface ProductSessionRecord {
   sessionVersion: number;
   expiresAt: Date;
   revokedAt?: Date;
+  /** Convenience workspace pointer for product UIs; NEVER an authorization source. */
+  activeOrganizationId?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -129,6 +131,7 @@ const productSessionSchema = new Schema<ProductSessionRecord>(
     sessionVersion: { type: Number, required: true, min: 1 },
     expiresAt: { type: Date, required: true, index: true },
     revokedAt: Date,
+    activeOrganizationId: { type: String, default: null },
   },
   { timestamps: true, collection: "productSessions" },
 );

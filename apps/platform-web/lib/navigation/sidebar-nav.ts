@@ -7,7 +7,6 @@ import {
   Settings,
   Share2,
   Users,
-  CloudDownload,
   LifeBuoy,
   Trash2,
   Star,
@@ -48,7 +47,6 @@ export interface WorkspaceNav {
 export const PERSONAL_NAV: NavItem[] = [
   { label: "Overview", href: "/dashboard", icon: LayoutDashboard },
   { label: "My Files", href: "/dashboard/files", icon: FolderOpen },
-  { label: "Migrations (Beta)", href: "/dashboard/migrations", icon: CloudDownload },
   { label: "Shared", href: "/dashboard/shared", icon: Share2 },
   { label: "Shared with me", href: "/dashboard/shared-with-me", icon: Users },
   { label: "Organizations", href: "/organizations", icon: Building2 },

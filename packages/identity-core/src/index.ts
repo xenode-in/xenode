@@ -57,6 +57,42 @@ export const FIRST_PARTY_CLIENTS: readonly FirstPartyClient[] = [
   },
 ];
 
+/**
+ * Resolve the first-party client registry with deployment-supplied origins.
+ *
+ * Each web product's redirect allowlist stays a static, explicit list — this
+ * only appends `${origin}/auth/callback` for origins the DEPLOYMENT declares
+ * via env (e.g. `DRIVE_ORIGIN=http://localhost:3000` for local dev, or a
+ * staging origin). Origins are validated as absolute http(s) URLs and
+ * normalized to their origin; anything else throws rather than silently
+ * widening the allowlist. Products without a supplied origin (e.g. mobile's
+ * custom scheme) are returned unchanged, and production URIs dedupe.
+ */
+export function resolveFirstPartyClients(
+  origins: Partial<Record<string, string>> = {},
+  clients = FIRST_PARTY_CLIENTS,
+): FirstPartyClient[] {
+  return clients.map((client) => {
+    const supplied = origins[client.productId];
+    if (!supplied) return client;
+    let origin: string;
+    try {
+      const url = new URL(supplied);
+      if (url.protocol !== "https:" && url.protocol !== "http:") {
+        throw new Error("unsupported protocol");
+      }
+      origin = url.origin;
+    } catch {
+      throw new Error(
+        `Invalid OIDC origin for product "${client.productId}": ${supplied}`,
+      );
+    }
+    const redirect = `${origin}/auth/callback`;
+    if (client.redirectUris.includes(redirect)) return client;
+    return { ...client, redirectUris: [...client.redirectUris, redirect] };
+  });
+}
+
 function base64Url(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);

@@ -1,6 +1,6 @@
 import { randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
-import { getAuth } from "@/lib/auth";
+import { getServerSession } from "@/lib/auth/session";
 import { uploadObject } from "@/lib/b2/objects";
 import { getPublicS3Client } from "@/lib/b2/client";
 
@@ -14,8 +14,7 @@ const ALLOWED_TYPES = new Set([
 ]);
 
 export async function POST(req: NextRequest) {
-  const auth = getAuth();
-  const session = await auth.api.getSession({ headers: req.headers });
+  const session = await getServerSession(req);
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

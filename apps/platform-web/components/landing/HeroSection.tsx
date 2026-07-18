@@ -31,7 +31,7 @@ export function HeroSection() {
             asChild
             className="bg-primary text-primary-foreground hover:bg-primary/90 uppercase tracking-wider font-semibold h-12 px-8 transition-all duration-200 hover:-translate-y-0.5 rounded-xl text-sm"
           >
-            <Link href="/login">Start for Free</Link>
+            <Link href="/auth/login">Start for Free</Link>
           </Button>
           <Button
             asChild

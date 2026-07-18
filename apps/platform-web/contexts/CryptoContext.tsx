@@ -50,9 +50,9 @@ interface CryptoContextType {
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
 
 function getLoginRedirect(reason: string) {
-  if (typeof window === "undefined") return `/login?reason=${reason}`;
+  if (typeof window === "undefined") return `/auth/login?reason=${reason}`;
   const next = `${window.location.pathname}${window.location.search}`;
-  return `/login?next=${encodeURIComponent(next)}&reason=${reason}`;
+  return `/auth/login?next=${encodeURIComponent(next)}&reason=${reason}`;
 }
 
 export function CryptoProvider({

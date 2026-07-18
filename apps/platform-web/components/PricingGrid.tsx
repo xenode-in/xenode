@@ -121,7 +121,7 @@ export default function PricingGrid({
   const handleSelectPlan = (slug: string) => {
     if (!session) {
       toast.error("Please sign in first to subscribe.");
-      router.push("/login");
+      router.push("/auth/login");
       return;
     }
     window.location.assign(`/checkout?plan=${slug}&cycle=${cycle}`);

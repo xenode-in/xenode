@@ -6,7 +6,7 @@ import { useTheme } from "next-themes";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
-import { authClient, useSession } from "@/lib/auth/client";
+import { useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { generateRecoveryKit } from "@/lib/crypto/recovery";
 import { consumePostAuthRedirect } from "@/lib/postAuthRedirect";
@@ -329,16 +329,22 @@ export function OnboardingForm() {
           }
         }
 
-        const result = await authClient.updateUser({
-          // @ts-expect-error additionalFields
-          onboarded: true,
-          encryptByDefault: data.encryptByDefault,
-          ...(finalAvatarUrl && finalAvatarUrl !== "custom"
-            ? { image: finalAvatarUrl }
-            : {}),
+        const profileRes = await fetch("/api/me", {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            onboarded: true,
+            encryptByDefault: data.encryptByDefault,
+            ...(finalAvatarUrl && finalAvatarUrl !== "custom"
+              ? { image: finalAvatarUrl }
+              : {}),
+          }),
         });
-        if (result.error)
-          throw new Error(result.error.message || "Failed to save preferences");
+        if (!profileRes.ok) {
+          const failure = await profileRes.json().catch(() => ({}));
+          throw new Error(failure.error || "Failed to save preferences");
+        }
 
         // 4. Always create Usage doc as free first.
         //    For paid plans: PayU success webhook upgrades it after payment.

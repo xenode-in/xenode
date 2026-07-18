@@ -8,7 +8,7 @@ export default function robots(): MetadataRoute.Robots {
       // ── Googlebot: full access to public pages, no crawl-delay needed ──
       {
         userAgent: "Googlebot",
-        allow: ["/", "/blog/", "/pricing", "/changelog/", "/terms", "/privacy", "/login"],
+        allow: ["/", "/blog/", "/pricing", "/changelog/", "/terms", "/privacy", "/auth/login"],
         disallow: [
           "/api/",
           "/_next/",
@@ -26,7 +26,7 @@ export default function robots(): MetadataRoute.Robots {
       // ── Bingbot: same as Googlebot ──────────────────────────────────────
       {
         userAgent: "Bingbot",
-        allow: ["/", "/blog/", "/pricing", "/changelog/", "/terms", "/privacy", "/login"],
+        allow: ["/", "/blog/", "/pricing", "/changelog/", "/terms", "/privacy", "/auth/login"],
         disallow: [
           "/api/",
           "/_next/",
@@ -68,14 +68,14 @@ export default function robots(): MetadataRoute.Robots {
       },
       {
         userAgent: "FacebookBot",
-        allow: ["/", "/blog/", "/pricing", "/login"],
+        allow: ["/", "/blog/", "/pricing", "/auth/login"],
         disallow: ["/api/", "/_next/", "/dashboard/", "/admin/"],
       },
 
       // ── Default: all other bots ──────────────────────────────────────────
       {
         userAgent: "*",
-        allow: ["/", "/blog/", "/pricing", "/changelog/", "/terms", "/privacy", "/login"],
+        allow: ["/", "/blog/", "/pricing", "/changelog/", "/terms", "/privacy", "/auth/login"],
         disallow: [
           "/api/",
           "/_next/",

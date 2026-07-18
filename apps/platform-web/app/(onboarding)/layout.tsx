@@ -10,7 +10,7 @@ export default async function OnboardingLayout({
   const session = await getServerSession();
 
   if (!session) {
-    redirect("/login");
+    redirect("/auth/login");
   }
 
   // If they are already onboarded, don't let them back in

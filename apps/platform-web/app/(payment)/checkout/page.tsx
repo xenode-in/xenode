@@ -65,7 +65,7 @@ export default async function Page({ searchParams }: CheckoutPageProps) {
 
   const session = await getServerSession();
   if (!session?.user)
-    redirect(`/login?next=/checkout?plan=${planSlug}&cycle=${billingCycle}`);
+    redirect(`/auth/login?next=/checkout?plan=${planSlug}&cycle=${billingCycle}`);
 
   await dbConnect();
   const db = mongoose.connection.db;

@@ -1,16 +1,12 @@
-// import { Suspense } from "react";
-// import { ConnectedAccounts } from "@/components/dashboard/settings/ConnectedAccounts";
 import { requireAuth } from "@/lib/auth/session";
-import { Shield, User, Mail, Calendar, Palette, HardDrive, Monitor } from "lucide-react";
+import { Shield, User, Mail, Calendar, Palette, HardDrive, ExternalLink } from "lucide-react";
 import { ThemeSelector } from "@/components/settings/theme-selector";
-import { EncryptionSettingsSection } from "@/components/settings/EncryptionSettingsSection";
 import { PreviewCacheSection } from "@/components/settings/PreviewCacheSection";
 import { VaultRecoverySection } from "@/components/settings/VaultRecoverySection";
-import { PasswordSettingsSection } from "@/components/settings/PasswordSettingsSection";
-import { TwoFactorSettingsSection } from "@/components/settings/TwoFactorSettingsSection";
 import { PasskeySettingsSection } from "@/components/settings/PasskeySettingsSection";
-import { SessionsSettingsSection } from "@/components/settings/SessionsSettingsSection";
-import { AvatarSettingsSection } from "@/components/settings/AvatarSettingsSection";
+
+const ACCOUNTS_ORIGIN =
+  process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
 
 export default async function SettingsPage() {
   const session = await requireAuth();
@@ -41,7 +37,6 @@ export default async function SettingsPage() {
           Profile
         </h3>
         <div className="space-y-4">
-          <AvatarSettingsSection />
           <div className="flex items-center justify-between py-3 border-b border-border">
             <div>
               <p className="text-sm text-muted-foreground">Name</p>
@@ -82,23 +77,25 @@ export default async function SettingsPage() {
         </h3>
         <div className="space-y-4">
           <VaultRecoverySection />
-          {/* <EncryptionSettingsSection /> */}
-          <PasswordSettingsSection />
-          <TwoFactorSettingsSection />
           <PasskeySettingsSection />
-          {/* <Suspense fallback={<div className="h-14 animate-pulse bg-muted rounded-lg w-full"></div>}>
-            <ConnectedAccounts />
-          </Suspense> */}
+          <div className="flex items-center justify-between py-3">
+            <div>
+              <p className="text-sm text-foreground">Account security</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Password, two-factor authentication, linked accounts, and
+                device sessions are managed in your Xenode Account.
+              </p>
+            </div>
+            <a
+              href={ACCOUNTS_ORIGIN}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-primary flex items-center gap-1 bg-secondary px-3 py-1.5 rounded-lg hover:bg-secondary/80"
+            >
+              Manage account <ExternalLink className="w-3 h-3" />
+            </a>
+          </div>
         </div>
-      </div>
-
-      {/* Sessions */}
-      <div className="bg-card border border-border rounded-xl p-6">
-        <h3 className="text-sm font-medium text-foreground mb-4 flex items-center gap-2">
-          <Monitor className="w-4 h-4 text-primary" />
-          Sessions
-        </h3>
-        <SessionsSettingsSection />
       </div>
 
       {/* Storage */}

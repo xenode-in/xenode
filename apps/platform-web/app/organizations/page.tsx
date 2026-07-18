@@ -5,7 +5,7 @@ import { getServerSession } from "@/lib/auth/session";
 export default async function OrganizationsPage() {
   const session = await getServerSession();
   if (!session) {
-    redirect("/login");
+    redirect("/auth/login");
   }
 
   return <OrganizationsClient user={session.user} />;

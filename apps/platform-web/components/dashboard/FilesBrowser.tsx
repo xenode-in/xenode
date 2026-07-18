@@ -672,7 +672,7 @@ export function FilesBrowser() {
       typeof window !== "undefined"
         ? `${window.location.pathname}${window.location.search}`
         : "/dashboard/files";
-    router.replace(`/login?next=${encodeURIComponent(next)}`);
+    router.replace(`/auth/login?next=${encodeURIComponent(next)}`);
   }, [router]);
 
   useEffect(() => {

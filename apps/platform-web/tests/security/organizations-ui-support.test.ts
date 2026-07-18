@@ -1,23 +1,11 @@
 import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ProductSession } from "@xenode/database";
 import { POST as activePOST } from "@/app/api/orgs/active/route";
 import { POST as recipientsPOST } from "@/app/api/orgs/recipients/route";
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import UserKeyVault from "@/models/UserKeyVault";
-
-// The active-org route verifies persistence through better-auth's getSession;
-// mock getAuth() so tests use the in-memory session collection instead.
-const { getSessionMock } = vi.hoisted(() => ({
-  getSessionMock: vi.fn(),
-}));
-vi.mock("@/lib/auth", () => ({
-  getAuth: () => ({
-    api: {
-      getSession: getSessionMock,
-    },
-  }),
-}));
 
 const mockedGetServerSession = vi.mocked(getServerSession);
 type MockSession = NonNullable<Awaited<ReturnType<typeof getServerSession>>>;
@@ -43,61 +31,31 @@ function mockSession(userId = "user_1", email = `${userId}@example.com`) {
     },
   } as unknown as MockSession;
   mockedGetServerSession.mockResolvedValue(session);
-  getSessionMock.mockResolvedValue(session);
   return session;
 }
 
+/**
+ * Post OIDC cutover the active-org pointer lives on the caller's Drive
+ * ProductSession, so tests seed that document instead of the removed
+ * better-auth `session` collection.
+ */
 async function insertSessionDocument(
   session: MockSession,
-  fields: { activeOrganizationId?: string | null; activeTeamId?: string | null } = {},
+  fields: { activeOrganizationId?: string | null } = {},
 ) {
-  await Bucket.db
-    .collection<{
-      _id: string;
-      id: string;
-      userId: string;
-      token: string;
-      expiresAt: Date;
-      createdAt: Date;
-      updatedAt: Date;
-      activeOrganizationId: string | null;
-      activeTeamId?: string | null;
-    }>("session")
-    .insertOne({
-      _id: session.session.id,
-      id: session.session.id,
-      userId: session.session.userId,
-      token: session.session.token,
-      expiresAt: session.session.expiresAt,
-      createdAt: session.session.createdAt,
-      updatedAt: session.session.updatedAt,
-      activeOrganizationId:
-        fields.activeOrganizationId ??
-        (session.session as { activeOrganizationId?: string | null })
-          .activeOrganizationId ??
-        null,
-      ...(fields.activeTeamId ? { activeTeamId: fields.activeTeamId } : {}),
-    });
+  await ProductSession.create({
+    sessionId: session.session.id,
+    accountId: session.session.userId,
+    productId: "drive",
+    authenticatedAt: session.session.createdAt,
+    sessionVersion: 1,
+    expiresAt: session.session.expiresAt,
+    activeOrganizationId: fields.activeOrganizationId ?? null,
+  });
 }
 
-function mockVerifiedSessionFromDb(session: MockSession) {
-  getSessionMock.mockImplementation(async () => {
-    const doc = await Bucket.db
-      .collection<{
-        activeOrganizationId?: string | null;
-        activeTeamId?: string | null;
-      }>("session")
-      .findOne({ token: session.session.token });
-
-    return {
-      ...session,
-      session: {
-        ...session.session,
-        activeOrganizationId: doc?.activeOrganizationId ?? null,
-        activeTeamId: doc?.activeTeamId ?? null,
-      },
-    } as MockSession;
-  });
+async function findProductSession(session: MockSession) {
+  return ProductSession.findOne({ sessionId: session.session.id }).lean();
 }
 
 async function createOrg() {
@@ -146,7 +104,6 @@ describe("organization UI support APIs", () => {
     delete process.env.ORGS_ENABLED;
     delete process.env.NEXT_PUBLIC_ORGS_ENABLED;
     mockedGetServerSession.mockReset();
-    getSessionMock.mockReset();
   });
 
   it("looks up invite recipients by auth user id and vault public key", async () => {
@@ -197,8 +154,7 @@ describe("organization UI support APIs", () => {
   it("switches the active organization only for members", async () => {
     process.env.ORGS_ENABLED = "true";
     const session = mockSession("user_1");
-    await insertSessionDocument(session, { activeTeamId: "team_1" });
-    mockVerifiedSessionFromDb(session);
+    await insertSessionDocument(session);
     await createOrg();
     await addMember("user_1", "member");
 
@@ -212,14 +168,9 @@ describe("organization UI support APIs", () => {
       activeOrganizationId: "org_1",
       scope: "organization",
     });
-    await expect(
-      Bucket.db.collection("session").findOne({ token: "token-user_1" }),
-    ).resolves.toMatchObject({
+    await expect(findProductSession(session)).resolves.toMatchObject({
       activeOrganizationId: "org_1",
     });
-    await expect(
-      Bucket.db.collection("session").findOne({ token: "token-user_1" }),
-    ).resolves.not.toHaveProperty("activeTeamId");
   });
 
   it("clears active organization when switching back to personal scope", async () => {
@@ -227,9 +178,7 @@ describe("organization UI support APIs", () => {
     const session = mockSession("user_1");
     await insertSessionDocument(session, {
       activeOrganizationId: "org_1",
-      activeTeamId: "team_1",
     });
-    mockVerifiedSessionFromDb(session);
 
     const response = await activePOST(
       post("/api/orgs/active", { orgId: null }),
@@ -238,18 +187,15 @@ describe("organization UI support APIs", () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({ activeOrganizationId: null, scope: "personal" });
-    await expect(
-      Bucket.db.collection("session").findOne({ token: "token-user_1" }),
-    ).resolves.toMatchObject({ activeOrganizationId: null });
-    await expect(
-      Bucket.db.collection("session").findOne({ token: "token-user_1" }),
-    ).resolves.not.toHaveProperty("activeTeamId");
+    await expect(findProductSession(session)).resolves.toMatchObject({
+      activeOrganizationId: null,
+    });
   });
 
-  it("reports an error when session verification is unchanged", async () => {
+  it("reports an error when no live product session can persist the switch", async () => {
     process.env.ORGS_ENABLED = "true";
-    const session = mockSession("user_1");
-    await insertSessionDocument(session);
+    mockSession("user_1");
+    // No ProductSession document seeded — persistence must fail closed.
     await createOrg();
     await addMember("user_1", "member");
 
@@ -268,7 +214,6 @@ describe("organization UI support APIs", () => {
     process.env.ORGS_ENABLED = "true";
     const session = mockSession("user_1");
     await insertSessionDocument(session);
-    mockVerifiedSessionFromDb(session);
     await createOrg();
 
     const response = await activePOST(
@@ -280,8 +225,8 @@ describe("organization UI support APIs", () => {
       error: "Forbidden",
       code: "organization_membership_required",
     });
-    await expect(
-      Bucket.db.collection("session").findOne({ token: "token-user_1" }),
-    ).resolves.toMatchObject({ activeOrganizationId: null });
+    await expect(findProductSession(session)).resolves.toMatchObject({
+      activeOrganizationId: null,
+    });
   });
 });

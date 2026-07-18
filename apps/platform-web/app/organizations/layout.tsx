@@ -9,7 +9,7 @@ export default async function OrganizationsLayout({
 }) {
   const session = await getServerSession();
   if (!session) {
-    redirect("/login");
+    redirect("/auth/login");
   }
 
   return (

@@ -183,7 +183,7 @@ function UnauthenticatedActions({
     const params = new URLSearchParams();
     if (mode === "signup") params.set("mode", "signup");
     if (invite.email) params.set("email", invite.email);
-    window.location.href = `/login?${params.toString()}`;
+    window.location.href = `/auth/login?${params.toString()}`;
   };
 
   return (
@@ -317,7 +317,7 @@ function AuthenticatedActions({
           className="w-full"
           onClick={() => {
             setPostAuthRedirect(invitePath);
-            router.push("/login");
+            router.push("/auth/login");
           }}
         >
           <LogIn className="h-4 w-4" />

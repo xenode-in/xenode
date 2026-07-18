@@ -28,13 +28,11 @@ export default async function DashboardLayout({
   const session = await getServerSession();
 
   if (!session) {
-    redirect("/login");
+    redirect("/auth/login");
   }
 
-  // Enforce email verification
-  if (session.user.emailVerified === false) {
-    redirect("/verify-email");
-  }
+  // Email verification is enforced by the Accounts authority at sign-in —
+  // Drive no longer hosts a verification flow.
 
   // Redirect to onboarding if not completed
   // Use loose check in case the field is undefined for older users

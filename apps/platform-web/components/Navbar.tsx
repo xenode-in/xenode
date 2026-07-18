@@ -70,7 +70,7 @@ export function Navbar() {
                 </Link>
               ) : (
                 <Link
-                  href="/login"
+                  href="/auth/login"
                   onClick={closeMenu}
                   className="text-sm text-primary-foreground font-medium px-5 py-2 rounded-lg bg-primary hover:bg-primary/90 transition-all duration-300 drop-shadow-sm flex items-center justify-center"
                 >
@@ -139,7 +139,7 @@ export function Navbar() {
                 </Link>
               ) : (
                 <Link
-                  href="/login"
+                  href="/auth/login"
                   onClick={closeMenu}
                   className="text-sm text-primary-foreground font-medium px-5 py-2 rounded-lg bg-primary hover:bg-primary/90 transition-all duration-300 drop-shadow-sm flex items-center justify-center"
                 >
