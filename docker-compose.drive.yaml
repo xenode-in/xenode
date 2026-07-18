@@ -1,0 +1,6 @@
+services:
+  drive:
+    extends:
+      file: docker-compose.yaml
+      service: drive
+

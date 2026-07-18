@@ -3,7 +3,7 @@
  *
  * Frame side of the Xenode <-> ONLYOFFICE bridge. This file is served from the
  * editor origin (inside the sandboxed iframe) and speaks the exact protocol
- * defined in lib/spreadsheets/v2/bridge/protocol.ts. It is plain ES5-ish
+ * defined in apps/drive/lib/office-editor/bridge/protocol.ts. It is plain ES5-ish
  * browser JS because it runs at the editor origin, outside the app bundle — the
  * constants below are hand-mirrored from protocol.ts and MUST stay in sync
  * (the version guard makes drift fail closed rather than silently).
@@ -21,7 +21,7 @@
 (function () {
   "use strict";
 
-  var CHANNEL = "xenode.sheets.v2";
+  var CHANNEL = "xenode.office-editor.v1";
   var VERSION = 2;
 
   var hash = new URLSearchParams((location.hash || "").replace(/^#/, ""));

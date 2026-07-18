@@ -49,7 +49,6 @@ export const featureFlagNames = [
   "OIDC_PRODUCT_SESSIONS_ENABLED",
   "PHOTOS_ASSET_ENABLED",
   "PHOTOS_APP_ENABLED",
-  "REALTIME_TICKETS_V2_ENABLED",
 ] as const;
 
 export type FeatureFlagName = (typeof featureFlagNames)[number];

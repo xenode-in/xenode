@@ -1,6 +1,0 @@
-services:
-  app:
-    extends:
-      file: docker-compose.yaml
-      service: app
-

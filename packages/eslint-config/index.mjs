@@ -3,7 +3,7 @@ import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
 
 /**
- * Shared ESLint flat config for Xenode Next.js web apps (platform-web, accounts,
+ * Shared ESLint flat config for Xenode Next.js web apps (Drive, Accounts,
  * photos). Apps import this and append their own app-specific ignores/rules.
  */
 export const nextConfig = defineConfig([

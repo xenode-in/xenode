@@ -1,82 +1,34 @@
-# MongoDB Index Reference
+# MongoDB indexes
 
-This document describes all required indexes across Xenode's MongoDB collections.
-Indexes are declared inside the Mongoose schema files in `models/`. MongoDB creates
-them automatically on first connection.
+Indexes are declared in Mongoose schemas. This migration assumes a clean reseed;
+do not carry historical indexes forward implicitly.
 
----
+## Critical invariants
 
-## ApiKey
+- `StorageObject` authorization/listing indexes are Space- and bucket-scoped.
+- `{ bucketId, key }` is the single unique object-key index. The reversed
+  `{ key, bucketId }` duplicate is intentionally absent.
+- No single-field `deletedAt` index is declared. The historical
+  `deletedAt_1` TTL index could delete database rows before B2 blobs and must not
+  exist. Bin listing uses compound bucket/deletion indexes; purge is an
+  authenticated cron workflow.
+- `Bucket.systemKey` and `Bucket.b2BucketId` each have exactly one unique index,
+  declared at the field level.
+- ProductSession lookup/revocation and KeyHandoff expiry indexes live in
+  `packages/database`.
 
-**File:** `models/ApiKey.ts`
+## StorageObject hot paths
 
-| Index                       | Type     | Rationale                                                                                                                             |
-| --------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `keyHash`                   | Unique   | Auth token lookup: `findOne({ keyHash })` — hot path on every API request                                                             |
-| `userId`                    | Single   | Ownership filter base; retained for lean queries                                                                                      |
-| `{ userId, createdAt: -1 }` | Compound | Covers `find({ userId }).sort({ createdAt: -1 })` and `countDocuments({ userId })` with a single index scan — no in-memory sort stage |
+| Index | Purpose |
+| --- | --- |
+| `{ bucketId, key }` unique | Object identity inside the system bucket |
+| `{ bucketId, createdAt: -1 }` | Primary bucket listing |
+| `{ spaceId, _id }` | Tenant-scoped point authorization |
+| `{ spaceId, createdAt: -1 }` | Space listing |
+| `{ bucketId, deletedAt, createdAt: -1, _id: -1 }` | Bin listing and cursor order |
+| `{ bucketId, deletedAt, size: -1, _id: -1 }` | Bin size sorting |
+| `{ bucketId, deletedAt, contentType, _id: -1 }` | Content-type listing |
+| `active_sync_content_unique` | Active mobile sync deduplication |
 
----
-
-## Bucket
-
-**File:** `models/Bucket.ts`
-
-| Index                       | Type            | Rationale                                                                           |
-| --------------------------- | --------------- | ----------------------------------------------------------------------------------- |
-| `userId`                    | Single          | Base ownership filter                                                               |
-| `b2BucketId`                | Unique          | Foreign-key lookups by B2 bucket identifier                                         |
-| `{ userId, name }`          | Compound Unique | Prevents duplicate bucket names per user; covers `findOne({ userId, name })`        |
-| `{ userId, createdAt: -1 }` | Compound        | Covers `find({ userId }).sort({ createdAt: -1 })` — the dashboard bucket-list query |
-
----
-
-## StorageObject
-
-**File:** `models/StorageObject.ts`
-
-| Index                         | Type            | Rationale                                                                                                                |
-| ----------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `bucketId`                    | Single          | Base bucket filter (retained)                                                                                            |
-| `userId`                      | Single          | Base ownership filter (retained)                                                                                         |
-| `{ bucketId, key }`           | Compound Unique | Prevents duplicate object keys per bucket; covers equality lookups                                                       |
-| `{ bucketId, createdAt: -1 }` | Compound        | Covers `find({ bucketId }).sort({ createdAt: -1 })` — the primary file listing query                                     |
-| `{ userId, _id }`             | Compound        | Covers `findOne({ _id, userId })` ownership checks and `aggregate($match { userId })`                                    |
-| `{ key, bucketId }`           | Compound        | Enables regex-prefix scans on `key` used in folder move and system-bucket path filtering (`key: { $regex: '^prefix/' }`) |
-
----
-
-## Usage
-
-**File:** `models/Usage.ts`
-
-| Index    | Type   | Rationale                                                                                                           |
-| -------- | ------ | ------------------------------------------------------------------------------------------------------------------- |
-| `userId` | Unique | Point-lookup on every `findOneAndUpdate({ userId })` write path (storage increment/decrement, egress, bucket count) |
-
-> **Note:** No additional indexes required. The unique constraint is already backed by an index and serves all hot paths.
-
----
-
-## Waitlist
-
-**File:** `models/Waitlist.ts`
-
-| Index   | Type   | Rationale                                                              |
-| ------- | ------ | ---------------------------------------------------------------------- |
-| `email` | Unique | Prevents duplicate sign-ups; serves `findOne({ email })` on submission |
-
-> **Note:** No additional indexes required. The unique constraint covers all query paths.
-
----
-
-## Explain-Plan Validation
-
-Run the regression guard script to verify all hot queries use index scans:
-
-```bash
-npx ts-node --project tsconfig.json scripts/explain-indexes.ts
-```
-
-Expected output: each query reports `IXSCAN` with `docsExamined ≈ nReturned`. The
-script exits with code `1` if any query falls back to a `COLLSCAN`.
+Regression coverage in `apps/drive/tests/security/index-cleanup.test.ts` asserts
+that the TTL hazard is absent and Bucket uniqueness indexes are not duplicated.

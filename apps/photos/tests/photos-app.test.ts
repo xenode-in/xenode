@@ -41,13 +41,13 @@ describe("Photos app isolation", () => {
     expect(source).not.toContain("SharedArrayBuffer");
   });
 
-  it("does not import Drive or platform-web internals", () => {
+  it("does not import Drive internals", () => {
     const source = [
       ...sourceFiles(join(process.cwd(), "app")),
       ...sourceFiles(join(process.cwd(), "lib")),
     ]
       .map((path) => readFileSync(path, "utf8"))
       .join("\n");
-    expect(source).not.toMatch(/platform-web|dashboard\/photos|@\/contexts\/CryptoContext/u);
+    expect(source).not.toMatch(/apps\/drive|dashboard\/photos|@\/contexts\/CryptoContext/u);
   });
 });

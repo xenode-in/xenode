@@ -15,7 +15,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$dest = Join-Path $projectRoot "apps/platform-web/public/internal-editors/onlyoffice/$ArtifactVersion"
+$dest = Join-Path $projectRoot "apps/drive/public/internal-editors/onlyoffice/$ArtifactVersion"
 
 $editorUrl = "https://github.com/cryptpad/onlyoffice-editor/releases/download/v9.3.0.140%2B2/onlyoffice-editor.zip"
 $editorSha = "fedf1af4c3b061f6afadbc231cee7f06d15dd1a5e82db3c5f1e9739b7ddf5b5b38825f3ec3da5e92d7ed6ad1d944c11b9f83875cc5fb67bde4f9c9b1434579d8"

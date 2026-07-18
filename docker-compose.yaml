@@ -9,27 +9,24 @@ version: "3.8"
 #
 # Required env vars — set all of these in Coolify:
 #
-#   NEXT_PUBLIC_APP_URL       Public URL of the app (e.g. https://xenode.app)
+#   ACCOUNTS_ORIGIN / DRIVE_ORIGIN / PHOTOS_ORIGIN   Exact product origins
+#   NEXT_PUBLIC_APP_URL       Public Drive URL (e.g. https://xenode.in)
 #
 #   MONGODB_URI               MongoDB Atlas / self-hosted connection string
 #   MONGODB_LOGS_URI          Separate DB for logs (can be same cluster)
 #   REDIS_URL                 Redis connection URL (e.g. redis://host:6379)
 #
-#   BETTER_AUTH_SECRET        32+ char secret for session token signing
+#   BETTER_AUTH_SECRET        32+ char Accounts identity secret
+#   REALTIME_TICKET_SECRET    Independent 32+ char realtime ticket secret
+#   CDN_SIGNING_SECRET        Independent 32+ char CDN signing secret
+#   REALTIME_ALLOWED_ORIGIN   Exact comma-separated product origins
 #
 #   ADMIN_USERNAME            Initial super-admin username
 #   ADMIN_PASSWORD            Initial super-admin password
 #   ADMIN_JWT_SECRET          32+ char secret for admin JWT sessions
 #
-#   B2_APPLICATION_KEY_ID     Backblaze B2 private key ID
-#   B2_APPLICATION_KEY        Backblaze B2 private application key
-#   B2_BUCKET_ID              Backblaze B2 private bucket ID
-#   B2_BUCKET_NAME            Backblaze B2 private bucket name
-#
-#   S3_KEY_ID                 Public storage key ID (Zata.ai / B2 public bucket)
-#   S3_APPLICATION_KEY        Public storage application key
-#   PUBLIC_S3_BUCKET          Public bucket name (default: xenopublic)
-#   PUBLIC_S3_ENDPOINT        Public storage endpoint (default: https://idr01.zata.ai)
+#   S3_KEY_ID / S3_APPLICATION_KEY / S3_BUCKET_NAME / S3_ENDPOINT / S3_REGION
+#                              Backblaze B2 S3-compatible system bucket
 #
 #   RESEND_API_KEY            Resend transactional email API key
 #
@@ -50,11 +47,11 @@ version: "3.8"
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
-  # ── Next.js app ─────────────────────────────────────────────────────────────
-  app:
+  # ── Drive Next.js app ───────────────────────────────────────────────────────
+  drive:
     build:
       context: .
-      dockerfile: apps/platform-web/Dockerfile
+      dockerfile: apps/drive/Dockerfile
     restart: always
     ports:
       - "3000:3000"
@@ -64,31 +61,35 @@ services:
 
       # ── App ───────────────────────────────────────────────────────────────
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
+      ACCOUNTS_ORIGIN: ${ACCOUNTS_ORIGIN}
+      DRIVE_ORIGIN: ${DRIVE_ORIGIN}
+      PHOTOS_ORIGIN: ${PHOTOS_ORIGIN}
+      NEXT_PUBLIC_ACCOUNTS_ORIGIN: ${NEXT_PUBLIC_ACCOUNTS_ORIGIN}
+      NEXT_PUBLIC_DRIVE_ORIGIN: ${NEXT_PUBLIC_DRIVE_ORIGIN}
+      NEXT_PUBLIC_PHOTOS_ORIGIN: ${NEXT_PUBLIC_PHOTOS_ORIGIN}
 
       # ── Database & Cache (external managed services) ───────────────────────
       MONGODB_URI: ${MONGODB_URI}
       MONGODB_LOGS_URI: ${MONGODB_LOGS_URI}
       REDIS_URL: ${REDIS_URL}
 
-      # ── Auth ──────────────────────────────────────────────────────────────
+      # ── Auth, realtime, and CDN (all secrets must be distinct) ───────────
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+      REALTIME_TICKET_SECRET: ${REALTIME_TICKET_SECRET}
+      CDN_SIGNING_SECRET: ${CDN_SIGNING_SECRET}
+      REALTIME_ALLOWED_ORIGIN: ${REALTIME_ALLOWED_ORIGIN}
 
       # ── Admin panel ────────────────────────────────────────────────────────
       ADMIN_USERNAME: ${ADMIN_USERNAME}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET}
 
-      # ── Backblaze B2 private storage ───────────────────────────────────────
-      B2_APPLICATION_KEY_ID: ${B2_APPLICATION_KEY_ID}
-      B2_APPLICATION_KEY: ${B2_APPLICATION_KEY}
-      B2_BUCKET_ID: ${B2_BUCKET_ID}
-      B2_BUCKET_NAME: ${B2_BUCKET_NAME}
-
-      # ── Public storage (Zata.ai / B2 public bucket) ────────────────────────
+      # ── Backblaze B2 S3-compatible system bucket ──────────────────────────
       S3_KEY_ID: ${S3_KEY_ID}
       S3_APPLICATION_KEY: ${S3_APPLICATION_KEY}
-      PUBLIC_S3_BUCKET: ${PUBLIC_S3_BUCKET:-xenopublic}
-      PUBLIC_S3_ENDPOINT: ${PUBLIC_S3_ENDPOINT:-https://idr01.zata.ai}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
+      S3_ENDPOINT: ${S3_ENDPOINT}
+      S3_REGION: ${S3_REGION}
 
       # ── Email ──────────────────────────────────────────────────────────────
       RESEND_API_KEY: ${RESEND_API_KEY}
@@ -123,7 +124,7 @@ services:
     image: alpine:3.19
     restart: unless-stopped
     depends_on:
-      - app
+      - drive
     environment:
       CRON_SECRET: ${CRON_SECRET}
     entrypoint:
@@ -133,12 +134,12 @@ services:
         apk add --no-cache curl --quiet
         printf '%s\n' \
           '# ── Test ping (every minute) — remove once cron is confirmed working ──' \
-          '*  *  * * *  curl -sf -X GET  http://app:3000/api/cron/ping                      -H "Authorization: Bearer '"${CRON_SECRET}"'" | head -c 200' \
+          '*  *  * * *  curl -sf -X GET  http://drive:3000/api/cron/ping                    -H "Authorization: Bearer '"${CRON_SECRET}"'" | head -c 200' \
           '# ── Production jobs ───────────────────────────────────────────────────' \
-          '0  0  * * *  curl -sf -X GET  http://app:3000/api/cron/expire-plans             -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
-          '0  3  * * *  curl -sf -X GET  http://app:3000/api/cron/purge-bin                -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
-          '0  */6 * * * curl -sf -X GET  http://app:3000/api/cron/cleanup-orphans          -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
-          '30 9  * * *  curl -sf -X POST http://app:3000/api/payment/payu/charge-recurring -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
+          '0  0  * * *  curl -sf -X GET  http://drive:3000/api/cron/expire-plans           -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
+          '0  3  * * *  curl -sf -X GET  http://drive:3000/api/cron/purge-bin              -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
+          '0  */6 * * * curl -sf -X GET  http://drive:3000/api/cron/cleanup-orphans        -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
+          '30 9  * * *  curl -sf -X POST http://drive:3000/api/payment/payu/charge-recurring -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
           > /etc/crontabs/root
         echo "=== Cron sidecar ready. Jobs ==="
         cat /etc/crontabs/root

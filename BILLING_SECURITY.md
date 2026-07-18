@@ -1,104 +1,43 @@
-# Xenode — Billing & E2EE Security Architecture
+# Billing and E2EE boundary
 
-This document defines the security contracts between the billing/payment layer and the E2EE key management system.
+Billing is deliberately blind to files and keys.
 
----
+## Prohibited dependencies
 
-## Zero-Knowledge Billing Contract
+Code under Drive payment, subscription, refund, pricing, and admin-billing
+routes must not import or query:
 
-The following rules are **non-negotiable** and enforced by code, lint rules, and this document:
+- Accounts `UserVault`, `SpaceProductKey`, or key-handoff records;
+- `lib/crypto/**` or shared key-unwrapping helpers;
+- `StorageObject.encryptedDEK`, IVs, chunk IVs, or encrypted filenames.
 
-### 1. Billing routes must NEVER access key material
+Billing operates on `Usage.totalStorageBytes`, `Usage.storageLimitBytes`, plan
+state, and billing-domain models. It never scans file metadata to compute quota.
 
-All files under `app/api/payment/**` are **prohibited** from importing:
-- `UserKeyVault` model
-- `StorageObject.encryptedDEK`
-- `StorageObject.iv`
-- `StorageObject.chunkIvs`
-- Any value from `lib/crypto/**`
+## Storage contract
 
-ESLint `no-restricted-imports` enforces this. See `.eslintrc` for the rule.
+`StorageObject.key` is opaque (`users/{accountId}/{randomHex32}`). Real names and
+content types are encrypted by the browser. Subscription changes may change the
+allowed byte limit; reads and deletes remain available so an over-limit user can
+recover. Billing never auto-deletes encrypted files.
 
-### 2. Object keys must be opaque
+## Razorpay lifecycle
 
-`StorageObject.key` stores a random hex path: `users/{userId}/{randomHex32}`
+Xenode uses Razorpay subscriptions only. One-time order events are ignored.
+Checkout resolves coupon before campaign, then records the selected Razorpay
+offer ID. Webhook handlers in `lib/billing/webhooks/handlers.ts` are the
+authoritative idempotent state machine. API lifecycle functions call Razorpay,
+emit a sanitized `BillingEvent`, and delegate Usage changes to
+`syncUserSubscriptionState`.
 
-The original filename **only** lives in `StorageObject.encryptedName` (AES-GCM encrypted, client-side only). No server-side code may read `encryptedName` as plaintext — it is an opaque blob to the server.
+Refunds flow through `SupportTicket` + `RefundRequest` and refund the underlying
+payment before cancellation. The 14-day guarantee applies to the first payment.
 
-### 3. Billing events must not log file metadata
+## Audit and secrets
 
-`payuResponse` in the `Payment` model stores only:
-```
-{ status, txnid, mode, PG_TYPE, bank_ref_num }
-```
-PII fields (email, phone, name, udf1) are stripped before persistence.
+BillingEvent payload sanitation removes names, email, phone, and addresses.
+Webhook signatures use their own Razorpay secrets. Admin authentication is
+separate from user Accounts/OIDC authentication.
 
-### 4. Storage quota operates on bytes only
-
-The billing system interacts with `Usage.totalStorageBytes` and `Usage.storageLimitBytes` **only**. It never inspects individual `StorageObject` records for quota enforcement. File count (`totalObjects`) is a secondary metric.
-
-### 5. Refund & Expiry policy
-
-Xenode offers a **14-day refund policy** for all paid plans.
-
-When a plan expires or a subscription is cancelled:
-- **New uploads are blocked** (HTTP 402) if usage exceeds the free tier limit.
-- **Reads and deletes are always allowed** — the user must be able to reclaim space.
-- **Auto-deletion of encrypted files is strictly forbidden** — the server does not hold decryption keys.
-- A grace notification must be sent (email integration: PENDING).
-
-### 6. PendingTransaction TTL
-
-`PendingTransaction` records auto-expire after 1 hour via MongoDB TTL index. This limits the window for replay attacks against the payment callback.
-
----
-
-## Connection Architecture
-
-```
-Next.js API Layer
-    │
-    ├── lib/mongodb.ts          ← Single Mongoose connection (singleton)
-    │       │
-    │       └── mongoose.connection.db  ← Shared with better-auth adapter
-    │
-    ├── app/api/payment/**      ← Billing boundary (no key vault access)
-    ├── app/api/objects/**      ← Storage boundary (opaque keys only)
-    └── app/api/keys/**         ← E2EE boundary (no billing access)
-```
-
----
-
-## Cron Jobs
-
-| Route | Schedule | Purpose |
-|-------|----------|---------|
-| `/api/cron/expire-plans` | `0 0 * * *` (daily midnight UTC) | Expire lapsed plans and reset to free tier |
-
-All cron routes require `Authorization: Bearer {CRON_SECRET}` header.
-
----
-
-## ESLint Billing Boundary Rule
-
-Add to your ESLint config to enforce the billing/E2EE separation:
-
-```js
-// In eslint.config.mjs or .eslintrc.js
-{
-  files: ["app/api/payment/**/*.ts"],
-  rules: {
-    "no-restricted-imports": [
-      "error",
-      {
-        patterns: [
-          {
-            group: ["**/UserKeyVault*", "**/lib/crypto/**"],
-            message: "Billing routes must not access E2EE key material. See BILLING_SECURITY.md."
-          }
-        ]
-      }
-    ]
-  }
-}
-```
+Boundary enforcement lives in `scripts/check-boundaries.mjs` and the Drive ESLint
+configuration. Any new billing route must preserve these restrictions.
