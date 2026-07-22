@@ -73,7 +73,7 @@ function PhotosAppInner() {
               void loadAlbums(spaceId);
             }}
           />
-          <Timeline spaceId={spaceId} onOpen={setLightbox} />
+          <Timeline key={spaceId} spaceId={spaceId} onOpen={setLightbox} />
         </>
       ) : null}
       {spaceId && view === "albums" && !album ? (

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import "./globals.css";
 
 export const metadata = {
   title: "Xenode Account",
@@ -8,9 +9,7 @@ export const metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <body style={{ margin: 0, fontFamily: "system-ui", background: "#09090b", color: "#fafafa" }}>
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

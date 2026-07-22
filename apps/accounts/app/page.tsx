@@ -1,28 +1,40 @@
+import { AccountShell } from "@/components/AccountShell";
+import { SignOutButton } from "@/components/SignOutButton";
+import { requireAccountsPageSession } from "@/lib/session";
+
 const sections = [
-  ["Profile", "/profile", "Name, username, email, and preferences"],
-  ["Linked accounts", "/linked-accounts", "Connectors for external services; never login identities"],
-  ["Security activity", "/security", "Recent sign-ins and sensitive account events"],
-  ["Devices", "/devices", "Product sessions and device revocation"],
-  ["Organizations", "/organizations", "Membership, domains, and organization security"],
-  ["Usage", "/usage", "Read-only storage and plan statistics"],
+  ["Profile", "/profile", "Name, username, verified email, and encryption defaults"],
+  ["Linked accounts", "/linked-accounts", "External connectors kept separate from your login identity"],
+  ["Security activity", "/security", "Recent sign-ins, Vault changes, and product handoffs"],
+  ["Devices", "/devices", "Active Drive, Photos, mobile, and office sessions"],
+  ["Organizations", "/organizations", "Memberships, roles, and organization workspaces"],
+  ["Usage", "/usage", "Read-only storage, plan, and product statistics"],
 ] as const;
 
-export default function AccountsHome() {
+export default async function AccountsHome() {
+  const session = await requireAccountsPageSession();
   return (
-    <main style={{ maxWidth: 960, margin: "0 auto", padding: "64px 24px" }}>
-      <p style={{ color: "#a1a1aa" }}>Xenode Account</p>
-      <h1 style={{ fontSize: 42, margin: "8px 0" }}>Your account, one secure place</h1>
-      <p style={{ color: "#a1a1aa", maxWidth: 680 }}>
-        Manage identity and security here. Drive and Photos keep separate host-only sessions and receive only their product-space keys.
-      </p>
-      <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: 16, marginTop: 40 }}>
-        {sections.map(([title, href, description]) => (
-          <a key={href} href={href} style={{ color: "inherit", textDecoration: "none", border: "1px solid #27272a", borderRadius: 16, padding: 20 }}>
-            <h2 style={{ marginTop: 0 }}>{title}</h2>
-            <p style={{ color: "#a1a1aa" }}>{description}</p>
-          </a>
-        ))}
-      </section>
-    </main>
+    <AccountShell user={session.user}>
+      <main className="page">
+        <p className="eyebrow">Xenode Account</p>
+        <h1>Your identity.<br />One secure place.</h1>
+        <p className="lede">
+          Manage identity and security here. Drive and Photos keep separate,
+          host-only sessions and receive only the key for the product space you open.
+        </p>
+        <div className="button-row" style={{ marginTop: 24 }}>
+          <SignOutButton />
+        </div>
+        <section className="grid grid-3" style={{ marginTop: 44 }}>
+          {sections.map(([title, href, description]) => (
+            <a className="card link-card" key={href} href={href}>
+              <h2>{title}</h2>
+              <p>{description}</p>
+              <span className="arrow">Open →</span>
+            </a>
+          ))}
+        </section>
+      </main>
+    </AccountShell>
   );
 }

@@ -16,7 +16,6 @@ import {
   createOneTimeHandoffStore,
   createProductHandoffRequest,
   parseSealedHandoff,
-  type HandoffBinding,
   type PendingHandoff,
   type SealedHandoff,
 } from "@xenode/key-handoff";

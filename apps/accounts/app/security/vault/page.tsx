@@ -11,7 +11,7 @@ import {
   sealEnvelope,
   type Argon2idParams,
 } from "@xenode/crypto-core";
-import { personalSpaceId } from "@xenode/spaces";
+import { personalSpaceId } from "@xenode/spaces/ids";
 import { deriveArgon2id } from "@/lib/argon2";
 
 type VaultState = {

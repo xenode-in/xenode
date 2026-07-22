@@ -56,10 +56,8 @@ export function Timeline({
   );
 
   useEffect(() => {
-    setItems([]);
-    setCursor(null);
-    setLoaded(false);
-    void load(null);
+    const timer = window.setTimeout(() => void load(null), 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
 
   const virtualWindow = getTimelineWindow({
