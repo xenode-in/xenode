@@ -31,7 +31,6 @@ import { Label } from "@/components/ui/label";
 import { LogOut, ShieldAlert } from "lucide-react";
 import { signOut } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { useRouter } from "next/navigation";
 
 interface SignOutDialogProps {
   open: boolean;
@@ -39,26 +38,27 @@ interface SignOutDialogProps {
 }
 
 export function SignOutDialog({ open, onOpenChange }: SignOutDialogProps) {
-  const router = useRouter();
   const { logout } = useCrypto();
   const [clearKeys, setClearKeys] = useState(false);
   const [loading, setLoading] = useState(false);
 
   async function handleSignOut() {
     setLoading(true);
+    // End the Accounts session too, otherwise navigating to Drive's login route
+    // immediately SSO-re-authenticates from the still-valid Accounts session and
+    // drops the user right back into Drive. The Accounts /logout flow revokes all
+    // product sessions, clears the account session, and drops the cached key.
+    const accountsOrigin = new URL(
+      process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in",
+    ).origin;
     try {
-      // Always log out (clears IDB if userId is present)
-      await logout();
-
-      await signOut();
-      router.push("/auth/login");
+      await logout(); // clears local crypto keys / IndexedDB
+      await signOut(); // revoke this Drive ProductSession + clear its cookie
     } catch {
-      // Sign out anyway even if cleanup fails
       await signOut();
-      router.push("/auth/login");
     } finally {
-      setLoading(false);
       onOpenChange(false);
+      window.location.assign(`${accountsOrigin}/logout`);
     }
   }
 
