@@ -9,6 +9,11 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace @xenode/drive",
+    "dev:all": "turbo run dev",
+    "dev:mongo": "node scripts/dev-mongo.mjs",
+    "dev:accounts": "npm run dev --workspace @xenode/accounts",
+    "dev:drive": "npm run dev --workspace @xenode/drive",
+    "dev:photos": "npm run dev --workspace @xenode/photos-web",
     "build": "turbo run build",
     "build:drive": "turbo run build --filter=@xenode/drive",
     "start": "npm run start --workspace @xenode/drive",
