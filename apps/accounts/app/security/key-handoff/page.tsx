@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   derivePasswordWrappingKey,
   decodeBase64Url,
@@ -103,15 +103,19 @@ export default function KeyHandoffBrokerPage() {
     "Confirm the destination and unlock only its product key.",
   );
   const [busy, setBusy] = useState(false);
+  // Gate window.location-derived content until after mount so the server render
+  // and the first client (hydration) render match. Only then compute the label.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const requestLabel = useMemo(() => {
-    if (typeof window === "undefined") return "Loading request...";
+    if (!mounted) return "Loading request...";
     try {
       const { binding } = parseBrokerRequest();
       return `${binding.productId} / ${binding.spaceId}`;
     } catch {
       return "Invalid request";
     }
-  }, []);
+  }, [mounted]);
 
   async function approve() {
     setBusy(true);
@@ -254,31 +258,44 @@ export default function KeyHandoffBrokerPage() {
   }
 
   return (
-    <main style={{ maxWidth: 640, margin: "0 auto", padding: 64 }}>
-      <h1>Unlock product</h1>
-      <p style={{ color: "#a1a1aa" }}>
+    <main className="page page-narrow">
+      <p className="eyebrow">Key handoff</p>
+      <h1>Unlock this product</h1>
+      <p className="lede">
         Accounts unwraps the requested ProductSpaceKey and, for Drive, its
         subordinate sharing key. Your Account Root Key never leaves this browser.
       </p>
-      <p><strong>Request:</strong> {requestLabel}</p>
-      <label htmlFor="handoff-password">Vault password</label>
-      <input
-        id="handoff-password"
-        type="password"
-        autoComplete="current-password"
-        value={password}
-        onChange={(event) => setPassword(event.target.value)}
-        style={{ display: "block", width: "100%", marginTop: 8, padding: 10 }}
-      />
-      <button
-        type="button"
-        disabled={busy || !password}
-        onClick={() => void approve()}
-        style={{ marginTop: 16, padding: "10px 16px" }}
-      >
-        {busy ? "Unlocking..." : "Approve one-time handoff"}
-      </button>
-      <p role="status" style={{ marginTop: 20 }}>{status}</p>
+      <section className="card" style={{ marginTop: 24 }}>
+        <div className="badge" style={{ marginBottom: 16 }}>{requestLabel}</div>
+        <form
+          className="form"
+          style={{ maxWidth: 460 }}
+          onSubmit={(event) => {
+            event.preventDefault();
+            void approve();
+          }}
+        >
+          <div className="field">
+            <label htmlFor="handoff-password">Vault password</label>
+            <input
+              className="input"
+              id="handoff-password"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </div>
+          <button className="button" type="submit" disabled={busy || !password}>
+            {busy ? "Unlocking…" : "Approve one-time handoff"}
+          </button>
+        </form>
+      </section>
+      {status ? (
+        <p className="status" role="status" style={{ marginTop: 20 }}>
+          {status}
+        </p>
+      ) : null}
     </main>
   );
 }

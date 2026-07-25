@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   derivePasswordWrappingKey,
   encodeBase64Url,
@@ -36,6 +36,18 @@ export default function VaultPage() {
   const [recoverySecret, setRecoverySecret] = useState("");
   const [status, setStatus] = useState("Loading Vault status…");
   const [busy, setBusy] = useState(false);
+  // Where to send the user after first-run vault setup (the OIDC handshake they
+  // came from, or the hub). Only same-origin paths are honored.
+  const [nextPath, setNextPath] = useState("/");
+  // True while creating the vault automatically from the signup password —
+  // the user is never prompted for a password a second time.
+  const [autoSetup, setAutoSetup] = useState(false);
+  const autoStarted = useRef(false);
+
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("next");
+    if (requested && requested.startsWith("/")) setNextPath(requested);
+  }, []);
 
   useEffect(() => {
     void fetch("/api/vault", { credentials: "include", cache: "no-store" })
@@ -52,9 +64,29 @@ export default function VaultPage() {
       });
   }, []);
 
-  async function createVault() {
-    if (!state || state.vault || password.length < 12) {
+  // Silent first-run: if the signup step stashed the password, create the vault
+  // with it automatically — no second password prompt.
+  useEffect(() => {
+    if (!state || state.vault || autoStarted.current) return;
+    let stashed = "";
+    try {
+      stashed = sessionStorage.getItem("xenode-vault-pw") ?? "";
+    } catch {
+      /* storage disabled */
+    }
+    if (stashed.length >= 12) {
+      autoStarted.current = true;
+      setAutoSetup(true);
+      setStatus("Setting up your encrypted vault…");
+      void createVault(stashed);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state]);
+
+  async function createVault(pw: string = password) {
+    if (!state || state.vault || pw.length < 12) {
       setStatus("Use a password of at least 12 characters.");
+      setAutoSetup(false);
       return;
     }
     setBusy(true);
@@ -65,7 +97,7 @@ export default function VaultPage() {
       const recovery = generateRecoverySecret();
       const params = randomParams();
       const passwordKey = await derivePasswordWrappingKey(
-        password,
+        pw,
         params,
         deriveArgon2id,
       );
@@ -171,44 +203,86 @@ export default function VaultPage() {
       setRecoverySecret(recoveryText);
       setStatus("Vault v2 created. Save the recovery secret now.");
       setPassword("");
+      try {
+        sessionStorage.removeItem("xenode-vault-pw");
+      } catch {
+        /* storage disabled */
+      }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Vault creation failed.");
+      setAutoSetup(false); // fall back to the manual password form
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <main style={{ maxWidth: 760, margin: "0 auto", padding: 64 }}>
-      <a href="/security" style={{ color: "#a1a1aa" }}>← Security</a>
-      <h1>Encrypted Vault</h1>
-      <p style={{ color: "#a1a1aa" }}>
+    <main className="page page-narrow">
+      <a href="/security" className="back-link">← Security</a>
+      <p className="eyebrow" style={{ marginTop: 20 }}>Encrypted Vault</p>
+      <h1>Your keys, sealed in this browser</h1>
+      <p className="lede">
         Account Root Keys and sharing private keys are generated and wrapped in
-        this browser. Accounts stores ciphertext envelopes only.
+        this browser. Accounts stores ciphertext envelopes only — never your
+        plaintext keys.
       </p>
-      <p role="status">{status}</p>
-      {!state?.vault ? (
-        <div style={{ display: "grid", gap: 12, maxWidth: 480 }}>
-          <label htmlFor="vault-password">Vault password</label>
-          <input
-            id="vault-password"
-            type="password"
-            value={password}
-            minLength={12}
-            autoComplete="new-password"
-            onChange={(event) => setPassword(event.target.value)}
-          />
-          <button type="button" disabled={busy} onClick={() => void createVault()}>
-            {busy ? "Creating…" : "Create Vault v2"}
-          </button>
-        </div>
+      {status ? (
+        <p className="status" role="status" style={{ marginTop: 24 }}>
+          {status}
+        </p>
+      ) : null}
+      {!state?.vault && autoSetup && !recoverySecret ? (
+        <section className="card" style={{ marginTop: 24 }}>
+          <p className="muted" style={{ margin: 0 }}>
+            Creating your encrypted vault from your sign-up password…
+          </p>
+        </section>
+      ) : null}
+      {!state?.vault && !autoSetup ? (
+        <section className="card" style={{ marginTop: 24 }}>
+          <form
+            className="form"
+            style={{ maxWidth: 460 }}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void createVault();
+            }}
+          >
+            <div className="field">
+              <label htmlFor="vault-password">Vault password</label>
+              <input
+                className="input"
+                id="vault-password"
+                type="password"
+                value={password}
+                minLength={12}
+                autoComplete="new-password"
+                placeholder="At least 12 characters"
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </div>
+            <button className="button" type="submit" disabled={busy}>
+              {busy ? "Creating…" : "Create Vault v2"}
+            </button>
+          </form>
+        </section>
       ) : null}
       {recoverySecret ? (
-        <section style={{ marginTop: 24, border: "1px solid #7c2d12", padding: 16 }}>
-          <strong>Recovery secret — shown once</strong>
-          <code style={{ display: "block", overflowWrap: "anywhere", marginTop: 12 }}>
-            {recoverySecret}
-          </code>
+        <section className="callout callout-warning" style={{ marginTop: 24 }}>
+          <strong className="callout-title">Recovery secret — shown once</strong>
+          <p className="fine-print" style={{ margin: "6px 0 0" }}>
+            Store this somewhere safe. It is the only way to recover your Vault
+            if you forget your password.
+          </p>
+          <code className="code-block">{recoverySecret}</code>
+          <button
+            type="button"
+            className="button"
+            style={{ marginTop: 16 }}
+            onClick={() => window.location.assign(nextPath)}
+          >
+            I&rsquo;ve saved it — continue
+          </button>
         </section>
       ) : null}
     </main>
