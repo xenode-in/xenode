@@ -3,6 +3,13 @@ import { getModel } from "../model";
 
 const envelopeSchema = new Schema(
   {
+    // Envelope context (bound into the AAD and checked by crypto-core
+    // `sameContext` on open). These MUST be persisted or decrypt fails with
+    // "Envelope context or format mismatch".
+    accountId: { type: String, required: true },
+    spaceId: { type: String },
+    productId: { type: String },
+    type: { type: String, required: true },
     formatVersion: { type: Number, required: true, min: 2 },
     algorithm: { type: String, enum: ["AES-256-GCM"], required: true },
     keyId: { type: String, required: true },

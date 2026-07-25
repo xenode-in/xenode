@@ -4,6 +4,10 @@ import { getAccountsAuth } from "@/lib/auth";
 const RECENT_AUTH_WINDOW_MS = 10 * 60 * 1000;
 
 type Envelope = {
+  accountId: string;
+  spaceId?: string;
+  productId?: string;
+  type: string;
   formatVersion: number;
   algorithm: string;
   keyId: string;
@@ -20,6 +24,15 @@ function isEnvelope(value: unknown): value is Envelope {
   if (!value || typeof value !== "object") return false;
   const envelope = value as Partial<Envelope>;
   return (
+    // Context fields — must be present so they persist and pass the
+    // crypto-core `sameContext` check when the envelope is later opened.
+    typeof envelope.accountId === "string" &&
+    envelope.accountId.length > 0 &&
+    typeof envelope.type === "string" &&
+    envelope.type.length > 0 &&
+    (envelope.spaceId === undefined || typeof envelope.spaceId === "string") &&
+    (envelope.productId === undefined ||
+      typeof envelope.productId === "string") &&
     envelope.formatVersion === 2 &&
     envelope.algorithm === "AES-256-GCM" &&
     typeof envelope.keyId === "string" &&

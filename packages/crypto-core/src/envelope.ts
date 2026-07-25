@@ -17,7 +17,7 @@ function aad(context: EnvelopeContext): Uint8Array {
       context.keyId,
       String(context.keyVersion),
       context.type,
-    ].join("\u001f"),
+    ].join(""),
   );
 }
 
@@ -32,25 +32,34 @@ function sameContext(left: EnvelopeContext, right: EnvelopeContext): boolean {
   );
 }
 
-async function importWrappingKey(rawKey: Uint8Array, usage: KeyUsage) {
+async function importWrappingKey(rawKey: Uint8Array, usages: KeyUsage[]) {
   if (rawKey.length !== 32) throw new Error("Wrapping keys must be 256 bits");
   return crypto.subtle.importKey(
     "raw",
     rawKey as BufferSource,
     { name: "AES-GCM" },
     false,
-    [usage],
+    usages,
   );
 }
 
-export async function sealEnvelope(
+/**
+ * Import a 256-bit product/space key as a NON-EXTRACTABLE AES-GCM CryptoKey
+ * usable for both sealing and opening envelopes. Non-extractable keys can be
+ * structured-cloned into IndexedDB, so callers can persist the unlocked key
+ * across reloads without ever writing raw key bytes to disk.
+ */
+export async function importProductKey(rawKey: Uint8Array): Promise<CryptoKey> {
+  return importWrappingKey(rawKey, ["encrypt", "decrypt"]);
+}
+
+export async function sealEnvelopeWithKey(
   plaintext: Uint8Array,
-  wrappingKey: Uint8Array,
+  key: CryptoKey,
   context: EnvelopeContext,
   now = new Date(),
 ): Promise<CryptoEnvelope> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await importWrappingKey(wrappingKey, "encrypt");
   const ciphertext = await crypto.subtle.encrypt(
     {
       name: "AES-GCM",
@@ -73,9 +82,19 @@ export async function sealEnvelope(
   };
 }
 
-export async function openEnvelope(
-  envelope: CryptoEnvelope,
+export async function sealEnvelope(
+  plaintext: Uint8Array,
   wrappingKey: Uint8Array,
+  context: EnvelopeContext,
+  now = new Date(),
+): Promise<CryptoEnvelope> {
+  const key = await importWrappingKey(wrappingKey, ["encrypt"]);
+  return sealEnvelopeWithKey(plaintext, key, context, now);
+}
+
+export async function openEnvelopeWithKey(
+  envelope: CryptoEnvelope,
+  key: CryptoKey,
   expectedContext: EnvelopeContext,
 ): Promise<Uint8Array> {
   if (
@@ -87,7 +106,6 @@ export async function openEnvelope(
   ) {
     throw new Error("Envelope context or format mismatch");
   }
-  const key = await importWrappingKey(wrappingKey, "decrypt");
   const plaintext = await crypto.subtle.decrypt(
     {
       name: "AES-GCM",
@@ -99,6 +117,15 @@ export async function openEnvelope(
     decodeBase64Url(envelope.ciphertext) as BufferSource,
   );
   return new Uint8Array(plaintext);
+}
+
+export async function openEnvelope(
+  envelope: CryptoEnvelope,
+  wrappingKey: Uint8Array,
+  expectedContext: EnvelopeContext,
+): Promise<Uint8Array> {
+  const key = await importWrappingKey(wrappingKey, ["decrypt"]);
+  return openEnvelopeWithKey(envelope, key, expectedContext);
 }
 
 export async function openRsaOaepProductSpaceKey(

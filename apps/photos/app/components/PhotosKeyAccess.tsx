@@ -100,14 +100,21 @@ function UnlockControl({
         if (!response.ok) throw new Error("Sign in to Photos first.");
         return response.json() as Promise<SessionInfo>;
       })
-      .then((value) => {
+      .then(async (value) => {
         setSession(value);
-        setStatus("Photos encryption key is locked.");
+        // Silent auto-unlock from the persisted key cache — only prompt for a
+        // new key handoff when nothing is cached for this space.
+        const restored = await productCrypto.restore(value.spaceId);
+        setStatus(
+          restored
+            ? "Photos encryption key unlocked."
+            : "Photos encryption key is locked.",
+        );
       })
       .catch((error: unknown) => {
         setStatus(error instanceof Error ? error.message : "Session unavailable.");
       });
-  }, []);
+  }, [productCrypto]);
 
   const consumeRequest = useCallback(
     async (request: PendingHandoff): Promise<boolean> => {

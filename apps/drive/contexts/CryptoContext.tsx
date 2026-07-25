@@ -12,6 +12,9 @@ import React, {
 import {
   ProductCryptoProvider,
   useProductCrypto,
+  loadPersistedKey,
+  savePersistedKey,
+  deletePersistedKey,
 } from "@xenode/crypto-react";
 import {
   consumeProductKeyBundle,
@@ -21,7 +24,7 @@ import {
   type PendingHandoff,
   type SealedHandoff,
 } from "@xenode/key-handoff";
-import { personalSpaceId } from "@xenode/spaces";
+import { personalSpaceId } from "@xenode/spaces/ids";
 import { clearLocalDb } from "@/lib/db/local";
 import { clearThumbnailMemoryCache } from "@/lib/thumbnails/memoryCache";
 import { deriveDriveMetadataKey } from "@/lib/crypto/productKeys";
@@ -50,6 +53,45 @@ type ImportedSharingKeys = {
   publicKey: CryptoKey;
   metadataKey: CryptoKey;
 };
+
+// The product-space key persists via the crypto-react ProductKeyStore cache.
+// Drive's gate also needs the RSA sharing keypair + derived metadata key, which
+// aren't recoverable from the (non-extractable) product key — so persist those
+// three non-extractable CryptoKeys too, keyed by spaceId, for silent re-unlock.
+const AUX_PRIVATE = "drive-sharing-private";
+const AUX_PUBLIC = "drive-sharing-public";
+const AUX_METADATA = "drive-metadata";
+
+async function persistSharingKeys(
+  spaceId: string,
+  keys: ImportedSharingKeys,
+): Promise<void> {
+  await Promise.all([
+    savePersistedKey(AUX_PRIVATE, spaceId, keys.privateKey),
+    savePersistedKey(AUX_PUBLIC, spaceId, keys.publicKey),
+    savePersistedKey(AUX_METADATA, spaceId, keys.metadataKey),
+  ]);
+}
+
+async function loadSharingKeys(
+  spaceId: string,
+): Promise<ImportedSharingKeys | null> {
+  const [privateKey, publicKey, metadataKey] = await Promise.all([
+    loadPersistedKey(AUX_PRIVATE, spaceId),
+    loadPersistedKey(AUX_PUBLIC, spaceId),
+    loadPersistedKey(AUX_METADATA, spaceId),
+  ]);
+  if (!privateKey || !publicKey || !metadataKey) return null;
+  return { privateKey, publicKey, metadataKey };
+}
+
+async function forgetSharingKeys(spaceId: string): Promise<void> {
+  await Promise.all([
+    deletePersistedKey(AUX_PRIVATE, spaceId),
+    deletePersistedKey(AUX_PUBLIC, spaceId),
+    deletePersistedKey(AUX_METADATA, spaceId),
+  ]);
+}
 
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
 
@@ -148,14 +190,16 @@ export function CryptoProvider({
         throw new Error("Drive handoff is missing sharing keys.");
       }
       try {
-        setSharingKeys(
-          await importAndVerifySharingKeys(
-            bundle.sharingPrivateKeyPkcs8,
-            bundle.sharingPublicKeySpki,
-            bundle.productSpaceKey,
-            requestedSpaceId,
-          ),
+        const keys = await importAndVerifySharingKeys(
+          bundle.sharingPrivateKeyPkcs8,
+          bundle.sharingPublicKeySpki,
+          bundle.productSpaceKey,
+          requestedSpaceId,
         );
+        setSharingKeys(keys);
+        // Persist the sharing keypair + metadata key so a reload auto-unlocks
+        // (the product key itself is persisted by ProductCryptoProvider).
+        await persistSharingKeys(requestedSpaceId, keys);
         return bundle.productSpaceKey;
       } finally {
         bundle.sharingPrivateKeyPkcs8.fill(0);
@@ -171,6 +215,7 @@ export function CryptoProvider({
         spaceId={spaceId}
         pending={pending}
         sharingKeys={sharingKeys}
+        setSharingKeys={setSharingKeys}
         clearSharingKeys={() => setSharingKeys(null)}
       >
         {children}
@@ -184,6 +229,7 @@ function DriveKeyAccess({
   spaceId,
   pending,
   sharingKeys,
+  setSharingKeys,
   clearSharingKeys,
   children,
 }: {
@@ -191,6 +237,7 @@ function DriveKeyAccess({
   spaceId: string;
   pending: React.RefObject<Map<string, PendingHandoff>>;
   sharingKeys: ImportedSharingKeys | null;
+  setSharingKeys: (keys: ImportedSharingKeys) => void;
   clearSharingKeys: () => void;
   children: ReactNode;
 }) {
@@ -203,6 +250,25 @@ function DriveKeyAccess({
   ).origin;
   const isUnlocked =
     Boolean(spaceId && sharingKeys) && productCrypto.isUnlocked(spaceId);
+
+  // Silent auto-unlock from the persisted caches on mount: restore the product
+  // key (ProductCryptoProvider) + the sharing/metadata keys, so a reload never
+  // re-triggers the Accounts handoff popup.
+  useEffect(() => {
+    if (!accountId || !spaceId) return;
+    let cancelled = false;
+    void (async () => {
+      const restoredProduct = await productCrypto.restore(spaceId);
+      if (!restoredProduct || cancelled) return;
+      const keys = await loadSharingKeys(spaceId);
+      if (cancelled || !keys) return;
+      setSharingKeys(keys);
+      setStatus("Drive encryption keys are unlocked in memory.");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, spaceId, productCrypto, setSharingKeys]);
 
   const consumeRequest = useCallback(
     async (request: PendingHandoff): Promise<boolean> => {
@@ -313,7 +379,8 @@ function DriveKeyAccess({
   }, [accountId, accountsOrigin, consumeRequest, pending, spaceId]);
 
   const lock = useCallback(async () => {
-    productCrypto.lock(spaceId || undefined);
+    await productCrypto.lock(spaceId || undefined);
+    if (spaceId) await forgetSharingKeys(spaceId);
     clearSharingKeys();
     clearThumbnailMemoryCache();
     setStatus("Drive encryption is locked.");
