@@ -1,0 +1,10 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+/* Shared Xenode design system (tokens, @theme, keyframes). */
+@import "../../../packages/ui/src/styles/tokens.css";
+
+/* Generate utility classes used by the shared component library + this app. */
+@source "../../../packages/ui/src/components";
+@source "./";

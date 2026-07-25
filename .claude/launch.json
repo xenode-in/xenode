@@ -12,6 +12,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "-w", "@xenode/accounts"],
       "port": 3001
+    },
+    {
+      "name": "photos",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "-w", "@xenode/photos-web"],
+      "port": 3002
     }
   ]
 }

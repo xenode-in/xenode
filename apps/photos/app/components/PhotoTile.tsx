@@ -19,8 +19,8 @@ export function PhotoTile({
         minHeight: 142,
         borderRadius: 10,
         overflow: "hidden",
-        background: "linear-gradient(135deg,#27272a,#18181b)",
-        outline: checked ? "3px solid #8b5cf6" : "1px solid #3f3f46",
+        background: "linear-gradient(135deg,var(--border),var(--card))",
+        outline: checked ? "3px solid var(--primary)" : "1px solid var(--border)",
       }}
     >
       <button
@@ -38,7 +38,7 @@ export function PhotoTile({
         }}
       >
         <strong>{asset.mediaType === "video" ? "Video" : "Photo"}</strong>
-        <small style={{ display: "block", marginTop: 76, color: "#a1a1aa" }}>
+        <small style={{ display: "block", marginTop: 76, color: "var(--muted-foreground)" }}>
           {new Date(asset.takenAt).toLocaleString()}
         </small>
       </button>

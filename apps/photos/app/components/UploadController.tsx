@@ -6,7 +6,7 @@ export function UploadController() {
   const [status, setStatus] = useState("No uploads queued.");
   return (
     <label>
-      <span style={{ display: "inline-block", padding: "7px 12px", border: "1px solid #3f3f46" }}>
+      <span style={{ display: "inline-block", padding: "7px 12px", border: "1px solid var(--border)" }}>
         Add photos
       </span>
       <input
@@ -28,7 +28,7 @@ export function UploadController() {
           );
         }}
       />
-      <span role="status" style={{ marginLeft: 10, color: "#a1a1aa" }}>{status}</span>
+      <span role="status" style={{ marginLeft: 10, color: "var(--muted-foreground)" }}>{status}</span>
     </label>
   );
 }

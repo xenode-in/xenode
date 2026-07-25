@@ -269,20 +269,13 @@ function UnlockControl({
   const unlocked = session
     ? productCrypto.isUnlocked(session.spaceId)
     : false;
+  if (unlocked) return <>{children}</>;
   return (
     <>
-      <aside
-        style={{
-          display: "flex",
-          gap: 12,
-          alignItems: "center",
-          padding: "10px 32px",
-          borderBottom: "1px solid #27272a",
-        }}
-      >
+      <aside className="flex items-center gap-3 border-b border-border bg-card px-6 py-2.5 text-sm">
         <button
           type="button"
-          disabled={!session || unlocked}
+          disabled={!session}
           onClick={() => {
             try {
               sessionStorage.removeItem(HANDOFF_ATTEMPT_KEY);
@@ -291,11 +284,18 @@ function UnlockControl({
             }
             void startUnlock();
           }}
+          className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
         >
-          {unlocked ? "Encryption unlocked" : "Unlock encryption"}
+          Unlock encryption
         </button>
-        <span role="status" style={{ color: "#a1a1aa" }}>{status}</span>
-        {!session ? <a href="/auth/login">Sign in</a> : null}
+        <span role="status" className="text-muted-foreground">
+          {status}
+        </span>
+        {!session ? (
+          <a href="/auth/login" className="ml-auto text-primary hover:underline">
+            Sign in
+          </a>
+        ) : null}
       </aside>
       {children}
     </>

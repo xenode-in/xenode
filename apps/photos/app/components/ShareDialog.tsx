@@ -11,7 +11,7 @@ export function ShareDialog({ selectedIds }: { selectedIds: string[] }) {
         Share ({selectedIds.length})
       </button>
       {open ? (
-        <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: "25% 30%", zIndex: 40, background: "#18181b", padding: 24, border: "1px solid #52525b" }}>
+        <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: "25% 30%", zIndex: 40, background: "var(--card)", padding: 24, border: "1px solid var(--muted-foreground)" }}>
           <h2>Share selected assets</h2>
           <select value={role} onChange={(event) => setRole(event.target.value as typeof role)}>
             <option value="viewer">Viewer</option>

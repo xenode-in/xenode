@@ -10,7 +10,7 @@ export function Scrubber({
   onChange(value: number): void;
 }) {
   return (
-    <label style={{ display: "grid", gap: 6, color: "#a1a1aa" }}>
+    <label style={{ display: "grid", gap: 6, color: "var(--muted-foreground)" }}>
       Timeline position
       <input
         aria-label="Timeline position"
