@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -60,7 +61,10 @@ export function ProductCryptoProvider({
   children: ReactNode;
 }) {
   const store = useRef(new ProductKeyStore(productId));
-  const [, render] = useState(0);
+  // Bumped whenever the in-memory key set changes; folded into the memoized
+  // context value below so `isUnlocked` stays reactive without giving the value
+  // a new identity on every unrelated render.
+  const [version, setVersion] = useState(0);
 
   // Keep in-memory keys only for the provider's lifetime; the persistent cache
   // (IndexedDB) is what survives reloads and is cleared explicitly via lock().
@@ -75,7 +79,7 @@ export function ProductCryptoProvider({
       const cached = await loadPersistedKey(productId, spaceId);
       if (!cached) return false;
       store.current.set(spaceId, cached);
-      render((value) => value + 1);
+      setVersion((value) => value + 1);
       return true;
     },
     [productId],
@@ -92,7 +96,7 @@ export function ProductCryptoProvider({
       }
       store.current.set(spaceId, key);
       await savePersistedKey(productId, spaceId, key);
-      render((value) => value + 1);
+      setVersion((value) => value + 1);
     },
     [productId, unwrapHandoff],
   );
@@ -106,7 +110,7 @@ export function ProductCryptoProvider({
         store.current.clear();
         await clearPersistedKeys(productId);
       }
-      render((value) => value + 1);
+      setVersion((value) => value + 1);
     },
     [productId],
   );
@@ -117,17 +121,25 @@ export function ProductCryptoProvider({
     [],
   );
 
+  // Memoize so the context value keeps a stable identity across unrelated
+  // re-renders — consumers that put `productCrypto` in effect deps must not see
+  // a new object every render (that caused a render/fetch storm). `version` in
+  // the deps refreshes the value (and `isUnlocked`) whenever the key set changes.
+  const value = useMemo<ProductCryptoContextValue>(
+    () => ({
+      productId,
+      isUnlocked: (spaceId) => store.current.has(spaceId),
+      restore,
+      unlock,
+      lock,
+      withProductKey,
+    }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [productId, restore, unlock, lock, withProductKey, version],
+  );
+
   return (
-    <ProductCryptoContext.Provider
-      value={{
-        productId,
-        isUnlocked: (spaceId) => store.current.has(spaceId),
-        restore,
-        unlock,
-        lock,
-        withProductKey,
-      }}
-    >
+    <ProductCryptoContext.Provider value={value}>
       {children}
     </ProductCryptoContext.Provider>
   );

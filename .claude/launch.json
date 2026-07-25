@@ -2,22 +2,25 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "xenode-dev",
+      "name": "drive",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "port": 3000
+      "runtimeArgs": ["run", "dev:drive"],
+      "port": 3000,
+      "autoPort": false
     },
     {
       "name": "accounts",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "-w", "@xenode/accounts"],
-      "port": 3001
+      "runtimeArgs": ["run", "dev:accounts"],
+      "port": 3001,
+      "autoPort": false
     },
     {
       "name": "photos",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "-w", "@xenode/photos-web"],
-      "port": 3002
+      "runtimeArgs": ["run", "dev:photos"],
+      "port": 3002,
+      "autoPort": false
     }
   ]
 }

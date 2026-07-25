@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { SignOutButton } from "@/components/SignOutButton";
 
 const links = [
   ["Overview", "/"],
@@ -45,9 +46,12 @@ export function AccountShell({
             );
           })}
         </nav>
-        <div className="account-chip" title={user.email}>
-          <span className="avatar">{initial}</span>
-          <span>{user.name || user.email}</span>
+        <div className="topbar-account">
+          <div className="account-chip" title={user.email}>
+            <span className="avatar">{initial}</span>
+            <span>{user.name || user.email}</span>
+          </div>
+          <SignOutButton className="button button-secondary button-sm" />
         </div>
       </header>
       {children}

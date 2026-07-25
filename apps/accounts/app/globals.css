@@ -264,6 +264,15 @@ h2 {
   color: var(--primary);
   background: var(--secondary);
 }
+.topbar-account {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.button-sm {
+  padding: 7px 14px;
+  font-size: 13px;
+}
 .account-chip {
   display: flex;
   align-items: center;

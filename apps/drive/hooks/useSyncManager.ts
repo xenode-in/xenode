@@ -129,11 +129,24 @@ export function useSyncManager() {
     }
   }, [metadataKey, userId]);
 
+  // Always call the freshest `sync` without making it an effect dependency —
+  // `sync` is recreated whenever the (reference-unstable) metadataKey changes,
+  // and depending on it here caused the effect to tear down and re-fire on every
+  // render, hammering /api/files/sync in a tight loop.
+  const syncRef = useRef(sync);
   useEffect(() => {
-    sync();
-    const interval = setInterval(sync, 60000);
-    return () => clearInterval(interval);
+    syncRef.current = sync;
   }, [sync]);
+
+  // Run once when the user is known, and again only when the metadata key first
+  // becomes available (to decrypt names) — never on every render. Then poll.
+  const hasMetadataKey = Boolean(metadataKey);
+  useEffect(() => {
+    if (!userId) return;
+    void syncRef.current();
+    const interval = setInterval(() => void syncRef.current(), 60000);
+    return () => clearInterval(interval);
+  }, [userId, hasMetadataKey]);
 
   return { isSyncing, sync };
 }
