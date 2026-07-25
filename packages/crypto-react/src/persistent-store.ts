@@ -120,3 +120,100 @@ export async function clearPersistedKeys(productId: string): Promise<void> {
     request.onblocked = () => resolve();
   });
 }
+
+/**
+ * A separate IndexedDB database for short-lived, structured-cloneable values
+ * that must survive a full-page navigation — specifically the redirect-based key
+ * handoff's pending request (its binding + NON-EXTRACTABLE ephemeral ECDH
+ * keypair). Kept apart from the product-key store so signing out (which clears
+ * the key store) and consuming a handoff (which clears this) don't interfere.
+ *
+ * The ephemeral private key is non-extractable, so persisting it here never puts
+ * usable raw key bytes on disk; it is deleted the moment the handoff is consumed.
+ */
+const PENDING_STORE = "pending";
+
+function pendingDbName(productId: string): string {
+  return `xenode-handoff-${productId}`;
+}
+
+function openPendingDb(productId: string): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(pendingDbName(productId), 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(PENDING_STORE)) {
+        db.createObjectStore(PENDING_STORE);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function pendingTx<T>(
+  db: IDBDatabase,
+  mode: IDBTransactionMode,
+  run: (store: IDBObjectStore) => IDBRequest<T>,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const transaction = db.transaction(PENDING_STORE, mode);
+    const request = run(transaction.objectStore(PENDING_STORE));
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+}
+
+/** Persist the in-flight redirect handoff for a product. Best-effort. */
+export async function savePendingHandoff(
+  productId: string,
+  value: unknown,
+): Promise<void> {
+  if (!isBrowser()) return;
+  try {
+    const db = await openPendingDb(productId);
+    try {
+      await pendingTx(db, "readwrite", (store) => store.put(value, "current"));
+    } finally {
+      db.close();
+    }
+  } catch {
+    /* best-effort */
+  }
+}
+
+/** Load the in-flight redirect handoff for a product, or null. */
+export async function loadPendingHandoff(
+  productId: string,
+): Promise<unknown | null> {
+  if (!isBrowser()) return null;
+  try {
+    const db = await openPendingDb(productId);
+    try {
+      const value = await pendingTx<unknown>(db, "readonly", (store) =>
+        store.get("current"),
+      );
+      return value ?? null;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/** Remove the in-flight redirect handoff for a product. */
+export async function clearPendingHandoff(productId: string): Promise<void> {
+  if (!isBrowser()) return;
+  try {
+    const db = await openPendingDb(productId);
+    try {
+      await pendingTx(db, "readwrite", (store) => store.delete("current"));
+    } finally {
+      db.close();
+    }
+  } catch {
+    /* ignore */
+  }
+}

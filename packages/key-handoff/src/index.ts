@@ -168,6 +168,14 @@ export async function createProductHandoffRequest(args: {
   productId: string;
   spaceId: string;
   destinationOrigin: string;
+  /**
+   * Transport for the sealed key. `"popup"` (default) keeps the window.open +
+   * postMessage flow. `"redirect"` makes the broker navigate the whole tab back
+   * to `returnPath` on the destination origin when done — no popup, no click.
+   */
+  mode?: "popup" | "redirect";
+  /** Same-origin path (must start with a single "/") to return to in redirect mode. */
+  returnPath?: string;
 }): Promise<PendingHandoff> {
   const accountsOrigin = new URL(args.accountsOrigin).origin;
   const destinationOrigin = new URL(args.destinationOrigin).origin;
@@ -191,6 +199,15 @@ export async function createProductHandoffRequest(args: {
     "publicKey",
     base64Url(new TextEncoder().encode(JSON.stringify(publicKey))),
   );
+  if (args.mode === "redirect") {
+    brokerUrl.searchParams.set("mode", "redirect");
+    // Only ever a same-origin path; the broker re-validates before redirecting.
+    const returnPath =
+      args.returnPath && /^\/(?!\/)/u.test(args.returnPath)
+        ? args.returnPath
+        : "/";
+    brokerUrl.searchParams.set("returnPath", returnPath);
+  }
   return {
     binding,
     destinationKeyPair,

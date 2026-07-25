@@ -51,6 +51,8 @@ type ProductKeyResponse = {
 function parseBrokerRequest(): {
   binding: HandoffBinding;
   destinationPublicKey: JsonWebKey;
+  mode: "popup" | "redirect";
+  returnPath: string;
 } {
   const params = new URLSearchParams(window.location.search);
   const names = [
@@ -89,10 +91,31 @@ function parseBrokerRequest(): {
   }
   const publicKeyText = params.get("publicKey");
   if (!publicKeyText) throw new Error("Missing destination public key.");
+  // Redirect transport: a same-origin return path. Reject anything that could
+  // resolve off the destination origin (protocol-relative, absolute URLs).
+  const mode = params.get("mode") === "redirect" ? "redirect" : "popup";
+  const requestedReturn = params.get("returnPath") ?? "/";
+  const returnPath = /^\/(?!\/)/u.test(requestedReturn) ? requestedReturn : "/";
   return {
     binding,
     destinationPublicKey: decodeHandoffPublicKey(publicKeyText),
+    mode,
+    returnPath,
   };
+}
+
+/** Build the same-origin URL to return to after a redirect handoff (or null if unsafe). */
+function buildReturnUrl(binding: HandoffBinding, returnPath: string): string | null {
+  try {
+    const target = new URL(returnPath || "/", binding.destinationOrigin);
+    if (target.origin !== binding.destinationOrigin) return null;
+    target.hash = `xenode-handoff=${encodeURIComponent(
+      binding.transactionId,
+    )}&xenode-state=${encodeURIComponent(binding.state)}`;
+    return target.toString();
+  } catch {
+    return null;
+  }
 }
 
 async function responseJson<T>(response: Response): Promise<T> {
@@ -153,7 +176,8 @@ export default function KeyHandoffBrokerPage() {
     let productSpaceKey: Uint8Array | undefined;
     let sharingPrivateKey: Uint8Array | undefined;
     try {
-      const { binding, destinationPublicKey } = parseBrokerRequest();
+      const { binding, destinationPublicKey, mode, returnPath } =
+        parseBrokerRequest();
       const [vault, productKeyPayload] = await Promise.all([
         fetch("/api/vault", {
           credentials: "include",
@@ -275,6 +299,14 @@ export default function KeyHandoffBrokerPage() {
         }),
       );
 
+      setPassword("");
+      if (mode === "redirect") {
+        const returnUrl = buildReturnUrl(binding, returnPath);
+        if (!returnUrl) throw new Error("Invalid return path.");
+        setStatus("Key delivered. Returning you to the app…");
+        window.location.assign(returnUrl);
+        return;
+      }
       window.opener?.postMessage(
         {
           type: "xenode:key-handoff-ready",
@@ -283,7 +315,6 @@ export default function KeyHandoffBrokerPage() {
         },
         binding.destinationOrigin,
       );
-      setPassword("");
       setStatus("Key delivered as one-time ciphertext. You may close this window.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Key handoff failed.");

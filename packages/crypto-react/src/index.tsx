@@ -24,6 +24,9 @@ export {
   savePersistedKey,
   deletePersistedKey,
   clearPersistedKeys,
+  savePendingHandoff,
+  loadPendingHandoff,
+  clearPendingHandoff,
 } from "./persistent-store";
 
 export interface ProductCryptoContextValue {
