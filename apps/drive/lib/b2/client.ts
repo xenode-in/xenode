@@ -38,7 +38,14 @@ export function getS3Client(): S3Client {
     _client = new S3Client({
       endpoint: storage.endpoint,
       region: storage.region,
-      credentials,
+      // Pass a fresh, mutable copy: the shared config freezes its credentials
+      // object, but the AWS SDK mutates it (attaches a `$source` feature marker),
+      // which silently fails on a frozen object and then throws
+      // "Cannot set properties of undefined (setting 'CREDENTIALS_CODE')".
+      credentials: {
+        accessKeyId: credentials.accessKeyId,
+        secretAccessKey: credentials.secretAccessKey,
+      },
       forcePathStyle: true,
       // requestHandler: _requestHandler,
     });
