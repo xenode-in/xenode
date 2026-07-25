@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Xenode Recovery Kit</title>
+    <style>
+      @page {
+        size: A4;
+        margin: 0;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+      :root {
+        --primary: #003fba;
+        --ink: #06183a;
+        --muted: #51617d;
+        --line: #d6e0f2;
+        --wash: #f7f9ff;
+        --card: #ffffff;
+      }
+      html,
+      body {
+        background: #e8efff;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+        color: var(--ink);
+      }
+      .page {
+        width: 210mm;
+        min-height: 297mm;
+        margin: 0 auto;
+        background: var(--card);
+        padding: 24mm 20mm;
+      }
+      .header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        border-bottom: 2px solid var(--line);
+        padding-bottom: 18px;
+      }
+      .wordmark {
+        font-family: Georgia, "Times New Roman", serif;
+        font-style: italic;
+        font-size: 30px;
+        color: var(--primary);
+        font-weight: 700;
+      }
+      .kicker {
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+        margin-top: 4px;
+      }
+      .meta {
+        text-align: right;
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+      .meta strong {
+        color: var(--ink);
+      }
+      h1 {
+        font-size: 22px;
+        margin: 28px 0 6px;
+      }
+      .lede {
+        font-size: 13px;
+        color: var(--muted);
+        line-height: 1.6;
+        max-width: 150mm;
+      }
+      .phrase-card {
+        margin-top: 22px;
+        border: 1.5px solid var(--line);
+        border-radius: 14px;
+        background: var(--wash);
+        padding: 22px;
+      }
+      .phrase-card h2 {
+        font-size: 12px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--primary);
+        margin-bottom: 16px;
+      }
+      .phrase-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+      }
+      .word {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: #ffffff;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-size: 14px;
+      }
+      .word .n {
+        color: var(--muted);
+        font-size: 11px;
+        min-width: 16px;
+        text-align: right;
+      }
+      .word .w {
+        font-weight: 600;
+        font-family: "Courier New", monospace;
+      }
+      .phrase-fallback {
+        font-family: "Courier New", monospace;
+        font-size: 15px;
+        line-height: 2.2;
+        word-spacing: 6px;
+      }
+      .section {
+        margin-top: 24px;
+      }
+      .section h3 {
+        font-size: 14px;
+        margin-bottom: 8px;
+      }
+      .section p {
+        font-size: 12.5px;
+        color: var(--muted);
+        line-height: 1.6;
+      }
+      .tips {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-top: 12px;
+      }
+      .tip {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px 14px;
+        font-size: 12.5px;
+        color: var(--ink);
+      }
+      .tip b {
+        color: var(--primary);
+      }
+      .warn {
+        margin-top: 22px;
+        border: 1px solid #f0c27a;
+        background: #fff7e8;
+        border-radius: 10px;
+        padding: 14px 16px;
+        font-size: 12.5px;
+        color: #7a5312;
+        line-height: 1.6;
+      }
+      .footer {
+        margin-top: 28px;
+        border-top: 1px solid var(--line);
+        padding-top: 12px;
+        font-size: 11px;
+        color: var(--muted);
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="header">
+        <div>
+          <div class="wordmark">Xenode</div>
+          <div class="kicker">Account Recovery Kit</div>
+        </div>
+        <div class="meta">
+          <div>Account: <strong>{{userEmail}}</strong></div>
+          <div>Generated: <strong>{{generatedDate}}</strong></div>
+        </div>
+      </div>
+
+      <h1>Your 12-word recovery phrase</h1>
+      <p class="lede">
+        This phrase is the only way to recover your end-to-end encrypted vault if
+        you forget your password. Xenode never sees it and cannot reset it for
+        you. Keep this sheet somewhere safe and private.
+      </p>
+
+      <div class="phrase-card">
+        <h2>Recovery phrase</h2>
+        <div class="phrase-grid" style="display: none"></div>
+        <div class="phrase-fallback" data-phrase="{{recoveryPhrase}}">
+          {{recoveryPhrase}}
+        </div>
+      </div>
+
+      <div class="section">
+        <h3>Why you need this</h3>
+        <p>
+          Your files are encrypted with keys that only exist on your devices,
+          unlocked by your password. If you lose your password, these 12 words
+          re-derive your keys. Without either, your data cannot be recovered — by
+          anyone.
+        </p>
+      </div>
+
+      <div class="tips">
+        <div class="tip"><b>Do</b> — store on paper in a safe or lockbox.</div>
+        <div class="tip"><b>Do</b> — keep the words in the exact order shown.</div>
+        <div class="tip"><b>Don't</b> — email, message, or photograph it.</div>
+        <div class="tip"><b>Don't</b> — store it in plain text on a device.</div>
+      </div>
+
+      <div class="warn">
+        <b>Security warning:</b> anyone with these 12 words can decrypt your
+        account. Treat this sheet like the key to a safe.
+      </div>
+
+      <div class="footer">
+        Xenode — end-to-end encrypted. This document was generated in your
+        browser and never left your device.
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var fallback = document.querySelector(".phrase-fallback");
+        var grid = document.querySelector(".phrase-grid");
+        if (!fallback || !grid) return;
+        var raw = fallback.getAttribute("data-phrase") || "";
+        // Only build the grid if the placeholder was actually replaced.
+        if (raw.indexOf("{{") !== -1) return;
+        var words = raw.trim().split(/\s+/);
+        if (words.length < 2) return;
+        words.forEach(function (word, i) {
+          var cell = document.createElement("div");
+          cell.className = "word";
+          var n = document.createElement("span");
+          n.className = "n";
+          n.textContent = i + 1 + ".";
+          var w = document.createElement("span");
+          w.className = "w";
+          w.textContent = word;
+          cell.appendChild(n);
+          cell.appendChild(w);
+          grid.appendChild(cell);
+        });
+        grid.style.display = "grid";
+        fallback.style.display = "none";
+      })();
+    </script>
+  </body>
+</html>

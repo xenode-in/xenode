@@ -89,10 +89,10 @@ export default function VerifyEmailPage() {
         inputs.current[0]?.focus();
         return;
       }
-      // Verified + auto-signed-in → continue to one-time vault setup, then on
-      // to wherever the user was headed.
+      // Verified + auto-signed-in → continue to the onboarding wizard (which
+      // creates the vault silently), then on to wherever the user was headed.
       window.location.assign(
-        `/security/vault?next=${encodeURIComponent(nextPath)}`,
+        `/onboarding?next=${encodeURIComponent(nextPath)}`,
       );
     } catch {
       setMessage("Something went wrong. Please try again.");

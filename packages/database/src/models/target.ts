@@ -70,6 +70,8 @@ export interface AccountProfileRecord {
   accountId: string;
   onboarded: boolean;
   defaultEncrypt: boolean;
+  /** UI theme preference chosen at onboarding; products may read it. */
+  theme?: "light" | "dark" | "system";
   usernameHistory: Array<{ username: string; changedAt: Date }>;
   createdAt: Date;
   updatedAt: Date;
@@ -79,6 +81,7 @@ const accountProfileSchema = new Schema<AccountProfileRecord>(
     accountId: { type: String, required: true, unique: true, index: true },
     onboarded: { type: Boolean, default: false },
     defaultEncrypt: { type: Boolean, default: true },
+    theme: { type: String, enum: ["light", "dark", "system"] },
     usernameHistory: {
       type: [{ username: String, changedAt: Date }],
       default: [],

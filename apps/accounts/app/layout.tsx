@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import { Libre_Baskerville, Geist_Mono } from "next/font/google";
+import { ThemeProvider } from "@/components/providers/theme-provider";
 import "./globals.css";
 
 const suisseIntl = localFont({
@@ -39,7 +40,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body
         className={`${suisseIntl.variable} ${libreBaskerville.variable} ${geistMono.variable}`}
       >
-        {children}
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );

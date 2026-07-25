@@ -1,34 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import {
-  derivePasswordWrappingKey,
-  encodeBase64Url,
-  generateAccountRootKey,
-  generateProductSpaceKey,
-  generateRecoveryMnemonic,
-  sealEnvelope,
-  type Argon2idParams,
-} from "@xenode/crypto-core";
-import { personalSpaceId } from "@xenode/spaces/ids";
-import { deriveArgon2id } from "@/lib/argon2";
-import { cacheAccountRootKey } from "@/lib/ark-cache";
+import { generateRecoveryMnemonic } from "@xenode/crypto-core";
+import { createAccountVault } from "@/lib/vault-setup";
 
 type VaultState = {
   accountId: string;
   vault: { vaultRevision: number } | null;
 };
-
-function randomParams(): Argon2idParams {
-  return {
-    algorithm: "argon2id",
-    memoryKiB: 64 * 1024,
-    iterations: 3,
-    parallelism: 1,
-    salt: encodeBase64Url(crypto.getRandomValues(new Uint8Array(16))),
-    outputLength: 32,
-  };
-}
 
 export default function VaultPage() {
   const [state, setState] = useState<VaultState | null>(null);
@@ -92,117 +71,14 @@ export default function VaultPage() {
     setBusy(true);
     setStatus("Generating account keys locally…");
     try {
-      const accountId = state.accountId;
-      const ark = generateAccountRootKey();
-      const { words: recoveryPhrase, secret: recovery } =
-        await generateRecoveryMnemonic();
-      const params = randomParams();
-      const passwordKey = await derivePasswordWrappingKey(
-        pw,
-        params,
-        deriveArgon2id,
-      );
-      const sharingPair = (await crypto.subtle.generateKey(
-        {
-          name: "RSA-OAEP",
-          modulusLength: 4096,
-          publicExponent: new Uint8Array([1, 0, 1]),
-          hash: "SHA-256",
-        },
-        true,
-        ["encrypt", "decrypt"],
-      )) as CryptoKeyPair;
-      const [sharingPublicKey, sharingPrivateKey] = await Promise.all([
-        crypto.subtle.exportKey("spki", sharingPair.publicKey),
-        crypto.subtle.exportKey("pkcs8", sharingPair.privateKey),
-      ]);
-      const passwordEnvelope = {
-        ...(await sealEnvelope(ark, passwordKey, {
-          accountId,
-          keyId: "ark",
-          keyVersion: 1,
-          type: "password",
-        })),
-        kdfParams: params,
-      };
-      const recoveryEnvelope = await sealEnvelope(ark, recovery, {
-        accountId,
-        keyId: "ark",
-        keyVersion: 1,
-        type: "recovery",
+      const { words: recoveryPhrase, secret } = await generateRecoveryMnemonic();
+      const vault = await createAccountVault({
+        accountId: state.accountId,
+        password: pw,
+        recoverySecret: secret,
       });
-      const wrappedSharingPrivateKey = await sealEnvelope(
-        new Uint8Array(sharingPrivateKey),
-        ark,
-        {
-          accountId,
-          keyId: "sharing-private-key",
-          keyVersion: 1,
-          type: "sharing-private-key",
-        },
-      );
-
-      const personalSpace = personalSpaceId(accountId);
-      for (const productId of ["drive", "photos"] as const) {
-        const productKey = generateProductSpaceKey();
-        const productEnvelope = await sealEnvelope(productKey, ark, {
-          accountId,
-          spaceId: personalSpace,
-          productId,
-          keyId: `${personalSpace}:${productId}`,
-          keyVersion: 1,
-          type: "product-space-key",
-        });
-        productKey.fill(0);
-        const keyResponse = await fetch(
-          `/api/space-product-keys?spaceId=${encodeURIComponent(personalSpace)}&productId=${productId}`,
-          {
-            method: "PUT",
-            credentials: "include",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(productEnvelope),
-          },
-        );
-        if (!keyResponse.ok) {
-          const keyError = (await keyResponse.json().catch(() => ({}))) as {
-            error?: string;
-          };
-          throw new Error(
-            keyError.error ?? `Could not create ${productId} key.`,
-          );
-        }
-      }
-
-      const response = await fetch("/api/vault", {
-        method: "PUT",
-        credentials: "include",
-        headers: {
-          "content-type": "application/json",
-          "idempotency-key": crypto.randomUUID().replaceAll("-", ""),
-        },
-        body: JSON.stringify({
-          expectedVaultRevision: 0,
-          passwordEnvelope,
-          recoveryEnvelope,
-          deviceEnvelopes: [],
-          sharingPublicKey: encodeBase64Url(new Uint8Array(sharingPublicKey)),
-          wrappedSharingPrivateKey,
-        }),
-      });
-      const payload = (await response.json()) as {
-        error?: string;
-        vault?: { vaultRevision: number };
-      };
-      if (!response.ok || !payload.vault) {
-        throw new Error(payload.error ?? "Vault creation failed.");
-      }
-      // Cache the ARK on this device so the key-handoff broker can unwrap
-      // product keys without re-prompting the password (seamless unlock).
-      await cacheAccountRootKey(accountId, ark).catch(() => undefined);
-      ark.fill(0);
-      recovery.fill(0);
-      passwordKey.fill(0);
-      setState({ accountId, vault: payload.vault });
+      secret.fill(0);
+      setState({ accountId: state.accountId, vault });
       setRecoverySecret(recoveryPhrase);
       setStatus("Vault v2 created. Save your 12-word recovery phrase now.");
       setPassword("");
