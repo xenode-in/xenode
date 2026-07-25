@@ -20,6 +20,7 @@
     "@xenode/key-handoff": "^0.0.0",
     "@xenode/realtime": "^0.0.0",
     "@xenode/spaces": "^0.0.0",
+    "@xenode/ui": "*",
     "ioredis": "^5.10.0",
     "better-auth": "^1.6.23",
     "resend": "^6.9.4",
