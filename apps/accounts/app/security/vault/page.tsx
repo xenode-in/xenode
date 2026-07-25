@@ -6,8 +6,7 @@ import {
   encodeBase64Url,
   generateAccountRootKey,
   generateProductSpaceKey,
-  generateRecoverySecret,
-  recoverySecretText,
+  generateRecoveryMnemonic,
   sealEnvelope,
   type Argon2idParams,
 } from "@xenode/crypto-core";
@@ -95,7 +94,8 @@ export default function VaultPage() {
     try {
       const accountId = state.accountId;
       const ark = generateAccountRootKey();
-      const recovery = generateRecoverySecret();
+      const { words: recoveryPhrase, secret: recovery } =
+        await generateRecoveryMnemonic();
       const params = randomParams();
       const passwordKey = await derivePasswordWrappingKey(
         pw,
@@ -196,7 +196,6 @@ export default function VaultPage() {
       if (!response.ok || !payload.vault) {
         throw new Error(payload.error ?? "Vault creation failed.");
       }
-      const recoveryText = recoverySecretText(recovery);
       // Cache the ARK on this device so the key-handoff broker can unwrap
       // product keys without re-prompting the password (seamless unlock).
       await cacheAccountRootKey(accountId, ark).catch(() => undefined);
@@ -204,8 +203,8 @@ export default function VaultPage() {
       recovery.fill(0);
       passwordKey.fill(0);
       setState({ accountId, vault: payload.vault });
-      setRecoverySecret(recoveryText);
-      setStatus("Vault v2 created. Save the recovery secret now.");
+      setRecoverySecret(recoveryPhrase);
+      setStatus("Vault v2 created. Save your 12-word recovery phrase now.");
       setPassword("");
       try {
         sessionStorage.removeItem("xenode-vault-pw");
@@ -273,20 +272,65 @@ export default function VaultPage() {
       ) : null}
       {recoverySecret ? (
         <section className="callout callout-warning" style={{ marginTop: 24 }}>
-          <strong className="callout-title">Recovery secret — shown once</strong>
+          <strong className="callout-title">
+            Recovery phrase — shown once
+          </strong>
           <p className="fine-print" style={{ margin: "6px 0 0" }}>
-            Store this somewhere safe. It is the only way to recover your Vault
-            if you forget your password.
+            Write down these 12 words in order and store them somewhere safe.
+            They are the only way to recover your Vault if you forget your
+            password.
           </p>
-          <code className="code-block">{recoverySecret}</code>
-          <button
-            type="button"
-            className="button"
-            style={{ marginTop: 16 }}
-            onClick={() => window.location.assign(nextPath)}
+          <ol
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+              gap: 8,
+              listStyle: "none",
+              padding: 0,
+              margin: "16px 0 0",
+            }}
           >
-            I&rsquo;ve saved it — continue
-          </button>
+            {recoverySecret.split(" ").map((word, index) => (
+              <li
+                key={`${index}-${word}`}
+                className="code-block"
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "8px 12px",
+                }}
+              >
+                <span
+                  className="fine-print"
+                  style={{ opacity: 0.6, minWidth: 18, textAlign: "right" }}
+                >
+                  {index + 1}
+                </span>
+                <span style={{ fontWeight: 600 }}>{word}</span>
+              </li>
+            ))}
+          </ol>
+          <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => {
+                void navigator.clipboard
+                  ?.writeText(recoverySecret)
+                  .catch(() => undefined);
+              }}
+            >
+              Copy phrase
+            </button>
+            <button
+              type="button"
+              className="button"
+              onClick={() => window.location.assign(nextPath)}
+            >
+              I&rsquo;ve saved it — continue
+            </button>
+          </div>
         </section>
       ) : null}
     </main>

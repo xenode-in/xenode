@@ -12,6 +12,9 @@
     "test": "vitest run",
     "lint": "eslint src tests"
   },
+  "dependencies": {
+    "@scure/bip39": "^2.2.0"
+  },
   "devDependencies": {
     "@xenode/eslint-config": "*",
     "@xenode/tsconfig": "*",
