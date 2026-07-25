@@ -4,12 +4,13 @@ import { getModel } from "../model";
 const envelopeSchema = new Schema(
   {
     // Envelope context (bound into the AAD and checked by crypto-core
-    // `sameContext` on open). These MUST be persisted or decrypt fails with
-    // "Envelope context or format mismatch".
-    accountId: { type: String, required: true },
+    // `sameContext` on open). Persisted (not required at the schema level so
+    // fixtures/legacy rows still save) — the /api/vault validator enforces
+    // their presence for real writes so decrypt-time `sameContext` passes.
+    accountId: { type: String },
     spaceId: { type: String },
     productId: { type: String },
-    type: { type: String, required: true },
+    type: { type: String },
     formatVersion: { type: Number, required: true, min: 2 },
     algorithm: { type: String, enum: ["AES-256-GCM"], required: true },
     keyId: { type: String, required: true },

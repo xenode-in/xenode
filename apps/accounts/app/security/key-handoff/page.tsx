@@ -4,11 +4,17 @@ import { useEffect, useMemo, useState } from "react";
 import {
   derivePasswordWrappingKey,
   decodeBase64Url,
+  importProductKey,
   openEnvelope,
+  openEnvelopeWithKey,
   openRsaOaepProductSpaceKey,
   type Argon2idParams,
   type CryptoEnvelope,
 } from "@xenode/crypto-core";
+import {
+  cacheAccountRootKey,
+  loadCachedAccountRootKey,
+} from "@/lib/ark-cache";
 import { FIRST_PARTY_CLIENTS } from "@xenode/identity-core";
 import {
   decodeHandoffPublicKey,
@@ -117,7 +123,29 @@ export default function KeyHandoffBrokerPage() {
     }
   }, [mounted]);
 
-  async function approve() {
+  // If the ARK is cached on this device, seal the product key automatically —
+  // no password prompt (seamless unlock). Otherwise fall back to the form.
+  const [hasCachedArk, setHasCachedArk] = useState(false);
+  const [autoTried, setAutoTried] = useState(false);
+  useEffect(() => {
+    if (!mounted || autoTried) return;
+    setAutoTried(true);
+    void (async () => {
+      try {
+        const { binding } = parseBrokerRequest();
+        const cached = await loadCachedAccountRootKey(binding.accountId);
+        if (cached) {
+          setHasCachedArk(true);
+          void approve(true);
+        }
+      } catch {
+        /* invalid request — the form/label already reflects it */
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted, autoTried]);
+
+  async function approve(useCachedArk: boolean) {
     setBusy(true);
     setStatus("Unlocking the requested product key locally...");
     let passwordKey: Uint8Array | undefined;
@@ -140,18 +168,29 @@ export default function KeyHandoffBrokerPage() {
         throw new Error("Sign in to the account that started this handoff.");
       }
 
-      const passwordEnvelope = vault.vault.passwordEnvelope;
-      passwordKey = await derivePasswordWrappingKey(
-        password,
-        passwordEnvelope.kdfParams,
-        deriveArgon2id,
-      );
-      accountRootKey = await openEnvelope(passwordEnvelope, passwordKey, {
-        accountId: binding.accountId,
-        keyId: "ark",
-        keyVersion: 1,
-        type: "password",
-      });
+      // Obtain the ARK as a non-extractable CryptoKey: from the device cache
+      // (no password needed) or by deriving it from the vault password once.
+      let arkKey: CryptoKey | null = useCachedArk
+        ? await loadCachedAccountRootKey(binding.accountId)
+        : null;
+      if (!arkKey) {
+        const passwordEnvelope = vault.vault.passwordEnvelope;
+        passwordKey = await derivePasswordWrappingKey(
+          password,
+          passwordEnvelope.kdfParams,
+          deriveArgon2id,
+        );
+        accountRootKey = await openEnvelope(passwordEnvelope, passwordKey, {
+          accountId: binding.accountId,
+          keyId: "ark",
+          keyVersion: 1,
+          type: "password",
+        });
+        arkKey = await importProductKey(accountRootKey);
+        await cacheAccountRootKey(binding.accountId, accountRootKey).catch(
+          () => undefined,
+        );
+      }
 
       const stored = productKeyPayload.key;
       if (
@@ -162,9 +201,9 @@ export default function KeyHandoffBrokerPage() {
         throw new Error("Product key binding mismatch.");
       }
       if (binding.productId === "drive" || stored.algorithm === "RSA-OAEP-256") {
-        sharingPrivateKey = await openEnvelope(
+        sharingPrivateKey = await openEnvelopeWithKey(
           vault.vault.wrappedSharingPrivateKey,
-          accountRootKey,
+          arkKey,
           {
             accountId: binding.accountId,
             keyId: "sharing-private-key",
@@ -190,7 +229,7 @@ export default function KeyHandoffBrokerPage() {
           createdAt: new Date(stored.createdAt).toISOString(),
           type: "product-space-key",
         };
-        productSpaceKey = await openEnvelope(productEnvelope, accountRootKey, {
+        productSpaceKey = await openEnvelopeWithKey(productEnvelope, arkKey, {
           accountId: binding.accountId,
           spaceId: binding.spaceId,
           productId: binding.productId,
@@ -267,29 +306,36 @@ export default function KeyHandoffBrokerPage() {
       </p>
       <section className="card" style={{ marginTop: 24 }}>
         <div className="badge" style={{ marginBottom: 16 }}>{requestLabel}</div>
-        <form
-          className="form"
-          style={{ maxWidth: 460 }}
-          onSubmit={(event) => {
-            event.preventDefault();
-            void approve();
-          }}
-        >
-          <div className="field">
-            <label htmlFor="handoff-password">Vault password</label>
-            <input
-              className="input"
-              id="handoff-password"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </div>
-          <button className="button" type="submit" disabled={busy || !password}>
-            {busy ? "Unlocking…" : "Approve one-time handoff"}
-          </button>
-        </form>
+        {hasCachedArk ? (
+          <p className="muted" style={{ margin: 0 }}>
+            Unlocking automatically — this device already holds your unlocked
+            vault. No password needed.
+          </p>
+        ) : (
+          <form
+            className="form"
+            style={{ maxWidth: 460 }}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void approve(false);
+            }}
+          >
+            <div className="field">
+              <label htmlFor="handoff-password">Vault password</label>
+              <input
+                className="input"
+                id="handoff-password"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            </div>
+            <button className="button" type="submit" disabled={busy || !password}>
+              {busy ? "Unlocking…" : "Approve one-time handoff"}
+            </button>
+          </form>
+        )}
       </section>
       {status ? (
         <p className="status" role="status" style={{ marginTop: 20 }}>

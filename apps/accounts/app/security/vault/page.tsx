@@ -13,6 +13,7 @@ import {
 } from "@xenode/crypto-core";
 import { personalSpaceId } from "@xenode/spaces/ids";
 import { deriveArgon2id } from "@/lib/argon2";
+import { cacheAccountRootKey } from "@/lib/ark-cache";
 
 type VaultState = {
   accountId: string;
@@ -196,6 +197,9 @@ export default function VaultPage() {
         throw new Error(payload.error ?? "Vault creation failed.");
       }
       const recoveryText = recoverySecretText(recovery);
+      // Cache the ARK on this device so the key-handoff broker can unwrap
+      // product keys without re-prompting the password (seamless unlock).
+      await cacheAccountRootKey(accountId, ark).catch(() => undefined);
       ark.fill(0);
       recovery.fill(0);
       passwordKey.fill(0);
