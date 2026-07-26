@@ -2,11 +2,11 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import https from "https";
 import {
-  DEFAULT_STORAGE_REGION,
   requireRegionBucketCredentials,
   resolveRegionBucketConfig,
   type StorageRegion,
 } from "@xenode/config/storage";
+import { getActiveRegion } from "@/lib/storage/region-context";
 
 const _clientsByRegion = new Map<StorageRegion, S3Client>();
 let _publicClient: S3Client | null = null;
@@ -31,7 +31,7 @@ const _requestHandler = new NodeHttpHandler({ httpsAgent: _httpsAgent });
  * behavior.
  */
 export function getS3Client(
-  region: StorageRegion = DEFAULT_STORAGE_REGION,
+  region: StorageRegion = getActiveRegion(),
 ): S3Client {
   const cached = _clientsByRegion.get(region);
   if (cached) return cached;
@@ -85,7 +85,7 @@ export function getPublicS3Client(): S3Client {
   return _publicClient;
 }
 
-export const getB2Region = (region: StorageRegion = DEFAULT_STORAGE_REGION) =>
+export const getB2Region = (region: StorageRegion = getActiveRegion()) =>
   resolveRegionBucketConfig(region).region;
-export const getB2Endpoint = (region: StorageRegion = DEFAULT_STORAGE_REGION) =>
+export const getB2Endpoint = (region: StorageRegion = getActiveRegion()) =>
   resolveRegionBucketConfig(region).endpoint;

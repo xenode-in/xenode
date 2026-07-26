@@ -14,6 +14,8 @@ import {
 } from "@xenode/spaces";
 import { getServerSession } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
+import { setActiveRegion } from "@/lib/storage/region-context";
+import { resolveContextStorageRegion } from "@/lib/storage/region";
 import { AuthzError } from "./errors";
 
 type BetterAuthSession = Awaited<ReturnType<typeof getServerSession>>;
@@ -62,7 +64,7 @@ export async function getAccessContext(
       spaceId,
       productId: "drive",
     });
-    return {
+    const context: AccessContext = {
       userId: accountId,
       accountId,
       spaceId,
@@ -73,6 +75,10 @@ export async function getAccessContext(
       teamId: access.space.teamId,
       session,
     };
+    // Bind the caller's storage region for the rest of this request so all S3
+    // operations target their regional bucket (default region ⇒ unchanged).
+    setActiveRegion(await resolveContextStorageRegion(context));
+    return context;
   } catch (error) {
     if (error instanceof SpaceAuthorizationError) {
       throw new AuthzError(error.status, error.code, error.message);

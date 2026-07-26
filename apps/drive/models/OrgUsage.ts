@@ -42,6 +42,8 @@ export interface IOrgUsage extends Document {
   gracePeriodEndsAt: Date | null;
   /** Optional per-team storage sub-limits (schema-flexible; not enforced yet). */
   teamQuotas: IOrgTeamQuota[];
+  /** Immutable storage region for this org's files (default: asia). */
+  storageRegion?: "asia" | "us" | "eu";
   createdAt: Date;
   updatedAt: Date;
 }
@@ -72,6 +74,7 @@ const OrgUsageSchema = new Schema<IOrgUsage>(
     isGracePeriod: { type: Boolean, default: false },
     gracePeriodEndsAt: { type: Date, default: null },
     teamQuotas: { type: [OrgTeamQuotaSchema], default: [] },
+    storageRegion: { type: String, enum: ["asia", "us", "eu"] },
   },
   { timestamps: true },
 );

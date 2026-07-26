@@ -5,9 +5,11 @@ import {
   requireAccessContext,
   toJsonResponse,
 } from "@/lib/authz";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { randomBytes } from "crypto";
+import { getS3Client } from "@/lib/b2/client";
+import { activeStorageBucketName } from "@/lib/storage/region-context";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
@@ -23,21 +25,6 @@ export async function POST(request: NextRequest) {
     const userId = ctx.userId;
     await enforceStorageAccess(userId);
 
-    const S3_ENDPOINT =
-      process.env.S3_ENDPOINT || "https://s3.us-west-004.backblazeb2.com";
-    const S3_REGION = process.env.S3_REGION || "us-west-004";
-    const S3_KEY_ID = process.env.S3_KEY_ID;
-    const S3_APPLICATION_KEY = process.env.S3_APPLICATION_KEY;
-
-    if (!S3_KEY_ID || !S3_APPLICATION_KEY) {
-      return NextResponse.json(
-        { error: "Server configuration error" },
-        { status: 500 },
-      );
-    }
-
-    const keyId = S3_KEY_ID.trim();
-    const appKey = S3_APPLICATION_KEY.trim();
     const {
       fileSize,
       fileType,
@@ -107,12 +94,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const s3Client = new S3Client({
-      endpoint: S3_ENDPOINT,
-      region: S3_REGION,
-      credentials: { accessKeyId: keyId, secretAccessKey: appKey },
-      forcePathStyle: true,
-    });
+    // Region-aware client + bucket (bound in requireAccessContext).
+    const s3Client = getS3Client();
+    const regionBucket = activeStorageBucketName();
 
     // Accept client-provided adaptive chunk size (validated 2 MB – 64 MB)
     const MIN_CHUNK = 2 * 1024 * 1024;
@@ -149,7 +133,7 @@ export async function POST(request: NextRequest) {
       const chunkKey = `${logicalKey}-chunk-${i}`;
       chunkKeys.push(chunkKey);
       const command = new PutObjectCommand({
-        Bucket: bucket.b2BucketId,
+        Bucket: regionBucket,
         Key: chunkKey,
         ContentType: fileType || "application/octet-stream",
       });
