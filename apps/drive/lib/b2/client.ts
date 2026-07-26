@@ -2,11 +2,13 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import https from "https";
 import {
-  requireSystemBucketCredentials,
-  resolveSystemBucketConfig,
+  DEFAULT_STORAGE_REGION,
+  requireRegionBucketCredentials,
+  resolveRegionBucketConfig,
+  type StorageRegion,
 } from "@xenode/config/storage";
 
-let _client: S3Client | null = null;
+const _clientsByRegion = new Map<StorageRegion, S3Client>();
 let _publicClient: S3Client | null = null;
 
 /**
@@ -22,36 +24,34 @@ const _requestHandler = new NodeHttpHandler({ httpsAgent: _httpsAgent });
  * Get or create the S3 client for B2
  * Uses lazy initialization to prevent build-time crashes
  */
-export function getS3Client(): S3Client {
-  if (!_client) {
-    const storage = resolveSystemBucketConfig();
-    const credentials = requireSystemBucketCredentials(storage);
+/**
+ * Get or create the S3 client for a storage region (default: asia). One cached
+ * client per region so a US/EU account's objects use that region's endpoint +
+ * credentials. Existing callers that pass nothing keep the default-region
+ * behavior.
+ */
+export function getS3Client(
+  region: StorageRegion = DEFAULT_STORAGE_REGION,
+): S3Client {
+  const cached = _clientsByRegion.get(region);
+  if (cached) return cached;
 
-    console.log(`[B2] Initializing S3 Client with:`);
-    console.log(`[B2] Endpoint: ${storage.endpoint}`);
-    console.log(`[B2] Region: ${storage.region}`);
-    console.log(`[B2] Key ID Length: ${credentials.accessKeyId.length}`);
-    console.log(
-      `[B2] App Key Length: ${credentials.secretAccessKey.length}`,
-    );
+  const storage = resolveRegionBucketConfig(region);
+  const credentials = requireRegionBucketCredentials(region);
 
-    _client = new S3Client({
-      endpoint: storage.endpoint,
-      region: storage.region,
-      // Pass a fresh, mutable copy: the shared config freezes its credentials
-      // object, but the AWS SDK mutates it (attaches a `$source` feature marker),
-      // which silently fails on a frozen object and then throws
-      // "Cannot set properties of undefined (setting 'CREDENTIALS_CODE')".
-      credentials: {
-        accessKeyId: credentials.accessKeyId,
-        secretAccessKey: credentials.secretAccessKey,
-      },
-      forcePathStyle: true,
-      // requestHandler: _requestHandler,
-    });
-  }
-
-  return _client;
+  const client = new S3Client({
+    endpoint: storage.endpoint,
+    region: storage.region,
+    // Fresh, mutable credentials copy — the AWS SDK mutates the object it gets.
+    credentials: {
+      accessKeyId: credentials.accessKeyId,
+      secretAccessKey: credentials.secretAccessKey,
+    },
+    forcePathStyle: true,
+    // requestHandler: _requestHandler,
+  });
+  _clientsByRegion.set(region, client);
+  return client;
 }
 
 /**
@@ -85,5 +85,7 @@ export function getPublicS3Client(): S3Client {
   return _publicClient;
 }
 
-export const getB2Region = () => resolveSystemBucketConfig().region;
-export const getB2Endpoint = () => resolveSystemBucketConfig().endpoint;
+export const getB2Region = (region: StorageRegion = DEFAULT_STORAGE_REGION) =>
+  resolveRegionBucketConfig(region).region;
+export const getB2Endpoint = (region: StorageRegion = DEFAULT_STORAGE_REGION) =>
+  resolveRegionBucketConfig(region).endpoint;
