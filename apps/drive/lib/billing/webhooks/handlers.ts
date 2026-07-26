@@ -520,6 +520,12 @@ const handleSubscriptionCharged: Handler = async (ctx) => {
           : sub.planSlug,
       billingCycle: sub.billingCycle,
       amountPaise,
+      currency:
+        typeof paymentEntity.currency === "string"
+          ? (paymentEntity.currency as "INR" | "USD" | "EUR")
+          : typeof sub.metadata?.currency === "string"
+            ? (sub.metadata.currency as "INR" | "USD" | "EUR")
+            : undefined,
       subscriptionStartDate: sub.current_period_start || sub.startDate,
       subscriptionEndDate: sub.current_period_end || sub.endDate,
       method:

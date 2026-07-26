@@ -4,6 +4,7 @@ import razorpay from "@/lib/razorpay";
 import { getServerSession } from "@/lib/auth/session";
 import Subscription from "@/models/Subscription";
 import { getRecurringPlanContext } from "@/lib/subscriptions/service";
+import { resolveAccountStorageRegion } from "@/lib/storage/region";
 import { getActiveCampaign } from "@/lib/billing/campaigns";
 import { createSubscriptionSchema } from "@/lib/billing/validation/schemas";
 import { parseJson, jsonError, BillingError } from "@/lib/billing/http";
@@ -73,11 +74,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Currency + Razorpay plan follow the account's immutable storage region.
+    const region = await resolveAccountStorageRegion(userId);
     const planContext = await getRecurringPlanContext(
       input.planSlug,
       input.billingCycle,
+      region,
     );
     const baseAmountPaise = planContext.baseAmountPaise;
+    const currency = planContext.currency;
 
     // Resolve discount: coupon first, campaign fallback.
     let offerId: string | null = null;
@@ -161,7 +166,7 @@ export async function POST(request: NextRequest) {
     // All fields needed to reconstruct the Subscription doc at payment time
     // are stored in Razorpay notes — no MongoDB write happens here.
     const subscriptionPayload: Record<string, unknown> = {
-      plan_id: planContext.pricingEntry.razorpayPlanId,
+      plan_id: planContext.razorpayPlanId,
       total_count: maxTotalCount,
       quantity: 1,
       customer_notify: true,
@@ -170,6 +175,8 @@ export async function POST(request: NextRequest) {
         planSlug: planContext.plan.slug,
         planName: planContext.plan.name,
         billingCycle: input.billingCycle,
+        region,
+        currency,
         phone: input.phone || null,
         couponCode: couponCodeUsed,
         couponId,
@@ -193,6 +200,7 @@ export async function POST(request: NextRequest) {
       shortUrl: razorpaySubscription.short_url,
       offerApplied,
       offerSource,
+      currency,
       amount: (offerApplied ? firstCycleAmountPaise : baseAmountPaise) / 100,
     };
     captureEvent(userId, "subscription_checkout_started", {

@@ -6,9 +6,20 @@
 
 export type BillingCycle = "monthly" | "yearly" | "quarterly" | "lifetime";
 
+/** Currencies billed per storage region (asia→INR, us→USD, eu→EUR). */
+export type BillingCurrency = "INR" | "USD" | "EUR";
+
+/** Region-specific price for a plan/cycle. Amount is in MAJOR units (₹/$/€). */
+export interface RegionPrice {
+  currency: BillingCurrency;
+  amount: number;
+  /** Razorpay Plan ID for this region's currency (must be created per currency). */
+  razorpayPlanId?: string;
+}
+
 export interface IPlanPricing {
   cycle: BillingCycle;
-  /** Price in Indian Rupees */
+  /** Canonical Asia/INR price in Indian Rupees (kept as the default region). */
   priceINR: number;
   /**
    * Optional display-only discount label.
@@ -16,10 +27,15 @@ export interface IPlanPricing {
    */
   discountPercent?: number;
   /**
-   * Razorpay Plan ID for subscriptions (recurring).
-   * e.g. plan_N6O...
+   * Razorpay Plan ID for the INR (Asia) subscription. e.g. plan_N6O...
    */
   razorpayPlanId?: string;
+  /**
+   * Per-region price overrides for non-default regions (us/eu). Asia derives
+   * from `priceINR` + `razorpayPlanId`. Each region needs its own Razorpay plan
+   * (created in the dashboard for that currency).
+   */
+  regions?: Partial<Record<"us" | "eu", RegionPrice>>;
 }
 
 export interface PlanCardProps {

@@ -4,7 +4,12 @@ import dbConnect from "@/lib/mongodb";
 import razorpay from "@/lib/razorpay";
 import { getPlanBySlugFromDB } from "@/lib/config/getPricingConfig";
 import { getActiveCampaign } from "@/lib/billing/campaigns";
-import type { BillingCycle } from "@/types/pricing";
+import type { BillingCurrency, BillingCycle } from "@/types/pricing";
+import {
+  DEFAULT_STORAGE_REGION,
+  type StorageRegion,
+} from "@xenode/config/storage";
+import { resolveRegionPricing, toMinorUnits } from "@/lib/pricing/regionPricing";
 import Payment from "@/models/Payment";
 import Subscription from "@/models/Subscription";
 import SubscriptionInvoice from "@/models/SubscriptionInvoice";
@@ -48,6 +53,7 @@ function getRazorpayPeriodConfig(cycle: BillingCycle) {
 export async function getRecurringPlanContext(
   planSlug: string,
   billingCycle: BillingCycle,
+  region: StorageRegion = DEFAULT_STORAGE_REGION,
 ) {
   const plan = await getPlanBySlugFromDB(planSlug);
 
@@ -64,8 +70,16 @@ export async function getRecurringPlanContext(
   const pricingEntry = plan.pricing.find(
     (entry) => entry.cycle === billingCycle,
   );
-  if (!pricingEntry?.razorpayPlanId) {
+  if (!pricingEntry) {
     throw new Error("Recurring plan is not configured for this billing cycle");
+  }
+
+  // Resolve the caller's region price + currency + region-specific Razorpay plan.
+  const regionPrice = resolveRegionPricing(pricingEntry, region);
+  if (!regionPrice.razorpayPlanId) {
+    throw new Error(
+      `Recurring plan is not configured for ${region}/${regionPrice.currency}`,
+    );
   }
 
   const campaign = await getActiveCampaign({
@@ -80,7 +94,8 @@ export async function getRecurringPlanContext(
       ? campaign
       : null;
 
-  const baseAmountPaise = Math.round(pricingEntry.priceINR * 100);
+  // "Paise" is the historical name; for USD/EUR these are cents (same ×100).
+  const baseAmountPaise = toMinorUnits(regionPrice.amount);
   const offerAmountPaise =
     limitedCampaign && limitedCampaign.discountPercent
       ? computeDiscountedAmount(baseAmountPaise, limitedCampaign.discountPercent)
@@ -89,6 +104,9 @@ export async function getRecurringPlanContext(
   return {
     plan,
     pricingEntry,
+    region,
+    currency: regionPrice.currency,
+    razorpayPlanId: regionPrice.razorpayPlanId,
     limitedCampaign,
     baseAmountPaise,
     offerAmountPaise,
@@ -102,6 +120,7 @@ export async function createRazorpayRecurringPlan(args: {
   name: string;
   billingCycle?: BillingCycle;
   description?: string;
+  currency?: BillingCurrency;
 }) {
   const periodConfig = getRazorpayPeriodConfig(args.billingCycle ?? "monthly");
   if (!periodConfig) {
@@ -114,7 +133,7 @@ export async function createRazorpayRecurringPlan(args: {
     item: {
       name: args.name,
       amount: args.amountPaise,
-      currency: "INR",
+      currency: args.currency ?? "INR",
       description: args.description || args.name,
     },
     notes: {
@@ -351,6 +370,7 @@ export async function createSubscriptionPaymentIfMissing(args: {
   planName: string;
   billingCycle?: BillingCycle;
   amountPaise: number;
+  currency?: BillingCurrency;
   subscriptionStartDate?: Date | null;
   subscriptionEndDate?: Date | null;
   method?: string;
@@ -366,7 +386,7 @@ export async function createSubscriptionPaymentIfMissing(args: {
   const payment = await Payment.create({
     userId: args.userId,
     amount: args.amountPaise / 100,
-    currency: "INR",
+    currency: args.currency ?? "INR",
     status: "success",
     order_id: args.subscriptionId,
     payment_id: args.paymentId,

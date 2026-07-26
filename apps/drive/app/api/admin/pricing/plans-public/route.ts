@@ -10,6 +10,8 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "@/lib/auth/session";
 import { getPricingConfig } from "@/lib/config/getPricingConfig";
 import { getHeadlineCampaign } from "@/lib/billing/campaigns";
+import { resolveAccountStorageRegion } from "@/lib/storage/region";
+import { CURRENCY_SYMBOL, REGION_CURRENCY } from "@/lib/pricing/regionPricing";
 import Usage from "@/models/Usage";
 import Payment from "@/models/Payment";
 import Subscription from "@/models/Subscription";
@@ -56,6 +58,27 @@ export async function GET() {
     getHeadlineCampaign(),
   ]);
 
+  // Localize prices to the caller's immutable storage region. Each pricing entry
+  // is annotated with { currency, amount } for that region; `amount` is null when
+  // a non-default region hasn't been priced yet (UI shows it as unavailable).
+  const region = await resolveAccountStorageRegion(session.user.id);
+  const currency = REGION_CURRENCY[region];
+  const regionPlans = plans.map((plan) => ({
+    ...plan,
+    pricing: plan.pricing.map((entry) => {
+      if (region === "asia") {
+        return { ...entry, currency: "INR", amount: entry.priceINR };
+      }
+      const override = entry.regions?.[region];
+      return {
+        ...entry,
+        currency,
+        amount: override?.amount ?? null,
+        razorpayPlanId: override?.razorpayPlanId,
+      };
+    }),
+  }));
+
   // Headline campaign is shown unless its targetAudience excludes this user.
   const campaign =
     headline &&
@@ -71,7 +94,10 @@ export async function GET() {
       : null;
 
   return NextResponse.json({
-    plans,
+    plans: regionPlans,
+    region,
+    currency,
+    currencySymbol: CURRENCY_SYMBOL[currency],
     campaign,
     currentPlan,
     currentCycle,

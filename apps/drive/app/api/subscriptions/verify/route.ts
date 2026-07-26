@@ -201,6 +201,10 @@ export async function POST(request: NextRequest) {
           : subscriptionDoc.planSlug,
       billingCycle: subscriptionDoc.billingCycle,
       amountPaise,
+      currency:
+        typeof subscriptionDoc.metadata?.currency === "string"
+          ? (subscriptionDoc.metadata.currency as "INR" | "USD" | "EUR")
+          : undefined,
       subscriptionStartDate:
         subscriptionDoc.current_period_start || subscriptionDoc.startDate,
       subscriptionEndDate:
