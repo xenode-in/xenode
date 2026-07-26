@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   Copy,
   Download,
+  Globe,
   Loader2,
   Monitor,
   Moon,
@@ -15,6 +16,11 @@ import {
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { generateRecoveryMnemonic } from "@xenode/crypto-core";
+import {
+  STORAGE_REGIONS,
+  STORAGE_REGION_LABELS,
+  type StorageRegion,
+} from "@xenode/config/storage";
 import { createAccountVault } from "@/lib/vault-setup";
 import {
   generateAvatarBatch,
@@ -27,7 +33,13 @@ import {
   WelcomeBalloons,
 } from "@/components/onboarding/illustrations";
 
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 6;
+
+const REGION_BLURB: Record<StorageRegion, string> = {
+  asia: "Lowest latency across Asia-Pacific.",
+  us: "Data stored in the United States.",
+  eu: "Data stored in Europe (EU).",
+};
 
 const slideVariants = {
   hidden: { opacity: 0, x: 24 },
@@ -83,6 +95,9 @@ export function OnboardingWizard({
   const { theme, setTheme } = useTheme();
   const themeChoice = (theme as ThemeChoice) ?? "system";
 
+  // Storage region — chosen here once and locked for the account.
+  const [region, setRegion] = useState<StorageRegion | "">("");
+
   const [avatars, setAvatars] = useState<GeneratedAvatar[]>([]);
   const [avatarUrl, setAvatarUrl] = useState<string>("");
   const [avatarLoading, setAvatarLoading] = useState(false);
@@ -104,7 +119,7 @@ export function OnboardingWizard({
 
   // Load avatar options the first time the avatar step opens.
   useEffect(() => {
-    if (step === 4 && avatars.length === 0) {
+    if (step === 5 && avatars.length === 0) {
       const batch = generateAvatarBatch();
       setAvatars(batch);
       if (!avatarUrl) setAvatarUrl(batch[0]?.url ?? "");
@@ -253,6 +268,7 @@ export function OnboardingWizard({
           theme: themeChoice,
           defaultEncrypt: true,
           image: avatarUrl || undefined,
+          region: region || undefined,
         }),
       });
       kit.secret.fill(0);
@@ -458,6 +474,51 @@ export function OnboardingWizard({
                 exit="exit"
                 className="onb-step"
               >
+                <Globe className="onb-art" size={120} strokeWidth={1} />
+                <p className="eyebrow">Storage region</p>
+                <h1>Where should your files live?</h1>
+                <p className="lede">
+                  Your files are stored in this region. Choose the one closest to
+                  you — <strong>this can&rsquo;t be changed later</strong>.
+                </p>
+                <div className="onb-themes onb-regions">
+                  {STORAGE_REGIONS.map((value) => (
+                    <button
+                      key={value}
+                      type="button"
+                      className={`onb-theme-card${
+                        region === value ? " is-selected" : ""
+                      }`}
+                      onClick={() => setRegion(value)}
+                    >
+                      <span style={{ fontWeight: 600 }}>
+                        {STORAGE_REGION_LABELS[value]}
+                      </span>
+                      <span className="fine-print" style={{ opacity: 0.7 }}>
+                        {REGION_BLURB[value]}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  className="button button-block"
+                  onClick={nextStep}
+                  disabled={!region}
+                >
+                  Continue
+                </button>
+              </motion.div>
+            )}
+
+            {step === 5 && (
+              <motion.div
+                key="step5"
+                variants={slideVariants}
+                initial="hidden"
+                animate="visible"
+                exit="exit"
+                className="onb-step"
+              >
                 <p className="eyebrow">Profile</p>
                 <h1>Pick an avatar</h1>
                 <p className="lede">Choose one of these, or upload your own.</p>
@@ -509,9 +570,9 @@ export function OnboardingWizard({
               </motion.div>
             )}
 
-            {step === 5 && (
+            {step === 6 && (
               <motion.div
-                key="step5"
+                key="step6"
                 variants={slideVariants}
                 initial="hidden"
                 animate="visible"

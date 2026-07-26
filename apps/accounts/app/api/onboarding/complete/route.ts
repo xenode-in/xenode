@@ -4,6 +4,7 @@ import {
   connectDatabase,
   getDatabase,
 } from "@xenode/database";
+import { isStorageRegion } from "@xenode/config/storage";
 import { getAccountsSession } from "@/lib/session";
 import { userFilter } from "@/lib/hub-data";
 
@@ -31,6 +32,7 @@ export async function POST(request: Request) {
     theme?: unknown;
     defaultEncrypt?: unknown;
     image?: unknown;
+    region?: unknown;
   };
   const theme =
     body.theme === "light" || body.theme === "dark" || body.theme === "system"
@@ -39,8 +41,18 @@ export async function POST(request: Request) {
   const defaultEncrypt =
     typeof body.defaultEncrypt === "boolean" ? body.defaultEncrypt : undefined;
   const image = validImage(body.image);
+  const region = isStorageRegion(body.region) ? body.region : undefined;
 
   await connectDatabase();
+
+  // Storage region is chosen once and never changes — only set it if the
+  // account doesn't already have one (any later value is ignored).
+  const existing = await AccountProfile.findOne({
+    accountId: session.user.id,
+  }).lean();
+  const regionToSet =
+    existing?.storageRegion ?? region ?? undefined;
+
   if (image) {
     await getDatabase()
       .collection("user")
@@ -51,6 +63,7 @@ export async function POST(request: Request) {
   const set: Record<string, unknown> = { onboarded: true };
   if (theme) set.theme = theme;
   if (defaultEncrypt !== undefined) set.defaultEncrypt = defaultEncrypt;
+  if (regionToSet) set.storageRegion = regionToSet;
   await AccountProfile.updateOne(
     { accountId: session.user.id },
     { $set: set },
@@ -59,8 +72,13 @@ export async function POST(request: Request) {
   await AuditEvent.create({
     accountId: session.user.id,
     action: "account.onboarding.completed",
-    metadata: { theme: theme ?? null, hasAvatar: Boolean(image) },
+    metadata: {
+      theme: theme ?? null,
+      hasAvatar: Boolean(image),
+      storageRegion: regionToSet ?? null,
+      regionLocked: Boolean(existing?.storageRegion),
+    },
   }).catch(() => undefined);
 
-  return Response.json({ ok: true });
+  return Response.json({ ok: true, storageRegion: regionToSet ?? null });
 }

@@ -72,6 +72,12 @@ export interface AccountProfileRecord {
   defaultEncrypt: boolean;
   /** UI theme preference chosen at onboarding; products may read it. */
   theme?: "light" | "dark" | "system";
+  /**
+   * Storage region for this account's files, chosen once at onboarding and
+   * IMMUTABLE thereafter — all of the account's objects live in this region's
+   * bucket, so it cannot change without a data migration.
+   */
+  storageRegion?: "asia" | "us" | "eu";
   usernameHistory: Array<{ username: string; changedAt: Date }>;
   createdAt: Date;
   updatedAt: Date;
@@ -82,6 +88,7 @@ const accountProfileSchema = new Schema<AccountProfileRecord>(
     onboarded: { type: Boolean, default: false },
     defaultEncrypt: { type: Boolean, default: true },
     theme: { type: String, enum: ["light", "dark", "system"] },
+    storageRegion: { type: String, enum: ["asia", "us", "eu"] },
     usernameHistory: {
       type: [{ username: String, changedAt: Date }],
       default: [],
