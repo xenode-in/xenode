@@ -10,6 +10,7 @@ import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import { getDownloadUrl } from "@/lib/b2/objects";
+import { activeStorageBucketName } from "@/lib/storage/region-context";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
 
 export const dynamic = "force-dynamic";
@@ -61,7 +62,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       keyToServe = version.key;
     }
 
-    const signedUrl = await getDownloadUrl(bucket.b2BucketId, keyToServe);
+    const signedUrl = await getDownloadUrl(activeStorageBucketName(), keyToServe);
     const upstreamHeaders: Record<string, string> = {};
     const rangeHeader = request.headers.get("Range");
     if (rangeHeader) upstreamHeaders["Range"] = rangeHeader;

@@ -128,6 +128,23 @@ export function resolveSystemBucketConfig(
   return resolveRegionBucketConfig(DEFAULT_STORAGE_REGION, env);
 }
 
+/**
+ * Reverse-lookup the region that owns a physical bucket name. Used by token-
+ * served download routes that have no session context but carry the bucket name
+ * in the signed URL. Falls back to the default region.
+ */
+export function regionForBucketName(
+  bucketName: string,
+  env: Record<string, string | undefined> = process.env,
+): StorageRegion {
+  for (const region of STORAGE_REGIONS) {
+    if (resolveRegionBucketConfig(region, env).bucketName === bucketName) {
+      return region;
+    }
+  }
+  return DEFAULT_STORAGE_REGION;
+}
+
 export function requireRegionBucketCredentials(
   region: StorageRegion,
   env: Record<string, string | undefined> = process.env,

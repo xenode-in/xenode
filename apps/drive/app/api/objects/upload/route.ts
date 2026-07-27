@@ -14,6 +14,7 @@ import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 import { uploadObject } from "@/lib/b2/objects";
+import { activeStorageBucketName } from "@/lib/storage/region-context";
 import { incrementStorage, updateBucketStats } from "@/lib/metering/usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
 
@@ -69,7 +70,8 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(await file.arrayBuffer());
     const size = buffer.length;
     const contentType = file.type || "application/octet-stream";
-    const b2BucketName = bucket.b2BucketId;
+    // Physical bucket follows the caller's region (bound in requireAccessContext).
+    const b2BucketName = activeStorageBucketName();
 
     let uploadResult: { etag: string; b2FileId: string };
     try {

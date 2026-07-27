@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getS3Client } from "@/lib/b2/client";
+import { regionForBucketName } from "@xenode/config/storage";
 import { verifyFileToken } from "@/lib/b2/cdn";
 
 export const dynamic = "force-dynamic";
@@ -44,7 +45,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       Key: key,
       ...(rangeHeader ? { Range: rangeHeader } : {})
     });
-    const response = await getS3Client().send(command);
+    // No session here (token-signed): resolve the region from the bucket name
+    // baked into the signed URL so we use the matching regional client.
+    const response = await getS3Client(regionForBucketName(bucket)).send(command);
 
     if (!response.Body) {
       return new NextResponse("File not found", { status: 404 });

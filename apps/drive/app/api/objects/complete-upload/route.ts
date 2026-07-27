@@ -14,6 +14,7 @@ import {
   updateBucketStats,
 } from "@/lib/metering/usage";
 import { getS3Client } from "@/lib/b2/client";
+import { activeStorageBucketName } from "@/lib/storage/region-context";
 import { HeadObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import {
   parentPrefixForKey,
@@ -252,7 +253,7 @@ export async function POST(request: NextRequest) {
       for (const chunk of chunks) {
         try {
           const command = new HeadObjectCommand({
-            Bucket: bucket.b2BucketId,
+            Bucket: activeStorageBucketName(),
             Key: chunk.key,
           });
           await getS3Client().send(command);
@@ -275,11 +276,11 @@ export async function POST(request: NextRequest) {
     } else {
       try {
         const command = new HeadObjectCommand({
-          Bucket: bucket.b2BucketId,
+          Bucket: activeStorageBucketName(),
           Key: objectKey,
         });
         const s3Response = await getS3Client().send(command);
-        b2FileId = s3Response.VersionId || `${bucket.b2BucketId}/${objectKey}`;
+        b2FileId = s3Response.VersionId || `${activeStorageBucketName()}/${objectKey}`;
       } catch (err) {
         console.error("Failed to head object from B2:", err);
         return NextResponse.json(
@@ -377,7 +378,7 @@ export async function POST(request: NextRequest) {
         deletedAt: { $exists: false },
       });
       if (dupe) {
-        await deleteUploadedKeys(bucket.b2BucketId, [
+        await deleteUploadedKeys(activeStorageBucketName(), [
           objectKey,
           optimizedKey,
           thumbnail,
@@ -389,7 +390,7 @@ export async function POST(request: NextRequest) {
     if (optimizedKey) {
       try {
         const command = new HeadObjectCommand({
-          Bucket: bucket.b2BucketId,
+          Bucket: activeStorageBucketName(),
           Key: optimizedKey,
         });
         await getS3Client().send(command);
@@ -451,7 +452,7 @@ export async function POST(request: NextRequest) {
       });
       if (!winner) throw error;
 
-      await deleteUploadedKeys(bucket.b2BucketId, [
+      await deleteUploadedKeys(activeStorageBucketName(), [
         objectKey,
         optimizedKey,
         thumbnail,
@@ -480,7 +481,7 @@ export async function POST(request: NextRequest) {
             rollbackError,
           ),
       );
-      await deleteUploadedKeys(bucket.b2BucketId, [
+      await deleteUploadedKeys(activeStorageBucketName(), [
         objectKey,
         optimizedKey,
         thumbnail,
