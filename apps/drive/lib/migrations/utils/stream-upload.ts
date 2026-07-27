@@ -2,6 +2,7 @@ import { Upload } from "@aws-sdk/lib-storage";
 import { getS3Client } from "../../b2/client";
 import { Readable } from "stream";
 import { Progress } from "@aws-sdk/lib-storage";
+import { regionForBucketName } from "@xenode/config/storage";
 
 export async function uploadStreamToB2(
   bucketName: string,
@@ -11,7 +12,7 @@ export async function uploadStreamToB2(
   onProgress?: (progress: Progress) => void
 ): Promise<{ etag: string; b2FileId: string }> {
   const upload = new Upload({
-    client: getS3Client(),
+    client: getS3Client(regionForBucketName(bucketName)),
     params: {
       Bucket: bucketName,
       Key: key,

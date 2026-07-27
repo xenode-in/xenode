@@ -18,6 +18,7 @@ import { getSignedFileUrl } from "@/lib/b2/cdn";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
+import { resolveShareKeyBucket } from "@/lib/storage/shareBucket";
 
 export const dynamic = "force-dynamic";
 
@@ -68,13 +69,14 @@ export async function POST(request: NextRequest) {
         (userId && key.startsWith(`users/${userId}/`)) ||
         (workspacePrefix && key.startsWith(workspacePrefix)),
     );
-    const bucket = await Bucket.findOne(
-      ctx && hasScopedKeys ? bucketOwnershipClause(ctx) : { systemKey: "drive" },
-    )
-      .select("b2BucketId")
-      .lean<{ b2BucketId: string }>();
+    const scopedBucket =
+      ctx && hasScopedKeys
+        ? await Bucket.findOne(bucketOwnershipClause(ctx))
+            .select("b2BucketId")
+            .lean<{ b2BucketId: string }>()
+        : null;
 
-    if (!bucket) {
+    if (hasScopedKeys && !scopedBucket) {
       statusCode = 404;
       errorMessage = "Bucket not found";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
@@ -82,18 +84,23 @@ export async function POST(request: NextRequest) {
 
     const urls: Record<string, string> = {};
     for (const key of allowed) {
-      urls[key] = getSignedFileUrl(bucket.b2BucketId, key);
+      const bucket = key.startsWith("shares/")
+        ? await resolveShareKeyBucket(key)
+        : scopedBucket;
+      if (bucket) {
+        urls[key] = getSignedFileUrl(bucket.b2BucketId, key);
+      }
     }
 
     return NextResponse.json({ urls });
-  } catch (err: any) {
+  } catch (err: unknown) {
     if (isAuthzError(err)) {
       statusCode = err.status;
       errorMessage = err.message;
       return toJsonResponse(err);
     }
     statusCode = 500;
-    errorMessage = err?.message ?? "Internal error";
+    errorMessage = err instanceof Error ? err.message : "Internal error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   }
 }

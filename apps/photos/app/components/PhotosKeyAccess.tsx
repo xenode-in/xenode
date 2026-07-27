@@ -22,16 +22,15 @@ import {
   type PendingHandoff,
   type SealedHandoff,
 } from "@xenode/key-handoff";
+import {
+  getClientPhotosSession,
+  type PhotosSessionInfo,
+} from "@/lib/client-session";
 
 // Loop guard + document-scoped dedupe for the redirect handoff (see Drive).
 const HANDOFF_ATTEMPT_KEY = "xenode-handoff-attempt:photos";
 let handoffRedirectInFlight = false;
 
-type SessionInfo = {
-  accountId: string;
-  spaceId: string;
-  productId: "photos";
-};
 type UnlockPayload = {
   transactionId: string;
   sealed: SealedHandoff;
@@ -93,8 +92,9 @@ function UnlockControl({
   children: ReactNode;
 }) {
   const productCrypto = useProductCrypto();
-  const [session, setSession] = useState<SessionInfo | null>(null);
+  const [session, setSession] = useState<PhotosSessionInfo | null>(null);
   const [status, setStatus] = useState("Checking product session...");
+  const bootstrappedSession = useRef<string | null>(null);
 
   const consumeRequest = useCallback(
     async (request: PendingHandoff): Promise<boolean> => {
@@ -176,28 +176,36 @@ function UnlockControl({
     }
   }, [session]);
 
-  // Fetch the session, then: consume a returning handoff, restore from cache, or
-  // auto-redirect once to unlock seamlessly.
+  // Discover the product session independently from key bootstrap. If these
+  // flows share an effect, setSession changes startUnlock and restarts another
+  // /api/session request.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      let value: SessionInfo;
       try {
-        const response = await fetch("/api/session", {
-          credentials: "include",
-          cache: "no-store",
-        });
-        if (!response.ok) throw new Error("Sign in to Photos first.");
-        value = (await response.json()) as SessionInfo;
+        const value = await getClientPhotosSession();
+        if (!cancelled) setSession(value);
       } catch (error) {
         if (!cancelled) {
           setStatus(error instanceof Error ? error.message : "Session unavailable.");
         }
-        return;
       }
-      if (cancelled) return;
-      setSession(value);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
+  // For a known session: consume a returning handoff, restore from cache, or
+  // auto-redirect once to unlock seamlessly.
+  useEffect(() => {
+    if (!session) return;
+    const bootstrapKey = `${session.accountId}:${session.spaceId}`;
+    if (bootstrappedSession.current === bootstrapKey) return;
+    bootstrappedSession.current = bootstrapKey;
+
+    let cancelled = false;
+    void (async () => {
       // (1) Return leg — consume a redirect handoff if we came back with one.
       const hash = new URLSearchParams(window.location.hash.replace(/^#/u, ""));
       const returnedTx = hash.get("xenode-handoff");
@@ -236,7 +244,7 @@ function UnlockControl({
       }
 
       // (2) Silent restore from the persisted key cache.
-      const restored = await productCrypto.restore(value.spaceId);
+      const restored = await productCrypto.restore(session.spaceId);
       if (restored && !cancelled) {
         setStatus("Photos encryption key unlocked.");
         try {
@@ -264,7 +272,7 @@ function UnlockControl({
     return () => {
       cancelled = true;
     };
-  }, [productCrypto, consumeRequest, startUnlock]);
+  }, [session, productCrypto, consumeRequest, startUnlock]);
 
   const unlocked = session
     ? productCrypto.isUnlocked(session.spaceId)

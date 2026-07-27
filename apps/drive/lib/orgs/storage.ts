@@ -7,6 +7,7 @@ import {
 } from "@/lib/orgs/access";
 import Bucket, { type IBucket } from "@/models/Bucket";
 import { organizationSpaceId, teamSpaceId } from "@xenode/spaces/ids";
+import { resolveOrgStorageRegion } from "@/lib/storage/region";
 
 export type OrgStorageAction = "read" | "write" | "manage" | "delete";
 
@@ -74,9 +75,11 @@ export async function loadOrgBucket(args: {
   bucketId: string;
   action?: OrgStorageAction;
 }): Promise<IBucket> {
+  const storageRegion = await resolveOrgStorageRegion(args.orgId);
   const bucket = await Bucket.findOne({
     _id: args.bucketId,
     systemKey: "drive",
+    storageRegion,
   });
 
   if (!bucket) {
@@ -148,9 +151,11 @@ export async function loadTeamBucket(args: {
   teamId: string;
   bucketId: string;
 }): Promise<IBucket> {
+  const storageRegion = await resolveOrgStorageRegion(args.orgId);
   const bucket = await Bucket.findOne({
     _id: args.bucketId,
     systemKey: "drive",
+    storageRegion,
   });
 
   if (!bucket) {

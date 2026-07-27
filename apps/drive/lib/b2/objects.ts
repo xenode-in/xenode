@@ -9,8 +9,9 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { getS3Client, getPublicS3Client } from "./client";
+import { getS3Client } from "./client";
 import { getSignedFileUrl } from "./cdn";
+import { regionForBucketName } from "@xenode/config/storage";
 
 export interface B2ObjectInfo {
   key: string;
@@ -28,7 +29,7 @@ export async function uploadObject(
   body: Buffer | ReadableStream | Uint8Array,
   contentType: string = "application/octet-stream",
   size?: number,
-  client: S3Client = getS3Client(),
+  client?: S3Client,
 ): Promise<{ etag: string; b2FileId: string }> {
   const command = new PutObjectCommand({
     Bucket: bucketName,
@@ -38,7 +39,9 @@ export async function uploadObject(
     ContentLength: size,
   });
 
-  const response = await client.send(command);
+  const targetClient =
+    client ?? getS3Client(regionForBucketName(bucketName));
+  const response = await targetClient.send(command);
   return {
     etag: response.ETag || "",
     b2FileId: response.VersionId || `${bucketName}/${key}`,
@@ -57,7 +60,7 @@ export async function deleteObject(
     Key: key,
   });
 
-  await getS3Client().send(command);
+  await getS3Client(regionForBucketName(bucketName)).send(command);
 }
 
 /**
@@ -80,7 +83,7 @@ export async function deleteObjects(
   for (let i = 0; i < unique.length; i += CHUNK) {
     const slice = unique.slice(i, i + CHUNK);
     try {
-      await getS3Client().send(
+      await getS3Client(regionForBucketName(bucketName)).send(
         new DeleteObjectsCommand({
           Bucket: bucketName,
           Delete: {
@@ -118,7 +121,7 @@ export async function listObjects(
     ContinuationToken: continuationToken,
   });
 
-  const response = await getS3Client().send(command);
+  const response = await getS3Client(regionForBucketName(bucketName)).send(command);
 
   const objects: B2ObjectInfo[] = (response.Contents || []).map((obj) => ({
     key: obj.Key || "",
@@ -145,7 +148,7 @@ export async function getObjectMetadata(
     Key: key,
   });
 
-  const response = await getS3Client().send(command);
+  const response = await getS3Client(regionForBucketName(bucketName)).send(command);
   return {
     size: response.ContentLength || 0,
     contentType: response.ContentType || "application/octet-stream",
@@ -185,7 +188,11 @@ export async function getUploadUrl(
     ContentType: contentType,
   });
 
-  return getSignedUrl(getS3Client(), command, { expiresIn });
+  return getSignedUrl(
+    getS3Client(regionForBucketName(bucketName)),
+    command,
+    { expiresIn },
+  );
 }
 
 /**
@@ -197,7 +204,10 @@ export async function copyObject(
   destinationBucket: string,
   destinationKey: string,
 ): Promise<void> {
-  const client = getS3Client();
+  const sourceRegion = regionForBucketName(sourceBucket);
+  const destinationRegion = regionForBucketName(destinationBucket);
+  const sourceClient = getS3Client(sourceRegion);
+  const destinationClient = getS3Client(destinationRegion);
   // Encode each segment while preserving path separators. Encoding the whole
   // key turns "/" into "%2F", which some S3-compatible providers (including
   // B2 configurations) interpret as a different source key.
@@ -207,7 +217,10 @@ export async function copyObject(
     .join("/");
 
   try {
-    await client.send(
+    if (sourceRegion !== destinationRegion) {
+      throw new Error("Cross-region CopyObject requires streamed copy");
+    }
+    await sourceClient.send(
       new CopyObjectCommand({
         CopySource: `/${sourceBucket}/${encodedSourceKey}`,
         Bucket: destinationBucket,
@@ -225,11 +238,11 @@ export async function copyObject(
       error:
         copyError instanceof Error ? copyError.message : String(copyError),
     });
-    const source = await client.send(
+    const source = await sourceClient.send(
       new GetObjectCommand({ Bucket: sourceBucket, Key: sourceKey }),
     );
     if (!source.Body) throw new Error("Source object body is empty");
-    await client.send(
+    await destinationClient.send(
       new PutObjectCommand({
         Bucket: destinationBucket,
         Key: destinationKey,

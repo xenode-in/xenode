@@ -13,6 +13,7 @@ import StorageObject, { type IStorageObjectVersion } from "@/models/StorageObjec
 import OrgUsage from "@/models/OrgUsage";
 import ShareLink from "@/models/ShareLink";
 import DirectShare from "@/models/DirectShare";
+import { resolveOrgStorageRegion } from "@/lib/storage/region";
 
 export const dynamic = "force-dynamic";
 
@@ -130,8 +131,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const allDocIds = docs.map((d) => d._id);
 
     // 1. Remove encrypted blobs from the org's shared B2 bucket (best-effort).
+    const storageRegion = await resolveOrgStorageRegion(orgId);
     await deleteB2Objects(
-      systemWorkspaceBucketName("ORGANIZATION"),
+      systemWorkspaceBucketName("ORGANIZATION", storageRegion),
       collectB2Keys(docs),
     );
 

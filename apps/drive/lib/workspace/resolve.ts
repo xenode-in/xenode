@@ -52,7 +52,7 @@ export function resolveWorkspace(ctx: AccessContext): ResolvedWorkspace {
       type: ctx.spaceType,
       ownerId: orgStorageOwnerId(ctx.organizationId),
       bucketType: "ORGANIZATION",
-      bucketName: getBucketForWorkspace("ORGANIZATION"),
+      bucketName: getBucketForWorkspace("ORGANIZATION", ctx.region),
       keyPrefix:
         ctx.spaceType === "team" && ctx.teamId
           ? teamObjectKeyPrefix(ctx.organizationId, ctx.teamId)
@@ -65,7 +65,7 @@ export function resolveWorkspace(ctx: AccessContext): ResolvedWorkspace {
     type: "personal",
     ownerId: ctx.userId,
     bucketType: "PERSONAL",
-    bucketName: getBucketForWorkspace("PERSONAL"),
+    bucketName: getBucketForWorkspace("PERSONAL", ctx.region),
     keyPrefix: `users/${ctx.userId}/`,
   };
 }

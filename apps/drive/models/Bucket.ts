@@ -1,10 +1,13 @@
 import mongoose, { Schema, Document, Model } from "mongoose";
+import type { StorageRegion } from "@xenode/config/storage";
 
 export interface IBucket extends Document {
   _id: mongoose.Types.ObjectId;
   systemKey: "drive";
+  storageRegion: StorageRegion;
   name: string;
   b2BucketId: string;
+  /** S3 signing region (`auto` for Cloudflare R2). */
   region: string;
   objectCount: number;
   totalSizeBytes: number;
@@ -19,7 +22,12 @@ const BucketSchema = new Schema<IBucket>(
       enum: ["drive"],
       required: true,
       default: "drive",
-      unique: true,
+    },
+    storageRegion: {
+      type: String,
+      enum: ["asia", "us", "eu"],
+      required: true,
+      default: "asia",
     },
     name: {
       type: String,
@@ -52,6 +60,11 @@ const BucketSchema = new Schema<IBucket>(
   {
     timestamps: true,
   },
+);
+
+BucketSchema.index(
+  { systemKey: 1, storageRegion: 1 },
+  { unique: true, name: "systemKey_1_storageRegion_1" },
 );
 
 const Bucket: Model<IBucket> =

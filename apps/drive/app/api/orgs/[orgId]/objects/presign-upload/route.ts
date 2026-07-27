@@ -1,5 +1,5 @@
 import { randomBytes } from "crypto";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { NextRequest, NextResponse } from "next/server";
 import {
@@ -15,6 +15,7 @@ import {
 } from "@/lib/orgs/storage";
 import { assertOrgStorageHeadroom } from "@/lib/orgs/billing/orgUsage";
 import { enforceRateLimit } from "@/lib/ratelimit/limiter";
+import { getS3Client } from "@/lib/b2/client";
 
 export const dynamic = "force-dynamic";
 
@@ -56,15 +57,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       await assertOrgStorageHeadroom(orgId, uploadSize);
     }
 
-    const S3_KEY_ID = process.env.S3_KEY_ID?.trim();
-    const S3_APPLICATION_KEY = process.env.S3_APPLICATION_KEY?.trim();
-    if (!S3_KEY_ID || !S3_APPLICATION_KEY) {
-      return NextResponse.json(
-        { error: "Server configuration error" },
-        { status: 500 },
-      );
-    }
-
     const basePrefix =
       typeof prefix === "string" && prefix.startsWith(orgObjectKeyPrefix(orgId))
         ? prefix
@@ -78,15 +70,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     await dbConnect();
     const bucket = await loadOrgBucket({ orgId, bucketId, action: "write" });
-    const s3Client = new S3Client({
-      endpoint: process.env.S3_ENDPOINT || "https://s3.us-west-004.backblazeb2.com",
-      region: process.env.S3_REGION || "us-west-004",
-      credentials: {
-        accessKeyId: S3_KEY_ID,
-        secretAccessKey: S3_APPLICATION_KEY,
-      },
-      forcePathStyle: true,
-    });
+    const s3Client = getS3Client(bucket.storageRegion);
     const command = new PutObjectCommand({
       Bucket: bucket.b2BucketId,
       Key: objectKey,

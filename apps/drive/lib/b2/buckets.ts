@@ -5,6 +5,11 @@ import {
   HeadBucketCommand,
 } from "@aws-sdk/client-s3";
 import { getS3Client } from "./client";
+import {
+  DEFAULT_STORAGE_REGION,
+  regionForBucketName,
+  type StorageRegion,
+} from "@xenode/config/storage";
 
 export interface B2BucketInfo {
   name: string;
@@ -15,12 +20,15 @@ export interface B2BucketInfo {
  * Create a new bucket in B2 via S3-compatible API
  * Bucket names in B2 must be globally unique
  */
-export async function createB2Bucket(bucketName: string): Promise<string> {
+export async function createB2Bucket(
+  bucketName: string,
+  region: StorageRegion = regionForBucketName(bucketName),
+): Promise<string> {
   const command = new CreateBucketCommand({
     Bucket: bucketName,
   });
 
-  const response = await getS3Client().send(command);
+  const response = await getS3Client(region).send(command);
 
   return response.Location || bucketName;
 }
@@ -34,7 +42,7 @@ export async function deleteB2Bucket(bucketName: string): Promise<void> {
     Bucket: bucketName,
   });
 
-  await getS3Client().send(command);
+  await getS3Client(regionForBucketName(bucketName)).send(command);
 }
 
 /**
@@ -42,7 +50,7 @@ export async function deleteB2Bucket(bucketName: string): Promise<void> {
  */
 export async function listB2Buckets(): Promise<B2BucketInfo[]> {
   const command = new ListBucketsCommand({});
-  const response = await getS3Client().send(command);
+  const response = await getS3Client(DEFAULT_STORAGE_REGION).send(command);
 
   return (response.Buckets || []).map((bucket) => ({
     name: bucket.Name || "",
@@ -53,10 +61,13 @@ export async function listB2Buckets(): Promise<B2BucketInfo[]> {
 /**
  * Check if a bucket exists
  */
-export async function bucketExists(bucketName: string): Promise<boolean> {
+export async function bucketExists(
+  bucketName: string,
+  region: StorageRegion = regionForBucketName(bucketName),
+): Promise<boolean> {
   try {
     const command = new HeadBucketCommand({ Bucket: bucketName });
-    await getS3Client().send(command);
+    await getS3Client(region).send(command);
     return true;
   } catch {
     return false;

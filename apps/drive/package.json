@@ -17,6 +17,7 @@
     "cron:purge-bin": "node scripts/cron-trigger.mjs purge-bin",
     "cron:cleanup-orphans": "node scripts/cron-trigger.mjs cleanup-orphans",
     "cron:charge": "node scripts/cron-trigger.mjs charge-recurring",
+    "migrate:regional-buckets": "node --env-file-if-exists=../../.env.local --import tsx scripts/migrate-regional-buckets.ts",
     "postinstall": "node scripts/copy-worker-assets.mjs"
   },
   "dependencies": {

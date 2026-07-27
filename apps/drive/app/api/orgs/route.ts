@@ -16,6 +16,7 @@ import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { ensureSystemWorkspaceBucketRecord } from "@/lib/storage/workspaceBucket";
 import { ensureOrganizationSpace } from "@xenode/spaces/repository";
 import { putMemberProductKey } from "@xenode/spaces/product-keys";
+import { getOrCreateOrgUsage } from "@/lib/orgs/billing/orgUsage";
 
 export const dynamic = "force-dynamic";
 
@@ -255,7 +256,8 @@ export async function POST(request: NextRequest) {
           rotationReason: "initial",
         });
       }
-      await ensureSystemWorkspaceBucketRecord("ORGANIZATION");
+      await getOrCreateOrgUsage(org.id, ctx.region);
+      await ensureSystemWorkspaceBucketRecord("ORGANIZATION", ctx.region);
     } catch (error) {
       await organizations.deleteOne({ id: org.id }).catch(() => {});
       await members

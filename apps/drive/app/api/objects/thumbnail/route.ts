@@ -9,6 +9,7 @@ import { getDownloadUrl } from "@/lib/b2/objects";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
+import { resolveShareKeyBucket } from "@/lib/storage/shareBucket";
 
 export const dynamic = "force-dynamic";
 
@@ -51,9 +52,9 @@ export async function GET(request: NextRequest) {
 
     await dbConnect();
 
-    const bucket = await Bucket.findOne(
-      ctx ? bucketOwnershipClause(ctx) : { systemKey: "drive" },
-    );
+    const bucket = key.startsWith("shares/")
+      ? await resolveShareKeyBucket(key)
+      : await Bucket.findOne(ctx ? bucketOwnershipClause(ctx) : { _id: null });
 
     if (!bucket) {
       return NextResponse.json(

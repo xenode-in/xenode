@@ -3,6 +3,7 @@ import { isAuthzError, requireAccessContext, toJsonResponse } from "@/lib/authz"
 import dbConnect from "@/lib/mongodb";
 import { requireTeamStorageMembership } from "@/lib/orgs/storage";
 import { ensureSystemWorkspaceBucketRecord } from "@/lib/storage/workspaceBucket";
+import { resolveOrgStorageRegion } from "@/lib/storage/region";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     await requireTeamStorageMembership({ userId: ctx.userId, orgId, teamId });
 
     await dbConnect();
-    const bucket = await ensureSystemWorkspaceBucketRecord("ORGANIZATION");
+    const region = await resolveOrgStorageRegion(orgId);
+    const bucket = await ensureSystemWorkspaceBucketRecord(
+      "ORGANIZATION",
+      region,
+    );
 
     return NextResponse.json({ buckets: [bucket] });
   } catch (error) {

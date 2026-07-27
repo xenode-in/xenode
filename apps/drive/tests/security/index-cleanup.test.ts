@@ -15,16 +15,25 @@ describe("Drive database index cleanup", () => {
     expect(deletedAtOnly).toBeUndefined();
   });
 
-  it("declares each system bucket uniqueness index once", () => {
+  it("declares regional system bucket uniqueness indexes once", () => {
     const indexes = Bucket.schema.indexes() as SchemaIndex[];
 
-    for (const field of ["systemKey", "b2BucketId"]) {
-      const matches = indexes.filter(([keys]) => {
-        const fields = Object.keys(keys);
-        return fields.length === 1 && fields[0] === field;
-      });
-      expect(matches).toHaveLength(1);
-      expect(matches[0]?.[1]).toMatchObject({ unique: true });
-    }
+    const bucketIdIndexes = indexes.filter(([keys]) => {
+      const fields = Object.keys(keys);
+      return fields.length === 1 && fields[0] === "b2BucketId";
+    });
+    expect(bucketIdIndexes).toHaveLength(1);
+    expect(bucketIdIndexes[0]?.[1]).toMatchObject({ unique: true });
+
+    const regionalSystemKeyIndexes = indexes.filter(([keys]) => {
+      const fields = Object.keys(keys);
+      return (
+        fields.length === 2 &&
+        keys.systemKey === 1 &&
+        keys.storageRegion === 1
+      );
+    });
+    expect(regionalSystemKeyIndexes).toHaveLength(1);
+    expect(regionalSystemKeyIndexes[0]?.[1]).toMatchObject({ unique: true });
   });
 });

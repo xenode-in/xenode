@@ -3,6 +3,11 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import nextConfig from "../next.config";
 import { getTimelineWindow } from "../lib/virtual-timeline";
+import {
+  decryptPhotoFile,
+  encryptPhotoFile,
+} from "../lib/photo-encryption";
+import { fitImageWithin } from "../lib/image-derivatives";
 
 function sourceFiles(directory: string): string[] {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -49,5 +54,52 @@ describe("Photos app isolation", () => {
       .map((path) => readFileSync(path, "utf8"))
       .join("\n");
     expect(source).not.toMatch(/apps\/drive|dashboard\/photos|@\/contexts\/CryptoContext/u);
+  });
+
+  it("encrypts photo bytes with a per-file key wrapped by the Photos Space key", async () => {
+    const rawProductKey = crypto.getRandomValues(new Uint8Array(32));
+    const productKey = await crypto.subtle.importKey(
+      "raw",
+      rawProductKey,
+      { name: "AES-GCM" },
+      false,
+      ["encrypt", "decrypt"],
+    );
+    rawProductKey.fill(0);
+    const context = {
+      accountId: "account_1",
+      spaceId: "space_personal_account_1",
+      objectKey: "users/account_1/0123456789abcdef0123456789abcdef",
+    };
+    const encrypted = await encryptPhotoFile(
+      new Blob(["private-photo-bytes"]),
+      productKey,
+      context,
+    );
+    expect(encrypted.body.byteLength).toBe(
+      Buffer.byteLength("private-photo-bytes") + 16,
+    );
+    const plaintext = await decryptPhotoFile(
+      encrypted.body,
+      productKey,
+      context,
+      encrypted,
+    );
+    expect(new TextDecoder().decode(plaintext)).toBe("private-photo-bytes");
+  });
+
+  it("bounds thumbnail and optimized dimensions without upscaling", () => {
+    expect(fitImageWithin(6000, 4000, 512)).toEqual({
+      width: 512,
+      height: 341,
+    });
+    expect(fitImageWithin(6000, 4000, 2560)).toEqual({
+      width: 2560,
+      height: 1707,
+    });
+    expect(fitImageWithin(320, 240, 512)).toEqual({
+      width: 320,
+      height: 240,
+    });
   });
 });

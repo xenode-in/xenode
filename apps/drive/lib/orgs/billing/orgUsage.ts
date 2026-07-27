@@ -5,6 +5,7 @@ import OrgUsage, {
   ORG_FREE_TIER_LIMIT_BYTES,
 } from "@/models/OrgUsage";
 import { orgStorageOwnerId } from "@/lib/orgs/storage";
+import type { StorageRegion } from "@xenode/config/storage";
 
 /**
  * Org storage metering — the organization analogue of `lib/metering/usage.ts`,
@@ -12,7 +13,10 @@ import { orgStorageOwnerId } from "@/lib/orgs/storage";
  * atomically at upload time. BILLING_SECURITY: bytes only, no keys/metadata.
  */
 
-export async function getOrCreateOrgUsage(orgId: string) {
+export async function getOrCreateOrgUsage(
+  orgId: string,
+  storageRegion?: StorageRegion,
+) {
   await dbConnect();
   return OrgUsage.findOneAndUpdate(
     { orgId },
@@ -23,6 +27,7 @@ export async function getOrCreateOrgUsage(orgId: string) {
         plan: "org-free",
         storageLimitBytes: ORG_FREE_TIER_LIMIT_BYTES,
         seats: ORG_FREE_SEATS,
+        ...(storageRegion ? { storageRegion } : {}),
       },
     },
     { upsert: true, new: true, setDefaultsOnInsert: true },

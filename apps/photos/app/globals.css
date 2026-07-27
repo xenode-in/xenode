@@ -8,3 +8,33 @@
 /* Generate utility classes used by the shared component library + this app. */
 @source "../../../packages/ui/src/components";
 @source "./";
+
+html {
+  min-height: 100%;
+  background: var(--background);
+  --font-brand: Georgia, "Times New Roman", serif;
+  --font-geist-mono: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+}
+
+body {
+  min-height: 100dvh;
+  margin: 0;
+  overflow-x: hidden;
+}
+
+button,
+a,
+input {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  color: var(--primary-foreground);
+  background: var(--primary);
+}
+
+* {
+  scrollbar-color: color-mix(in srgb, var(--muted-foreground) 35%, transparent)
+    transparent;
+  scrollbar-width: thin;
+}

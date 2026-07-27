@@ -109,7 +109,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     let b2FileId = "";
     try {
-      const s3Response = await getS3Client().send(
+      const s3Response = await getS3Client(bucket.storageRegion).send(
         new HeadObjectCommand({ Bucket: bucket.b2BucketId, Key: objectKey }),
       );
       b2FileId = s3Response.VersionId || `${bucket.b2BucketId}/${objectKey}`;

@@ -3,7 +3,6 @@ import {
   StandardFonts,
   rgb,
   type PDFFont,
-  type PDFPage,
   type RGB,
 } from "pdf-lib";
 import fs from "fs";
@@ -16,7 +15,8 @@ import { User } from "@/models/User";
 import { GetObjectCommand } from "@aws-sdk/client-s3";
 import { getS3Client } from "@/lib/b2/client";
 import { uploadObject } from "@/lib/b2/objects";
-import { resolveSystemBucketConfig } from "@xenode/config/storage";
+import { resolveRegionBucketConfig } from "@xenode/config/storage";
+import { resolveAccountStorageRegion } from "@/lib/storage/region";
 
 const PLAN_DISPLAY_NAMES: Record<string, string> = {
   free: "Free Tier",
@@ -389,7 +389,7 @@ export async function renderInvoicePdf(
   hline(ML, MR, top + headerH + 12);
 
   // Item row
-  let rowTop = top + headerH + 12 + 16;
+  const rowTop = top + headerH + 12 + 16;
   text(data.planName, colDescX, rowTop, { font: helv, size: 8.5, color: COLOR.fg });
   let dly = rowTop + 9;
   for (const ln of descLines) {
@@ -411,7 +411,7 @@ export async function renderInvoicePdf(
   });
 
   // Footer totals
-  let fTop = top + headerH + 12 + rowH + 6;
+  const fTop = top + headerH + 12 + rowH + 6;
   hline(colQtyC - 20, MR, fTop - 6);
   const totalRow = (
     label: string,
@@ -506,7 +506,8 @@ export async function generateInvoicePdfBuffer(
   if (subscription.userId !== userId)
     throw new Error("Unauthorized access to invoice");
 
-  const bucketName = resolveSystemBucketConfig().bucketName;
+  const storageRegion = await resolveAccountStorageRegion(userId);
+  const bucketName = resolveRegionBucketConfig(storageRegion).bucketName;
   let s3Key = `invoices/${invoiceId}.pdf`;
 
   // 3. Serve cached PDF from B2 if present
@@ -519,7 +520,7 @@ export async function generateInvoicePdfBuffer(
       } else {
         s3Key = invoice.pdfUrl;
       }
-      const s3Client = getS3Client();
+      const s3Client = getS3Client(storageRegion);
       const s3Response = await s3Client.send(
         new GetObjectCommand({ Bucket: bucketName, Key: s3Key }),
       );

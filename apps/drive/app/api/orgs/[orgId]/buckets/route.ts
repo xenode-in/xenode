@@ -7,6 +7,7 @@ import {
 import dbConnect from "@/lib/mongodb";
 import { requireOrgStorageMembership } from "@/lib/orgs/storage";
 import { ensureSystemWorkspaceBucketRecord } from "@/lib/storage/workspaceBucket";
+import { resolveOrgStorageRegion } from "@/lib/storage/region";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     await requireOrgStorageMembership({ userId: ctx.userId, orgId, action: "read" });
 
     await dbConnect();
-    const bucket = await ensureSystemWorkspaceBucketRecord("ORGANIZATION");
+    const region = await resolveOrgStorageRegion(orgId);
+    const bucket = await ensureSystemWorkspaceBucketRecord(
+      "ORGANIZATION",
+      region,
+    );
 
     return NextResponse.json({ buckets: [bucket] });
   } catch (error) {

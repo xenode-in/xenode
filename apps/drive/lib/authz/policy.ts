@@ -49,7 +49,13 @@ export function ownerClause(ctx: AccessContext): Record<string, unknown> {
 
 /** Ownership clause for a StorageObject query (excluding `_id`). */
 export function objectOwnershipClause(ctx: AccessContext): Record<string, unknown> {
-  return ownerClause(ctx);
+  return {
+    ...ownerClause(ctx),
+    // Photos shares the account's regional physical bucket, but its encrypted
+    // objects belong exclusively to the Photos product and must never surface
+    // through Drive listing, preview, sharing, or mutation routes.
+    productId: { $ne: "photos" },
+  };
 }
 
 /** Full filter for a single StorageObject the caller owns. */
@@ -69,8 +75,9 @@ export function objectFilter(
 export function bucketOwnershipClause(ctx: AccessContext): Record<string, unknown> {
   return {
     systemKey: "drive",
-    name: systemWorkspaceBucketName("PERSONAL"),
-    b2BucketId: systemWorkspaceBucketName("PERSONAL"),
+    storageRegion: ctx.region,
+    name: systemWorkspaceBucketName("PERSONAL", ctx.region),
+    b2BucketId: systemWorkspaceBucketName("PERSONAL", ctx.region),
   };
 }
 

@@ -32,7 +32,10 @@ export async function GET(request: NextRequest) {
     const ctx = await requireAccessContext(request);
     userId = ctx.userId;
 
-    const bucket = await ensureSystemWorkspaceBucketRecord("PERSONAL");
+    const bucket = await ensureSystemWorkspaceBucketRecord(
+      "PERSONAL",
+      ctx.region,
+    );
 
     return NextResponse.json({ buckets: [bucket] });
   } catch (error: unknown) {

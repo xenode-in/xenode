@@ -6,6 +6,7 @@ import type { IAlbumShareItem } from "@/models/AlbumShareLink";
 import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
 import { deleteObjects as deleteB2Objects } from "@/lib/b2/objects";
+import { resolveAccountStorageRegion } from "@/lib/storage/region";
 
 /** Collect the `shares/` thumbnail keys from a set of share items. */
 function thumbKeysOf(items: IAlbumShareItem[]): string[] {
@@ -36,7 +37,8 @@ async function resolveUserB2Bucket(
       if (bucket) return bucket.b2BucketId;
     }
   }
-  const owned = await Bucket.findOne({ systemKey: "drive" })
+  const storageRegion = await resolveAccountStorageRegion(userId);
+  const owned = await Bucket.findOne({ systemKey: "drive", storageRegion })
     .select("b2BucketId")
     .lean<{ b2BucketId: string } | null>();
   return owned?.b2BucketId ?? null;

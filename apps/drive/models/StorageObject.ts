@@ -2,6 +2,8 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 
 export interface IStorageObject extends Document {
   _id: mongoose.Types.ObjectId;
+  /** Product that owns this object. Missing on legacy Drive rows. */
+  productId?: "drive" | "photos";
   spaceId: string;
   createdByAccountId: string;
   bucketId: mongoose.Types.ObjectId;
@@ -23,6 +25,11 @@ export interface IStorageObject extends Document {
   updatedAt: Date;
   deletedAt?: Date;
   thumbnail?: string;
+  thumbnailSize?: number;
+  thumbnailContentType?: string;
+  thumbnailIV?: string;
+  thumbnailEncryptedDEK?: string;
+  thumbnailSpaceKeyWrapIv?: string;
   /** E2EE fields — undefined on legacy plaintext files */
   isEncrypted: boolean;
   encryptedDEK?: string; // Base64 RSA-OAEP wrapped AES-256 DEK
@@ -108,6 +115,12 @@ export interface IStorageObjectVersion {
 
 const StorageObjectSchema = new Schema<IStorageObject>(
   {
+    productId: {
+      type: String,
+      enum: ["drive", "photos"],
+      required: false,
+      index: true,
+    },
     bucketId: {
       type: Schema.Types.ObjectId,
       ref: "Bucket",
@@ -178,6 +191,26 @@ const StorageObjectSchema = new Schema<IStorageObject>(
       index: true,
     },
     thumbnail: {
+      type: String,
+      required: false,
+    },
+    thumbnailSize: {
+      type: Number,
+      required: false,
+    },
+    thumbnailContentType: {
+      type: String,
+      required: false,
+    },
+    thumbnailIV: {
+      type: String,
+      required: false,
+    },
+    thumbnailEncryptedDEK: {
+      type: String,
+      required: false,
+    },
+    thumbnailSpaceKeyWrapIv: {
       type: String,
       required: false,
     },
@@ -366,6 +399,23 @@ const StorageObjectSchema = new Schema<IStorageObject>(
   },
 );
 
+// This is Drive's local model. Photos deliberately uses the shared raw
+// database collection so its objects can share the same physical regional R2
+// bucket without crossing product boundaries. Apply the exclusion at the model
+// seam as defense in depth so an older Drive route cannot accidentally list,
+// mutate, share, or purge a Photos-owned object.
+StorageObjectSchema.pre(
+  /^(?:find|update|delete|countDocuments)/,
+  function scopeStorageObjectsToDrive(
+    this: mongoose.Query<unknown, IStorageObject>,
+  ) {
+    const query = this.getQuery();
+    if (!Object.prototype.hasOwnProperty.call(query, "productId")) {
+      this.where({ productId: { $ne: "photos" } });
+    }
+  },
+);
+
 /**
  * Indexes
  *
@@ -382,6 +432,7 @@ StorageObjectSchema.index({ bucketId: 1, key: 1 }, { unique: true });
 StorageObjectSchema.index({ bucketId: 1, createdAt: -1 });
 StorageObjectSchema.index({ spaceId: 1, _id: 1 });
 StorageObjectSchema.index({ spaceId: 1, createdAt: -1 });
+StorageObjectSchema.index({ spaceId: 1, productId: 1, createdAt: -1 });
 StorageObjectSchema.index({ bucketId: 1, position: 1 });
 StorageObjectSchema.index({ tags: 1 });
 StorageObjectSchema.index({

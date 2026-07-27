@@ -1,13 +1,17 @@
 import { bucketExists, createB2Bucket } from "@/lib/b2/buckets";
 import Bucket, { type IBucket } from "@/models/Bucket";
-import { resolveSystemBucketConfig } from "@xenode/config/storage";
+import {
+  DEFAULT_STORAGE_REGION,
+  resolveRegionBucketConfig,
+  type StorageRegion,
+} from "@xenode/config/storage";
 
 /**
- * Storage-bucket selector for the single-system-bucket model.
+ * Storage-bucket selector for the regional system-bucket model.
  *
- * Xenode uses one shared Backblaze B2 bucket and isolates tenants by immutable
- * object-key prefixes. Workspace type remains an authorization concern, not a
- * physical-bucket selector.
+ * Xenode uses one shared physical bucket per storage region and isolates
+ * tenants within that bucket by immutable object-key prefixes. Workspace type
+ * remains an authorization concern, not a physical-bucket selector.
  * Never hardcode a bucket name; always resolve it here.
  */
 export type WorkspaceStorageType = "PERSONAL" | "ORGANIZATION";
@@ -16,13 +20,19 @@ export type WorkspaceStorageType = "PERSONAL" | "ORGANIZATION";
  * The B2 bucket name backing a workspace type. Stored as `Bucket.b2BucketId`
  * (B2's S3 API addresses buckets by name). Env-driven, with safe defaults.
  */
-export function getBucketForWorkspace(type: WorkspaceStorageType): string {
+export function getBucketForWorkspace(
+  type: WorkspaceStorageType,
+  storageRegion: StorageRegion = DEFAULT_STORAGE_REGION,
+): string {
   void type;
-  return resolveSystemBucketConfig().bucketName;
+  return resolveRegionBucketConfig(storageRegion).bucketName;
 }
 
-export function systemWorkspaceBucketName(type: WorkspaceStorageType): string {
-  return getBucketForWorkspace(type);
+export function systemWorkspaceBucketName(
+  type: WorkspaceStorageType,
+  storageRegion: StorageRegion = DEFAULT_STORAGE_REGION,
+): string {
+  return getBucketForWorkspace(type, storageRegion);
 }
 
 function isBucketAlreadyOwned(err: unknown): boolean {
@@ -48,8 +58,9 @@ function isDuplicateKey(err: unknown): boolean {
  */
 export async function ensureWorkspaceBucket(
   type: WorkspaceStorageType,
+  storageRegion: StorageRegion = DEFAULT_STORAGE_REGION,
 ): Promise<string> {
-  const name = getBucketForWorkspace(type);
+  const name = getBucketForWorkspace(type, storageRegion);
   if (process.env.NODE_ENV === "test" || process.env.VITEST) {
     return name;
   }
@@ -59,12 +70,12 @@ export async function ensureWorkspaceBucket(
   // can't classify (e.g. an S3-compatible provider returning "UnknownError" on
   // CreateBucket) assume the bucket is externally managed and carry on.
   try {
-    if (await bucketExists(name)) return name;
+    if (await bucketExists(name, storageRegion)) return name;
   } catch {
     // HeadBucket unsupported/errored — fall through and try to create.
   }
   try {
-    await createB2Bucket(name);
+    await createB2Bucket(name, storageRegion);
   } catch (err) {
     if (isBucketAlreadyOwned(err)) return name;
     console.warn(
@@ -76,30 +87,38 @@ export async function ensureWorkspaceBucket(
 }
 
 /**
- * Ensure the singleton Mongo bucket document for a shared physical workspace
- * bucket exists. This mirrors the existing system-owned personal bucket row:
- * `{ userId: "system", name: bucketName, b2BucketId: bucketName }`.
+ * Ensure the Mongo bucket document for a regional physical workspace bucket
+ * exists. There is exactly one `drive` record per logical storage region.
  */
 export async function ensureSystemWorkspaceBucketRecord(
   type: WorkspaceStorageType,
+  storageRegion: StorageRegion = DEFAULT_STORAGE_REGION,
 ): Promise<IBucket> {
-  const bucketName = await ensureWorkspaceBucket(type);
+  const bucketName = await ensureWorkspaceBucket(type, storageRegion);
+  const storageConfig = resolveRegionBucketConfig(storageRegion);
   const existing = await Bucket.findOne({
-    $or: [{ systemKey: "drive" }, { b2BucketId: bucketName }],
+    $or: [
+      { systemKey: "drive", storageRegion },
+      { b2BucketId: bucketName },
+    ],
   });
   if (existing) {
     if (
       existing.systemKey !== "drive" ||
+      existing.storageRegion !== storageRegion ||
       existing.name !== bucketName ||
-      existing.b2BucketId !== bucketName
+      existing.b2BucketId !== bucketName ||
+      existing.region !== storageConfig.region
     ) {
       await Bucket.updateOne(
         { _id: existing._id },
         {
           $set: {
             systemKey: "drive",
+            storageRegion,
             name: bucketName,
             b2BucketId: bucketName,
+            region: storageConfig.region,
           },
           $unset: {
             userId: "",
@@ -119,13 +138,17 @@ export async function ensureSystemWorkspaceBucketRecord(
   try {
     return await Bucket.create({
       systemKey: "drive",
+      storageRegion,
       name: bucketName,
       b2BucketId: bucketName,
-      region: resolveSystemBucketConfig().region,
+      region: storageConfig.region,
     });
   } catch (err) {
     if (!isDuplicateKey(err)) throw err;
-    const existingAfterRace = await Bucket.findOne({ b2BucketId: bucketName });
+    const existingAfterRace = await Bucket.findOne({
+      systemKey: "drive",
+      storageRegion,
+    });
     if (existingAfterRace) return existingAfterRace;
     throw err;
   }
