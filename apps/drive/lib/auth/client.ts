@@ -83,16 +83,25 @@ export async function getSession(): Promise<{ data: DriveSession | null }> {
   return { data: await loadSession() };
 }
 
-/** Revoke the Drive ProductSession and clear the host-only cookie. */
-export async function signOut(): Promise<{ success: boolean }> {
+/** Start coordinated current-browser logout at the Accounts authority. */
+export async function signOut(): Promise<{
+  success: boolean;
+  logoutUrl?: string;
+}> {
   try {
-    await fetch("/auth/logout", { method: "POST", credentials: "include" });
+    const response = await fetch("/auth/logout/start", {
+      method: "POST",
+      credentials: "include",
+    });
+    const payload = (await response.json().catch(() => null)) as
+      | { logoutUrl?: string }
+      | null;
+    return { success: response.ok, logoutUrl: payload?.logoutUrl };
   } finally {
     current = { data: null, isPending: false, error: null };
     loaded = true;
     notify();
   }
-  return { success: true };
 }
 
 export const authClient = { useSession, getSession, signOut };

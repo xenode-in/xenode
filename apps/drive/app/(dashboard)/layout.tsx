@@ -64,7 +64,10 @@ export default async function DashboardLayout({
   }));
 
   return (
-    <CryptoProvider initialUserId={session.user.id}>
+    <CryptoProvider
+      initialUserId={session.user.id}
+      initialSessionId={session.session.id}
+    >
       <WorkspaceProvider workspace={workspace}>
         <DownloadProvider>
           <PreviewProvider>

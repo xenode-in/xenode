@@ -1,6 +1,13 @@
 import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
-import { emailOTP, jwt, oidcProvider, username } from "better-auth/plugins";
+import { symmetricEncrypt } from "better-auth/crypto";
+import {
+  emailOTP,
+  generateExportedKeyPair,
+  jwt,
+  username,
+} from "better-auth/plugins";
+import { oauthProvider } from "@better-auth/oauth-provider";
 import { Resend } from "resend";
 import { AuditEvent, connectDatabase, getDatabase } from "@xenode/database";
 import {
@@ -9,6 +16,89 @@ import {
 } from "@xenode/identity-core";
 
 const EMAIL_FROM = process.env.EMAIL_FROM ?? "Xenode <noreply@alerts.xenode.in>";
+const PRIMARY_RS256_KEY_ID = "xenode-accounts-rs256-v1";
+
+export function firstPartyIdTokenClaims(
+  metadata?: Record<string, unknown>,
+): { azp: string } {
+  const authorizedParty = metadata?.authorizedParty;
+  if (typeof authorizedParty !== "string") {
+    throw new Error("OIDC client is missing its authorized party");
+  }
+  return { azp: authorizedParty };
+}
+
+async function ensureRs256SigningKey() {
+  const secret = process.env.BETTER_AUTH_SECRET;
+  if (!secret) {
+    throw new Error("BETTER_AUTH_SECRET is required");
+  }
+  const collection = getDatabase().collection("jwks");
+  if (await collection.findOne({ id: PRIMARY_RS256_KEY_ID })) return;
+
+  const keyPair = await generateExportedKeyPair({
+    jwks: { keyPairConfig: { alg: "RS256", modulusLength: 2048 } },
+  });
+  const encryptedPrivateKey = await symmetricEncrypt({
+    key: secret,
+    data: JSON.stringify(keyPair.privateWebKey),
+  });
+  await collection.updateOne(
+    { id: PRIMARY_RS256_KEY_ID },
+    {
+      $setOnInsert: {
+        id: PRIMARY_RS256_KEY_ID,
+        alg: "RS256",
+        publicKey: JSON.stringify(keyPair.publicWebKey),
+        privateKey: JSON.stringify(encryptedPrivateKey),
+        createdAt: new Date(),
+      },
+    },
+    { upsert: true },
+  );
+}
+
+async function ensureFirstPartyOAuthClients() {
+  const clients = resolveFirstPartyClients({
+    drive: process.env.DRIVE_ORIGIN,
+    photos: process.env.PHOTOS_ORIGIN,
+  });
+  const collection = getDatabase().collection("oauthClient");
+  const now = new Date();
+  await Promise.all(
+    clients
+      .filter((client) => client.clientId !== "xenode-mobile")
+      .map((client) =>
+        collection.updateOne(
+          { clientId: client.clientId },
+          {
+            $set: {
+              disabled: false,
+              skipConsent: true,
+              enableEndSession: true,
+              scopes: ["openid", "profile", "email"],
+              name: client.clientId,
+              redirectUris: [...client.redirectUris],
+              postLogoutRedirectUris: [
+                ...(client.postLogoutRedirectUris ?? []),
+              ],
+              tokenEndpointAuthMethod: "none",
+              grantTypes: ["authorization_code"],
+              responseTypes: ["code"],
+              public: true,
+              type: "user-agent-based",
+              requirePKCE: true,
+              metadata: { authorizedParty: client.clientId },
+              updatedAt: now,
+            },
+            $setOnInsert: { createdAt: now },
+          },
+          { upsert: true },
+        ),
+      ),
+  );
+  return clients;
+}
 
 function otpEmailHtml(otp: string): string {
   return `<!doctype html><html><body style="margin:0;background:#f7f9ff;font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#06183a;padding:32px">
@@ -24,13 +114,18 @@ function otpEmailHtml(otp: string): string {
 
 async function createAccountsAuth() {
   await connectDatabase();
+  await ensureRs256SigningKey();
+  const accountsOrigin =
+    process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
+  const firstPartyClients = await ensureFirstPartyOAuthClients();
   const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
   const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
   const resend = new Resend(process.env.RESEND_API_KEY || "fallback");
   return betterAuth({
       appName: "Xenode Accounts",
-      baseURL: process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in",
+      baseURL: accountsOrigin,
       secret: process.env.BETTER_AUTH_SECRET,
+      disabledPaths: ["/token"],
       database: mongodbAdapter(
         getDatabase() as unknown as Parameters<typeof mongodbAdapter>[0],
         { usePlural: false, transaction: false },
@@ -136,28 +231,54 @@ async function createAccountsAuth() {
             }
           },
         }),
-        jwt(),
-        oidcProvider({
+        jwt({
+          disableSettingJwtHeader: true,
+          jwks: {
+            keyPairConfig: { alg: "RS256", modulusLength: 2048 },
+          },
+          adapter: {
+            getJwks: async () => {
+              const keys = await getDatabase()
+                .collection("jwks")
+                .find({ id: PRIMARY_RS256_KEY_ID })
+                .toArray();
+              return keys.map((key) => ({
+                id: String(key._id),
+                publicKey: String(key.publicKey),
+                privateKey: String(key.privateKey),
+                createdAt: new Date(key.createdAt),
+                ...(key.expiresAt
+                  ? { expiresAt: new Date(key.expiresAt) }
+                  : {}),
+                alg: "RS256" as const,
+              }));
+            },
+          },
+          jwt: {
+            issuer: accountsOrigin,
+            audience: accountsOrigin,
+          },
+        }),
+        oauthProvider({
           loginPage: "/login",
           consentPage: "/oauth/authorize",
           allowDynamicClientRegistration: false,
-          requirePKCE: true,
-          allowPlainCodeChallengeMethod: false,
-          useJWTPlugin: true,
           codeExpiresIn: 300,
-          scopes: ["openid", "profile", "email", "offline_access"],
-          trustedClients: resolveFirstPartyClients({
-            drive: process.env.DRIVE_ORIGIN,
-            photos: process.env.PHOTOS_ORIGIN,
-          }).map((client) => ({
-            clientId: client.clientId,
-            type: "public" as const,
-            name: client.clientId,
-            metadata: null,
-            disabled: false,
-            redirectUrls: [...client.redirectUris],
-            skipConsent: true,
-          })),
+          accessTokenExpiresIn: 3600,
+          idTokenExpiresIn: 3600,
+          grantTypes: ["authorization_code"],
+          scopes: ["openid", "profile", "email"],
+          customIdTokenClaims: ({ metadata }) =>
+            firstPartyIdTokenClaims(metadata),
+          silenceWarnings: {
+            oauthAuthServerConfig: true,
+            openidConfig: true,
+          },
+          cachedTrustedClients: new Set(
+            firstPartyClients
+              .filter((client) => client.clientId !== "xenode-mobile")
+              .map((client) => client.clientId),
+          ),
         }),
       ],
     });

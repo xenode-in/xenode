@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { ProductSession } from "@xenode/database";
 import dbConnect from "@/lib/mongodb";
+import { parseDriveSessionCookie } from "@/lib/auth/product-cookie";
 
 export const DRIVE_SESSION_COOKIE = "xenode_drive_session";
 
@@ -15,11 +16,14 @@ export const DRIVE_SESSION_COOKIE = "xenode_drive_session";
  */
 export async function getDriveProductSession() {
   await dbConnect();
-  const sessionId = (await cookies()).get(DRIVE_SESSION_COOKIE)?.value;
-  if (!sessionId) return null;
+  const value = (await cookies()).get(DRIVE_SESSION_COOKIE)?.value;
+  const credential = value ? await parseDriveSessionCookie(value) : null;
+  if (!credential) return null;
   return ProductSession.findOne({
-    sessionId,
+    sessionId: credential.sessionId,
     productId: "drive",
+    sessionVersion: credential.sessionVersion,
+    issuerSessionId: { $type: "string" },
     revokedAt: { $exists: false },
     expiresAt: { $gt: new Date() },
   }).lean();

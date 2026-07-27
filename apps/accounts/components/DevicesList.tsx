@@ -14,6 +14,7 @@ export function DevicesList({ initialSessions }: { initialSessions: ProductSessi
   const [sessions, setSessions] = useState(initialSessions);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [everywhereBusy, setEverywhereBusy] = useState(false);
 
   async function revoke(sessionId: string) {
     setBusy(sessionId);
@@ -33,8 +34,35 @@ export function DevicesList({ initialSessions }: { initialSessions: ProductSessi
     setSessions((current) => current.map((item) => item.sessionId === sessionId ? { ...item, revokedAt: payload.revokedAt } : item));
   }
 
+  async function signOutEverywhere() {
+    setEverywhereBusy(true);
+    setError("");
+    const response = await fetch("/api/account/sign-out-everywhere", {
+      method: "POST",
+      credentials: "include",
+    });
+    if (!response.ok) {
+      setEverywhereBusy(false);
+      setError("Could not sign out every device.");
+      return;
+    }
+    const payload = (await response.json()) as { logoutUrl?: string };
+    window.location.assign(payload.logoutUrl ?? "/logout");
+  }
+
   return (
-    <section className="grid grid-2" style={{ marginTop: 32 }}>
+    <>
+      <div className="button-row" style={{ marginTop: 24 }}>
+        <button
+          className="button button-danger"
+          type="button"
+          disabled={everywhereBusy}
+          onClick={() => void signOutEverywhere()}
+        >
+          {everywhereBusy ? "Signing out…" : "Sign out everywhere"}
+        </button>
+      </div>
+      <section className="grid grid-2" style={{ marginTop: 20 }}>
       {error ? <p className="status status-error" role="alert" style={{ gridColumn: "1 / -1" }}>{error}</p> : null}
       {sessions.length ? sessions.map((item) => (
         <article className="card" key={item.sessionId}>
@@ -44,6 +72,7 @@ export function DevicesList({ initialSessions }: { initialSessions: ProductSessi
           {!item.revokedAt ? <button className="button button-danger" type="button" disabled={busy === item.sessionId} onClick={() => void revoke(item.sessionId)}>{busy === item.sessionId ? "Revoking…" : "Revoke session"}</button> : null}
         </article>
       )) : <div className="empty" style={{ gridColumn: "1 / -1" }}>No active product sessions.</div>}
-    </section>
+      </section>
+    </>
   );
 }

@@ -12,9 +12,7 @@ import React, {
 import {
   ProductCryptoProvider,
   useProductCrypto,
-  loadPersistedKey,
-  savePersistedKey,
-  deletePersistedKey,
+  clearPersistedKeys,
   savePendingHandoff,
   loadPendingHandoff,
   clearPendingHandoff,
@@ -31,6 +29,7 @@ import { personalSpaceId } from "@xenode/spaces/ids";
 import { clearLocalDb } from "@/lib/db/local";
 import { clearThumbnailMemoryCache } from "@/lib/thumbnails/memoryCache";
 import { deriveDriveMetadataKey } from "@/lib/crypto/productKeys";
+import { SessionRevocationGuard } from "@/components/auth/SessionRevocationGuard";
 
 interface CryptoContextType {
   isInitializing: boolean;
@@ -65,34 +64,11 @@ const AUX_PRIVATE = "drive-sharing-private";
 const AUX_PUBLIC = "drive-sharing-public";
 const AUX_METADATA = "drive-metadata";
 
-async function persistSharingKeys(
-  spaceId: string,
-  keys: ImportedSharingKeys,
-): Promise<void> {
+async function clearLegacySharingKeys(): Promise<void> {
   await Promise.all([
-    savePersistedKey(AUX_PRIVATE, spaceId, keys.privateKey),
-    savePersistedKey(AUX_PUBLIC, spaceId, keys.publicKey),
-    savePersistedKey(AUX_METADATA, spaceId, keys.metadataKey),
-  ]);
-}
-
-async function loadSharingKeys(
-  spaceId: string,
-): Promise<ImportedSharingKeys | null> {
-  const [privateKey, publicKey, metadataKey] = await Promise.all([
-    loadPersistedKey(AUX_PRIVATE, spaceId),
-    loadPersistedKey(AUX_PUBLIC, spaceId),
-    loadPersistedKey(AUX_METADATA, spaceId),
-  ]);
-  if (!privateKey || !publicKey || !metadataKey) return null;
-  return { privateKey, publicKey, metadataKey };
-}
-
-async function forgetSharingKeys(spaceId: string): Promise<void> {
-  await Promise.all([
-    deletePersistedKey(AUX_PRIVATE, spaceId),
-    deletePersistedKey(AUX_PUBLIC, spaceId),
-    deletePersistedKey(AUX_METADATA, spaceId),
+    clearPersistedKeys(AUX_PRIVATE),
+    clearPersistedKeys(AUX_PUBLIC),
+    clearPersistedKeys(AUX_METADATA),
   ]);
 }
 
@@ -156,9 +132,11 @@ async function importAndVerifySharingKeys(
 export function CryptoProvider({
   children,
   initialUserId,
+  initialSessionId,
 }: {
   children: ReactNode;
   initialUserId?: string | null;
+  initialSessionId?: string | null;
 }) {
   const accountId = initialUserId ?? "";
   const spaceId = accountId ? personalSpaceId(accountId) : "";
@@ -207,9 +185,6 @@ export function CryptoProvider({
           requestedSpaceId,
         );
         setSharingKeys(keys);
-        // Persist the sharing keypair + metadata key so a reload auto-unlocks
-        // (the product key itself is persisted by ProductCryptoProvider).
-        await persistSharingKeys(requestedSpaceId, keys);
         return bundle.productSpaceKey;
       } finally {
         bundle.sharingPrivateKeyPkcs8.fill(0);
@@ -220,6 +195,9 @@ export function CryptoProvider({
 
   return (
     <ProductCryptoProvider productId="drive" unwrapHandoff={unwrapHandoff}>
+      {initialSessionId ? (
+        <SessionRevocationGuard sessionId={initialSessionId} />
+      ) : null}
       <DriveKeyAccess
         accountId={accountId}
         spaceId={spaceId}
@@ -252,7 +230,8 @@ function DriveKeyAccess({
   children: ReactNode;
 }) {
   const productCrypto = useProductCrypto();
-  const [status, setStatus] = useState("Drive encryption is locked.");
+  const unlockProductKey = productCrypto.unlock;
+  const [status, setStatus] = useState("Restoring Drive encryption…");
   const [isModalOpen, setModalOpen] = useState(false);
   const accountsOrigin = new URL(
     process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in",
@@ -291,12 +270,12 @@ function DriveKeyAccess({
       // Seed the in-memory map so unwrapHandoff (which reads `pending`) resolves
       // this transaction — after a redirect the map starts empty.
       pending.current.set(transactionId, request);
-      await productCrypto.unlock(spaceId, { transactionId, sealed } satisfies UnlockPayload);
+      await unlockProductKey(spaceId, { transactionId, sealed } satisfies UnlockPayload);
       setStatus("Drive encryption keys are unlocked in memory.");
       setModalOpen(false);
       return true;
     },
-    [productCrypto, spaceId, pending],
+    [unlockProductKey, spaceId, pending],
   );
 
   // Redirect-based handoff (zero-click): navigate the whole tab to the Accounts
@@ -380,20 +359,7 @@ function DriveKeyAccess({
       }
 
       // (2) Silent restore from the persisted caches (product + sharing keys).
-      const restoredProduct = await productCrypto.restore(spaceId);
-      if (restoredProduct && !cancelled) {
-        const keys = await loadSharingKeys(spaceId);
-        if (keys && !cancelled) {
-          setSharingKeys(keys);
-          setStatus("Drive encryption keys are unlocked in memory.");
-          try {
-            sessionStorage.removeItem(HANDOFF_ATTEMPT_KEY);
-          } catch {
-            /* ignore */
-          }
-          return;
-        }
-      }
+      await clearLegacySharingKeys();
       if (cancelled) return;
 
       // (3) Still locked — auto-redirect once per session (guarded against loops).
@@ -415,7 +381,6 @@ function DriveKeyAccess({
   }, [
     accountId,
     spaceId,
-    productCrypto,
     consumeRequest,
     startUnlock,
     setSharingKeys,
@@ -423,7 +388,7 @@ function DriveKeyAccess({
 
   const lock = useCallback(async () => {
     await productCrypto.lock(spaceId || undefined);
-    if (spaceId) await forgetSharingKeys(spaceId);
+    await clearLegacySharingKeys();
     await clearPendingHandoff("drive");
     try {
       sessionStorage.removeItem(HANDOFF_ATTEMPT_KEY);

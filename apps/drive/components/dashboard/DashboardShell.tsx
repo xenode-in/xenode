@@ -144,8 +144,8 @@ export function DashboardShell({
             <span className="text-xl font-brand italic text-sidebar-foreground">
               Xenode
             </span>
-            <span className="text-xs font-medium text-sidebar-primary bg-sidebar-primary/10 px-2 py-0.5 rounded-full">
-              Storage
+            <span className="text-sm font-normal text-sidebar-foreground/70">
+              Drive
             </span>
           </Link>
         </div>
@@ -212,8 +212,8 @@ export function DashboardShell({
                     <span className="text-xl font-brand italic text-sidebar-foreground">
                       Xenode
                     </span>
-                    <span className="ml-2 text-xs font-medium text-sidebar-primary bg-sidebar-primary/10 px-2 py-0.5 rounded-full">
-                      Storage
+                    <span className="ml-2 text-sm font-normal text-sidebar-foreground/70">
+                      Drive
                     </span>
                   </div>
                   {orgsEnabled && (

@@ -18,18 +18,21 @@
     "@xenode/contracts": "*",
     "@xenode/crypto-react": "^0.0.0",
     "@xenode/database": "*",
+    "@xenode/identity-core": "^0.0.0",
     "@xenode/key-handoff": "^0.0.0",
     "@xenode/media-processing": "*",
     "@xenode/photos": "*",
+    "@xenode/realtime": "^0.0.0",
     "@xenode/spaces": "*",
     "@xenode/ui": "*",
     "@xenode/upload-engine": "^0.0.0",
     "jose": "^6.1.3",
     "lucide-react": "^0.563.0",
+    "next": "^16.2.11",
     "next-themes": "^0.4.6",
-    "next": "^16.1.6",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react-dom": "^19.2.4",
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

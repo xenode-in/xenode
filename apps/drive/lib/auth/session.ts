@@ -3,6 +3,7 @@ import { type NextRequest } from "next/server";
 import mongoose from "mongoose";
 import { ProductSession } from "@xenode/database";
 import dbConnect from "@/lib/mongodb";
+import { parseDriveSessionCookie } from "@/lib/auth/product-cookie";
 import { User } from "@/models/User";
 
 export const DRIVE_SESSION_COOKIE = "xenode_drive_session";
@@ -32,6 +33,7 @@ export interface DriveSession {
     token: string;
     userId: string;
     productId: "drive";
+    issuerSessionId: string;
     sessionVersion: number;
     activeOrganizationId: string | null;
     createdAt: Date;
@@ -58,14 +60,17 @@ function cookieValue(header: string | null, name: string): string | null {
  * non-browser clients (mobile re-integrates via the `xenode-mobile` OIDC
  * client and carries its ProductSession the same way).
  */
-async function resolveSessionId(request?: NextRequest): Promise<string | null> {
+async function resolveCredential(
+  request?: NextRequest,
+): Promise<{ sessionId: string; sessionVersion: number } | null> {
   const h = request ? request.headers : await nextHeaders();
   const authorization = h.get("authorization");
   if (authorization?.startsWith("Bearer ")) {
     const token = authorization.slice("Bearer ".length).trim();
-    if (token) return token;
+    if (token) return parseDriveSessionCookie(token);
   }
-  return cookieValue(h.get("cookie"), DRIVE_SESSION_COOKIE);
+  const value = cookieValue(h.get("cookie"), DRIVE_SESSION_COOKIE);
+  return value ? parseDriveSessionCookie(value) : null;
 }
 
 /**
@@ -83,13 +88,15 @@ async function resolveSessionId(request?: NextRequest): Promise<string | null> {
 export async function getServerSession(
   request?: NextRequest,
 ): Promise<DriveSession | null> {
-  const sessionId = await resolveSessionId(request);
-  if (!sessionId) return null;
+  const credential = await resolveCredential(request);
+  if (!credential) return null;
 
   await dbConnect();
   const productSession = await ProductSession.findOne({
-    sessionId,
+    sessionId: credential.sessionId,
     productId: "drive",
+    sessionVersion: credential.sessionVersion,
+    issuerSessionId: { $type: "string" },
     revokedAt: { $exists: false },
     expiresAt: { $gt: new Date() },
   }).lean();
@@ -112,6 +119,7 @@ export async function getServerSession(
       token: productSession.sessionId,
       userId: productSession.accountId,
       productId: "drive",
+      issuerSessionId: productSession.issuerSessionId,
       sessionVersion: productSession.sessionVersion,
       activeOrganizationId: productSession.activeOrganizationId ?? null,
       createdAt: productSession.authenticatedAt,

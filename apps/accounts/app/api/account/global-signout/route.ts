@@ -1,5 +1,8 @@
-import { ProductSession, connectDatabase } from "@xenode/database";
 import { getAccountsSession } from "@/lib/session";
+import {
+  requireSameOrigin,
+  revokeProductSessions,
+} from "@/lib/logout-coordinator";
 
 /**
  * POST /api/account/global-signout — revoke every product session (Drive,
@@ -12,12 +15,19 @@ import { getAccountsSession } from "@/lib/session";
  * /api/auth/sign-out. No session ⇒ nothing to revoke ⇒ still a success.
  */
 export async function POST(request: Request) {
+  const origin =
+    process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
+  try {
+    requireSameOrigin(request, new URL(origin).origin);
+  } catch (response) {
+    return response as Response;
+  }
   const session = await getAccountsSession(request);
   if (!session) return Response.json({ ok: true });
-  await connectDatabase();
-  await ProductSession.updateMany(
-    { accountId: session.user.id, revokedAt: { $exists: false } },
-    { $set: { revokedAt: new Date() }, $inc: { sessionVersion: 1 } },
-  );
+  await revokeProductSessions({
+    accountId: session.user.id,
+    issuerSessionId: session.session.id,
+    action: "browser_logout",
+  });
   return Response.json({ ok: true });
 }

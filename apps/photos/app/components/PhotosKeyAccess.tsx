@@ -26,10 +26,13 @@ import {
   getClientPhotosSession,
   type PhotosSessionInfo,
 } from "@/lib/client-session";
+import { SessionRevocationGuard } from "./SessionRevocationGuard";
 
 // Loop guard + document-scoped dedupe for the redirect handoff (see Drive).
 const HANDOFF_ATTEMPT_KEY = "xenode-handoff-attempt:photos";
+const OIDC_ATTEMPT_KEY = "xenode-oidc-attempt:photos";
 let handoffRedirectInFlight = false;
+let oidcRedirectInFlight = false;
 
 type UnlockPayload = {
   transactionId: string;
@@ -184,10 +187,39 @@ function UnlockControl({
     void (async () => {
       try {
         const value = await getClientPhotosSession();
-        if (!cancelled) setSession(value);
+        if (!cancelled) {
+          setSession(value);
+          try {
+            sessionStorage.removeItem(OIDC_ATTEMPT_KEY);
+          } catch {
+            /* storage disabled */
+          }
+        }
       } catch (error) {
         if (!cancelled) {
-          setStatus(error instanceof Error ? error.message : "Session unavailable.");
+          let attempted = false;
+          try {
+            attempted = sessionStorage.getItem(OIDC_ATTEMPT_KEY) === "1";
+          } catch {
+            /* storage disabled */
+          }
+          if (!attempted && !oidcRedirectInFlight) {
+            oidcRedirectInFlight = true;
+            try {
+              sessionStorage.setItem(OIDC_ATTEMPT_KEY, "1");
+            } catch {
+              /* storage disabled */
+            }
+            setStatus("Continuing with your Xenode Account…");
+            const next = window.location.pathname + window.location.search;
+            window.location.replace(
+              `/auth/login?next=${encodeURIComponent(next)}`,
+            );
+            return;
+          }
+          setStatus(
+            error instanceof Error ? error.message : "Session unavailable.",
+          );
         }
       }
     })();
@@ -277,7 +309,14 @@ function UnlockControl({
   const unlocked = session
     ? productCrypto.isUnlocked(session.spaceId)
     : false;
-  if (unlocked) return <>{children}</>;
+  if (unlocked) {
+    return (
+      <>
+        <SessionRevocationGuard sessionId={session!.sessionId} />
+        {children}
+      </>
+    );
+  }
   return (
     <>
       <aside className="flex items-center gap-3 border-b border-border bg-card px-6 py-2.5 text-sm">
@@ -300,7 +339,17 @@ function UnlockControl({
           {status}
         </span>
         {!session ? (
-          <a href="/auth/login" className="ml-auto text-primary hover:underline">
+          <a
+            href="/auth/login"
+            onClick={() => {
+              try {
+                sessionStorage.removeItem(OIDC_ATTEMPT_KEY);
+              } catch {
+                /* ignore */
+              }
+            }}
+            className="ml-auto text-primary hover:underline"
+          >
             Sign in
           </a>
         ) : null}

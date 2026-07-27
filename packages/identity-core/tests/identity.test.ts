@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   FIRST_PARTY_CLIENTS,
+  buildOidcAuthorizationUrl,
+  createOidcFlow,
+  decodeProductSessionCookie,
+  encodeProductSessionCookie,
   normalizeUsername,
   pkceS256,
   redeemAuthorizationCode,
   resolveFirstPartyClients,
+  sanitizeReturnTo,
   validateAuthorizationRequest,
   validateIdTokenClaims,
   validateUsername,
@@ -115,7 +120,7 @@ describe("identity authority contracts", () => {
 
     // Static production URIs stay; the env origin's callback is appended.
     expect(drive.redirectUris).toEqual([
-      "https://xenode.in/auth/callback",
+      "https://drive.xenode.in/auth/callback",
       "http://localhost:3000/auth/callback",
     ]);
     // Origins are normalized — path segments never widen the allowlist.
@@ -127,16 +132,18 @@ describe("identity authority contracts", () => {
     expect(mobile.redirectUris).toEqual(["in.xenode.app://auth/callback"]);
 
     // Re-declaring the production origin dedupes instead of duplicating.
-    const deduped = resolveFirstPartyClients({ drive: "https://xenode.in" });
+    const deduped = resolveFirstPartyClients({
+      drive: "https://drive.xenode.in",
+    });
     expect(
       deduped.find((c) => c.clientId === "xenode-drive-web")!.redirectUris,
-    ).toEqual(["https://xenode.in/auth/callback"]);
+    ).toEqual(["https://drive.xenode.in/auth/callback"]);
 
     // The registry itself is never mutated.
     expect(
       FIRST_PARTY_CLIENTS.find((c) => c.clientId === "xenode-drive-web")!
         .redirectUris,
-    ).toEqual(["https://xenode.in/auth/callback"]);
+    ).toEqual(["https://drive.xenode.in/auth/callback"]);
 
     // Non-URL and non-http(s) origins fail loudly.
     expect(() => resolveFirstPartyClients({ drive: "not a url" })).toThrow(
@@ -145,5 +152,61 @@ describe("identity authority contracts", () => {
     expect(() =>
       resolveFirstPartyClients({ drive: "javascript:alert(1)" }),
     ).toThrow(/Invalid OIDC origin/u);
+  });
+
+  it("preserves only same-origin return paths and never requests offline access", async () => {
+    expect(sanitizeReturnTo("/dashboard/files?view=grid", "/dashboard")).toBe(
+      "/dashboard/files?view=grid",
+    );
+    expect(sanitizeReturnTo("//evil.example/path", "/dashboard")).toBe(
+      "/dashboard",
+    );
+    expect(
+      sanitizeReturnTo("https://evil.example/path", "/dashboard"),
+    ).toBe("/dashboard");
+    const flow = await createOidcFlow("/dashboard", "/dashboard");
+    const authorize = buildOidcAuthorizationUrl({
+      issuer: "https://accounts.xenode.in",
+      clientId: "xenode-drive-web",
+      redirectUri: "https://drive.xenode.in/auth/callback",
+      flow,
+    });
+    expect(authorize.searchParams.get("scope")).toBe("openid profile email");
+    expect(authorize.searchParams.get("code_challenge_method")).toBe("S256");
+  });
+
+  it("signs product cookies and rejects tampering and expiry", async () => {
+    const secret = "a-secure-test-secret-with-at-least-32-bytes";
+    const value = await encodeProductSessionCookie(
+      {
+        sessionId: "session_1",
+        sessionVersion: 3,
+        productId: "drive",
+        expiresAt: Math.floor(Date.now() / 1000) + 60,
+      },
+      secret,
+    );
+    await expect(
+      decodeProductSessionCookie(value, secret),
+    ).resolves.toMatchObject({
+      sessionId: "session_1",
+      sessionVersion: 3,
+      productId: "drive",
+    });
+    await expect(
+      decodeProductSessionCookie(`${value.slice(0, -1)}x`, secret),
+    ).resolves.toBeNull();
+    const expired = await encodeProductSessionCookie(
+      {
+        sessionId: "session_1",
+        sessionVersion: 3,
+        productId: "drive",
+        expiresAt: Math.floor(Date.now() / 1000) - 1,
+      },
+      secret,
+    );
+    await expect(
+      decodeProductSessionCookie(expired, secret),
+    ).resolves.toBeNull();
   });
 });

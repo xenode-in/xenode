@@ -6,16 +6,19 @@ import {
   Cloud,
   HelpCircle,
   Images,
+  LogOut,
   Search,
   Settings,
   Sparkles,
   UserRound,
 } from "lucide-react";
 import { Button, cn } from "@xenode/ui";
+import { startPhotosLogout } from "@/lib/logout-client";
 
 const ACCOUNTS_ORIGIN =
   process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
-const DRIVE_ORIGIN = process.env.NEXT_PUBLIC_DRIVE_ORIGIN ?? "https://xenode.in";
+const DRIVE_ORIGIN =
+  process.env.NEXT_PUBLIC_DRIVE_ORIGIN ?? "https://drive.xenode.in";
 
 export function PhotosShell({
   view,
@@ -83,6 +86,15 @@ export function PhotosShell({
             <a href={ACCOUNTS_ORIGIN} aria-label="Open Xenode Account">
               <UserRound />
             </a>
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="rounded-full"
+            aria-label="Sign out of Xenode"
+            onClick={() => void startPhotosLogout()}
+          >
+            <LogOut />
           </Button>
         </div>
       </header>

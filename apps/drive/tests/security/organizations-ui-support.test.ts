@@ -60,6 +60,8 @@ async function insertSessionDocument(
     sessionId: session.session.id,
     accountId: session.session.userId,
     productId: "drive",
+    issuerSessionId: "accounts-session-1",
+    clientId: "xenode-drive-web",
     authenticatedAt: session.session.createdAt,
     sessionVersion: 1,
     expiresAt: session.session.expiresAt,

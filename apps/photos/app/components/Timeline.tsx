@@ -37,7 +37,7 @@ export function Timeline({
 }: {
   spaceId: string;
   query: string;
-  onOpen(asset: TimelineAsset): void;
+  onOpen(asset: TimelineAsset, assets: TimelineAsset[]): void;
 }) {
   const [items, setItems] = useState<TimelineAsset[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -236,7 +236,7 @@ export function Timeline({
               }}
               group={group}
               density={density}
-              onOpen={onOpen}
+              onOpen={(asset) => onOpen(asset, filtered)}
             />
           ))}
 

@@ -10,5 +10,6 @@ export async function GET() {
     accountId: session.accountId,
     spaceId: personalSpaceId(session.accountId),
     productId: "photos",
+    sessionId: session.sessionId,
   });
 }

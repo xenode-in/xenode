@@ -131,6 +131,9 @@ export interface ProductSessionRecord {
   sessionId: string;
   accountId: string;
   productId: string;
+  /** OIDC `sid` of the Accounts browser session that minted this session. */
+  issuerSessionId: string;
+  clientId: string;
   authenticatedAt: Date;
   sessionVersion: number;
   expiresAt: Date;
@@ -145,6 +148,8 @@ const productSessionSchema = new Schema<ProductSessionRecord>(
     sessionId: { type: String, required: true, unique: true, index: true },
     accountId: { type: String, required: true, index: true },
     productId: { type: String, required: true, index: true },
+    issuerSessionId: { type: String, required: true, index: true },
+    clientId: { type: String, required: true },
     authenticatedAt: { type: Date, required: true },
     sessionVersion: { type: Number, required: true, min: 1 },
     expiresAt: { type: Date, required: true, index: true },
@@ -154,10 +159,75 @@ const productSessionSchema = new Schema<ProductSessionRecord>(
   { timestamps: true, collection: "productSessions" },
 );
 productSessionSchema.index({ accountId: 1, productId: 1, revokedAt: 1 });
+productSessionSchema.index({
+  accountId: 1,
+  issuerSessionId: 1,
+  revokedAt: 1,
+});
 export const ProductSession = getModel<ProductSessionRecord>(
   "ProductSession",
   productSessionSchema,
 );
+
+interface BrowserLogoutCleanupTicketRecord {
+  productId: string;
+  tokenHash: string;
+  consumedAt?: Date;
+}
+
+export interface BrowserLogoutTransactionRecord {
+  transactionIdHash: string;
+  accountId: string;
+  issuerSessionId: string;
+  initiatingProduct: string;
+  cleanupTickets: BrowserLogoutCleanupTicketRecord[];
+  expiresAt: Date;
+  completedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const browserLogoutCleanupTicketSchema =
+  new Schema<BrowserLogoutCleanupTicketRecord>(
+    {
+      productId: { type: String, required: true },
+      tokenHash: { type: String, required: true },
+      consumedAt: Date,
+    },
+    { _id: false },
+  );
+
+const browserLogoutTransactionSchema =
+  new Schema<BrowserLogoutTransactionRecord>(
+    {
+      transactionIdHash: {
+        type: String,
+        required: true,
+        unique: true,
+        index: true,
+      },
+      accountId: { type: String, required: true, index: true },
+      issuerSessionId: { type: String, required: true, index: true },
+      initiatingProduct: { type: String, required: true },
+      cleanupTickets: {
+        type: [browserLogoutCleanupTicketSchema],
+        required: true,
+      },
+      expiresAt: { type: Date, required: true },
+      completedAt: Date,
+    },
+    { timestamps: true, collection: "browserLogoutTransactions" },
+  );
+browserLogoutTransactionSchema.index(
+  { expiresAt: 1 },
+  { expireAfterSeconds: 0 },
+);
+
+export const BrowserLogoutTransaction =
+  getModel<BrowserLogoutTransactionRecord>(
+    "BrowserLogoutTransaction",
+    browserLogoutTransactionSchema,
+  );
 
 export interface KeyHandoffRecord {
   transactionId: string;

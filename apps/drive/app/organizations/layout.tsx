@@ -13,6 +13,11 @@ export default async function OrganizationsLayout({
   }
 
   return (
-    <CryptoProvider initialUserId={session.user.id}>{children}</CryptoProvider>
+    <CryptoProvider
+      initialUserId={session.user.id}
+      initialSessionId={session.session.id}
+    >
+      {children}
+    </CryptoProvider>
   );
 }

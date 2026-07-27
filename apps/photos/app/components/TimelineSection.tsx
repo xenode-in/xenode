@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef } from "react";
+import { forwardRef, useEffect, useMemo, useState } from "react";
 import { PhotoTile } from "./PhotoTile";
 import type { TimelineAsset, TimelineGroup } from "./Timeline";
 import { usePhotoSelection } from "./SelectionController";
@@ -16,6 +16,7 @@ export const TimelineSection = forwardRef<
   }
 >(function TimelineSection({ group, density, onOpen }, ref) {
   const selection = usePhotoSelection();
+  const [windowWidth, setWindowWidth] = useState(0);
   const selectedCount = group.assets.filter((asset) =>
     selection.selected.has(asset.id),
   ).length;
@@ -31,6 +32,23 @@ export const TimelineSection = forwardRef<
       }
     }
   }
+
+  useEffect(() => {
+    const updateWidth = () => setWindowWidth(window.innerWidth);
+    updateWidth();
+    window.addEventListener("resize", updateWidth);
+    return () => window.removeEventListener("resize", updateWidth);
+  }, []);
+
+  const columns = useMemo(() => {
+    const count = getColumnCount(windowWidth);
+    const result: TimelineAsset[][] = Array.from(
+      { length: count },
+      () => [],
+    );
+    group.assets.forEach((asset, index) => result[index % count].push(asset));
+    return result;
+  }, [group.assets, windowWidth]);
 
   return (
     <section ref={ref} className="scroll-mt-24" aria-label={group.label}>
@@ -59,23 +77,40 @@ export const TimelineSection = forwardRef<
           {group.assets.length}
         </span>
       </header>
-      <div
-        className={cn(
-          "grid gap-2",
-          density === "comfortable"
-            ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6"
-            : "grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7 2xl:grid-cols-8",
-        )}
-      >
-        {group.assets.map((asset) => (
-          <PhotoTile
-            key={asset.id}
-            asset={asset}
-            density={density}
-            onOpen={onOpen}
-          />
-        ))}
-      </div>
+      {density === "comfortable" ? (
+        <div className="flex items-start gap-2 sm:gap-3">
+          {columns.map((column, index) => (
+            <div key={index} className="flex min-w-0 flex-1 flex-col gap-2 sm:gap-3">
+              {column.map((asset) => (
+                <PhotoTile
+                  key={asset.id}
+                  asset={asset}
+                  density={density}
+                  onOpen={onOpen}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7 2xl:grid-cols-8">
+          {group.assets.map((asset) => (
+            <PhotoTile
+              key={asset.id}
+              asset={asset}
+              density={density}
+              onOpen={onOpen}
+            />
+          ))}
+        </div>
+      )}
     </section>
   );
 });
+
+function getColumnCount(width: number) {
+  if (width >= 1280) return 5;
+  if (width >= 1024) return 4;
+  if (width >= 768) return 3;
+  return 2;
+}

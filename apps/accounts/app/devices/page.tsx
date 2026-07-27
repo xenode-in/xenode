@@ -25,7 +25,7 @@ export default async function DevicesPage() {
       <main className="page">
         <p className="eyebrow">Product access</p>
         <h1>Devices</h1>
-        <p className="lede">Review and revoke host-specific Drive, Photos, mobile, and office sessions. Revocation takes effect independently for each product.</p>
+        <p className="lede">Review product access for your Xenode sessions. Normal sign-out closes every product in this browser; use “Sign out everywhere” only when all devices should be revoked.</p>
         <DevicesList initialSessions={sessions} />
       </main>
     </AccountShell>

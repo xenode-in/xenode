@@ -47,6 +47,7 @@ describe("Drive key handoff proxy", () => {
         token: "drive-session",
         userId: "account_1",
         productId: "drive",
+        issuerSessionId: "accounts-session-1",
         sessionVersion: 1,
         activeOrganizationId: null,
         createdAt: new Date(),

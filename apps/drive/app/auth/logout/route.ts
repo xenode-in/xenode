@@ -15,7 +15,8 @@ import { withRedis } from "@/lib/redis";
  * POST /auth/logout — revoke the caller's Drive ProductSession and clear the
  * host-only session cookie. Revocation is propagated to realtime (best
  * effort) so live sockets drop; the DB flag alone already blocks all
- * subsequent requests. Account-wide sign-out lives at the Accounts hub.
+ * subsequent requests. Kept for compatibility; user-facing sign-out uses
+ * /auth/logout/start so the matching Accounts and Photos sessions also end.
  */
 export async function POST(request: NextRequest) {
   const session = await getServerSession(request);

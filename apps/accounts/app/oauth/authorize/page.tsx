@@ -13,12 +13,10 @@ const SCOPE_LABELS: Record<string, string> = {
   openid: "Confirm your Xenode account identity",
   profile: "Read your display name and username",
   email: "Read your verified email address",
-  offline_access: "Keep this product signed in until you revoke it",
 };
 
 export default function ConsentPage() {
   const query = useMemo(() => typeof window === "undefined" ? new URLSearchParams() : new URLSearchParams(window.location.search), []);
-  const consentCode = query.get("consent_code") ?? "";
   const clientId = query.get("client_id") ?? "unknown-client";
   const scopes = (query.get("scope") ?? "openid").split(" ").filter(Boolean);
   const [busy, setBusy] = useState(false);
@@ -31,15 +29,18 @@ export default function ConsentPage() {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ accept, consent_code: consentCode || undefined }),
+      body: JSON.stringify({
+        accept,
+        oauth_query: window.location.search.slice(1),
+      }),
     });
-    const payload = (await response.json().catch(() => null)) as { redirectURI?: string } | null;
-    if (!response.ok || !payload?.redirectURI) {
+    const payload = (await response.json().catch(() => null)) as { redirect_uri?: string } | null;
+    if (!response.ok || !payload?.redirect_uri) {
       setBusy(false);
       setMessage("This authorization request is invalid or has expired.");
       return;
     }
-    window.location.assign(payload.redirectURI);
+    window.location.assign(payload.redirect_uri);
   }
 
   return (

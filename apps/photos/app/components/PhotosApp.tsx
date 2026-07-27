@@ -26,6 +26,7 @@ function PhotosAppInner() {
   const [view, setView] = useState<"timeline" | "albums">("timeline");
   const [search, setSearch] = useState("");
   const [lightbox, setLightbox] = useState<TimelineAsset | null>(null);
+  const [previewAssets, setPreviewAssets] = useState<TimelineAsset[]>([]);
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
   const [album, setAlbum] = useState<AlbumSummary | null>(null);
   const [timelineVersion, setTimelineVersion] = useState(0);
@@ -94,7 +95,10 @@ function PhotosAppInner() {
           key={`${spaceId}:${timelineVersion}`}
           spaceId={spaceId}
           query={search}
-          onOpen={setLightbox}
+          onOpen={(asset, assets) => {
+            setPreviewAssets(assets);
+            setLightbox(asset);
+          }}
         />
       ) : null}
       {spaceId && view === "albums" && !album ? (
@@ -105,7 +109,12 @@ function PhotosAppInner() {
         />
       ) : null}
       {album ? <AlbumView album={album} onBack={() => setAlbum(null)} /> : null}
-      <Lightbox asset={lightbox} onClose={() => setLightbox(null)} />
+      <Lightbox
+        asset={lightbox}
+        assets={previewAssets}
+        onChange={setLightbox}
+        onClose={() => setLightbox(null)}
+      />
     </PhotosShell>
   );
 }

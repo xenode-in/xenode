@@ -33,6 +33,10 @@ vi.mock("next/headers", () => ({
 
 import { GET as callbackGET } from "@/app/auth/callback/route";
 import { getDriveProductSession } from "@/lib/auth/product-session";
+import {
+  createDriveSessionCookie,
+  parseDriveSessionCookie,
+} from "@/lib/auth/product-cookie";
 
 let privateKey: CryptoKey;
 let jwks: { keys: object[] };
@@ -62,10 +66,17 @@ async function signIdToken(overrides: {
   nonce?: string;
   sub?: string;
   expiresIn?: string;
+  sid?: string | null;
+  azp?: string;
 }) {
-  return new SignJWT({
+  const claims: Record<string, string> = {
     nonce: overrides.nonce ?? "nonce-0123456789abcdef",
-  })
+    azp: overrides.azp ?? "xenode-drive-web",
+  };
+  if (overrides.sid !== null) {
+    claims.sid = overrides.sid ?? "accounts-session-1";
+  }
+  return new SignJWT(claims)
     .setProtectedHeader({ alg: "RS256", kid: "test-key" })
     .setIssuer(overrides.iss ?? ISSUER)
     .setAudience(overrides.aud ?? "xenode-drive-web")
@@ -177,6 +188,29 @@ describe("Drive OIDC callback", () => {
     expect(await ProductSession.countDocuments({ productId: "drive" })).toBe(0);
   });
 
+  it("rejects an id_token without Accounts session lineage", async () => {
+    seedFlowCookies();
+    mockAccountsFetch(await signIdToken({ sid: null }));
+    const response = await callbackGET(
+      callbackRequest({ code: "code_1", state: "state-0123456789abcdef" }),
+    );
+    expect(response.status).toBe(400);
+    expect(await ProductSession.countDocuments({ productId: "drive" })).toBe(0);
+  });
+
+  it("rejects an id_token for another authorized party", async () => {
+    seedFlowCookies();
+    mockAccountsFetch(await signIdToken({ azp: "xenode-photos-web" }));
+    const response = await callbackGET(
+      callbackRequest({ code: "code_1", state: "state-0123456789abcdef" }),
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Invalid OIDC authorized party",
+    });
+    expect(await ProductSession.countDocuments({ productId: "drive" })).toBe(0);
+  });
+
   it("mints a Drive ProductSession + host-only cookie for a valid flow", async () => {
     seedFlowCookies();
     mockAccountsFetch(await signIdToken({}));
@@ -192,7 +226,12 @@ describe("Drive OIDC callback", () => {
       productId: "drive",
       sessionVersion: 1,
     });
-    expect(jar.get("xenode_drive_session")?.value).toBe(session!.sessionId);
+    await expect(
+      parseDriveSessionCookie(jar.get("xenode_drive_session")!.value),
+    ).resolves.toMatchObject({
+      sessionId: session!.sessionId,
+      sessionVersion: 1,
+    });
     // Single-use flow cookies are cleared.
     expect(jar.get("xenode_drive_oidc_state")).toBeUndefined();
     expect(jar.get("xenode_drive_oidc_nonce")).toBeUndefined();
@@ -201,6 +240,12 @@ describe("Drive OIDC callback", () => {
 });
 
 describe("Drive ProductSession resolution", () => {
+  it("rejects unsigned legacy session cookies", async () => {
+    jar.store.clear();
+    jar.set("xenode_drive_session", "legacy-session-id");
+    await expect(getDriveProductSession()).resolves.toBeNull();
+  });
+
   it("resolves a live session and rejects revoked/expired ones", async () => {
     jar.store.clear();
 
@@ -208,11 +253,20 @@ describe("Drive ProductSession resolution", () => {
       sessionId: "live-session",
       accountId: "acct_1",
       productId: "drive",
+      issuerSessionId: "accounts-session-1",
+      clientId: "xenode-drive-web",
       authenticatedAt: new Date(),
       sessionVersion: 1,
       expiresAt: new Date(Date.now() + 60_000),
     });
-    jar.set("xenode_drive_session", "live-session");
+    jar.set(
+      "xenode_drive_session",
+      await createDriveSessionCookie({
+        sessionId: "live-session",
+        sessionVersion: 1,
+        expiresAt: new Date(Date.now() + 60_000),
+      }),
+    );
     await expect(getDriveProductSession()).resolves.toMatchObject({
       sessionId: "live-session",
       accountId: "acct_1",
@@ -230,11 +284,20 @@ describe("Drive ProductSession resolution", () => {
       sessionId: "expired-session",
       accountId: "acct_1",
       productId: "drive",
+      issuerSessionId: "accounts-session-1",
+      clientId: "xenode-drive-web",
       authenticatedAt: new Date(Date.now() - 120_000),
       sessionVersion: 1,
       expiresAt: new Date(Date.now() - 60_000),
     });
-    jar.set("xenode_drive_session", "expired-session");
+    jar.set(
+      "xenode_drive_session",
+      await createDriveSessionCookie({
+        sessionId: "expired-session",
+        sessionVersion: 1,
+        expiresAt: new Date(Date.now() - 60_000),
+      }),
+    );
     await expect(getDriveProductSession()).resolves.toBeNull();
 
     // A Photos session id must not unlock Drive.
@@ -242,15 +305,47 @@ describe("Drive ProductSession resolution", () => {
       sessionId: "photos-session",
       accountId: "acct_1",
       productId: "photos",
+      issuerSessionId: "accounts-session-1",
+      clientId: "xenode-photos-web",
       authenticatedAt: new Date(),
       sessionVersion: 1,
       expiresAt: new Date(Date.now() + 60_000),
     });
-    jar.set("xenode_drive_session", "photos-session");
+    jar.set(
+      "xenode_drive_session",
+      await createDriveSessionCookie({
+        sessionId: "photos-session",
+        sessionVersion: 1,
+        expiresAt: new Date(Date.now() + 60_000),
+      }),
+    );
     await expect(getDriveProductSession()).resolves.toBeNull();
 
     // No cookie → no session.
     jar.delete("xenode_drive_session");
+    await expect(getDriveProductSession()).resolves.toBeNull();
+  });
+
+  it("rejects a signed cookie whose session version is stale", async () => {
+    jar.store.clear();
+    await ProductSession.create({
+      sessionId: "versioned-session",
+      accountId: "acct_1",
+      productId: "drive",
+      issuerSessionId: "accounts-session-1",
+      clientId: "xenode-drive-web",
+      authenticatedAt: new Date(),
+      sessionVersion: 2,
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+    jar.set(
+      "xenode_drive_session",
+      await createDriveSessionCookie({
+        sessionId: "versioned-session",
+        sessionVersion: 1,
+        expiresAt: new Date(Date.now() + 60_000),
+      }),
+    );
     await expect(getDriveProductSession()).resolves.toBeNull();
   });
 });

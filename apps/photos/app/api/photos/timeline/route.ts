@@ -1,20 +1,12 @@
-import { cookies } from "next/headers";
-import { connectDatabase, PhotoAsset, ProductSession } from "@xenode/database";
+import { connectDatabase, PhotoAsset } from "@xenode/database";
 import { resolveSpaceAccess } from "@xenode/spaces";
 import { spaceIdSchema } from "@xenode/contracts";
 import { decodeTimelineCursor, encodeTimelineCursor } from "@xenode/photos";
+import { getPhotosProductSession } from "@/lib/session";
 
 export async function GET(request: Request) {
   await connectDatabase();
-  const sessionId = (await cookies()).get("xenode_photos_session")?.value;
-  const session = sessionId
-    ? await ProductSession.findOne({
-        sessionId,
-        productId: "photos",
-        revokedAt: { $exists: false },
-        expiresAt: { $gt: new Date() },
-      }).lean()
-    : null;
+  const session = await getPhotosProductSession();
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   const url = new URL(request.url);

@@ -30,14 +30,14 @@ export function usagePercent(used: number, limit: number | null): number {
 }
 
 export function resumeAuthorizationPath(search: URLSearchParams): string {
-  const allowed = [
+  const allowed = new Set([
     "client_id", "redirect_uri", "response_type", "scope", "state", "nonce",
     "code_challenge", "code_challenge_method", "prompt", "max_age",
-  ];
+    "resource", "request_uri", "exp", "ba_iat", "ba_param", "ba_pl", "sig",
+  ]);
   const target = new URLSearchParams();
-  for (const key of allowed) {
-    const value = search.get(key);
-    if (value) target.set(key, value);
+  for (const [key, value] of search.entries()) {
+    if (allowed.has(key) && value) target.append(key, value);
   }
   const query = target.toString();
   return query ? `/api/auth/oauth2/authorize?${query}` : "/";

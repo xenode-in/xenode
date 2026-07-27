@@ -22,6 +22,7 @@ mongoose.set("updatePipeline", true);
 export async function connectDatabase(
   uri = process.env.MONGODB_URI,
 ): Promise<typeof mongoose> {
+  if (!uri && mongoose.connection.readyState === 1) return mongoose;
   if (!uri) throw new Error("MONGODB_URI environment variable is required");
   if (cache.connection && cache.uri === uri) return cache.connection;
 

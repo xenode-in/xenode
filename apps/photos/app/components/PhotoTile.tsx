@@ -7,6 +7,10 @@ import { useProductCrypto } from "@xenode/crypto-react";
 import { usePhotoSelection } from "./SelectionController";
 import type { TimelineAsset } from "./Timeline";
 import { decryptPhotoFile } from "@/lib/photo-encryption";
+import {
+  fetchCachedPhotoCiphertext,
+  photoPreviewCacheKey,
+} from "@/lib/photo-preview-cache";
 
 export function PhotoTile({
   asset,
@@ -20,7 +24,6 @@ export function PhotoTile({
   const selection = usePhotoSelection();
   const productCrypto = useProductCrypto();
   const checked = selection.selected.has(asset.id);
-  const hue = hashHue(asset.id);
   const date = new Date(asset.takenAt);
   const tile = useRef<HTMLElement>(null);
   const [previewUrl, setPreviewUrl] = useState("");
@@ -60,6 +63,7 @@ export function PhotoTile({
         spaceId?: string;
         spaceKeyWrapIv?: string;
         url?: string;
+        variant?: "thumbnail" | "optimized" | "original";
       };
       if (
         !response.ok ||
@@ -73,9 +77,15 @@ export function PhotoTile({
       ) {
         throw new Error(descriptor.error ?? "Photo preview unavailable");
       }
-      const encryptedResponse = await fetch(descriptor.url);
-      if (!encryptedResponse.ok) throw new Error("Could not read photo");
-      const ciphertext = await encryptedResponse.arrayBuffer();
+      const ciphertext = await fetchCachedPhotoCiphertext(
+        descriptor.url,
+        photoPreviewCacheKey({
+          accountId: descriptor.accountId,
+          objectKey: descriptor.objectKey,
+          spaceId: descriptor.spaceId,
+          variant: descriptor.variant ?? "thumbnail",
+        }),
+      );
       const plaintext = await productCrypto.withProductKey(
         descriptor.spaceId,
         (productSpaceKey) =>
@@ -118,14 +128,19 @@ export function PhotoTile({
     <article
       ref={tile}
       className={cn(
-        "group relative isolate overflow-hidden rounded-xl border bg-muted transition duration-300 hover:-translate-y-0.5 hover:shadow-lg",
+        "group relative isolate w-full overflow-hidden rounded-xl border bg-transparent transition duration-300 hover:-translate-y-0.5 hover:shadow-lg",
         checked
           ? "border-primary ring-2 ring-primary/60 ring-offset-2 ring-offset-background"
           : "border-border/50",
-        density === "compact" ? "aspect-square" : "aspect-[4/3]",
+        density === "compact" && "aspect-square",
       )}
       style={{
-        background: `linear-gradient(145deg, hsl(${hue} 54% 30%), hsl(${(hue + 42) % 360} 58% 14%))`,
+        aspectRatio:
+          density === "comfortable"
+            ? asset.width && asset.height
+              ? `${asset.width} / ${asset.height}`
+              : "1 / 1"
+            : undefined,
       }}
     >
       <button
@@ -143,7 +158,7 @@ export function PhotoTile({
             className="absolute inset-0 size-full object-cover transition duration-700 group-hover:scale-105"
           />
         ) : (
-          <span className="absolute inset-0 bg-[radial-gradient(circle_at_25%_15%,rgba(255,255,255,.22),transparent_34%)]" />
+          <span className="absolute inset-0 bg-muted/20" />
         )}
         <span className="absolute inset-0 grid place-items-center text-white/55 transition duration-500 group-hover:text-white/75">
           {asset.mediaType === "video" ? (
@@ -190,14 +205,6 @@ export function PhotoTile({
       </button>
     </article>
   );
-}
-
-function hashHue(value: string): number {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 31 + value.charCodeAt(index)) % 360;
-  }
-  return hash;
 }
 
 function detectImageType(bytes: Uint8Array): string {

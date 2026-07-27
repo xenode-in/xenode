@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { connectDatabase, ProductSession } from "@xenode/database";
+import { sanitizeReturnTo } from "@xenode/identity-core";
+import { createPhotosSessionCookie } from "@/lib/product-cookie";
 
 function failure(message: string) {
   return Response.json({ error: message }, { status: 400 });
@@ -13,11 +15,23 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const returnedState = url.searchParams.get("state");
+  const returnedIssuer = url.searchParams.get("iss");
   const jar = await cookies();
   const expectedState = jar.get("xenode_photos_oidc_state")?.value;
   const nonce = jar.get("xenode_photos_oidc_nonce")?.value;
   const verifier = jar.get("xenode_photos_pkce")?.value;
-  if (!code || !returnedState || returnedState !== expectedState || !nonce || !verifier) {
+  const returnTo = sanitizeReturnTo(
+    jar.get("xenode_photos_oidc_return")?.value,
+    "/",
+  );
+  if (
+    !code ||
+    !returnedState ||
+    returnedState !== expectedState ||
+    (returnedIssuer !== null && returnedIssuer !== issuer) ||
+    !nonce ||
+    !verifier
+  ) {
     return failure("Invalid OIDC callback state");
   }
 
@@ -50,27 +64,44 @@ export async function GET(request: Request) {
   } catch {
     return failure("Invalid OIDC token");
   }
-  if (payload.nonce !== nonce || typeof payload.sub !== "string") {
+  if (payload.nonce !== nonce) {
     return failure("Invalid OIDC token nonce");
+  }
+  if (typeof payload.sub !== "string") {
+    return failure("Invalid OIDC token subject");
+  }
+  if (typeof payload.sid !== "string") {
+    return failure("Invalid OIDC issuer session");
+  }
+  if (payload.azp !== "xenode-photos-web") {
+    return failure("Invalid OIDC authorized party");
+  }
+  if (typeof payload.exp !== "number") {
+    return failure("Invalid OIDC token expiry");
   }
 
   await connectDatabase();
   const sessionId = randomUUID();
   const expiresAt = new Date(
-    Date.now() +
-      Math.min(Number(tokens.expires_in) || 3600, 7 * 24 * 3600) * 1000,
+    Math.min(payload.exp * 1000, Date.now() + 3600 * 1000),
   );
   await ProductSession.create({
     sessionId,
     accountId: payload.sub,
     productId: "photos",
+    issuerSessionId: payload.sid,
+    clientId: "xenode-photos-web",
     authenticatedAt: new Date(),
     sessionVersion: 1,
     expiresAt,
   });
-  jar.set("xenode_photos_session", sessionId, {
+  jar.set("xenode_photos_session", await createPhotosSessionCookie({
+    sessionId,
+    sessionVersion: 1,
+    expiresAt,
+  }), {
     httpOnly: true,
-    secure: true,
+    secure: new URL(origin).protocol === "https:",
     sameSite: "lax",
     path: "/",
     expires: expiresAt,
@@ -78,5 +109,6 @@ export async function GET(request: Request) {
   jar.delete("xenode_photos_oidc_state");
   jar.delete("xenode_photos_oidc_nonce");
   jar.delete("xenode_photos_pkce");
-  return Response.redirect(new URL("/", origin));
+  jar.delete("xenode_photos_oidc_return");
+  return Response.redirect(new URL(returnTo, origin));
 }

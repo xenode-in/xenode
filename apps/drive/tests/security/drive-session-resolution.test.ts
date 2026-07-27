@@ -12,6 +12,7 @@ import {
   getServerSession,
   requireAuth,
 } from "@/lib/auth/session";
+import { createDriveSessionCookie } from "@/lib/auth/product-cookie";
 
 async function seedAccount() {
   const user = await User.create({
@@ -29,24 +30,38 @@ async function seedSession(accountId: string, sessionId: string) {
     sessionId,
     accountId,
     productId: "drive",
+    issuerSessionId: "accounts-session-1",
+    clientId: "xenode-drive-web",
     authenticatedAt: new Date(),
     sessionVersion: 1,
     expiresAt: new Date(Date.now() + 60_000),
   });
 }
 
-function requestWithCookie(sessionId: string) {
+async function sessionCredential(sessionId: string) {
+  return createDriveSessionCookie({
+    sessionId,
+    sessionVersion: 1,
+    expiresAt: new Date(Date.now() + 60_000),
+  });
+}
+
+async function requestWithCookie(sessionId: string) {
   return new NextRequest("http://localhost/api/objects", {
-    headers: { cookie: `${DRIVE_SESSION_COOKIE}=${sessionId}` },
+    headers: {
+      cookie: `${DRIVE_SESSION_COOKIE}=${await sessionCredential(sessionId)}`,
+    },
   });
 }
 
 describe("Drive session resolution (real implementation)", () => {
-  it("hydrates the legacy session shape from ProductSession + user doc", async () => {
+  it("hydrates the product session shape from ProductSession + user doc", async () => {
     const accountId = await seedAccount();
     await seedSession(accountId, "resolution-live");
 
-    const session = await getServerSession(requestWithCookie("resolution-live"));
+    const session = await getServerSession(
+      await requestWithCookie("resolution-live"),
+    );
     expect(session).not.toBeNull();
     expect(session!.user.id).toBe(accountId);
     expect(session!.user.name).toBe("Res Olver");
@@ -67,7 +82,9 @@ describe("Drive session resolution (real implementation)", () => {
     await seedSession(accountId, "resolution-bearer");
 
     const request = new NextRequest("http://localhost/api/objects", {
-      headers: { authorization: "Bearer resolution-bearer" },
+      headers: {
+        authorization: `Bearer ${await sessionCredential("resolution-bearer")}`,
+      },
     });
     const session = await getServerSession(request);
     expect(session?.user.id).toBe(accountId);
@@ -82,10 +99,10 @@ describe("Drive session resolution (real implementation)", () => {
     );
 
     await expect(
-      getServerSession(requestWithCookie("resolution-revoked")),
+      getServerSession(await requestWithCookie("resolution-revoked")),
     ).resolves.toBeNull();
     await expect(
-      requireAuth(requestWithCookie("resolution-revoked")),
+      requireAuth(await requestWithCookie("resolution-revoked")),
     ).rejects.toThrow("Unauthorized");
     await expect(
       requireAuth(new NextRequest("http://localhost/api/objects")),

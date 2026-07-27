@@ -15,6 +15,31 @@ loadEnvConfig(
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   typedRoutes: false,
+  async headers() {
+    const driveOrigin =
+      process.env.DRIVE_ORIGIN ??
+      (process.env.NODE_ENV === "production"
+        ? "https://drive.xenode.in"
+        : "http://localhost:3000");
+    const photosOrigin =
+      process.env.PHOTOS_ORIGIN ??
+      (process.env.NODE_ENV === "production"
+        ? "https://photos.xenode.in"
+        : "http://localhost:3002");
+    return [
+      {
+        source: "/logout",
+        headers: [
+          { key: "Cache-Control", value: "no-store" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+          {
+            key: "Content-Security-Policy",
+            value: `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src ${new URL(driveOrigin).origin} ${new URL(photosOrigin).origin}; frame-ancestors 'none'; object-src 'none'; base-uri 'none'`,
+          },
+        ],
+      },
+    ];
+  },
 };
 
 export default nextConfig;

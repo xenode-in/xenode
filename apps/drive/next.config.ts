@@ -79,7 +79,7 @@ const nextConfig: NextConfig = {
       },
       {
         // Fallback catch-all (excluding the public ones above)
-        source: "/((?!plans|pricing|checkout).*)",
+        source: "/((?!plans|pricing|checkout|auth/logout/cleanup).*)",
         headers: strictHeaders,
       },
       {

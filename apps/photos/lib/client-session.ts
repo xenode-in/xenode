@@ -2,6 +2,7 @@ export type PhotosSessionInfo = {
   accountId: string;
   spaceId: string;
   productId: "photos";
+  sessionId: string;
 };
 
 let activeRequest: Promise<PhotosSessionInfo> | null = null;

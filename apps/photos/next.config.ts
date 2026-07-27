@@ -15,7 +15,7 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   async headers() {
     return [{
-      source: "/:path*",
+      source: "/((?!auth/logout/cleanup).*)",
       headers: [
         { key: "Content-Security-Policy", value: "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self' http://localhost:3001 https://accounts.xenode.in https://*.r2.cloudflarestorage.com; worker-src 'self' blob:" },
         { key: "Cross-Origin-Opener-Policy", value: "same-origin" },

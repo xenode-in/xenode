@@ -2,6 +2,7 @@ import { connectDatabase, getDatabase } from "../connection";
 import { createAccountRepository } from "./accounts";
 
 export * from "./accounts";
+export * from "./browser-logout";
 export * from "./types";
 
 export async function listExternalAccountsForUser(userId: string) {

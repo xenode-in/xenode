@@ -15,7 +15,10 @@ export default async function OfficeEditorLayout({
   if (!session) redirect(`/auth/login?next=${encodeURIComponent("/office-editor")}`);
 
   return (
-    <CryptoProvider initialUserId={session.user.id}>
+    <CryptoProvider
+      initialUserId={session.user.id}
+      initialSessionId={session.session.id}
+    >
       <WorkspaceProvider workspace={{ kind: "personal" }}>
         <UploadProvider>
           <div className="h-screen w-full overflow-hidden bg-background">
