@@ -15,6 +15,7 @@ import {
 } from "@/lib/metering/usage";
 import { getS3Client } from "@/lib/b2/client";
 import { activeStorageBucketName } from "@/lib/storage/region-context";
+import type { StorageRegion } from "@xenode/config/storage";
 import { HeadObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import {
   parentPrefixForKey,
@@ -40,13 +41,14 @@ function belongsToPrefix(key: unknown, prefix: string): key is string {
 async function deleteUploadedKeys(
   b2BucketId: string,
   keys: unknown[],
+  region: StorageRegion,
 ): Promise<void> {
   const unique = Array.from(
     new Set(keys.filter((key): key is string => typeof key === "string" && !!key)),
   );
   await Promise.all(
     unique.map((Key) =>
-      getS3Client()
+      getS3Client(region)
         .send(new DeleteObjectCommand({ Bucket: b2BucketId, Key }))
         .catch((err) =>
           console.warn(`Failed to delete uploaded B2 object ${Key}:`, err),
@@ -253,10 +255,10 @@ export async function POST(request: NextRequest) {
       for (const chunk of chunks) {
         try {
           const command = new HeadObjectCommand({
-            Bucket: activeStorageBucketName(),
+            Bucket: activeStorageBucketName(ctx.region),
             Key: chunk.key,
           });
-          await getS3Client().send(command);
+          await getS3Client(ctx.region).send(command);
           totalSize += chunk.size;
         } catch (err) {
           console.error(`Failed to head chunk ${chunk.key} from B2:`, err);
@@ -276,11 +278,11 @@ export async function POST(request: NextRequest) {
     } else {
       try {
         const command = new HeadObjectCommand({
-          Bucket: activeStorageBucketName(),
+          Bucket: activeStorageBucketName(ctx.region),
           Key: objectKey,
         });
-        const s3Response = await getS3Client().send(command);
-        b2FileId = s3Response.VersionId || `${activeStorageBucketName()}/${objectKey}`;
+        const s3Response = await getS3Client(ctx.region).send(command);
+        b2FileId = s3Response.VersionId || `${activeStorageBucketName(ctx.region)}/${objectKey}`;
       } catch (err) {
         console.error("Failed to head object from B2:", err);
         return NextResponse.json(
@@ -378,11 +380,11 @@ export async function POST(request: NextRequest) {
         deletedAt: { $exists: false },
       });
       if (dupe) {
-        await deleteUploadedKeys(activeStorageBucketName(), [
+        await deleteUploadedKeys(activeStorageBucketName(ctx.region), [
           objectKey,
           optimizedKey,
           thumbnail,
-        ]);
+        ], ctx.region);
         return NextResponse.json({ object: dupe });
       }
     }
@@ -390,10 +392,10 @@ export async function POST(request: NextRequest) {
     if (optimizedKey) {
       try {
         const command = new HeadObjectCommand({
-          Bucket: activeStorageBucketName(),
+          Bucket: activeStorageBucketName(ctx.region),
           Key: optimizedKey,
         });
-        await getS3Client().send(command);
+        await getS3Client(ctx.region).send(command);
       } catch {
         console.warn(`Optimized file ${optimizedKey} not found in storage, continuing anyway.`);
       }
@@ -452,11 +454,11 @@ export async function POST(request: NextRequest) {
       });
       if (!winner) throw error;
 
-      await deleteUploadedKeys(activeStorageBucketName(), [
+      await deleteUploadedKeys(activeStorageBucketName(ctx.region), [
         objectKey,
         optimizedKey,
         thumbnail,
-      ]);
+      ], ctx.region);
       return NextResponse.json({ object: winner });
     }
 
@@ -481,12 +483,16 @@ export async function POST(request: NextRequest) {
             rollbackError,
           ),
       );
-      await deleteUploadedKeys(activeStorageBucketName(), [
-        objectKey,
-        optimizedKey,
-        thumbnail,
-        ...(Array.isArray(chunks) ? chunks.map((chunk) => chunk?.key) : []),
-      ]);
+      await deleteUploadedKeys(
+        activeStorageBucketName(ctx.region),
+        [
+          objectKey,
+          optimizedKey,
+          thumbnail,
+          ...(Array.isArray(chunks) ? chunks.map((chunk) => chunk?.key) : []),
+        ],
+        ctx.region,
+      );
       throw error;
     }
     await updateBucketStats(bucketId, 1, size);

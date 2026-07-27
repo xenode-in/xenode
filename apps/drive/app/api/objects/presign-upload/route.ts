@@ -106,12 +106,12 @@ export async function POST(request: NextRequest) {
     // Region-aware: the client + physical bucket are resolved from the caller's
     // storage region (bound in requireAccessContext). Asia is unchanged.
     const command = new PutObjectCommand({
-      Bucket: activeStorageBucketName(),
+      Bucket: activeStorageBucketName(ctx.region),
       Key: opaqueKey,
       ContentType: fileType || "application/octet-stream",
     });
 
-    const presignedUrl = await getSignedUrl(getS3Client(), command, {
+    const presignedUrl = await getSignedUrl(getS3Client(ctx.region), command, {
       expiresIn: 3600,
     });
 

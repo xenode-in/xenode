@@ -62,7 +62,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       keyToServe = version.key;
     }
 
-    const signedUrl = await getDownloadUrl(activeStorageBucketName(), keyToServe);
+    const signedUrl = await getDownloadUrl(activeStorageBucketName(ctx.region), keyToServe);
     const upstreamHeaders: Record<string, string> = {};
     const rangeHeader = request.headers.get("Range");
     if (rangeHeader) upstreamHeaders["Range"] = rangeHeader;

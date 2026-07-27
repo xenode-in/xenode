@@ -31,7 +31,13 @@ export function getActiveRegion(): StorageRegion {
   return regionStore.getStore() ?? DEFAULT_STORAGE_REGION;
 }
 
-/** Physical bucket name for the active region (what S3 commands address). */
-export function activeStorageBucketName(): string {
-  return resolveRegionBucketConfig(getActiveRegion()).bucketName;
+/**
+ * Physical bucket name for a region (what S3 commands address). Pass the
+ * caller's `ctx.region` explicitly — the AsyncLocalStorage fallback only works
+ * when a region was set in the current handler's own context.
+ */
+export function activeStorageBucketName(
+  region: StorageRegion = getActiveRegion(),
+): string {
+  return resolveRegionBucketConfig(region).bucketName;
 }

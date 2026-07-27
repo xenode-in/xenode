@@ -14,8 +14,8 @@ import {
 } from "@xenode/spaces";
 import { getServerSession } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
-import { setActiveRegion } from "@/lib/storage/region-context";
 import { resolveContextStorageRegion } from "@/lib/storage/region";
+import type { StorageRegion } from "@xenode/config/storage";
 import { AuthzError } from "./errors";
 
 type BetterAuthSession = Awaited<ReturnType<typeof getServerSession>>;
@@ -30,6 +30,8 @@ export interface AccessContext {
   spaceType: SpaceAccess["space"]["type"];
   organizationId?: string;
   teamId?: string;
+  /** Immutable storage region for this caller — pick the physical bucket/client with it. */
+  region: StorageRegion;
   session: NonNullable<BetterAuthSession>;
 }
 
@@ -64,21 +66,22 @@ export async function getAccessContext(
       spaceId,
       productId: "drive",
     });
-    const context: AccessContext = {
+    const base = {
       userId: accountId,
       accountId,
       spaceId,
-      productId: "drive",
+      productId: "drive" as const,
       role: access.role,
       spaceType: access.space.type,
       organizationId: access.space.organizationId,
       teamId: access.space.teamId,
       session,
     };
-    // Bind the caller's storage region for the rest of this request so all S3
-    // operations target their regional bucket (default region ⇒ unchanged).
-    setActiveRegion(await resolveContextStorageRegion(context));
-    return context;
+    // Resolve the caller's immutable storage region and carry it on the context.
+    // Threaded explicitly (not via AsyncLocalStorage) because enterWith() set in
+    // this callee does not survive the route handler's later awaits.
+    const region = await resolveContextStorageRegion(base);
+    return { ...base, region };
   } catch (error) {
     if (error instanceof SpaceAuthorizationError) {
       throw new AuthzError(error.status, error.code, error.message);

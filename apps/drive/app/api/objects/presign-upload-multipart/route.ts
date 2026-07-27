@@ -94,9 +94,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Region-aware client + bucket (bound in requireAccessContext).
-    const s3Client = getS3Client();
-    const regionBucket = activeStorageBucketName();
+    // Region-aware client + bucket from the caller's region.
+    const s3Client = getS3Client(ctx.region);
+    const regionBucket = activeStorageBucketName(ctx.region);
 
     // Accept client-provided adaptive chunk size (validated 2 MB – 64 MB)
     const MIN_CHUNK = 2 * 1024 * 1024;

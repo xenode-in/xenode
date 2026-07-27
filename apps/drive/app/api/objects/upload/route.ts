@@ -14,6 +14,7 @@ import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 import { uploadObject } from "@/lib/b2/objects";
+import { getS3Client } from "@/lib/b2/client";
 import { activeStorageBucketName } from "@/lib/storage/region-context";
 import { incrementStorage, updateBucketStats } from "@/lib/metering/usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
@@ -70,12 +71,19 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(await file.arrayBuffer());
     const size = buffer.length;
     const contentType = file.type || "application/octet-stream";
-    // Physical bucket follows the caller's region (bound in requireAccessContext).
-    const b2BucketName = activeStorageBucketName();
+    // Physical bucket + client follow the caller's region.
+    const b2BucketName = activeStorageBucketName(ctx.region);
 
     let uploadResult: { etag: string; b2FileId: string };
     try {
-      uploadResult = await uploadObject(b2BucketName, opaqueKey, buffer, contentType, size);
+      uploadResult = await uploadObject(
+        b2BucketName,
+        opaqueKey,
+        buffer,
+        contentType,
+        size,
+        getS3Client(ctx.region),
+      );
     } catch (err: unknown) {
       statusCode = 502;
       errorMessage = err instanceof Error ? err.message : "Failed to upload file";
