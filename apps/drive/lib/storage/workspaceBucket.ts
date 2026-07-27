@@ -1,4 +1,4 @@
-import { createB2Bucket } from "@/lib/b2/buckets";
+import { bucketExists, createB2Bucket } from "@/lib/b2/buckets";
 import Bucket, { type IBucket } from "@/models/Bucket";
 import { resolveSystemBucketConfig } from "@xenode/config/storage";
 
@@ -53,13 +53,24 @@ export async function ensureWorkspaceBucket(
   if (process.env.NODE_ENV === "test" || process.env.VITEST) {
     return name;
   }
+  // Buckets are provisioned out-of-band (per region, by the account owner), so
+  // treat this as ensure-if-missing and never let bucket provisioning 500 the
+  // config route: verify existence first, and if creation errors in a way we
+  // can't classify (e.g. an S3-compatible provider returning "UnknownError" on
+  // CreateBucket) assume the bucket is externally managed and carry on.
+  try {
+    if (await bucketExists(name)) return name;
+  } catch {
+    // HeadBucket unsupported/errored — fall through and try to create.
+  }
   try {
     await createB2Bucket(name);
   } catch (err) {
-    // Already provisioned (by us) is the steady state — ignore. Any other
-    // error (e.g. the name is taken by a different account) is a real config
-    // problem and should surface to the caller.
-    if (!isBucketAlreadyOwned(err)) throw err;
+    if (isBucketAlreadyOwned(err)) return name;
+    console.warn(
+      `[storage] ensureWorkspaceBucket: could not verify/create bucket "${name}" ` +
+        `(${(err as { name?: string })?.name ?? "error"}); assuming it is provisioned externally.`,
+    );
   }
   return name;
 }
