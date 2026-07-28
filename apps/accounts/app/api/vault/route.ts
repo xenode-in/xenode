@@ -1,55 +1,8 @@
 import { AuditEvent, UserVault, connectDatabase } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
+import { isAccountEnvelope, isVaultEnvelope } from "@/lib/vault-validation";
 
 const RECENT_AUTH_WINDOW_MS = 10 * 60 * 1000;
-
-type Envelope = {
-  accountId: string;
-  spaceId?: string;
-  productId?: string;
-  type: string;
-  formatVersion: number;
-  algorithm: string;
-  keyId: string;
-  keyVersion: number;
-  ciphertext: string;
-  iv: string;
-  aadVersion: number;
-  createdAt: string;
-  status: string;
-  kdfParams?: unknown;
-};
-
-function isEnvelope(value: unknown): value is Envelope {
-  if (!value || typeof value !== "object") return false;
-  const envelope = value as Partial<Envelope>;
-  return (
-    // Context fields — must be present so they persist and pass the
-    // crypto-core `sameContext` check when the envelope is later opened.
-    typeof envelope.accountId === "string" &&
-    envelope.accountId.length > 0 &&
-    typeof envelope.type === "string" &&
-    envelope.type.length > 0 &&
-    (envelope.spaceId === undefined || typeof envelope.spaceId === "string") &&
-    (envelope.productId === undefined ||
-      typeof envelope.productId === "string") &&
-    envelope.formatVersion === 2 &&
-    envelope.algorithm === "AES-256-GCM" &&
-    typeof envelope.keyId === "string" &&
-    Number.isInteger(envelope.keyVersion) &&
-    Number(envelope.keyVersion) > 0 &&
-    typeof envelope.ciphertext === "string" &&
-    envelope.ciphertext.length > 16 &&
-    typeof envelope.iv === "string" &&
-    envelope.iv.length >= 16 &&
-    envelope.aadVersion === 1 &&
-    typeof envelope.createdAt === "string" &&
-    !Number.isNaN(new Date(envelope.createdAt).getTime()) &&
-    (envelope.status === "active" ||
-      envelope.status === "retired" ||
-      envelope.status === "revoked")
-  );
-}
 
 async function sessionFor(request: Request) {
   const auth = await getAccountsAuth();
@@ -101,20 +54,40 @@ export async function PUT(request: Request) {
     !body ||
     !Number.isInteger(body.expectedVaultRevision) ||
     Number(body.expectedVaultRevision) < 0 ||
-    !isEnvelope(body.passwordEnvelope) ||
-    !isEnvelope(body.recoveryEnvelope) ||
+    (body.passwordEnvelope !== null &&
+      body.passwordEnvelope !== undefined &&
+      !isVaultEnvelope(body.passwordEnvelope)) ||
+    !isVaultEnvelope(body.recoveryEnvelope) ||
     !Array.isArray(body.deviceEnvelopes) ||
-    !body.deviceEnvelopes.every(isEnvelope) ||
+    !body.deviceEnvelopes.every(isVaultEnvelope) ||
     body.deviceEnvelopes.length > 50 ||
     typeof body.sharingPublicKey !== "string" ||
     body.sharingPublicKey.length < 100 ||
-    !isEnvelope(body.wrappedSharingPrivateKey)
+    !isVaultEnvelope(body.wrappedSharingPrivateKey)
   ) {
     return Response.json({ error: "Invalid Vault v2 payload" }, { status: 400 });
   }
 
   await connectDatabase();
   const accountId = session.user.id;
+  if (
+    (body.passwordEnvelope &&
+      !isAccountEnvelope(body.passwordEnvelope, accountId, "password")) ||
+    !isAccountEnvelope(body.recoveryEnvelope, accountId, "recovery") ||
+    !body.deviceEnvelopes.every((envelope) =>
+      isAccountEnvelope(envelope, accountId, "device"),
+    ) ||
+    !isAccountEnvelope(
+      body.wrappedSharingPrivateKey,
+      accountId,
+      "sharing-private-key",
+    )
+  ) {
+    return Response.json(
+      { error: "Vault envelope context mismatch" },
+      { status: 400 },
+    );
+  }
   const expectedRevision = Number(body.expectedVaultRevision);
   const payload = {
     passwordEnvelope: body.passwordEnvelope,

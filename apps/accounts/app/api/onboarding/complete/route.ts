@@ -5,6 +5,7 @@ import {
   getDatabase,
 } from "@xenode/database";
 import { isStorageRegion } from "@xenode/config/storage";
+import { normalizeUsername, validateUsername } from "@xenode/identity-core";
 import { getAccountsSession } from "@/lib/session";
 import { userFilter } from "@/lib/hub-data";
 
@@ -33,6 +34,7 @@ export async function POST(request: Request) {
     defaultEncrypt?: unknown;
     image?: unknown;
     region?: unknown;
+    username?: unknown;
   };
   const theme =
     body.theme === "light" || body.theme === "dark" || body.theme === "system"
@@ -42,23 +44,54 @@ export async function POST(request: Request) {
     typeof body.defaultEncrypt === "boolean" ? body.defaultEncrypt : undefined;
   const image = validImage(body.image);
   const region = isStorageRegion(body.region) ? body.region : undefined;
+  const username =
+    typeof body.username === "string"
+      ? normalizeUsername(body.username)
+      : undefined;
+  if (username && !validateUsername(username)) {
+    return Response.json({ error: "Invalid username" }, { status: 400 });
+  }
 
   await connectDatabase();
 
   // Storage region is chosen once and never changes — only set it if the
   // account doesn't already have one (any later value is ignored).
-  const existing = await AccountProfile.findOne({
-    accountId: session.user.id,
-  }).lean();
+  const [existing, currentUser] = await Promise.all([
+    AccountProfile.findOne({
+      accountId: session.user.id,
+    }).lean(),
+    getDatabase()
+      .collection<{ username?: string }>("user")
+      .findOne(userFilter(session.user.id)),
+  ]);
+  if (!currentUser?.username && !username) {
+    return Response.json({ error: "Choose a username" }, { status: 400 });
+  }
   const regionToSet =
     existing?.storageRegion ?? region ?? undefined;
 
-  if (image) {
+  if (image || username) {
+    const update: Record<string, unknown> = {};
+    if (image) update.image = image;
+    if (username) {
+      update.username = username;
+      update.displayUsername = username;
+    }
+    try {
     await getDatabase()
       .collection("user")
       .updateOne(userFilter(session.user.id), {
-        $set: { image, updatedAt: new Date() },
+        $set: { ...update, updatedAt: new Date() },
       });
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === 11000) {
+        return Response.json(
+          { error: "That username is already in use" },
+          { status: 409 },
+        );
+      }
+      throw error;
+    }
   }
   const set: Record<string, unknown> = { onboarded: true };
   if (theme) set.theme = theme;

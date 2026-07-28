@@ -1,4 +1,8 @@
-import { createBrowserLogoutTransaction } from "@xenode/database";
+import {
+  AuditEvent,
+  UserVault,
+  createBrowserLogoutTransaction,
+} from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
 import { getAccountsSession } from "@/lib/session";
 import {
@@ -25,6 +29,22 @@ export async function POST(request: Request) {
     accountId: session.user.id,
     action: "sign_out_everywhere",
   });
+  await UserVault.updateOne(
+    { accountId: session.user.id },
+    {
+      $pull: {
+        deviceEnvelopes: {
+          "kdfParams.algorithm": "browser-device-aes-gcm",
+        },
+      },
+      $inc: { vaultRevision: 1 },
+    },
+  );
+  await AuditEvent.create({
+    accountId: session.user.id,
+    action: "vault.browser_devices.revoked",
+    metadata: { reason: "sign_out_everywhere" },
+  }).catch(() => undefined);
   const auth = await getAccountsAuth();
   await auth.api.revokeSessions({ headers: request.headers });
   return Response.json({

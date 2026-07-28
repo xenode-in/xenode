@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 
+type ProviderId = "google" | "github";
 type LinkedAccount = {
   id: string;
   accountId: string;
@@ -10,86 +11,146 @@ type LinkedAccount = {
   createdAt: string;
 };
 
-export function LinkedAccounts({ googleConfigured, initialAccounts }: { googleConfigured: boolean; initialAccounts: LinkedAccount[] }) {
-  const [accounts, setAccounts] = useState<LinkedAccount[]>(initialAccounts);
-  const [busy, setBusy] = useState(false);
+const PROVIDERS: Array<{ id: ProviderId; name: string }> = [
+  { id: "google", name: "Google" },
+  { id: "github", name: "GitHub" },
+];
+
+export function LinkedAccounts({
+  configured,
+  hasCredential,
+  initialAccounts,
+}: {
+  configured: Record<ProviderId, boolean>;
+  hasCredential: boolean;
+  initialAccounts: LinkedAccount[];
+}) {
+  const [accounts, setAccounts] = useState(initialAccounts);
+  const [busy, setBusy] = useState<ProviderId | null>(null);
   const [status, setStatus] = useState("");
   const [error, setError] = useState(false);
 
   async function load() {
-    const response = await fetch("/api/auth/list-accounts", { credentials: "include", cache: "no-store" });
+    const response = await fetch("/api/auth/list-accounts", {
+      credentials: "include",
+      cache: "no-store",
+    });
     if (!response.ok) {
       setError(true);
-      setStatus("Could not load linked accounts.");
+      setStatus("Could not load sign-in methods.");
       return;
     }
     const payload = (await response.json()) as LinkedAccount[];
     setAccounts(payload.filter((account) => account.providerId !== "credential"));
-    setStatus("");
   }
 
-  const google = accounts.find((account) => account.providerId === "google");
-
-  async function connectGoogle() {
-    setBusy(true);
+  async function connect(provider: ProviderId) {
+    setBusy(provider);
     setError(false);
     const response = await fetch("/api/auth/link-social", {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        provider: "google",
-        callbackURL: `${window.location.origin}/linked-accounts?linked=google`,
-        errorCallbackURL: `${window.location.origin}/linked-accounts?error=google`,
+        provider,
+        callbackURL: `${window.location.origin}/linked-accounts?linked=${provider}`,
+        errorCallbackURL: `${window.location.origin}/linked-accounts?error=${provider}`,
         disableRedirect: true,
       }),
     });
-    const payload = (await response.json().catch(() => null)) as { url?: string } | null;
+    const payload = (await response.json().catch(() => null)) as {
+      url?: string;
+    } | null;
     if (!response.ok || !payload?.url) {
-      setBusy(false);
+      setBusy(null);
       setError(true);
-      setStatus("Google could not be connected. Check the connector configuration and try again.");
+      setStatus(`Could not connect ${provider === "google" ? "Google" : "GitHub"}.`);
       return;
     }
     window.location.assign(payload.url);
   }
 
-  async function disconnectGoogle() {
-    if (!google) return;
-    setBusy(true);
+  async function disconnect(provider: ProviderId, accountId: string) {
+    const remainingMethods =
+      accounts.filter((account) => account.providerId !== provider).length +
+      (hasCredential ? 1 : 0);
+    if (remainingMethods === 0) {
+      setError(true);
+      setStatus("Add another sign-in method before disconnecting this one.");
+      return;
+    }
+    setBusy(provider);
     setError(false);
     const response = await fetch("/api/auth/unlink-account", {
       method: "POST",
       credentials: "include",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ providerId: "google", accountId: google.accountId }),
+      body: JSON.stringify({ providerId: provider, accountId }),
     });
-    setBusy(false);
+    setBusy(null);
     if (!response.ok) {
       setError(true);
-      setStatus("Google could not be disconnected. Sign in again and retry.");
+      setStatus("That sign-in method could not be disconnected.");
       return;
     }
-    setStatus("Google disconnected.");
+    setStatus(`${provider === "google" ? "Google" : "GitHub"} disconnected.`);
     await load();
   }
 
   return (
-    <section className="card" style={{ marginTop: 32 }}>
-      <div className="section-heading" style={{ marginTop: 0 }}>
-        <div><h2>Google</h2><p className="muted">Profile connector through a verified OAuth link.</p></div>
-        <span className="badge">{google ? "Connected" : googleConfigured ? "Available" : "Not configured"}</span>
-      </div>
-      {google ? (
-        <>
-          <p className="fine-print">Connected {new Date(google.createdAt).toLocaleDateString()}. Granted scopes: {google.scopes.join(", ") || "profile"}.</p>
-          <button className="button button-danger" type="button" disabled={busy} onClick={() => void disconnectGoogle()}>Disconnect Google</button>
-        </>
-      ) : (
-        <button className="button" type="button" disabled={busy || !googleConfigured} onClick={() => void connectGoogle()}>{busy ? "Opening Google…" : "Connect Google"}</button>
-      )}
-      {status ? <p className={`status${error ? " status-error" : ""}`} style={{ marginTop: 16 }} role="status">{status}</p> : null}
-      <p className="fine-print" style={{ marginBottom: 0 }}>Xenode uses Better Auth’s OAuth link flow directly; no Google API SDK is loaded in the Accounts hub.</p>
-    </section>
+    <>
+      {PROVIDERS.map(({ id, name }) => {
+        const linked = accounts.find((account) => account.providerId === id);
+        return (
+          <section className="card" style={{ marginTop: 24 }} key={id}>
+            <div className="section-heading" style={{ marginTop: 0 }}>
+              <div>
+                <h2>{name}</h2>
+                <p className="muted">
+                  Verified OAuth identity for signing in to Xenode.
+                </p>
+              </div>
+              <span className="badge">
+                {linked ? "Connected" : configured[id] ? "Available" : "Not configured"}
+              </span>
+            </div>
+            {linked ? (
+              <>
+                <p className="fine-print">
+                  Connected {new Date(linked.createdAt).toLocaleDateString()}.
+                  Granted scopes: {linked.scopes.join(", ") || "identity"}.
+                </p>
+                <button
+                  className="button button-danger"
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => void disconnect(id, linked.accountId)}
+                >
+                  Disconnect {name}
+                </button>
+              </>
+            ) : (
+              <button
+                className="button"
+                type="button"
+                disabled={busy !== null || !configured[id]}
+                onClick={() => void connect(id)}
+              >
+                {busy === id ? `Opening ${name}…` : `Connect ${name}`}
+              </button>
+            )}
+          </section>
+        );
+      })}
+      {status ? (
+        <p
+          className={`status${error ? " status-error" : ""}`}
+          style={{ marginTop: 16 }}
+          role="status"
+        >
+          {status}
+        </p>
+      ) : null}
+    </>
   );
 }

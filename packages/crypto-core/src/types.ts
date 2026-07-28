@@ -26,7 +26,11 @@ export interface CryptoEnvelope extends EnvelopeContext {
   iv: string;
   aadVersion: 1;
   /** KDF parameters for password/recovery envelopes (e.g. Argon2id); persisted alongside the envelope. */
-  kdfParams?: Argon2idParams | Record<string, unknown>;
+  kdfParams?:
+    | Argon2idParams
+    | BrowserDeviceWrappingParams
+    | WebAuthnPrfWrappingParams
+    | Record<string, unknown>;
   createdAt: string;
   status: "active" | "retired" | "revoked";
 }
@@ -38,6 +42,21 @@ export interface Argon2idParams {
   parallelism: number;
   salt: string;
   outputLength: 32;
+}
+
+export interface BrowserDeviceWrappingParams {
+  algorithm: "browser-device-aes-gcm";
+  deviceId: string;
+  deviceName: string;
+  createdAt: string;
+}
+
+export interface WebAuthnPrfWrappingParams {
+  algorithm: "webauthn-prf-hkdf-sha256";
+  credentialIdHash: string;
+  prfInput: string;
+  hkdfSalt: string;
+  info: "xenode/ark-passkey-wrap/v1";
 }
 
 export type Argon2idDeriver = (

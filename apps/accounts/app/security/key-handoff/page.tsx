@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   derivePasswordWrappingKey,
+  deriveRecoveryKeyFromMnemonic,
   decodeBase64Url,
   importProductKey,
   openEnvelope,
@@ -29,12 +30,20 @@ import {
   type HandoffBinding,
 } from "@xenode/key-handoff";
 import { deriveArgon2id } from "@/lib/argon2";
+import {
+  enrollBrowserDevice,
+  loadBrowserDeviceArk,
+} from "@/lib/device-vault";
+import { unlockArkWithPasskey } from "@/lib/passkey-vault";
 
 type VaultEnvelope = CryptoEnvelope & { kdfParams: Argon2idParams };
 type VaultResponse = {
   accountId: string;
   vault: {
-    passwordEnvelope: VaultEnvelope;
+    vaultRevision: number;
+    passwordEnvelope?: VaultEnvelope | null;
+    recoveryEnvelope: CryptoEnvelope;
+    deviceEnvelopes: CryptoEnvelope[];
     sharingPublicKey: string;
     wrappedSharingPrivateKey: CryptoEnvelope;
   } | null;
@@ -140,6 +149,8 @@ async function responseJson<T>(response: Response): Promise<T> {
 
 export default function KeyHandoffBrokerPage() {
   const [password, setPassword] = useState("");
+  const [recoveryPhrase, setRecoveryPhrase] = useState("");
+  const [hasPassword, setHasPassword] = useState(true);
   const [status, setStatus] = useState(
     "Confirm the destination and unlock only its product key.",
   );
@@ -173,12 +184,57 @@ export default function KeyHandoffBrokerPage() {
     void (async () => {
       try {
         const { binding } = parseBrokerRequest();
-        const cached = await loadCachedAccountRootKey(binding.accountId);
+        const forceInteraction =
+          new URLSearchParams(window.location.search).get("forceInteraction") ===
+          "1";
+        if (forceInteraction) {
+          setCacheState("missing");
+          const { mode } = parseBrokerRequest();
+          if (mode === "iframe") {
+            window.parent.postMessage(
+              {
+                type: "xenode:key-handoff-interaction-required",
+                transactionId: binding.transactionId,
+                state: binding.state,
+              },
+              binding.destinationOrigin,
+            );
+          }
+          return;
+        }
+        let cached = await loadCachedAccountRootKey(binding.accountId);
+        if (!cached) {
+          const response = await fetch("/api/vault", {
+            credentials: "include",
+            cache: "no-store",
+          });
+          if (response.ok) {
+            const data = (await response.json()) as VaultResponse;
+            setHasPassword(Boolean(data.vault?.passwordEnvelope));
+            if (data.vault) {
+              cached = await loadBrowserDeviceArk(
+                binding.accountId,
+                data.vault.deviceEnvelopes,
+              );
+            }
+          }
+        }
         if (cached) {
           setCacheState("available");
-          void approve(true);
+          void approve(true, cached);
         } else {
           setCacheState("missing");
+          const { binding, mode } = parseBrokerRequest();
+          if (mode === "iframe") {
+            window.parent.postMessage(
+              {
+                type: "xenode:key-handoff-interaction-required",
+                transactionId: binding.transactionId,
+                state: binding.state,
+              },
+              binding.destinationOrigin,
+            );
+          }
         }
       } catch {
         setCacheState("missing");
@@ -188,7 +244,7 @@ export default function KeyHandoffBrokerPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mounted]);
 
-  async function approve(useCachedArk: boolean) {
+  async function approve(useCachedArk: boolean, suppliedArk?: CryptoKey) {
     setBusy(true);
     setStatus("Unlocking the requested product key locally...");
     let passwordKey: Uint8Array | undefined;
@@ -214,26 +270,57 @@ export default function KeyHandoffBrokerPage() {
 
       // Obtain the ARK as a non-extractable CryptoKey: from the device cache
       // (no password needed) or by deriving it from the vault password once.
-      let arkKey: CryptoKey | null = useCachedArk
-        ? await loadCachedAccountRootKey(binding.accountId)
-        : null;
+      let arkKey: CryptoKey | null =
+        suppliedArk ??
+        (useCachedArk
+          ? await loadCachedAccountRootKey(binding.accountId)
+          : null);
       if (!arkKey) {
-        const passwordEnvelope = vault.vault.passwordEnvelope;
-        passwordKey = await derivePasswordWrappingKey(
-          password,
-          passwordEnvelope.kdfParams,
-          deriveArgon2id,
-        );
-        accountRootKey = await openEnvelope(passwordEnvelope, passwordKey, {
-          accountId: binding.accountId,
-          keyId: "ark",
-          keyVersion: 1,
-          type: "password",
-        });
+        if (recoveryPhrase.trim()) {
+          const recoveryKey =
+            await deriveRecoveryKeyFromMnemonic(recoveryPhrase);
+          try {
+            accountRootKey = await openEnvelope(
+              vault.vault.recoveryEnvelope,
+              recoveryKey,
+              {
+                accountId: binding.accountId,
+                keyId: "ark",
+                keyVersion: 1,
+                type: "recovery",
+              },
+            );
+          } finally {
+            recoveryKey.fill(0);
+          }
+        } else {
+          const passwordEnvelope = vault.vault.passwordEnvelope;
+          if (!passwordEnvelope) {
+            throw new Error(
+              "Use a passkey or recovery phrase to unlock this Vault.",
+            );
+          }
+          passwordKey = await derivePasswordWrappingKey(
+            password,
+            passwordEnvelope.kdfParams,
+            deriveArgon2id,
+          );
+          accountRootKey = await openEnvelope(passwordEnvelope, passwordKey, {
+            accountId: binding.accountId,
+            keyId: "ark",
+            keyVersion: 1,
+            type: "password",
+          });
+        }
         arkKey = await importProductKey(accountRootKey);
         await cacheAccountRootKey(binding.accountId, accountRootKey).catch(
           () => undefined,
         );
+        await enrollBrowserDevice(
+          binding.accountId,
+          accountRootKey,
+          vault.vault.vaultRevision,
+        ).catch(() => undefined);
       }
 
       const stored = productKeyPayload.key;
@@ -320,6 +407,7 @@ export default function KeyHandoffBrokerPage() {
       );
 
       setPassword("");
+      setRecoveryPhrase("");
       if (mode === "redirect") {
         const returnUrl = buildReturnUrl(binding, returnPath);
         if (!returnUrl) throw new Error("Invalid return path.");
@@ -411,32 +499,64 @@ export default function KeyHandoffBrokerPage() {
             vault. No password needed.
           </p>
         ) : (
-          <form
-            className="form handoff-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void approve(false);
-            }}
-          >
+          <div className="form handoff-form">
+            <button
+              className="button button-block"
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setBusy(true);
+                void unlockArkWithPasskey(
+                  parseBrokerRequest().binding.accountId,
+                )
+                  .then((key) => {
+                    if (!key) throw new Error("No usable passkey was found.");
+                    return approve(false, key);
+                  })
+                  .catch((error: unknown) => {
+                    setBusy(false);
+                    setStatus(
+                      error instanceof Error
+                        ? error.message
+                        : "Passkey unlock failed.",
+                    );
+                  });
+              }}
+            >
+              Unlock with passkey
+            </button>
+            {hasPassword ? (
+              <div className="field">
+                <label htmlFor="handoff-password">Vault password</label>
+                <input
+                  className="input"
+                  id="handoff-password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </div>
+            ) : null}
             <div className="field">
-              <label htmlFor="handoff-password">Vault password</label>
-              <input
+              <label htmlFor="handoff-recovery">Recovery phrase</label>
+              <textarea
                 className="input"
-                id="handoff-password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                id="handoff-recovery"
+                autoComplete="off"
+                value={recoveryPhrase}
+                onChange={(event) => setRecoveryPhrase(event.target.value)}
               />
             </div>
             <button
               className="button button-block"
-              type="submit"
-              disabled={busy || !password}
+              type="button"
+              disabled={busy || (!password && !recoveryPhrase.trim())}
+              onClick={() => void approve(false)}
             >
-              {busy ? "Unlocking…" : "Approve one-time handoff"}
+              {busy ? "Unlocking…" : "Unlock Vault"}
             </button>
-          </form>
+          </div>
         )}
       </section>
       {status ? (

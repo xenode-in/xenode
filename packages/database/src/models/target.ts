@@ -32,7 +32,7 @@ const envelopeSchema = new Schema(
 export interface UserVaultRecord {
   accountId: string;
   vaultRevision: number;
-  passwordEnvelope: unknown;
+  passwordEnvelope?: unknown | null;
   recoveryEnvelope: unknown;
   deviceEnvelopes: unknown[];
   sharingPublicKey: string;
@@ -47,7 +47,7 @@ const userVaultSchema = new Schema<UserVaultRecord>(
   {
     accountId: { type: String, required: true, unique: true, index: true },
     vaultRevision: { type: Number, required: true, min: 1 },
-    passwordEnvelope: { type: envelopeSchema, required: true },
+    passwordEnvelope: { type: envelopeSchema, required: false, default: null },
     recoveryEnvelope: { type: envelopeSchema, required: true },
     deviceEnvelopes: { type: [envelopeSchema], default: [] },
     sharingPublicKey: { type: String, required: true },
@@ -65,6 +65,90 @@ userVaultSchema.index(
   },
 );
 export const UserVault = getModel<UserVaultRecord>("UserVault", userVaultSchema);
+
+export interface VaultPasskeyRecord {
+  accountId: string;
+  credentialId: string;
+  publicKey: Buffer;
+  counter: number;
+  transports: string[];
+  envelopeKeyId: string;
+  prfInput: string;
+  hkdfSalt: string;
+  name?: string;
+  status: "pending" | "active" | "revoked";
+  lastUsedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const vaultPasskeySchema = new Schema<VaultPasskeyRecord>(
+  {
+    accountId: { type: String, required: true, index: true },
+    credentialId: { type: String, required: true, unique: true, index: true },
+    publicKey: { type: Buffer, required: true },
+    counter: { type: Number, required: true, min: 0, default: 0 },
+    transports: { type: [String], default: [] },
+    envelopeKeyId: { type: String, required: true },
+    prfInput: { type: String, required: true },
+    hkdfSalt: { type: String, required: true },
+    name: String,
+    status: {
+      type: String,
+      enum: ["pending", "active", "revoked"],
+      required: true,
+      default: "active",
+    },
+    lastUsedAt: Date,
+  },
+  { timestamps: true, collection: "vaultPasskeys" },
+);
+vaultPasskeySchema.index({ accountId: 1, status: 1, createdAt: -1 });
+export const VaultPasskey = getModel<VaultPasskeyRecord>(
+  "VaultPasskey",
+  vaultPasskeySchema,
+);
+
+export interface VaultPasskeyChallengeRecord {
+  nonce: string;
+  accountId: string;
+  challenge: string;
+  type: "registration" | "authentication";
+  prfInput: string;
+  hkdfSalt: string;
+  credentialId?: string;
+  expiresAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const vaultPasskeyChallengeSchema =
+  new Schema<VaultPasskeyChallengeRecord>(
+    {
+      nonce: { type: String, required: true, unique: true, index: true },
+      accountId: { type: String, required: true, index: true },
+      challenge: { type: String, required: true },
+      type: {
+        type: String,
+        enum: ["registration", "authentication"],
+        required: true,
+      },
+      prfInput: { type: String, required: true },
+      hkdfSalt: { type: String, required: true },
+      credentialId: String,
+      expiresAt: { type: Date, required: true },
+    },
+    { timestamps: true, collection: "vaultPasskeyChallenges" },
+  );
+vaultPasskeyChallengeSchema.index(
+  { expiresAt: 1 },
+  { expireAfterSeconds: 0 },
+);
+export const VaultPasskeyChallenge =
+  getModel<VaultPasskeyChallengeRecord>(
+    "VaultPasskeyChallenge",
+    vaultPasskeyChallengeSchema,
+  );
 
 export interface AccountProfileRecord {
   accountId: string;

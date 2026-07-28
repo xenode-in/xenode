@@ -17,7 +17,9 @@ export default async function OnboardingPage({
   const session = await requireAccountsPageSession();
   const next = safeNext((await searchParams).next);
   if (session.user.emailVerified === false) {
-    redirect(`/verify-email?next=${encodeURIComponent(`/onboarding?next=${next}`)}`);
+    redirect(
+      `/verify-email?email=${encodeURIComponent(session.user.email)}&next=${encodeURIComponent(`/onboarding?next=${encodeURIComponent(next)}`)}`,
+    );
   }
   await connectDatabase();
   const profile = await AccountProfile.findOne({
@@ -30,6 +32,11 @@ export default async function OnboardingPage({
       accountId={session.user.id}
       email={session.user.email ?? ""}
       name={session.user.name ?? ""}
+      username={
+        "username" in session.user && typeof session.user.username === "string"
+          ? session.user.username
+          : ""
+      }
       next={next}
     />
   );

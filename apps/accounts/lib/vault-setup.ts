@@ -9,6 +9,8 @@ import {
 import { personalSpaceId } from "@xenode/spaces/ids";
 import { deriveArgon2id } from "@/lib/argon2";
 import { cacheAccountRootKey } from "@/lib/ark-cache";
+import { createBrowserDeviceEnvelope } from "@/lib/device-vault";
+import { tryEnrollPasskey } from "@/lib/passkey-vault";
 
 function randomParams(): Argon2idParams {
   return {
@@ -34,20 +36,19 @@ function randomParams(): Argon2idParams {
  */
 export async function createAccountVault(params: {
   accountId: string;
-  password: string;
+  password?: string;
   recoverySecret: Uint8Array;
 }): Promise<{ vaultRevision: number }> {
   const { accountId, password, recoverySecret } = params;
-  if (password.length < 12) {
+  if (password !== undefined && password.length < 12) {
     throw new Error("Use a password of at least 12 characters.");
   }
   const ark = generateAccountRootKey();
-  const kdfParams = randomParams();
-  const passwordKey = await derivePasswordWrappingKey(
-    password,
-    kdfParams,
-    deriveArgon2id,
-  );
+  const kdfParams = password ? randomParams() : undefined;
+  const passwordKey =
+    password && kdfParams
+      ? await derivePasswordWrappingKey(password, kdfParams, deriveArgon2id)
+      : undefined;
   const sharingPair = (await crypto.subtle.generateKey(
     {
       name: "RSA-OAEP",
@@ -63,15 +64,18 @@ export async function createAccountVault(params: {
     crypto.subtle.exportKey("pkcs8", sharingPair.privateKey),
   ]);
 
-  const passwordEnvelope = {
-    ...(await sealEnvelope(ark, passwordKey, {
-      accountId,
-      keyId: "ark",
-      keyVersion: 1,
-      type: "password",
-    })),
-    kdfParams,
-  };
+  const passwordEnvelope =
+    passwordKey && kdfParams
+      ? {
+          ...(await sealEnvelope(ark, passwordKey, {
+            accountId,
+            keyId: "ark",
+            keyVersion: 1,
+            type: "password",
+          })),
+          kdfParams,
+        }
+      : null;
   const recoveryEnvelope = await sealEnvelope(ark, recoverySecret, {
     accountId,
     keyId: "ark",
@@ -88,6 +92,13 @@ export async function createAccountVault(params: {
       type: "sharing-private-key",
     },
   );
+  const browserDeviceEnvelope = await createBrowserDeviceEnvelope(
+    accountId,
+    ark,
+  );
+  const passkeyEnvelope = password
+    ? null
+    : await tryEnrollPasskey(accountId, ark);
 
   const personalSpace = personalSpaceId(accountId);
   for (const productId of ["drive", "photos"] as const) {
@@ -129,7 +140,10 @@ export async function createAccountVault(params: {
       expectedVaultRevision: 0,
       passwordEnvelope,
       recoveryEnvelope,
-      deviceEnvelopes: [],
+      deviceEnvelopes: [
+        browserDeviceEnvelope,
+        ...(passkeyEnvelope ? [passkeyEnvelope] : []),
+      ],
       sharingPublicKey: encodeBase64Url(new Uint8Array(sharingPublicKey)),
       wrappedSharingPrivateKey,
     }),
@@ -145,6 +159,6 @@ export async function createAccountVault(params: {
   // Cache the ARK so the key-handoff broker unlocks Drive/Photos with no prompt.
   await cacheAccountRootKey(accountId, ark).catch(() => undefined);
   ark.fill(0);
-  passwordKey.fill(0);
+  passwordKey?.fill(0);
   return payload.vault;
 }

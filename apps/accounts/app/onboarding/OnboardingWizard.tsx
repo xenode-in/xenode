@@ -69,11 +69,13 @@ export function OnboardingWizard({
   accountId,
   email,
   name,
+  username,
   next,
 }: {
   accountId: string;
   email: string;
   name: string;
+  username: string;
   next: string;
 }) {
   const [step, setStep] = useState(1);
@@ -87,10 +89,13 @@ export function OnboardingWizard({
   const [pdfBusy, setPdfBusy] = useState(false);
 
   // The signup password is stashed in sessionStorage; if it's missing (direct
-  // navigation) the Welcome step collects it instead.
+  // navigation or OAuth signup) the Welcome step collects a Vault password.
   const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const [hasStashedPassword, setHasStashedPassword] = useState(true);
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordSource, setPasswordSource] = useState<
+    "checking" | "signup" | "onboarding"
+  >("checking");
+  const [usernameChoice, setUsernameChoice] = useState(username);
 
   const { theme, setTheme } = useTheme();
   const themeChoice = (theme as ThemeChoice) ?? "system";
@@ -108,12 +113,15 @@ export function OnboardingWizard({
     try {
       const stashed = sessionStorage.getItem("xenode-vault-pw") ?? "";
       if (stashed.length >= 12) {
-        setPassword(stashed);
+        queueMicrotask(() => {
+          setPassword(stashed);
+          setPasswordSource("signup");
+        });
       } else {
-        setHasStashedPassword(false);
+        queueMicrotask(() => setPasswordSource("onboarding"));
       }
     } catch {
-      setHasStashedPassword(false);
+      queueMicrotask(() => setPasswordSource("onboarding"));
     }
   }, []);
 
@@ -121,8 +129,10 @@ export function OnboardingWizard({
   useEffect(() => {
     if (step === 5 && avatars.length === 0) {
       const batch = generateAvatarBatch();
-      setAvatars(batch);
-      if (!avatarUrl) setAvatarUrl(batch[0]?.url ?? "");
+      queueMicrotask(() => {
+        setAvatars(batch);
+        if (!avatarUrl) setAvatarUrl(batch[0]?.url ?? "");
+      });
     }
   }, [step, avatars.length, avatarUrl]);
 
@@ -138,19 +148,19 @@ export function OnboardingWizard({
   }
 
   function handleWelcomeContinue() {
-    if (!hasStashedPassword) {
+    if (!username && !/^[a-zA-Z0-9_]{3,30}$/u.test(usernameChoice)) {
+      setError("Choose a username using 3–30 letters, numbers, or underscores.");
+      return;
+    }
+    if (passwordSource === "checking") return;
+    if (passwordSource === "onboarding") {
       if (password.length < 12) {
-        setError("Use a password of at least 12 characters.");
+        setError("Create a Vault password using at least 12 characters.");
         return;
       }
-      if (password !== confirm) {
-        setError("Passwords do not match.");
+      if (password !== confirmPassword) {
+        setError("Vault passwords do not match.");
         return;
-      }
-      try {
-        sessionStorage.setItem("xenode-vault-pw", password);
-      } catch {
-        /* storage disabled — kept in memory for this session */
       }
     }
     nextStep();
@@ -171,44 +181,31 @@ export function OnboardingWizard({
     if (!kit) return;
     setPdfBusy(true);
     try {
-      const template = await fetch("/recovery-kit.html").then((r) => r.text());
       const generatedDate = new Date().toLocaleDateString("en-US", {
         year: "numeric",
         month: "long",
         day: "numeric",
       });
-      const populated = template
-        .replaceAll("{{userEmail}}", email || accountId)
-        .replaceAll("{{generatedDate}}", generatedDate)
-        .replaceAll("{{recoveryPhrase}}", kit.words);
-
-      const frame = document.createElement("iframe");
-      frame.style.cssText =
-        "position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden";
-      document.body.appendChild(frame);
-      const idoc = frame.contentWindow?.document;
-      if (!idoc) throw new Error("Print frame unavailable");
-      idoc.open();
-      idoc.write(populated);
-      idoc.close();
-
-      const originalTitle = document.title;
-      const cleanup = () => {
-        document.title = originalTitle;
-        frame.remove();
-        window.removeEventListener("afterprint", cleanup);
-      };
-      window.addEventListener("afterprint", cleanup);
-      setTimeout(() => {
-        // Chrome derives the "Save as PDF" filename from the top document title.
-        document.title = "xenode-recovery-kit";
-        frame.contentWindow?.focus();
-        frame.contentWindow?.print();
-      }, 250);
-      // Leak guard in case afterprint never fires.
-      setTimeout(cleanup, 60_000);
+      const { createRecoveryKitPdf } = await import("@/lib/recovery-pdf");
+      const bytes = await createRecoveryKitPdf({
+        accountLabel: email || accountId,
+        generatedDate,
+        recoveryPhrase: kit.words,
+      });
+      const blob = new Blob([Uint8Array.from(bytes).buffer], {
+        type: "application/pdf",
+      });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "xenode-recovery-kit.pdf";
+      anchor.style.display = "none";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1_000);
     } catch {
-      setError("Couldn't prepare the PDF — copy the words instead.");
+      setError("Couldn't download the PDF. Copy the words instead.");
     } finally {
       setPdfBusy(false);
     }
@@ -239,10 +236,6 @@ export function OnboardingWizard({
 
   async function finalize() {
     if (!kit) return;
-    if (password.length < 12) {
-      setError("Your vault password is missing — start again from sign in.");
-      return;
-    }
     setBusy(true);
     setError("");
     try {
@@ -250,7 +243,7 @@ export function OnboardingWizard({
       try {
         await createAccountVault({
           accountId,
-          password,
+          password: password.length >= 12 ? password : undefined,
           recoverySecret: kit.secret,
         });
       } catch (vaultError) {
@@ -260,7 +253,7 @@ export function OnboardingWizard({
           vaultError instanceof Error ? vaultError.message : "";
         if (!/revision|exist|conflict/iu.test(message)) throw vaultError;
       }
-      await fetch("/api/onboarding/complete", {
+      const completionResponse = await fetch("/api/onboarding/complete", {
         method: "POST",
         credentials: "include",
         headers: { "content-type": "application/json" },
@@ -269,8 +262,15 @@ export function OnboardingWizard({
           defaultEncrypt: true,
           image: avatarUrl || undefined,
           region: region || undefined,
+          username: usernameChoice || undefined,
         }),
       });
+      if (!completionResponse.ok) {
+        const payload = (await completionResponse.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        throw new Error(payload.error ?? "Could not finish account setup.");
+      }
       kit.secret.fill(0);
       try {
         sessionStorage.removeItem("xenode-vault-pw");
@@ -318,37 +318,72 @@ export function OnboardingWizard({
                   A few quick steps to secure your end-to-end encrypted vault and
                   make Xenode yours.
                 </p>
-                {!hasStashedPassword && (
+                {!username && (
                   <div className="onb-form">
                     <div className="field">
-                      <label htmlFor="onb-pw">Create your vault password</label>
+                      <label htmlFor="onb-username">Choose your Xenode username</label>
                       <input
-                        id="onb-pw"
+                        id="onb-username"
+                        className="input"
+                        minLength={3}
+                        maxLength={30}
+                        pattern="[A-Za-z0-9_]+"
+                        autoCapitalize="none"
+                        autoComplete="username"
+                        placeholder="ada_lovelace"
+                        value={usernameChoice}
+                        onChange={(e) =>
+                          setUsernameChoice(e.target.value.toLowerCase())
+                        }
+                      />
+                    </div>
+                  </div>
+                )}
+                {passwordSource === "onboarding" ? (
+                  <div className="onb-form">
+                    <div className="field">
+                      <label htmlFor="onb-vault-password">
+                        Create a Vault password
+                      </label>
+                      <input
+                        id="onb-vault-password"
                         className="input"
                         type="password"
                         minLength={12}
                         autoComplete="new-password"
                         placeholder="At least 12 characters"
                         value={password}
-                        onChange={(e) => setPassword(e.target.value)}
+                        onChange={(event) => setPassword(event.target.value)}
                       />
                     </div>
                     <div className="field">
-                      <label htmlFor="onb-confirm">Confirm password</label>
+                      <label htmlFor="onb-vault-password-confirm">
+                        Confirm Vault password
+                      </label>
                       <input
-                        id="onb-confirm"
+                        id="onb-vault-password-confirm"
                         className="input"
                         type="password"
                         minLength={12}
                         autoComplete="new-password"
-                        placeholder="Re-enter your password"
-                        value={confirm}
-                        onChange={(e) => setConfirm(e.target.value)}
+                        value={confirmPassword}
+                        onChange={(event) =>
+                          setConfirmPassword(event.target.value)
+                        }
                       />
                     </div>
+                    <p className="fine-print">
+                      This password protects your encrypted Vault and never goes
+                      to Google or GitHub. You will still use your provider to
+                      sign in.
+                    </p>
                   </div>
-                )}
-                <button className="button button-block" onClick={handleWelcomeContinue}>
+                ) : null}
+                <button
+                  className="button button-block"
+                  onClick={handleWelcomeContinue}
+                  disabled={passwordSource === "checking"}
+                >
                   Get started
                 </button>
               </motion.div>
@@ -367,18 +402,38 @@ export function OnboardingWizard({
                 <p className="eyebrow">Recovery kit</p>
                 <h1>Save your 12-word recovery phrase</h1>
                 <p className="lede">
-                  This is the only way to recover your vault if you forget your
-                  password. Xenode can never see or reset it.
+                  This recovers your vault if you lose every trusted device and
+                  passkey. Xenode can never see or reset it.
                 </p>
                 {kit ? (
-                  <ol className="onb-words">
-                    {kit.words.split(" ").map((word, i) => (
-                      <li key={`${i}-${word}`} className="onb-word">
-                        <span className="onb-word-n">{i + 1}</span>
-                        <span className="onb-word-w">{word}</span>
-                      </li>
-                    ))}
-                  </ol>
+                  <>
+                    <ol className="onb-words" aria-hidden="true">
+                      {kit.words.split(" ").map((word, i) => (
+                        <li key={`${i}-${word}`} className="onb-word">
+                          <span className="onb-word-n">{i + 1}</span>
+                          <span className="onb-word-w">{word}</span>
+                        </li>
+                      ))}
+                    </ol>
+                    <label
+                      className="onb-copy-phrase-label"
+                      htmlFor="onb-copy-phrase"
+                    >
+                      Copy-ready phrase
+                    </label>
+                    <textarea
+                      id="onb-copy-phrase"
+                      className="onb-copy-phrase"
+                      value={kit.words}
+                      readOnly
+                      rows={2}
+                      spellCheck={false}
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      onFocus={(event) => event.currentTarget.select()}
+                      onClick={(event) => event.currentTarget.select()}
+                    />
+                  </>
                 ) : (
                   <p className="lede">Generating your phrase…</p>
                 )}

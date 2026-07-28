@@ -94,6 +94,7 @@ function UnlockControl({
   const [session, setSession] = useState<PhotosSessionInfo | null>(null);
   const [status, setStatus] = useState("Checking product session...");
   const [brokerUrl, setBrokerUrl] = useState<string | null>(null);
+  const [interactionUrl, setInteractionUrl] = useState<string | null>(null);
   const [unlockError, setUnlockError] = useState(false);
   const [showUnlockOverlay, setShowUnlockOverlay] = useState(false);
   const handoffInFlight = useRef(false);
@@ -282,7 +283,8 @@ function UnlockControl({
       };
       if (
         data.type !== "xenode:key-handoff-ready" &&
-        data.type !== "xenode:key-handoff-error"
+        data.type !== "xenode:key-handoff-error" &&
+        data.type !== "xenode:key-handoff-interaction-required"
       ) {
         return;
       }
@@ -290,15 +292,26 @@ function UnlockControl({
       const request = pending.current.get(data.transactionId);
       if (!request || request.binding.state !== data.state) return;
 
+      if (data.type === "xenode:key-handoff-interaction-required") {
+        const target = new URL(request.brokerUrl);
+        target.searchParams.set("mode", "popup");
+        setBrokerUrl(null);
+        setInteractionUrl(target.toString());
+        setStatus("Confirm the unlock in Xenode Accounts.");
+        return;
+      }
+
       if (data.type === "xenode:key-handoff-error") {
         pending.current.delete(data.transactionId);
         handoffInFlight.current = false;
         setBrokerUrl(null);
+        setInteractionUrl(null);
         setUnlockError(true);
         setStatus(data.message ?? "The secure key exchange failed.");
         return;
       }
 
+      setInteractionUrl(null);
       setStatus("Opening the one-time encrypted handoff…");
       void consumeRequest(request).catch((error) => {
         pending.current.delete(data.transactionId!);
@@ -332,6 +345,17 @@ function UnlockControl({
           productName="Photos"
           status={status}
           brokerUrl={brokerUrl}
+          onOpenAccounts={
+            interactionUrl
+              ? () => {
+                  window.open(
+                    interactionUrl,
+                    "xenode-vault-unlock",
+                    "popup=yes,width=620,height=760",
+                  );
+                }
+              : undefined
+          }
           error={unlockError}
           onRetry={
             session
@@ -339,6 +363,7 @@ function UnlockControl({
                   handoffInFlight.current = false;
                   bootstrappedSession.current = null;
                   setBrokerUrl(null);
+                  setInteractionUrl(null);
                   setUnlockError(false);
                   void startUnlock();
                 }

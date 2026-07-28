@@ -234,6 +234,7 @@ function DriveKeyAccess({
   const lockProductKey = productCrypto.lock;
   const [status, setStatus] = useState("Restoring Drive encryption…");
   const [brokerUrl, setBrokerUrl] = useState<string | null>(null);
+  const [interactionUrl, setInteractionUrl] = useState<string | null>(null);
   const [unlockError, setUnlockError] = useState(false);
   const [cacheState, setCacheState] = useState<
     "checking" | "miss" | "ready"
@@ -286,9 +287,12 @@ function DriveKeyAccess({
       handoffInFlight.current = false;
       setCacheState("ready");
       setModalOpen(false);
+      if (accountId) {
+        window.sessionStorage.removeItem(`xenode:vault-lock:${accountId}`);
+      }
       return true;
     },
-    [unlockProductKey, spaceId, pending],
+    [accountId, unlockProductKey, spaceId, pending],
   );
 
   // Keep Drive mounted while Accounts performs the one-time key exchange in a
@@ -312,9 +316,20 @@ function DriveKeyAccess({
         destinationOrigin: window.location.origin,
         mode: "iframe",
       });
-      pending.current.set(request.binding.transactionId, request);
+      let brokerUrl = request.brokerUrl;
+      if (
+        window.sessionStorage.getItem(`xenode:vault-lock:${accountId}`) === "1"
+      ) {
+        const target = new URL(brokerUrl);
+        target.searchParams.set("forceInteraction", "1");
+        brokerUrl = target.toString();
+      }
+      pending.current.set(request.binding.transactionId, {
+        ...request,
+        brokerUrl,
+      });
       setStatus("Securely exchanging a one-time encrypted key…");
-      setBrokerUrl(request.brokerUrl);
+      setBrokerUrl(brokerUrl);
     } catch (error) {
       handoffInFlight.current = false;
       setUnlockError(true);
@@ -386,7 +401,8 @@ function DriveKeyAccess({
       };
       if (
         data.type !== "xenode:key-handoff-ready" &&
-        data.type !== "xenode:key-handoff-error"
+        data.type !== "xenode:key-handoff-error" &&
+        data.type !== "xenode:key-handoff-interaction-required"
       ) {
         return;
       }
@@ -394,15 +410,26 @@ function DriveKeyAccess({
       const request = pending.current.get(data.transactionId);
       if (!request || request.binding.state !== data.state) return;
 
+      if (data.type === "xenode:key-handoff-interaction-required") {
+        const target = new URL(request.brokerUrl);
+        target.searchParams.set("mode", "popup");
+        setBrokerUrl(null);
+        setInteractionUrl(target.toString());
+        setStatus("Confirm the unlock in Xenode Accounts.");
+        return;
+      }
+
       if (data.type === "xenode:key-handoff-error") {
         pending.current.delete(data.transactionId);
         handoffInFlight.current = false;
         setBrokerUrl(null);
+        setInteractionUrl(null);
         setUnlockError(true);
         setStatus(data.message ?? "The secure key exchange failed.");
         return;
       }
 
+      setInteractionUrl(null);
       setStatus("Opening the one-time encrypted handoff…");
       void consumeRequest(request).catch((error) => {
         pending.current.delete(data.transactionId!);
@@ -418,21 +445,28 @@ function DriveKeyAccess({
   }, [accountsOrigin, consumeRequest, pending]);
 
   const lock = useCallback(async () => {
+    if (accountId) {
+      window.sessionStorage.setItem(`xenode:vault-lock:${accountId}`, "1");
+    }
     await productCrypto.lock(spaceId || undefined);
     await clearLegacySharingKeys();
     await clearPendingHandoff("drive");
     pending.current.clear();
     handoffInFlight.current = false;
     setBrokerUrl(null);
+    setInteractionUrl(null);
     setUnlockError(false);
     clearSharingKeys();
     clearThumbnailMemoryCache();
     setCacheState("miss");
     setStatus("Drive encryption is locked.");
-  }, [clearSharingKeys, pending, productCrypto, spaceId]);
+  }, [accountId, clearSharingKeys, pending, productCrypto, spaceId]);
 
   const logout = useCallback(async () => {
     await lock();
+    if (accountId) {
+      window.sessionStorage.removeItem(`xenode:vault-lock:${accountId}`);
+    }
     if (accountId) await clearLocalDb(accountId);
   }, [accountId, lock]);
 
@@ -458,10 +492,22 @@ function DriveKeyAccess({
           productName="Drive"
           status={status}
           brokerUrl={brokerUrl}
+          onOpenAccounts={
+            interactionUrl
+              ? () => {
+                  window.open(
+                    interactionUrl,
+                    "xenode-vault-unlock",
+                    "popup=yes,width=620,height=760",
+                  );
+                }
+              : undefined
+          }
           error={unlockError}
           onRetry={() => {
             handoffInFlight.current = false;
             setBrokerUrl(null);
+            setInteractionUrl(null);
             setUnlockError(false);
             void startUnlock();
           }}

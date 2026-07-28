@@ -25,7 +25,9 @@ export default function VaultPage() {
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("next");
-    if (requested && requested.startsWith("/")) setNextPath(requested);
+    if (requested && requested.startsWith("/")) {
+      queueMicrotask(() => setNextPath(requested));
+    }
   }, []);
 
   useEffect(() => {

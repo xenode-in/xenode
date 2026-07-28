@@ -7,7 +7,14 @@ export default async function LinkedAccountsPage() {
   const googleConfigured = Boolean(
     process.env.GOOGLE_CLIENT_ID?.trim() && process.env.GOOGLE_CLIENT_SECRET?.trim(),
   );
-  const accounts = (await listExternalAccountsForUser(session.user.id))
+  const githubConfigured = Boolean(
+    process.env.GITHUB_CLIENT_ID?.trim() && process.env.GITHUB_CLIENT_SECRET?.trim(),
+  );
+  const allAccounts = await listExternalAccountsForUser(session.user.id);
+  const hasCredential = allAccounts.some(
+    (account) => account.providerId === "credential",
+  );
+  const accounts = allAccounts
     .filter((account) => account.providerId && account.providerId !== "credential")
     .map((account) => ({
       id: String(account._id),
@@ -19,10 +26,14 @@ export default async function LinkedAccountsPage() {
   return (
     <AccountShell user={session.user}>
       <main className="page">
-        <p className="eyebrow">Connectors</p>
+        <p className="eyebrow">Sign-in methods</p>
         <h1>Linked accounts</h1>
-        <p className="lede">External accounts authorize optional integrations. They never replace your Xenode email or username as the login identity.</p>
-        <LinkedAccounts googleConfigured={googleConfigured} initialAccounts={accounts} />
+        <p className="lede">Use verified Google and GitHub identities to sign in. OAuth authenticates you; it never becomes an encryption key.</p>
+        <LinkedAccounts
+          configured={{ google: googleConfigured, github: githubConfigured }}
+          hasCredential={hasCredential}
+          initialAccounts={accounts}
+        />
       </main>
     </AccountShell>
   );

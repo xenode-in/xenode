@@ -1096,6 +1096,35 @@ h2 {
   font-weight: 600;
   font-family: var(--font-mono);
 }
+.onb-copy-phrase-label {
+  width: 100%;
+  margin: -6px 0 6px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+}
+.onb-copy-phrase {
+  width: 100%;
+  min-height: 66px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  resize: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--muted) 35%, transparent);
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.onb-copy-phrase:focus {
+  border-color: var(--primary);
+  outline: 2px solid color-mix(in srgb, var(--primary) 22%, transparent);
+  outline-offset: 1px;
+}
 .onb-kit-actions {
   display: flex;
   gap: 12px;

@@ -11,13 +11,17 @@ import {
 import { resumeAuthorizationPath } from "@/lib/presentation";
 import { deriveArgon2id } from "@/lib/argon2";
 import { cacheAccountRootKey } from "@/lib/ark-cache";
+import { enrollBrowserDevice, loadBrowserDeviceArk } from "@/lib/device-vault";
 
 type Mode = "signin" | "signup";
+type SocialProvider = "google" | "github";
 
 type VaultResponse = {
   accountId: string;
   vault: {
+    vaultRevision: number;
     passwordEnvelope: CryptoEnvelope & { kdfParams: Argon2idParams };
+    deviceEnvelopes: CryptoEnvelope[];
   } | null;
 };
 
@@ -51,6 +55,17 @@ async function cacheArkFromLogin(pw: string): Promise<void> {
       type: "password",
     });
     await cacheAccountRootKey(data.accountId, ark);
+    const enrolled = await loadBrowserDeviceArk(
+      data.accountId,
+      data.vault.deviceEnvelopes,
+    );
+    if (!enrolled) {
+      await enrollBrowserDevice(
+        data.accountId,
+        ark,
+        data.vault.vaultRevision,
+      ).catch(() => undefined);
+    }
   } finally {
     ark?.fill(0);
     passwordKey.fill(0);
@@ -123,6 +138,7 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [tagline, setTagline] = useState(0);
+  const [providers, setProviders] = useState({ google: false, github: false });
 
   useEffect(() => {
     const timer = setInterval(
@@ -132,9 +148,67 @@ export default function LoginPage() {
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    void fetch("/api/auth/providers", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((value: { google?: boolean; github?: boolean }) =>
+        setProviders({
+          google: value.google === true,
+          github: value.github === true,
+        }),
+      )
+      .catch(() => undefined);
+    const oauthError = new URLSearchParams(window.location.search).get("error");
+    if (oauthError) {
+      queueMicrotask(() =>
+        setMessage(
+          oauthError === "email_not_found"
+            ? "That provider did not return an email. Add a verified email to the provider and try again."
+            : oauthError === "account_not_linked"
+              ? "This email already has a Xenode account. Verify it or sign in using the original method, then link this provider."
+              : "The external sign-in could not be completed. Please try again.",
+        ),
+      );
+    }
+  }, []);
+
   function switchMode(next: Mode) {
     setMode(next);
     setMessage("");
+  }
+
+  async function continueWith(provider: SocialProvider) {
+    setBusy(true);
+    setMessage("");
+    try {
+      const resumePath = resumeAuthorizationPath(
+        new URLSearchParams(window.location.search),
+      );
+      const continuation = `${window.location.origin}/auth/continue?next=${encodeURIComponent(resumePath)}`;
+      const response = await fetch("/api/auth/sign-in/social", {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          provider,
+          callbackURL: continuation,
+          newUserCallbackURL: continuation,
+          errorCallbackURL: `${window.location.origin}/login?provider=${provider}`,
+          disableRedirect: true,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        url?: string;
+        message?: string;
+      } | null;
+      if (!response.ok || !payload?.url) {
+        throw new Error(payload?.message || "Provider unavailable");
+      }
+      window.location.assign(payload.url);
+    } catch {
+      setBusy(false);
+      setMessage(`Could not open ${provider === "google" ? "Google" : "GitHub"} sign-in.`);
+    }
   }
 
   async function submit(event: React.FormEvent) {
@@ -274,9 +348,40 @@ export default function LoginPage() {
           </h1>
           <p className="auth-sub">
             {isSignin
-              ? "Sign in with your Xenode email or username. Connected external accounts can’t sign in here."
+              ? "Continue with Google, GitHub, or your Xenode credentials."
               : "One Xenode Account for Drive, Photos, and everything else. Your username is separate from your encryption keys."}
           </p>
+
+          {(providers.google || providers.github) && (
+            <>
+              <div className="button-row" style={{ marginBottom: 20 }}>
+                {providers.google && (
+                  <button
+                    className="button button-secondary"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void continueWith("google")}
+                  >
+                    Continue with Google
+                  </button>
+                )}
+                {providers.github && (
+                  <button
+                    className="button button-secondary"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void continueWith("github")}
+                  >
+                    Continue with GitHub
+                  </button>
+                )}
+              </div>
+              <p className="fine-print" style={{ textAlign: "center" }}>
+                OAuth signs you in. Your encryption keys remain protected by
+                this device, a passkey, or your recovery phrase.
+              </p>
+            </>
+          )}
 
           <form className="form" onSubmit={submit}>
             {!isSignin && (

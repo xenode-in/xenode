@@ -18,6 +18,43 @@ import {
 const EMAIL_FROM = process.env.EMAIL_FROM ?? "Xenode <noreply@alerts.xenode.in>";
 const PRIMARY_RS256_KEY_ID = "xenode-accounts-rs256-v1";
 
+export function resolveSocialProviders(
+  env: Partial<
+    Record<
+      | "GOOGLE_CLIENT_ID"
+      | "GOOGLE_CLIENT_SECRET"
+      | "GITHUB_CLIENT_ID"
+      | "GITHUB_CLIENT_SECRET",
+      string
+    >
+  >,
+) {
+  const googleClientId = env.GOOGLE_CLIENT_ID?.trim();
+  const googleClientSecret = env.GOOGLE_CLIENT_SECRET?.trim();
+  const githubClientId = env.GITHUB_CLIENT_ID?.trim();
+  const githubClientSecret = env.GITHUB_CLIENT_SECRET?.trim();
+  return {
+    ...(googleClientId && googleClientSecret
+      ? {
+          google: {
+            clientId: googleClientId,
+            clientSecret: googleClientSecret,
+            scope: ["openid", "email", "profile"],
+          },
+        }
+      : {}),
+    ...(githubClientId && githubClientSecret
+      ? {
+          github: {
+            clientId: githubClientId,
+            clientSecret: githubClientSecret,
+            scope: ["read:user", "user:email"],
+          },
+        }
+      : {}),
+  };
+}
+
 export function firstPartyIdTokenClaims(
   metadata?: Record<string, unknown>,
 ): { azp: string } {
@@ -118,8 +155,6 @@ async function createAccountsAuth() {
   const accountsOrigin =
     process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
   const firstPartyClients = await ensureFirstPartyOAuthClients();
-  const googleClientId = process.env.GOOGLE_CLIENT_ID?.trim();
-  const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
   const resend = new Resend(process.env.RESEND_API_KEY || "fallback");
   return betterAuth({
       appName: "Xenode Accounts",
@@ -139,23 +174,18 @@ async function createAccountsAuth() {
         sendOnSignUp: false,
         autoSignInAfterVerification: true,
       },
-      socialProviders:
-        googleClientId && googleClientSecret
-          ? {
-              google: {
-                clientId: googleClientId,
-                clientSecret: googleClientSecret,
-                scope: [
-                  "openid",
-                  "email",
-                  "profile",
-                ],
-              },
-            }
-          : {},
+      socialProviders: resolveSocialProviders({
+        GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
+        GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
+        GITHUB_CLIENT_ID: process.env.GITHUB_CLIENT_ID,
+        GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET,
+      }),
       account: {
+        encryptOAuthTokens: true,
         accountLinking: {
           enabled: true,
+          disableImplicitLinking: false,
+          requireLocalEmailVerified: true,
           allowDifferentEmails: false,
           allowUnlinkingAll: false,
         },
@@ -168,10 +198,13 @@ async function createAccountsAuth() {
                 accountId: session.userId,
                 action: "account.session.created",
                 metadata: {
-                  method:
-                    context?.path === "/sign-in/username"
-                      ? "username"
-                      : "email",
+                  method: context?.path?.includes("/callback/google")
+                    ? "google"
+                    : context?.path?.includes("/callback/github")
+                      ? "github"
+                      : context?.path === "/sign-in/username"
+                        ? "username"
+                        : "email",
                 },
               }).catch(() => undefined);
             },

@@ -18,8 +18,8 @@ export default function VerifyEmailPage() {
     const params = new URLSearchParams(window.location.search);
     const e = params.get("email");
     const n = params.get("next");
-    if (e) setEmail(e);
-    if (n && n.startsWith("/")) setNextPath(n);
+    if (e) queueMicrotask(() => setEmail(e));
+    if (n && n.startsWith("/")) queueMicrotask(() => setNextPath(n));
     if (!e) window.location.assign("/login");
   }, []);
 
