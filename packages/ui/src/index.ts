@@ -16,6 +16,7 @@ export * from "./components/ui/popover";
 export * from "./components/ui/progress";
 export * from "./components/ui/radio-group";
 export * from "./components/ui/select";
+export * from "./components/ui/secure-unlock-overlay";
 export * from "./components/ui/separator";
 export * from "./components/ui/skeleton";
 export * from "./components/ui/sonner";

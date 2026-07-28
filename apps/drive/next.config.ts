@@ -36,11 +36,16 @@ const nextConfig: NextConfig = {
   },
 
   async headers() {
+    const accountsOrigin =
+      process.env.ACCOUNTS_ORIGIN ??
+      (process.env.NODE_ENV === "production"
+        ? "https://accounts.xenode.in"
+        : "http://localhost:3001");
     const securityHeaders = [
       { key: "X-Content-Type-Options", value: "nosniff" },
       { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
       { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
-      { key: "Content-Security-Policy-Report-Only", value: "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; frame-src https://edit.xenode.in; form-action 'self'" },
+      { key: "Content-Security-Policy-Report-Only", value: `base-uri 'self'; object-src 'none'; frame-ancestors 'none'; frame-src https://edit.xenode.in ${new URL(accountsOrigin).origin}; form-action 'self'` },
     ];
     const relaxedHeaders = [
       ...securityHeaders,

@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   derivePasswordWrappingKey,
   decodeBase64Url,
@@ -51,7 +57,7 @@ type ProductKeyResponse = {
 function parseBrokerRequest(): {
   binding: HandoffBinding;
   destinationPublicKey: JsonWebKey;
-  mode: "popup" | "redirect";
+  mode: "popup" | "iframe" | "redirect";
   returnPath: string;
 } {
   const params = new URLSearchParams(window.location.search);
@@ -93,7 +99,13 @@ function parseBrokerRequest(): {
   if (!publicKeyText) throw new Error("Missing destination public key.");
   // Redirect transport: a same-origin return path. Reject anything that could
   // resolve off the destination origin (protocol-relative, absolute URLs).
-  const mode = params.get("mode") === "redirect" ? "redirect" : "popup";
+  const requestedMode = params.get("mode");
+  const mode =
+    requestedMode === "redirect"
+      ? "redirect"
+      : requestedMode === "iframe"
+        ? "iframe"
+        : "popup";
   const requestedReturn = params.get("returnPath") ?? "/";
   const returnPath = /^\/(?!\/)/u.test(requestedReturn) ? requestedReturn : "/";
   return {
@@ -134,8 +146,11 @@ export default function KeyHandoffBrokerPage() {
   const [busy, setBusy] = useState(false);
   // Gate window.location-derived content until after mount so the server render
   // and the first client (hydration) render match. Only then compute the label.
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useSyncExternalStore(
+    () => () => undefined,
+    () => true,
+    () => false,
+  );
   const requestLabel = useMemo(() => {
     if (!mounted) return "Loading request...";
     try {
@@ -148,25 +163,30 @@ export default function KeyHandoffBrokerPage() {
 
   // If the ARK is cached on this device, seal the product key automatically —
   // no password prompt (seamless unlock). Otherwise fall back to the form.
-  const [hasCachedArk, setHasCachedArk] = useState(false);
-  const [autoTried, setAutoTried] = useState(false);
+  const [cacheState, setCacheState] = useState<
+    "checking" | "available" | "missing"
+  >("checking");
+  const autoStarted = useRef(false);
   useEffect(() => {
-    if (!mounted || autoTried) return;
-    setAutoTried(true);
+    if (!mounted || autoStarted.current) return;
+    autoStarted.current = true;
     void (async () => {
       try {
         const { binding } = parseBrokerRequest();
         const cached = await loadCachedAccountRootKey(binding.accountId);
         if (cached) {
-          setHasCachedArk(true);
+          setCacheState("available");
           void approve(true);
+        } else {
+          setCacheState("missing");
         }
       } catch {
+        setCacheState("missing");
         /* invalid request — the form/label already reflects it */
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mounted, autoTried]);
+  }, [mounted]);
 
   async function approve(useCachedArk: boolean) {
     setBusy(true);
@@ -307,7 +327,8 @@ export default function KeyHandoffBrokerPage() {
         window.location.assign(returnUrl);
         return;
       }
-      window.opener?.postMessage(
+      const recipient = mode === "iframe" ? window.parent : window.opener;
+      recipient?.postMessage(
         {
           type: "xenode:key-handoff-ready",
           transactionId: binding.transactionId,
@@ -315,9 +336,28 @@ export default function KeyHandoffBrokerPage() {
         },
         binding.destinationOrigin,
       );
-      setStatus("Key delivered as one-time ciphertext. You may close this window.");
+      setStatus("Verified. Returning control to the product…");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Key handoff failed.");
+      const message =
+        error instanceof Error ? error.message : "Key handoff failed.";
+      setStatus(message);
+      if (useCachedArk) setCacheState("missing");
+      try {
+        const { binding, mode } = parseBrokerRequest();
+        if (mode === "iframe") {
+          window.parent.postMessage(
+            {
+              type: "xenode:key-handoff-error",
+              transactionId: binding.transactionId,
+              state: binding.state,
+              message,
+            },
+            binding.destinationOrigin,
+          );
+        }
+      } catch {
+        /* invalid requests are never messaged to an untrusted origin */
+      }
     } finally {
       productSpaceKey?.fill(0);
       sharingPrivateKey?.fill(0);
@@ -327,16 +367,44 @@ export default function KeyHandoffBrokerPage() {
     }
   }
 
+  const hasCachedArk = cacheState !== "missing";
+
   return (
-    <main className="page page-narrow">
+    <main className="handoff-page">
+      <div className="handoff-glow handoff-glow-one" aria-hidden="true" />
+      <div className="handoff-glow handoff-glow-two" aria-hidden="true" />
+      <div className="handoff-brand">
+        <span className="handoff-brand-mark">X</span>
+        <span className="brand-wordmark">Xenode</span>
+        <span className="handoff-brand-divider" />
+        <span>Accounts</span>
+      </div>
+      <div className="handoff-shield" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path
+            d="M12 3 5.5 5.8v5.6c0 4.2 2.7 7.9 6.5 9.1 3.8-1.2 6.5-4.9 6.5-9.1V5.8L12 3Z"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.7"
+          />
+          <path
+            d="m9.2 12 1.8 1.8 3.9-4"
+            fill="none"
+            stroke="currentColor"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="1.8"
+          />
+        </svg>
+      </div>
       <p className="eyebrow">Key handoff</p>
       <h1>Unlock this product</h1>
       <p className="lede">
         Accounts unwraps the requested ProductSpaceKey and, for Drive, its
         subordinate sharing key. Your Account Root Key never leaves this browser.
       </p>
-      <section className="card" style={{ marginTop: 24 }}>
-        <div className="badge" style={{ marginBottom: 16 }}>{requestLabel}</div>
+      <section className="handoff-vault-section">
+        <div className="badge handoff-badge">{requestLabel}</div>
         {hasCachedArk ? (
           <p className="muted" style={{ margin: 0 }}>
             Unlocking automatically — this device already holds your unlocked
@@ -344,8 +412,7 @@ export default function KeyHandoffBrokerPage() {
           </p>
         ) : (
           <form
-            className="form"
-            style={{ maxWidth: 460 }}
+            className="form handoff-form"
             onSubmit={(event) => {
               event.preventDefault();
               void approve(false);
@@ -362,17 +429,24 @@ export default function KeyHandoffBrokerPage() {
                 onChange={(event) => setPassword(event.target.value)}
               />
             </div>
-            <button className="button" type="submit" disabled={busy || !password}>
+            <button
+              className="button button-block"
+              type="submit"
+              disabled={busy || !password}
+            >
               {busy ? "Unlocking…" : "Approve one-time handoff"}
             </button>
           </form>
         )}
       </section>
       {status ? (
-        <p className="status" role="status" style={{ marginTop: 20 }}>
+        <p className="handoff-status" role="status">
           {status}
         </p>
       ) : null}
+      <p className="handoff-footer">
+        End-to-end encrypted · one-time delivery · expires automatically
+      </p>
     </main>
   );
 }

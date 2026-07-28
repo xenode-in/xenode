@@ -139,6 +139,7 @@ describe("encrypted key handoff", () => {
       productId: "photos",
       spaceId: "space_1",
       destinationOrigin: "https://photos.xenode.in",
+      mode: "iframe",
     });
     const broker = new URL(request.brokerUrl);
     expect(broker.origin).toBe("https://accounts.xenode.in");
@@ -147,6 +148,7 @@ describe("encrypted key handoff", () => {
       request.binding.transactionId,
     );
     expect(broker.searchParams.get("productId")).toBe("photos");
+    expect(broker.searchParams.get("mode")).toBe("iframe");
     expect(request.destinationKeyPair.privateKey.extractable).toBe(false);
 
     const sealed = await sealProductSpaceKey(

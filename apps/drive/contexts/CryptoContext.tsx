@@ -13,10 +13,9 @@ import {
   ProductCryptoProvider,
   useProductCrypto,
   clearPersistedKeys,
-  savePendingHandoff,
-  loadPendingHandoff,
   clearPendingHandoff,
 } from "@xenode/crypto-react";
+import { SecureUnlockOverlay } from "@xenode/ui";
 import {
   consumeProductKeyBundle,
   createOneTimeHandoffStore,
@@ -73,13 +72,6 @@ async function clearLegacySharingKeys(): Promise<void> {
 }
 
 const CryptoContext = createContext<CryptoContextType | undefined>(undefined);
-
-// Session guard: set once we redirect to the Accounts broker so a broker that
-// couldn't seal (and bounced back locked) doesn't send us into a redirect loop.
-const HANDOFF_ATTEMPT_KEY = "xenode-handoff-attempt:drive";
-// Document-scoped dedupe so React StrictMode's double-invoke can't fire two
-// redirects from the same page load.
-let handoffRedirectInFlight = false;
 
 const RSA_PARAMS: RsaHashedImportParams = {
   name: "RSA-OAEP",
@@ -203,7 +195,6 @@ export function CryptoProvider({
         spaceId={spaceId}
         pending={pending}
         sharingKeys={sharingKeys}
-        setSharingKeys={setSharingKeys}
         clearSharingKeys={() => setSharingKeys(null)}
       >
         {children}
@@ -217,7 +208,6 @@ function DriveKeyAccess({
   spaceId,
   pending,
   sharingKeys,
-  setSharingKeys,
   clearSharingKeys,
   children,
 }: {
@@ -225,13 +215,15 @@ function DriveKeyAccess({
   spaceId: string;
   pending: React.RefObject<Map<string, PendingHandoff>>;
   sharingKeys: ImportedSharingKeys | null;
-  setSharingKeys: (keys: ImportedSharingKeys) => void;
   clearSharingKeys: () => void;
   children: ReactNode;
 }) {
   const productCrypto = useProductCrypto();
   const unlockProductKey = productCrypto.unlock;
   const [status, setStatus] = useState("Restoring Drive encryption…");
+  const [brokerUrl, setBrokerUrl] = useState<string | null>(null);
+  const [unlockError, setUnlockError] = useState(false);
+  const handoffInFlight = useRef(false);
   const [isModalOpen, setModalOpen] = useState(false);
   const accountsOrigin = new URL(
     process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in",
@@ -251,7 +243,9 @@ function DriveKeyAccess({
           body: JSON.stringify(request.binding),
         },
       );
-      if (response.status === 410) return false;
+      if (response.status === 410) {
+        throw new Error("The one-time handoff expired. Please try again.");
+      }
       const payload = (await response.json().catch(() => ({}))) as {
         error?: string;
         ciphertext?: string;
@@ -271,22 +265,27 @@ function DriveKeyAccess({
       // this transaction — after a redirect the map starts empty.
       pending.current.set(transactionId, request);
       await unlockProductKey(spaceId, { transactionId, sealed } satisfies UnlockPayload);
-      setStatus("Drive encryption keys are unlocked in memory.");
+      setStatus("Drive is ready.");
+      setBrokerUrl(null);
+      setUnlockError(false);
+      handoffInFlight.current = false;
       setModalOpen(false);
       return true;
     },
     [unlockProductKey, spaceId, pending],
   );
 
-  // Redirect-based handoff (zero-click): navigate the whole tab to the Accounts
-  // broker, which (with the login-cached ARK) seals the key and redirects back.
+  // Keep Drive mounted while Accounts performs the one-time key exchange in a
+  // narrowly frameable, exact-origin broker route.
   const startUnlock = useCallback(async () => {
     if (!accountId || !spaceId) {
       setStatus("Sign in to Drive first.");
       return;
     }
-    if (handoffRedirectInFlight) return;
-    handoffRedirectInFlight = true;
+    if (handoffInFlight.current || isUnlocked) return;
+    handoffInFlight.current = true;
+    setUnlockError(false);
+    setStatus("Verifying this Drive session with Xenode Accounts…");
     try {
       const request = await createProductHandoffRequest({
         accountsOrigin,
@@ -295,110 +294,85 @@ function DriveKeyAccess({
         productId: "drive",
         spaceId,
         destinationOrigin: window.location.origin,
-        mode: "redirect",
-        returnPath: window.location.pathname + window.location.search,
+        mode: "iframe",
       });
-      await savePendingHandoff("drive", request);
-      try {
-        sessionStorage.setItem(HANDOFF_ATTEMPT_KEY, "1");
-      } catch {
-        /* storage disabled — the redirect still works, just no loop guard */
-      }
-      setStatus("Unlocking with your Xenode Account…");
-      window.location.assign(request.brokerUrl);
+      pending.current.set(request.binding.transactionId, request);
+      setStatus("Securely exchanging a one-time encrypted key…");
+      setBrokerUrl(request.brokerUrl);
     } catch (error) {
-      handoffRedirectInFlight = false;
+      handoffInFlight.current = false;
+      setUnlockError(true);
       setStatus(error instanceof Error ? error.message : "Could not start handoff.");
     }
-  }, [accountId, accountsOrigin, spaceId]);
+  }, [accountId, accountsOrigin, isUnlocked, pending, spaceId]);
 
-  // On mount: (1) consume a returning redirect handoff, else (2) restore from
-  // the on-device caches, else (3) auto-redirect once to unlock seamlessly.
   useEffect(() => {
-    if (!accountId || !spaceId) return;
+    if (!accountId || !spaceId || isUnlocked) return;
     let cancelled = false;
     void (async () => {
-      // (1) Return leg — did the broker just redirect us back with a handoff?
-      const hash = new URLSearchParams(
-        window.location.hash.replace(/^#/u, ""),
-      );
-      const returnedTx = hash.get("xenode-handoff");
-      const returnedState = hash.get("xenode-state");
-      if (returnedTx && returnedState) {
-        // Strip the fragment regardless of outcome so a reload can't re-consume.
-        window.history.replaceState(
-          null,
-          "",
-          window.location.pathname + window.location.search,
-        );
-        const persisted = (await loadPendingHandoff(
-          "drive",
-        )) as PendingHandoff | null;
-        await clearPendingHandoff("drive");
-        if (
-          persisted &&
-          persisted.binding.transactionId === returnedTx &&
-          persisted.binding.state === returnedState
-        ) {
-          try {
-            await consumeRequest(persisted);
-            try {
-              sessionStorage.removeItem(HANDOFF_ATTEMPT_KEY);
-            } catch {
-              /* ignore */
-            }
-          } catch (error) {
-            if (!cancelled) {
-              setStatus(
-                error instanceof Error ? error.message : "Handoff failed.",
-              );
-            }
-          }
-          return;
-        }
-      }
-
-      // (2) Silent restore from the persisted caches (product + sharing keys).
       await clearLegacySharingKeys();
       if (cancelled) return;
-
-      // (3) Still locked — auto-redirect once per session (guarded against loops).
-      let attempted = false;
-      try {
-        attempted = sessionStorage.getItem(HANDOFF_ATTEMPT_KEY) === "1";
-      } catch {
-        /* storage disabled */
-      }
-      if (!attempted) {
-        await startUnlock();
-      } else {
-        setStatus("Drive encryption is locked.");
-      }
+      await startUnlock();
     })();
     return () => {
       cancelled = true;
     };
-  }, [
-    accountId,
-    spaceId,
-    consumeRequest,
-    startUnlock,
-    setSharingKeys,
-  ]);
+  }, [accountId, isUnlocked, spaceId, startUnlock]);
+
+  useEffect(() => {
+    function receiveHandoff(event: MessageEvent) {
+      if (event.origin !== accountsOrigin) return;
+      const data = event.data as {
+        type?: string;
+        transactionId?: string;
+        state?: string;
+        message?: string;
+      };
+      if (
+        data.type !== "xenode:key-handoff-ready" &&
+        data.type !== "xenode:key-handoff-error"
+      ) {
+        return;
+      }
+      if (!data.transactionId || !data.state) return;
+      const request = pending.current.get(data.transactionId);
+      if (!request || request.binding.state !== data.state) return;
+
+      if (data.type === "xenode:key-handoff-error") {
+        pending.current.delete(data.transactionId);
+        handoffInFlight.current = false;
+        setBrokerUrl(null);
+        setUnlockError(true);
+        setStatus(data.message ?? "The secure key exchange failed.");
+        return;
+      }
+
+      setStatus("Opening the one-time encrypted handoff…");
+      void consumeRequest(request).catch((error) => {
+        pending.current.delete(data.transactionId!);
+        handoffInFlight.current = false;
+        setBrokerUrl(null);
+        setUnlockError(true);
+        setStatus(error instanceof Error ? error.message : "Handoff failed.");
+      });
+    }
+
+    window.addEventListener("message", receiveHandoff);
+    return () => window.removeEventListener("message", receiveHandoff);
+  }, [accountsOrigin, consumeRequest, pending]);
 
   const lock = useCallback(async () => {
     await productCrypto.lock(spaceId || undefined);
     await clearLegacySharingKeys();
     await clearPendingHandoff("drive");
-    try {
-      sessionStorage.removeItem(HANDOFF_ATTEMPT_KEY);
-    } catch {
-      /* ignore */
-    }
+    pending.current.clear();
+    handoffInFlight.current = false;
+    setBrokerUrl(null);
+    setUnlockError(false);
     clearSharingKeys();
     clearThumbnailMemoryCache();
     setStatus("Drive encryption is locked.");
-  }, [clearSharingKeys, productCrypto, spaceId]);
+  }, [clearSharingKeys, pending, productCrypto, spaceId]);
 
   const logout = useCallback(async () => {
     await lock();
@@ -421,37 +395,21 @@ function DriveKeyAccess({
 
   return (
     <CryptoContext.Provider value={value}>
-      {!isUnlocked ? (
-        <aside className="flex items-center justify-between gap-4 border-b border-border bg-card px-4 py-2 text-sm">
-          <span role="status" className="text-muted-foreground">{status}</span>
-          <div className="flex items-center gap-3">
-            <a
-              href={`${accountsOrigin}/security/vault`}
-              target="_blank"
-              rel="noreferrer"
-              className="text-xs text-muted-foreground hover:text-foreground"
-            >
-              Manage Vault
-            </a>
-            <button
-              type="button"
-              onClick={() => {
-                // Manual retry — clear the loop guard so the redirect fires again.
-                try {
-                  sessionStorage.removeItem(HANDOFF_ATTEMPT_KEY);
-                } catch {
-                  /* ignore */
-                }
-                void startUnlock();
-              }}
-              className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"
-            >
-              Unlock encryption
-            </button>
-          </div>
-        </aside>
-      ) : null}
       {children}
+      {!isUnlocked ? (
+        <SecureUnlockOverlay
+          productName="Drive"
+          status={status}
+          brokerUrl={brokerUrl}
+          error={unlockError}
+          onRetry={() => {
+            handoffInFlight.current = false;
+            setBrokerUrl(null);
+            setUnlockError(false);
+            void startUnlock();
+          }}
+        />
+      ) : null}
     </CryptoContext.Provider>
   );
 }

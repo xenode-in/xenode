@@ -10,10 +10,8 @@ import {
 import {
   ProductCryptoProvider,
   useProductCrypto,
-  savePendingHandoff,
-  loadPendingHandoff,
-  clearPendingHandoff,
 } from "@xenode/crypto-react";
+import { SecureUnlockOverlay } from "@xenode/ui";
 import {
   consumeProductSpaceKey,
   createOneTimeHandoffStore,
@@ -28,10 +26,7 @@ import {
 } from "@/lib/client-session";
 import { SessionRevocationGuard } from "./SessionRevocationGuard";
 
-// Loop guard + document-scoped dedupe for the redirect handoff (see Drive).
-const HANDOFF_ATTEMPT_KEY = "xenode-handoff-attempt:photos";
 const OIDC_ATTEMPT_KEY = "xenode-oidc-attempt:photos";
-let handoffRedirectInFlight = false;
 let oidcRedirectInFlight = false;
 
 type UnlockPayload = {
@@ -97,7 +92,14 @@ function UnlockControl({
   const productCrypto = useProductCrypto();
   const [session, setSession] = useState<PhotosSessionInfo | null>(null);
   const [status, setStatus] = useState("Checking product session...");
+  const [brokerUrl, setBrokerUrl] = useState<string | null>(null);
+  const [unlockError, setUnlockError] = useState(false);
+  const handoffInFlight = useRef(false);
   const bootstrappedSession = useRef<string | null>(null);
+  const accountsOrigin = new URL(
+    process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ??
+      "https://accounts.xenode.in",
+  ).origin;
 
   const consumeRequest = useCallback(
     async (request: PendingHandoff): Promise<boolean> => {
@@ -111,7 +113,9 @@ function UnlockControl({
           body: JSON.stringify(request.binding),
         },
       );
-      if (response.status === 410) return false;
+      if (response.status === 410) {
+        throw new Error("The one-time handoff expired. Please try again.");
+      }
       const payload = (await response.json().catch(() => ({}))) as {
         error?: string;
         ciphertext?: string;
@@ -136,25 +140,32 @@ function UnlockControl({
         transactionId,
         sealed,
       } satisfies UnlockPayload);
-      setStatus("Photos encryption key unlocked in memory.");
+      setStatus("Photos is ready.");
+      setBrokerUrl(null);
+      setUnlockError(false);
+      handoffInFlight.current = false;
       return true;
     },
     [productCrypto, pending],
   );
 
-  // Redirect-based handoff (zero-click) — see Drive's CryptoContext.
+  // Keep Photos mounted while Accounts performs the one-time key exchange in a
+  // narrowly frameable, exact-origin broker route.
   const startUnlock = useCallback(async () => {
     if (!session) {
       setStatus("Sign in to Photos first.");
       return;
     }
-    if (handoffRedirectInFlight) return;
-    handoffRedirectInFlight = true;
+    if (
+      handoffInFlight.current ||
+      productCrypto.isUnlocked(session.spaceId)
+    ) {
+      return;
+    }
+    handoffInFlight.current = true;
+    setUnlockError(false);
+    setStatus("Verifying this Photos session with Xenode Accounts…");
     try {
-      const accountsOrigin = new URL(
-        process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ??
-          "https://accounts.xenode.in",
-      ).origin;
       const request = await createProductHandoffRequest({
         accountsOrigin,
         accountId: session.accountId,
@@ -162,22 +173,17 @@ function UnlockControl({
         productId: "photos",
         spaceId: session.spaceId,
         destinationOrigin: window.location.origin,
-        mode: "redirect",
-        returnPath: window.location.pathname + window.location.search,
+        mode: "iframe",
       });
-      await savePendingHandoff("photos", request);
-      try {
-        sessionStorage.setItem(HANDOFF_ATTEMPT_KEY, "1");
-      } catch {
-        /* storage disabled */
-      }
-      setStatus("Unlocking with your Xenode Account…");
-      window.location.assign(request.brokerUrl);
+      pending.current.set(request.binding.transactionId, request);
+      setStatus("Securely exchanging a one-time encrypted key…");
+      setBrokerUrl(request.brokerUrl);
     } catch (error) {
-      handoffRedirectInFlight = false;
+      handoffInFlight.current = false;
+      setUnlockError(true);
       setStatus(error instanceof Error ? error.message : "Could not start handoff.");
     }
-  }, [session]);
+  }, [accountsOrigin, pending, productCrypto, session]);
 
   // Discover the product session independently from key bootstrap. If these
   // flows share an effect, setSession changes startUnlock and restarts another
@@ -228,83 +234,55 @@ function UnlockControl({
     };
   }, []);
 
-  // For a known session: consume a returning handoff, restore from cache, or
-  // auto-redirect once to unlock seamlessly.
   useEffect(() => {
     if (!session) return;
     const bootstrapKey = `${session.accountId}:${session.spaceId}`;
     if (bootstrappedSession.current === bootstrapKey) return;
     bootstrappedSession.current = bootstrapKey;
+    void startUnlock();
+  }, [session, startUnlock]);
 
-    let cancelled = false;
-    void (async () => {
-      // (1) Return leg — consume a redirect handoff if we came back with one.
-      const hash = new URLSearchParams(window.location.hash.replace(/^#/u, ""));
-      const returnedTx = hash.get("xenode-handoff");
-      const returnedState = hash.get("xenode-state");
-      if (returnedTx && returnedState) {
-        window.history.replaceState(
-          null,
-          "",
-          window.location.pathname + window.location.search,
-        );
-        const persisted = (await loadPendingHandoff(
-          "photos",
-        )) as PendingHandoff | null;
-        await clearPendingHandoff("photos");
-        if (
-          persisted &&
-          persisted.binding.transactionId === returnedTx &&
-          persisted.binding.state === returnedState
-        ) {
-          try {
-            await consumeRequest(persisted);
-            try {
-              sessionStorage.removeItem(HANDOFF_ATTEMPT_KEY);
-            } catch {
-              /* ignore */
-            }
-          } catch (error) {
-            if (!cancelled) {
-              setStatus(
-                error instanceof Error ? error.message : "Handoff failed.",
-              );
-            }
-          }
-          return;
-        }
-      }
-
-      // (2) Silent restore from the persisted key cache.
-      const restored = await productCrypto.restore(session.spaceId);
-      if (restored && !cancelled) {
-        setStatus("Photos encryption key unlocked.");
-        try {
-          sessionStorage.removeItem(HANDOFF_ATTEMPT_KEY);
-        } catch {
-          /* ignore */
-        }
+  useEffect(() => {
+    function receiveHandoff(event: MessageEvent) {
+      if (event.origin !== accountsOrigin) return;
+      const data = event.data as {
+        type?: string;
+        transactionId?: string;
+        state?: string;
+        message?: string;
+      };
+      if (
+        data.type !== "xenode:key-handoff-ready" &&
+        data.type !== "xenode:key-handoff-error"
+      ) {
         return;
       }
-      if (cancelled) return;
+      if (!data.transactionId || !data.state) return;
+      const request = pending.current.get(data.transactionId);
+      if (!request || request.binding.state !== data.state) return;
 
-      // (3) Still locked — auto-redirect once per session.
-      let attempted = false;
-      try {
-        attempted = sessionStorage.getItem(HANDOFF_ATTEMPT_KEY) === "1";
-      } catch {
-        /* storage disabled */
+      if (data.type === "xenode:key-handoff-error") {
+        pending.current.delete(data.transactionId);
+        handoffInFlight.current = false;
+        setBrokerUrl(null);
+        setUnlockError(true);
+        setStatus(data.message ?? "The secure key exchange failed.");
+        return;
       }
-      if (!attempted) {
-        await startUnlock();
-      } else {
-        setStatus("Photos encryption key is locked.");
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [session, productCrypto, consumeRequest, startUnlock]);
+
+      setStatus("Opening the one-time encrypted handoff…");
+      void consumeRequest(request).catch((error) => {
+        pending.current.delete(data.transactionId!);
+        handoffInFlight.current = false;
+        setBrokerUrl(null);
+        setUnlockError(true);
+        setStatus(error instanceof Error ? error.message : "Handoff failed.");
+      });
+    }
+
+    window.addEventListener("message", receiveHandoff);
+    return () => window.removeEventListener("message", receiveHandoff);
+  }, [accountsOrigin, consumeRequest, pending]);
 
   const unlocked = session
     ? productCrypto.isUnlocked(session.spaceId)
@@ -319,42 +297,24 @@ function UnlockControl({
   }
   return (
     <>
-      <aside className="flex items-center gap-3 border-b border-border bg-card px-6 py-2.5 text-sm">
-        <button
-          type="button"
-          disabled={!session}
-          onClick={() => {
-            try {
-              sessionStorage.removeItem(HANDOFF_ATTEMPT_KEY);
-            } catch {
-              /* ignore */
-            }
-            void startUnlock();
-          }}
-          className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50"
-        >
-          Unlock encryption
-        </button>
-        <span role="status" className="text-muted-foreground">
-          {status}
-        </span>
-        {!session ? (
-          <a
-            href="/auth/login"
-            onClick={() => {
-              try {
-                sessionStorage.removeItem(OIDC_ATTEMPT_KEY);
-              } catch {
-                /* ignore */
-              }
-            }}
-            className="ml-auto text-primary hover:underline"
-          >
-            Sign in
-          </a>
-        ) : null}
-      </aside>
       {children}
+      <SecureUnlockOverlay
+        productName="Photos"
+        status={status}
+        brokerUrl={brokerUrl}
+        error={unlockError}
+        onRetry={
+          session
+            ? () => {
+                handoffInFlight.current = false;
+                bootstrappedSession.current = null;
+                setBrokerUrl(null);
+                setUnlockError(false);
+                void startUnlock();
+              }
+            : undefined
+        }
+      />
     </>
   );
 }

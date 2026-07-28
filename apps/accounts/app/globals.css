@@ -137,6 +137,201 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* Secure product-key handoff */
+.handoff-page {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  min-height: 100dvh;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 34px clamp(22px, 6vw, 52px);
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--background) 94%, var(--primary)), var(--background) 62%),
+    var(--background);
+  text-align: center;
+}
+.handoff-page::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  width: min(560px, 92vw);
+  height: min(560px, 92vw);
+  border: 1px solid color-mix(in srgb, var(--primary) 10%, transparent);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 56px color-mix(in srgb, var(--primary) 2.6%, transparent),
+    0 0 0 112px color-mix(in srgb, var(--primary) 1.6%, transparent);
+}
+.handoff-glow {
+  position: absolute;
+  z-index: -2;
+  width: 280px;
+  height: 280px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  filter: blur(90px);
+  opacity: 0.6;
+}
+.handoff-glow-one {
+  top: -120px;
+  left: -80px;
+}
+.handoff-glow-two {
+  right: -100px;
+  bottom: -130px;
+  opacity: 0.38;
+}
+.handoff-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  margin-bottom: 22px;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+.handoff-brand-mark {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 9px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font-size: 13px;
+}
+.handoff-brand-divider {
+  width: 1px;
+  height: 15px;
+  background: var(--border);
+}
+.handoff-shield {
+  position: relative;
+  display: grid;
+  width: 72px;
+  height: 72px;
+  place-items: center;
+  margin-bottom: 20px;
+  border: 1px solid color-mix(in srgb, var(--primary) 20%, var(--border));
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--primary) 8%, var(--card));
+  color: var(--primary);
+  box-shadow: 0 16px 40px color-mix(in srgb, var(--primary) 14%, transparent);
+}
+.handoff-shield::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border: 1px solid color-mix(in srgb, var(--primary) 25%, transparent);
+  border-radius: inherit;
+  animation: handoff-pulse 2.2s ease-out infinite;
+}
+.handoff-shield svg {
+  width: 38px;
+  height: 38px;
+}
+.handoff-page .eyebrow {
+  margin-bottom: 9px;
+  letter-spacing: 0.16em;
+}
+.handoff-page h1 {
+  max-width: 480px;
+  font-size: clamp(28px, 7vw, 38px);
+}
+.handoff-page .lede {
+  max-width: 500px;
+  margin-top: 13px;
+  font-size: 14px;
+}
+.handoff-vault-section {
+  width: min(470px, 100%);
+  margin-top: 24px;
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  padding: 18px;
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(18px);
+}
+.handoff-badge {
+  margin-bottom: 14px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.handoff-vault-section .muted {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.handoff-form {
+  width: 100%;
+  text-align: left;
+}
+.handoff-status {
+  display: flex;
+  max-width: 500px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  margin: 18px 0 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.handoff-status::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--primary);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 11%, transparent);
+  animation: handoff-status-pulse 1.5s ease-in-out infinite;
+}
+.handoff-footer {
+  margin: 16px 0 0;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+@keyframes handoff-pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.45;
+  }
+  to {
+    transform: scale(1.28);
+    opacity: 0;
+  }
+}
+@keyframes handoff-status-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (max-height: 650px) {
+  .handoff-page {
+    justify-content: flex-start;
+    padding-top: 24px;
+  }
+  .handoff-shield {
+    width: 58px;
+    height: 58px;
+    margin-bottom: 14px;
+    border-radius: 19px;
+  }
+  .handoff-shield svg {
+    width: 31px;
+    height: 31px;
+  }
+}
+
 a {
   color: inherit;
 }

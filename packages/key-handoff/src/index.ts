@@ -173,7 +173,7 @@ export async function createProductHandoffRequest(args: {
    * postMessage flow. `"redirect"` makes the broker navigate the whole tab back
    * to `returnPath` on the destination origin when done — no popup, no click.
    */
-  mode?: "popup" | "redirect";
+  mode?: "popup" | "iframe" | "redirect";
   /** Same-origin path (must start with a single "/") to return to in redirect mode. */
   returnPath?: string;
 }): Promise<PendingHandoff> {
@@ -207,6 +207,8 @@ export async function createProductHandoffRequest(args: {
         ? args.returnPath
         : "/";
     brokerUrl.searchParams.set("returnPath", returnPath);
+  } else if (args.mode === "iframe") {
+    brokerUrl.searchParams.set("mode", "iframe");
   }
   return {
     binding,
