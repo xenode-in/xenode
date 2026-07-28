@@ -128,8 +128,14 @@ interface PendingResolver {
   reject: (reason: unknown) => void;
 }
 
-/** Keys awaiting the next flush, mapped to their promise callbacks. */
-const _pendingResolvers = new Map<string, PendingResolver[]>();
+interface PendingThumbnailRequest {
+  key: string;
+  headers: Headers;
+  resolvers: PendingResolver[];
+}
+
+/** Requests awaiting the next flush, isolated by Space scope and object key. */
+const _pendingResolvers = new Map<string, PendingThumbnailRequest>();
 
 /**
  * In-flight dedup map: once a key has been queued its Promise is stored here
@@ -141,7 +147,12 @@ const _inFlightPromises = new Map<string, Promise<string>>();
 
 let _flushTimer: ReturnType<typeof setTimeout> | null = null;
 
-async function flushBatch(headers?: HeadersInit) {
+function requestIdentity(key: string, headers: Headers): string {
+  const spaceId = headers.get("x-xenode-space-id") ?? "personal";
+  return `${spaceId}\u0000${key}`;
+}
+
+async function flushBatch() {
   _flushTimer = null;
 
   // Drain the pending map atomically.
@@ -150,45 +161,68 @@ async function flushBatch(headers?: HeadersInit) {
 
   if (snapshot.size === 0) return;
 
-  const keys = Array.from(snapshot.keys());
-
-  const chunks: string[][] = [];
-  for (let i = 0; i < keys.length; i += MAX_BATCH_KEYS) {
-    chunks.push(keys.slice(i, i + MAX_BATCH_KEYS));
+  const scopeGroups = new Map<
+    string,
+    { headers: Headers; entries: Array<[string, PendingThumbnailRequest]> }
+  >();
+  for (const [identity, request] of snapshot) {
+    const scopeId =
+      request.headers.get("x-xenode-space-id") ?? "personal";
+    const group = scopeGroups.get(scopeId) ?? {
+      headers: request.headers,
+      entries: [],
+    };
+    group.entries.push([identity, request]);
+    scopeGroups.set(scopeId, group);
   }
 
   await Promise.all(
-    chunks.map(async (chunk) => {
-      try {
-        const res = await fetch("/api/objects/thumbnail/batch", {
-          method: "POST",
-          credentials: "include",
-          headers: { ...Object.fromEntries(new Headers(headers)), "Content-Type": "application/json" },
-          body: JSON.stringify({ keys: chunk }),
-        });
-
-        if (!res.ok) throw new Error(`thumbnail/batch HTTP ${res.status}`);
-
-        const { urls } = (await res.json()) as { urls: Record<string, string> };
-
-        for (const key of chunk) {
-          const url = urls[key];
-          const resolvers = snapshot.get(key) ?? [];
-          if (url) {
-            resolvers.forEach((r) => r.resolve(url));
-          } else {
-            resolvers.forEach((r) =>
-              r.reject(new Error(`No signed URL returned for thumbnail key`)),
-            );
-          }
-          _inFlightPromises.delete(key);
-        }
-      } catch (err) {
-        for (const key of chunk) {
-          snapshot.get(key)?.forEach((r) => r.reject(err));
-          _inFlightPromises.delete(key);
-        }
+    Array.from(scopeGroups.values()).flatMap((group) => {
+      const chunks: Array<Array<[string, PendingThumbnailRequest]>> = [];
+      for (let i = 0; i < group.entries.length; i += MAX_BATCH_KEYS) {
+        chunks.push(group.entries.slice(i, i + MAX_BATCH_KEYS));
       }
+      return chunks.map(async (chunk) => {
+        const keys = chunk.map(([, request]) => request.key);
+        try {
+          const res = await fetch("/api/objects/thumbnail/batch", {
+            method: "POST",
+            credentials: "include",
+            headers: {
+              ...Object.fromEntries(group.headers),
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ keys }),
+          });
+
+          if (!res.ok) throw new Error(`thumbnail/batch HTTP ${res.status}`);
+
+          const { urls } = (await res.json()) as {
+            urls: Record<string, string>;
+          };
+
+          for (const [identity, request] of chunk) {
+            const url = urls[request.key];
+            if (url) {
+              request.resolvers.forEach((resolver) => resolver.resolve(url));
+            } else {
+              request.resolvers.forEach((resolver) =>
+                resolver.reject(
+                  new Error(
+                    `No signed URL returned for thumbnail key "${request.key}"`,
+                  ),
+                ),
+              );
+            }
+            _inFlightPromises.delete(identity);
+          }
+        } catch (err) {
+          for (const [identity, request] of chunk) {
+            request.resolvers.forEach((resolver) => resolver.reject(err));
+            _inFlightPromises.delete(identity);
+          }
+        }
+      });
     }),
   );
 }
@@ -198,17 +232,26 @@ async function flushBatch(headers?: HeadersInit) {
  * proxy URL once the batch fires. Deduped within the coalesce window.
  */
 function requestUrl(key: string, headers?: HeadersInit): Promise<string> {
-  if (_inFlightPromises.has(key)) return _inFlightPromises.get(key)!;
+  const scopedHeaders = new Headers(headers);
+  const identity = requestIdentity(key, scopedHeaders);
+  if (_inFlightPromises.has(identity)) {
+    return _inFlightPromises.get(identity)!;
+  }
 
   const promise = new Promise<string>((resolve, reject) => {
-    if (!_pendingResolvers.has(key)) _pendingResolvers.set(key, []);
-    _pendingResolvers.get(key)!.push({ resolve, reject });
+    const pending = _pendingResolvers.get(identity) ?? {
+      key,
+      headers: scopedHeaders,
+      resolvers: [],
+    };
+    pending.resolvers.push({ resolve, reject });
+    _pendingResolvers.set(identity, pending);
   });
 
-  _inFlightPromises.set(key, promise);
+  _inFlightPromises.set(identity, promise);
 
   if (!_flushTimer) {
-    _flushTimer = setTimeout(() => flushBatch(headers), COALESCE_MS);
+    _flushTimer = setTimeout(() => flushBatch(), COALESCE_MS);
   }
 
   return promise;

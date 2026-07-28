@@ -32,7 +32,7 @@ export function SecureUnlockOverlay({
         }}
       />
 
-      <div className="relative w-full max-w-[560px]">
+      <div className="relative w-full max-w-[560px]" style={{ maxWidth: 560 }}>
         <div className="mb-5 flex items-center justify-center gap-2 text-sm font-semibold tracking-tight text-foreground">
           <span className="font-brand text-xl italic">Xenode</span>
           <span className="h-4 w-px bg-border" />
@@ -44,6 +44,7 @@ export function SecureUnlockOverlay({
             src={brokerUrl}
             title={`Securely unlock Xenode ${productName}`}
             className="h-[560px] w-full rounded-[28px] border border-border bg-card shadow-[0_28px_90px_rgba(0,0,0,0.18)]"
+            style={{ height: 560 }}
             sandbox="allow-forms allow-same-origin allow-scripts"
             referrerPolicy="no-referrer"
           />

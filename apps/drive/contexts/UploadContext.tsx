@@ -83,6 +83,14 @@ const RETRY_MAX_MS = 15_000;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+function isIOSBrowser(): boolean {
+  if (typeof navigator === "undefined") return false;
+  return (
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  );
+}
+
 // Exponential backoff with jitter.
 function backoffDelay(attempt: number): number {
   const base = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** (attempt - 1));
@@ -151,7 +159,6 @@ async function putWithRetry(
     onProgress?: (loaded: number) => void;
     xhrSet: Set<XMLHttpRequest>;
     isCancelled: () => boolean;
-    isPaused: () => boolean;
     waitWhilePaused: () => Promise<void>;
     refreshUrl?: () => Promise<void>;
   },
@@ -172,8 +179,13 @@ async function putWithRetry(
       if (h.isCancelled()) throw err;
       const pe = err instanceof PutError ? err : new PutError("network");
 
-      // Aborted purely because we paused — loop back and wait, no attempt spent.
-      if (pe.kind === "abort" && h.isPaused()) continue;
+      // Every non-cancel abort comes from our pause controller. The page may
+      // already have resumed before this handler runs, so never spend a retry
+      // attempt for an internally aborted request.
+      if (pe.kind === "abort") {
+        await h.waitWhilePaused();
+        continue;
+      }
 
       // Expired presigned URL → refresh once and retry (counts as an attempt).
       if (pe.kind === "http" && pe.status === 403 && h.refreshUrl) {
@@ -182,7 +194,6 @@ async function putWithRetry(
 
       const retryable =
         pe.kind === "network" ||
-        pe.kind === "abort" ||
         (pe.kind === "http" && (pe.status === 403 || isTransientStatus(pe.status)));
 
       attempt++;
@@ -328,19 +339,26 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const pauseAll = useCallback(() => {
+  // Stop scheduling new requests without aborting requests already in flight.
+  // iOS may suspend background JavaScript/networking; allowing current PUTs to
+  // finish avoids corrupting their retry state while later chunks wait safely.
+  const parkAll = useCallback(() => {
     if (pausedRef.current) return;
     pausedRef.current = true;
     engineRef.current?.pause();
     setIsPaused(true);
-    // Abort every in-flight request; the retry loops re-queue on pause-abort.
-    for (const taskId of xhrsByTask.current.keys()) abortTaskXhrs(taskId);
     setTasks((prev) =>
-      prev.map((t) =>
-        t.status === "uploading" ? { ...t, status: "paused" } : t,
+      prev.map((task) =>
+        task.status === "uploading" ? { ...task, status: "paused" } : task,
       ),
     );
-  }, [abortTaskXhrs]);
+  }, []);
+
+  const pauseAll = useCallback(() => {
+    parkAll();
+    // Abort every in-flight request; the retry loops re-queue on pause-abort.
+    for (const taskId of xhrsByTask.current.keys()) abortTaskXhrs(taskId);
+  }, [abortTaskXhrs, parkAll]);
 
   const resumeAll = useCallback(() => {
     if (!pausedRef.current) return;
@@ -488,26 +506,27 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     };
   }, [tasks]);
 
-  // Pause uploads when the tab is backgrounded / device locked / network drops,
-  // and resume when it returns. On iOS, locking the phone suspends Safari (it
-  // does NOT reload the page), so the in-memory queue survives — we just need to
-  // stop firing requests that would fail and re-launch them on wake.
+  // Pause only for a real connectivity loss or page navigation/BFCache. Normal
+  // tab switches keep active PUT requests alive. On iOS only, park new chunks
+  // while hidden because Safari may suspend the page; never abort active PUTs.
   useEffect(() => {
-    const onHidden = () => {
-      if (document.visibilityState === "hidden") pauseAll();
-      else resumeAll();
+    const ios = isIOSBrowser();
+    const onVisibilityChange = () => {
+      if (!ios) return;
+      if (document.visibilityState === "hidden") {
+        parkAll();
+      } else if (navigator.onLine) {
+        resumeAll();
+      }
     };
     const onOffline = () => pauseAll();
-    const onOnline = () => {
-      // Only auto-resume if the tab is actually foregrounded.
-      if (document.visibilityState !== "hidden") resumeAll();
-    };
+    const onOnline = () => resumeAll();
     const onPageHide = () => pauseAll();
     const onPageShow = () => {
-      if (navigator.onLine && document.visibilityState !== "hidden") resumeAll();
+      if (navigator.onLine) resumeAll();
     };
 
-    document.addEventListener("visibilitychange", onHidden);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("offline", onOffline);
     window.addEventListener("online", onOnline);
     window.addEventListener("pagehide", onPageHide);
@@ -519,13 +538,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     }
 
     return () => {
-      document.removeEventListener("visibilitychange", onHidden);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("online", onOnline);
       window.removeEventListener("pagehide", onPageHide);
       window.removeEventListener("pageshow", onPageShow);
     };
-  }, [pauseAll, resumeAll]);
+  }, [parkAll, pauseAll, resumeAll]);
 
   const uploadChunkedMediaDirectly = useCallback(
     async (task: UploadTask) => {
@@ -967,7 +986,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               },
               xhrSet,
               isCancelled: () => cancelledIds.current.has(task.id),
-              isPaused: () => pausedRef.current,
               waitWhilePaused,
               refreshUrl: refreshUrls,
             });
@@ -1291,7 +1309,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
       const xhrSet = xhrSetFor(task.id);
       const isCancelled = () => cancelledIds.current.has(task.id);
-      const isPausedNow = () => pausedRef.current;
 
       // Step 6: Upload the main file (retryable, pause-aware, progress-tracked).
       await putWithRetry(uploadBody as Blob, uploadContentType, {
@@ -1304,7 +1321,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         },
         xhrSet,
         isCancelled,
-        isPaused: isPausedNow,
         waitWhilePaused,
         refreshUrl: async () => {
           const p = await presignMain();
@@ -1447,7 +1463,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
       const xhrSet = xhrSetFor(rec.id);
       const isCancelled = () => cancelledIds.current.has(rec.id);
-      const isPausedNow = () => pausedRef.current;
       const setTask = (patch: Partial<UploadTask>) =>
         setTasks((prev) =>
           prev.map((t) => (t.id === rec.id ? { ...t, ...patch } : t)),
@@ -1539,7 +1554,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 },
                 xhrSet,
                 isCancelled,
-                isPaused: isPausedNow,
                 waitWhilePaused,
                 refreshUrl: async () => {
                   presign = await presignMultipart();
@@ -1629,7 +1643,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                   getUrl: () => op.uploadUrl,
                   xhrSet,
                   isCancelled,
-                  isPaused: isPausedNow,
                   waitWhilePaused,
                 },
               );
@@ -1658,7 +1671,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 setTask({ progress: Math.round((l / total) * 100), statusText: undefined }),
               xhrSet,
               isCancelled,
-              isPaused: isPausedNow,
               waitWhilePaused,
             });
           }

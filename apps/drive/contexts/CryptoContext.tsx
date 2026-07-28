@@ -14,6 +14,8 @@ import {
   useProductCrypto,
   clearPersistedKeys,
   clearPendingHandoff,
+  loadPersistedKey,
+  savePersistedKey,
 } from "@xenode/crypto-react";
 import { SecureUnlockOverlay } from "@xenode/ui";
 import {
@@ -176,6 +178,11 @@ export function CryptoProvider({
           bundle.productSpaceKey,
           requestedSpaceId,
         );
+        await Promise.all([
+          savePersistedKey(AUX_PRIVATE, requestedSpaceId, keys.privateKey),
+          savePersistedKey(AUX_PUBLIC, requestedSpaceId, keys.publicKey),
+          savePersistedKey(AUX_METADATA, requestedSpaceId, keys.metadataKey),
+        ]);
         setSharingKeys(keys);
         return bundle.productSpaceKey;
       } finally {
@@ -195,6 +202,7 @@ export function CryptoProvider({
         spaceId={spaceId}
         pending={pending}
         sharingKeys={sharingKeys}
+        setSharingKeys={setSharingKeys}
         clearSharingKeys={() => setSharingKeys(null)}
       >
         {children}
@@ -208,6 +216,7 @@ function DriveKeyAccess({
   spaceId,
   pending,
   sharingKeys,
+  setSharingKeys,
   clearSharingKeys,
   children,
 }: {
@@ -215,14 +224,20 @@ function DriveKeyAccess({
   spaceId: string;
   pending: React.RefObject<Map<string, PendingHandoff>>;
   sharingKeys: ImportedSharingKeys | null;
+  setSharingKeys: (keys: ImportedSharingKeys) => void;
   clearSharingKeys: () => void;
   children: ReactNode;
 }) {
   const productCrypto = useProductCrypto();
   const unlockProductKey = productCrypto.unlock;
+  const restoreProductKey = productCrypto.restore;
+  const lockProductKey = productCrypto.lock;
   const [status, setStatus] = useState("Restoring Drive encryption…");
   const [brokerUrl, setBrokerUrl] = useState<string | null>(null);
   const [unlockError, setUnlockError] = useState(false);
+  const [cacheState, setCacheState] = useState<
+    "checking" | "miss" | "ready"
+  >(accountId && spaceId ? "checking" : "miss");
   const handoffInFlight = useRef(false);
   const [isModalOpen, setModalOpen] = useState(false);
   const accountsOrigin = new URL(
@@ -269,6 +284,7 @@ function DriveKeyAccess({
       setBrokerUrl(null);
       setUnlockError(false);
       handoffInFlight.current = false;
+      setCacheState("ready");
       setModalOpen(false);
       return true;
     },
@@ -307,17 +323,57 @@ function DriveKeyAccess({
   }, [accountId, accountsOrigin, isUnlocked, pending, spaceId]);
 
   useEffect(() => {
-    if (!accountId || !spaceId || isUnlocked) return;
+    if (!accountId || !spaceId) return;
     let cancelled = false;
-    void (async () => {
-      await clearLegacySharingKeys();
+    queueMicrotask(() => {
       if (cancelled) return;
-      await startUnlock();
-    })();
+      setCacheState("checking");
+      setStatus("Restoring Drive encryption…");
+    });
+    void Promise.all([
+      restoreProductKey(spaceId),
+      loadPersistedKey(AUX_PRIVATE, spaceId),
+      loadPersistedKey(AUX_PUBLIC, spaceId),
+      loadPersistedKey(AUX_METADATA, spaceId),
+    ])
+      .then(async ([productRestored, privateKey, publicKey, metadataKey]) => {
+        if (cancelled) return;
+        if (productRestored && privateKey && publicKey && metadataKey) {
+          setSharingKeys({ privateKey, publicKey, metadataKey });
+          setStatus("Drive is ready.");
+          setCacheState("ready");
+          return;
+        }
+        if (productRestored) await lockProductKey(spaceId);
+        await clearLegacySharingKeys();
+        if (!cancelled) setCacheState("miss");
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setUnlockError(true);
+        setStatus(
+          error instanceof Error
+            ? error.message
+            : "Could not restore Drive encryption.",
+        );
+        setCacheState("miss");
+      });
     return () => {
       cancelled = true;
     };
-  }, [accountId, isUnlocked, spaceId, startUnlock]);
+  }, [
+    accountId,
+    lockProductKey,
+    restoreProductKey,
+    setSharingKeys,
+    spaceId,
+  ]);
+
+  useEffect(() => {
+    if (cacheState !== "miss" || !accountId || !spaceId) return;
+    const timer = window.setTimeout(() => void startUnlock(), 0);
+    return () => window.clearTimeout(timer);
+  }, [accountId, cacheState, spaceId, startUnlock]);
 
   useEffect(() => {
     function receiveHandoff(event: MessageEvent) {
@@ -371,6 +427,7 @@ function DriveKeyAccess({
     setUnlockError(false);
     clearSharingKeys();
     clearThumbnailMemoryCache();
+    setCacheState("miss");
     setStatus("Drive encryption is locked.");
   }, [clearSharingKeys, pending, productCrypto, spaceId]);
 
@@ -380,7 +437,7 @@ function DriveKeyAccess({
   }, [accountId, lock]);
 
   const value: CryptoContextType = {
-    isInitializing: false,
+    isInitializing: cacheState === "checking",
     isUnlocked,
     needsSetup: false,
     privateKey: sharingKeys?.privateKey ?? null,
@@ -396,7 +453,7 @@ function DriveKeyAccess({
   return (
     <CryptoContext.Provider value={value}>
       {children}
-      {!isUnlocked ? (
+      {!isUnlocked && cacheState === "miss" ? (
         <SecureUnlockOverlay
           productName="Drive"
           status={status}

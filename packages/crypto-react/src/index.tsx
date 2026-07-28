@@ -14,6 +14,9 @@ import { importProductKey } from "@xenode/crypto-core";
 import { ProductKeyStore } from "./key-store";
 import {
   clearPersistedKeys,
+  deletePersistedKey,
+  loadPersistedKey,
+  savePersistedKey,
 } from "./persistent-store";
 
 export { ProductKeyStore } from "./key-store";
@@ -30,10 +33,10 @@ export {
 export interface ProductCryptoContextValue {
   productId: string;
   isUnlocked(spaceId: string): boolean;
-  /** Product keys are memory-only; retained for API compatibility and returns false. */
+  /** Restore a cached, non-extractable product key into memory. */
   restore(spaceId: string): Promise<boolean>;
   unlock(spaceId: string, handoffCiphertext: unknown): Promise<void>;
-  /** Forget a space (or all) in memory. */
+  /** Forget a space (or all) in memory and remove its persisted key cache. */
   lock(spaceId?: string): Promise<void>;
   withProductKey<T>(
     spaceId: string,
@@ -63,12 +66,12 @@ export function ProductCryptoProvider({
   // a new identity on every unrelated render.
   const [version, setVersion] = useState(0);
 
-  // Remove legacy product-key databases. New ProductSpaceKeys remain in memory.
+  // Crypto operations use the in-memory store. A non-extractable CryptoKey may
+  // also be restored from IndexedDB after the product session is validated.
   useEffect(() => {
     const current = store.current;
-    void clearPersistedKeys(productId);
     return () => current.clear();
-  }, [productId]);
+  }, []);
 
   useEffect(() => {
     if (typeof BroadcastChannel === "undefined") return;
@@ -84,8 +87,20 @@ export function ProductCryptoProvider({
   }, [productId]);
 
   const restore = useCallback(
-    async (spaceId: string) => store.current.has(spaceId),
-    [],
+    async (spaceId: string) => {
+      if (store.current.has(spaceId)) return true;
+      const key = await loadPersistedKey(productId, spaceId);
+      if (!key) return false;
+      try {
+        store.current.set(spaceId, key);
+      } catch {
+        await deletePersistedKey(productId, spaceId);
+        return false;
+      }
+      setVersion((value) => value + 1);
+      return true;
+    },
+    [productId],
   );
 
   const unlock = useCallback(
@@ -98,6 +113,7 @@ export function ProductCryptoProvider({
         raw.fill(0);
       }
       store.current.set(spaceId, key);
+      await savePersistedKey(productId, spaceId, key);
       setVersion((value) => value + 1);
     },
     [productId, unwrapHandoff],
@@ -107,6 +123,7 @@ export function ProductCryptoProvider({
     async (spaceId?: string) => {
       if (spaceId) {
         store.current.delete(spaceId);
+        await deletePersistedKey(productId, spaceId);
       } else {
         store.current.clear();
         await clearPersistedKeys(productId);

@@ -90,10 +90,12 @@ function UnlockControl({
   children: ReactNode;
 }) {
   const productCrypto = useProductCrypto();
+  const restoreProductKey = productCrypto.restore;
   const [session, setSession] = useState<PhotosSessionInfo | null>(null);
   const [status, setStatus] = useState("Checking product session...");
   const [brokerUrl, setBrokerUrl] = useState<string | null>(null);
   const [unlockError, setUnlockError] = useState(false);
+  const [showUnlockOverlay, setShowUnlockOverlay] = useState(false);
   const handoffInFlight = useRef(false);
   const bootstrappedSession = useRef<string | null>(null);
   const accountsOrigin = new URL(
@@ -153,6 +155,7 @@ function UnlockControl({
   // narrowly frameable, exact-origin broker route.
   const startUnlock = useCallback(async () => {
     if (!session) {
+      setShowUnlockOverlay(true);
       setStatus("Sign in to Photos first.");
       return;
     }
@@ -163,6 +166,7 @@ function UnlockControl({
       return;
     }
     handoffInFlight.current = true;
+    setShowUnlockOverlay(true);
     setUnlockError(false);
     setStatus("Verifying this Photos session with Xenode Accounts…");
     try {
@@ -226,6 +230,7 @@ function UnlockControl({
           setStatus(
             error instanceof Error ? error.message : "Session unavailable.",
           );
+          setShowUnlockOverlay(true);
         }
       }
     })();
@@ -239,8 +244,32 @@ function UnlockControl({
     const bootstrapKey = `${session.accountId}:${session.spaceId}`;
     if (bootstrappedSession.current === bootstrapKey) return;
     bootstrappedSession.current = bootstrapKey;
-    void startUnlock();
-  }, [session, startUnlock]);
+    let cancelled = false;
+    setStatus("Restoring Photos encryption…");
+    void restoreProductKey(session.spaceId)
+      .then((restored) => {
+        if (cancelled) return;
+        if (restored) {
+          setStatus("Photos is ready.");
+          setShowUnlockOverlay(false);
+          return;
+        }
+        return startUnlock();
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        bootstrappedSession.current = null;
+        setUnlockError(true);
+        setStatus(
+          error instanceof Error
+            ? error.message
+            : "Could not restore Photos encryption.",
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [restoreProductKey, session, startUnlock]);
 
   useEffect(() => {
     function receiveHandoff(event: MessageEvent) {
@@ -298,23 +327,25 @@ function UnlockControl({
   return (
     <>
       {children}
-      <SecureUnlockOverlay
-        productName="Photos"
-        status={status}
-        brokerUrl={brokerUrl}
-        error={unlockError}
-        onRetry={
-          session
-            ? () => {
-                handoffInFlight.current = false;
-                bootstrappedSession.current = null;
-                setBrokerUrl(null);
-                setUnlockError(false);
-                void startUnlock();
-              }
-            : undefined
-        }
-      />
+      {showUnlockOverlay ? (
+        <SecureUnlockOverlay
+          productName="Photos"
+          status={status}
+          brokerUrl={brokerUrl}
+          error={unlockError}
+          onRetry={
+            session
+              ? () => {
+                  handoffInFlight.current = false;
+                  bootstrappedSession.current = null;
+                  setBrokerUrl(null);
+                  setUnlockError(false);
+                  void startUnlock();
+                }
+              : undefined
+          }
+        />
+      ) : null}
     </>
   );
 }

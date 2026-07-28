@@ -17,6 +17,10 @@ import { ensureSystemWorkspaceBucketRecord } from "@/lib/storage/workspaceBucket
 import { ensureOrganizationSpace } from "@xenode/spaces/repository";
 import { putMemberProductKey } from "@xenode/spaces/product-keys";
 import { getOrCreateOrgUsage } from "@/lib/orgs/billing/orgUsage";
+import {
+  isStorageRegion,
+  type StorageRegion,
+} from "@xenode/config/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -173,6 +177,20 @@ export async function POST(request: NextRequest) {
     }
     const website = normalizeWebsite(body.website);
     const logo = normalizeHttpUrl(body.logo);
+    let requestedStorageRegion: StorageRegion | null = null;
+    if (
+      typeof body.storageRegion === "string" &&
+      body.storageRegion.trim()
+    ) {
+      if (!isStorageRegion(body.storageRegion)) {
+        return NextResponse.json(
+          { error: "Storage region must be asia, us, or eu" },
+          { status: 400 },
+        );
+      }
+      requestedStorageRegion = body.storageRegion;
+    }
+    const storageRegion = requestedStorageRegion ?? ctx.region;
     if (typeof body.logo === "string" && body.logo.trim() && !logo) {
       return NextResponse.json(
         { error: "Logo must be a valid URL" },
@@ -256,8 +274,8 @@ export async function POST(request: NextRequest) {
           rotationReason: "initial",
         });
       }
-      await getOrCreateOrgUsage(org.id, ctx.region);
-      await ensureSystemWorkspaceBucketRecord("ORGANIZATION", ctx.region);
+      await getOrCreateOrgUsage(org.id, storageRegion);
+      await ensureSystemWorkspaceBucketRecord("ORGANIZATION", storageRegion);
     } catch (error) {
       await organizations.deleteOne({ id: org.id }).catch(() => {});
       await members
@@ -279,6 +297,7 @@ export async function POST(request: NextRequest) {
         organization: serializeOrg(org, member, null),
         spaceKeyReady: !!ownerWrappedSpaceKey,
         defaultBucketReady: true,
+        storageRegion,
       },
       { status: 201 },
     );

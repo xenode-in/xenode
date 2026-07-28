@@ -14,6 +14,7 @@ import {
   Loader2,
   Lock,
   Mail,
+  MapPin,
   Plus,
   RefreshCw,
   Send,
@@ -28,6 +29,10 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { getPublicProductRegistry } from "@xenode/config/client";
+import {
+  STORAGE_REGION_LABELS,
+  type StorageRegion,
+} from "@xenode/config/storage";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { useSession } from "@/lib/auth/client";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -249,6 +254,9 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
   const [orgType, setOrgType] = useState<string>("");
   const [teamSize, setTeamSize] = useState<string>("");
   const [website, setWebsite] = useState("");
+  const [storageRegion, setStorageRegion] = useState<
+    "account" | StorageRegion
+  >("account");
   const [logo, setLogo] = useState<string>("");
   const [logoUploading, setLogoUploading] = useState(false);
 
@@ -326,6 +334,7 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
     setOrgType("");
     setTeamSize("");
     setWebsite("");
+    setStorageRegion("account");
     setLogo("");
     setCreateStep(0);
     setCreateOpen(true);
@@ -379,6 +388,8 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
             orgType: orgType || undefined,
             teamSize: teamSize || undefined,
             website: website.trim() || undefined,
+            storageRegion:
+              storageRegion === "account" ? undefined : storageRegion,
             logo: logo || undefined,
             ownerWrappedSpaceKey,
             keyVersion: 1,
@@ -392,6 +403,7 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
       setOrgType("");
       setTeamSize("");
       setWebsite("");
+      setStorageRegion("account");
       setLogo("");
       setCreateStep(0);
       await refresh();
@@ -990,6 +1002,8 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
         setTeamSize={setTeamSize}
         website={website}
         setWebsite={setWebsite}
+        storageRegion={storageRegion}
+        setStorageRegion={setStorageRegion}
         logo={logo}
         setLogo={setLogo}
         onUploadLogo={uploadLogo}
@@ -1345,6 +1359,10 @@ const TEAM_SIZE_OPTIONS: { value: string; label: string }[] = [
   { value: "500+", label: "500+ people" },
 ];
 
+const STORAGE_REGION_OPTIONS: { value: StorageRegion; label: string }[] = (
+  ["asia", "us", "eu"] as const
+).map((value) => ({ value, label: STORAGE_REGION_LABELS[value] }));
+
 const WIZARD_STEPS = ["Details", "Team", "Review"];
 
 function optionLabel(
@@ -1367,6 +1385,8 @@ function CreateOrgWizard({
   setTeamSize,
   website,
   setWebsite,
+  storageRegion,
+  setStorageRegion,
   logo,
   setLogo,
   onUploadLogo,
@@ -1387,6 +1407,8 @@ function CreateOrgWizard({
   setTeamSize: (value: string) => void;
   website: string;
   setWebsite: (value: string) => void;
+  storageRegion: "account" | StorageRegion;
+  setStorageRegion: (value: "account" | StorageRegion) => void;
   logo: string;
   setLogo: (value: string) => void;
   onUploadLogo: (file: File) => void;
@@ -1602,6 +1624,40 @@ function CreateOrgWizard({
                 This helps us tailor storage and collaboration defaults.
               </p>
             </div>
+            <div className="space-y-2">
+              <Label>
+                Data storage region{" "}
+                <span className="text-xs font-normal text-muted-foreground">
+                  (optional)
+                </span>
+              </Label>
+              <Select
+                value={storageRegion}
+                onValueChange={(value) =>
+                  setStorageRegion(value as "account" | StorageRegion)
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="account">
+                    Use my account region
+                  </SelectItem>
+                  {STORAGE_REGION_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                Leave this unchanged to use the region selected when your
+                account was created. The organization region cannot be changed
+                after files are stored.
+              </p>
+            </div>
           </div>
         )}
 
@@ -1618,6 +1674,15 @@ function CreateOrgWizard({
                 value={teamSize ? optionLabel(TEAM_SIZE_OPTIONS, teamSize) : "—"}
               />
               <ReviewCell label="Website" value={website.trim() || "—"} full />
+              <ReviewCell
+                label="Storage region"
+                value={
+                  storageRegion === "account"
+                    ? "My account region"
+                    : STORAGE_REGION_LABELS[storageRegion]
+                }
+                full
+              />
             </div>
             <ul className="space-y-2 pt-1 text-sm text-muted-foreground">
               <li className="flex items-start gap-2">

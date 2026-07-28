@@ -6,6 +6,8 @@ import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import { SpaceProductKey } from "@/tests/helpers/spaceProductKeys";
 import { organizationSpaceId } from "@xenode/spaces/ids";
+import OrgUsage from "@/models/OrgUsage";
+import { clearStorageConfigCacheForTests } from "@xenode/config/storage";
 
 const mockedGetServerSession = vi.mocked(getServerSession);
 
@@ -88,6 +90,8 @@ describe("organization lifecycle API", () => {
   afterEach(() => {
     delete process.env.ORGS_ENABLED;
     delete process.env.NEXT_PUBLIC_ORGS_ENABLED;
+    delete process.env.S3_US_BUCKET_NAME;
+    clearStorageConfigCacheForTests();
     mockedGetServerSession.mockReset();
   });
 
@@ -145,6 +149,57 @@ describe("organization lifecycle API", () => {
       algorithm: "RSA-OAEP-256",
       status: "active",
     })).toBe(1);
+    await expect(
+      OrgUsage.findOne({ orgId: body.organization.id })
+        .then((usage) => usage?.storageRegion),
+    ).resolves.toBe("asia");
+    expect(body.storageRegion).toBe("asia");
+  });
+
+  it("rejects an unsupported organization storage region", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("owner_1");
+
+    const response = await orgsPOST(
+      orgPost({
+        name: "Invalid Region Org",
+        orgType: "company",
+        teamSize: "1-10",
+        storageRegion: "moon",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Storage region must be asia, us, or eu",
+    });
+  });
+
+  it("uses an optional organization storage-region override", async () => {
+    process.env.ORGS_ENABLED = "true";
+    process.env.S3_US_BUCKET_NAME = "xenode-us-test";
+    clearStorageConfigCacheForTests();
+    mockSession("owner_1");
+
+    const response = await orgsPOST(
+      orgPost({
+        name: "US Workspace",
+        orgType: "company",
+        teamSize: "1-10",
+        storageRegion: "us",
+      }),
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(201);
+    expect(body.storageRegion).toBe("us");
+    await expect(
+      OrgUsage.findOne({ orgId: body.organization.id })
+        .then((usage) => usage?.storageRegion),
+    ).resolves.toBe("us");
+    await expect(
+      Bucket.exists({ systemKey: "drive", storageRegion: "us" }),
+    ).resolves.toBeTruthy();
   });
 
   it("rejects duplicate org slugs", async () => {

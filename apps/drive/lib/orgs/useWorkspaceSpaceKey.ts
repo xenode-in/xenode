@@ -14,6 +14,14 @@ export interface WorkspaceSpaceKeyState {
   error: string | null;
 }
 
+interface WorkspaceKeyResponse {
+  error?: string;
+  keys?: Array<{
+    wrappedKey?: string;
+    keyVersion?: number;
+  }>;
+}
+
 export function useWorkspaceSpaceKey(): WorkspaceSpaceKeyState {
   const workspace = useOptionalWorkspace();
   const cryptoContext = useOptionalCrypto();
@@ -25,6 +33,10 @@ export function useWorkspaceSpaceKey(): WorkspaceSpaceKeyState {
 
   const driveScope = workspace?.driveScope ?? { type: "personal" as const };
   const isWorkspaceEncrypted = driveScope.type !== "personal";
+  const workspaceOrgId =
+    driveScope.type === "personal" ? "" : driveScope.orgId;
+  const workspaceTeamId =
+    driveScope.type === "team" ? driveScope.teamId : "";
 
   useEffect(() => {
     let cancelled = false;
@@ -44,17 +56,17 @@ export function useWorkspaceSpaceKey(): WorkspaceSpaceKeyState {
       try {
         const params =
           driveScope.type === "team"
-            ? `?teamId=${encodeURIComponent(driveScope.teamId)}`
+            ? `?teamId=${encodeURIComponent(workspaceTeamId)}`
             : "";
-        const res = await fetch(`/api/orgs/${driveScope.orgId}/keys${params}`, {
+        const res = await fetch(`/api/orgs/${workspaceOrgId}/keys${params}`, {
           headers: workspace?.scopedHeaders(),
         });
-        const data = await res.json().catch(() => ({}));
+        const data = (await res.json().catch(() => ({}))) as WorkspaceKeyResponse;
         if (!res.ok) {
           throw new Error(data.error || "Failed to load workspace key");
         }
         const grant = Array.isArray(data.keys) ? data.keys[0] : null;
-        if (!grant?.wrappedSpaceKey || !grant?.keyVersion) {
+        if (!grant?.wrappedKey || !grant?.keyVersion) {
           throw new Error("Workspace encryption key is not available");
         }
         const raw = await unwrapSpaceKeyGrant({
@@ -83,8 +95,8 @@ export function useWorkspaceSpaceKey(): WorkspaceSpaceKeyState {
     privateKey,
     workspace,
     driveScope.type,
-    driveScope.type === "personal" ? "" : driveScope.orgId,
-    driveScope.type === "team" ? driveScope.teamId : "",
+    workspaceOrgId,
+    workspaceTeamId,
   ]);
 
   const [importedKey, setImportedKey] = useState<CryptoKey | null>(null);

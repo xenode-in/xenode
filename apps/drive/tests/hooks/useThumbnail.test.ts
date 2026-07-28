@@ -55,6 +55,52 @@ describe("useThumbnail batcher", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it("isolates organization and personal requests queued in the same window", async () => {
+    expect(batchUtils).toBeDefined();
+
+    const observed: Array<{ spaceId: string | null; keys: string[] }> = [];
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (_input, init) => {
+        const headers = new Headers(init?.headers);
+        const spaceId = headers.get("x-xenode-space-id");
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          keys: string[];
+        };
+        observed.push({ spaceId, keys: body.keys });
+        const urls = Object.fromEntries(
+          body.keys.map((key) => [key, `/signed/${spaceId ?? "personal"}/${key}`]),
+        );
+        return {
+          ok: true,
+          json: async () => ({ urls }),
+        } as Response;
+      });
+
+    const personalKey = "users/u1/personal-thumb.jpg";
+    const organizationKey = "organizations/org-1/org-thumb.jpg";
+    const personalPromise = batchUtils!.requestUrl(personalKey);
+    const organizationPromise = batchUtils!.requestUrl(organizationKey, {
+      "x-xenode-space-id": "space_org-1",
+    });
+
+    await batchUtils!.flushBatch();
+
+    await expect(personalPromise).resolves.toBe(
+      `/signed/personal/${personalKey}`,
+    );
+    await expect(organizationPromise).resolves.toBe(
+      `/signed/space_org-1/${organizationKey}`,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(observed).toEqual(
+      expect.arrayContaining([
+        { spaceId: null, keys: [personalKey] },
+        { spaceId: "space_org-1", keys: [organizationKey] },
+      ]),
+    );
+  });
+
 });
 describe("thumbnail plaintext cache", () => {
   it("never treats encrypted bytes as an image when the key is unavailable", async () => {
