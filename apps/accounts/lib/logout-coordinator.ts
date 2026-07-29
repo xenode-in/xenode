@@ -9,7 +9,7 @@ import { publishProductSessionRevoked } from "@/lib/realtime";
 export async function revokeProductSessions(args: {
   accountId: string;
   issuerSessionId?: string;
-  action: "browser_logout" | "sign_out_everywhere";
+  action: "browser_logout" | "device_revoked" | "sign_out_everywhere";
 }): Promise<number> {
   await connectDatabase();
   const filter = {

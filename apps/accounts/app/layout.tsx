@@ -21,7 +21,7 @@ const libreBaskerville = Libre_Baskerville({
 
 const geistMono = Geist_Mono({
   subsets: ["latin"],
-  variable: "--font-mono",
+  variable: "--font-geist-mono",
   display: "swap",
 });
 
@@ -38,7 +38,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${suisseIntl.variable} ${libreBaskerville.variable} ${geistMono.variable}`}
+        className={`${suisseIntl.variable} ${libreBaskerville.variable} ${geistMono.variable} font-sans antialiased`}
       >
         <ThemeProvider>{children}</ThemeProvider>
       </body>

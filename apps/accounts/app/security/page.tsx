@@ -1,9 +1,9 @@
 import { AccountShell } from "@/components/AccountShell";
 import { loadSecurityActivity } from "@/lib/hub-data";
-import { requireAccountsPageSession } from "@/lib/session";
+import { requireUnlockedAccountsPageSession } from "@/lib/session";
 
 export default async function SecurityPage() {
-  const session = await requireAccountsPageSession();
+  const session = await requireUnlockedAccountsPageSession("/security");
   const activity = await loadSecurityActivity(session.user.id);
   return (
     <AccountShell user={session.user}>

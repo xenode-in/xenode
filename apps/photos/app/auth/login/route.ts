@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   const origin = process.env.PHOTOS_ORIGIN ?? "https://photos.xenode.in";
   const flow = await createOidcFlow(
     new URL(request.url).searchParams.get("next"),
-    "/",
+    "/library",
   );
   const jar = await cookies();
   const options = {

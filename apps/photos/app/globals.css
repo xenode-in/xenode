@@ -38,3 +38,64 @@ input {
     transparent;
   scrollbar-width: thin;
 }
+
+.photos-grid {
+  z-index: 0;
+  opacity: 0.38;
+  background-image:
+    linear-gradient(to right, rgb(17 23 20 / 0.055) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(17 23 20 / 0.035) 1px, transparent 1px);
+  background-size: 80px 80px;
+  mask-image: linear-gradient(to bottom, black 0%, transparent 72%);
+}
+
+.photo-sky {
+  background:
+    radial-gradient(circle at 62% 35%, #fff9ce 0 7%, transparent 8%),
+    linear-gradient(155deg, transparent 0 57%, #587454 58% 72%, #223b2d 73%),
+    linear-gradient(180deg, #98d6d0 0%, #e9d3a3 70%);
+}
+
+.photo-sunset {
+  background:
+    radial-gradient(circle at 72% 32%, #fff5c4 0 6%, transparent 7%),
+    linear-gradient(150deg, transparent 0 58%, #412f43 59% 70%, #191f2c 71%),
+    linear-gradient(180deg, #f09c72 0%, #bf6b83 46%, #314568 100%);
+}
+
+.photo-forest {
+  background:
+    radial-gradient(ellipse at 48% 72%, #bed89b 0 5%, transparent 6%),
+    linear-gradient(118deg, #17342a 0 25%, transparent 26%),
+    linear-gradient(242deg, #305442 0 28%, transparent 29%),
+    linear-gradient(180deg, #9dc8b7 0%, #52735a 50%, #1e3829 100%);
+}
+
+.photo-night {
+  background:
+    radial-gradient(circle at 22% 32%, #ffd786 0 1.5%, transparent 2%),
+    radial-gradient(circle at 67% 47%, #efb65e 0 2%, transparent 2.5%),
+    radial-gradient(circle at 78% 29%, #f7ecb7 0 1%, transparent 1.5%),
+    linear-gradient(165deg, transparent 0 52%, #111a25 53%),
+    linear-gradient(180deg, #17223c, #3f4364);
+}
+
+.photo-flower {
+  background:
+    radial-gradient(circle at 52% 48%, #f0bd56 0 7%, transparent 8%),
+    radial-gradient(ellipse at 52% 32%, #f7e8ef 0 14%, transparent 15%),
+    radial-gradient(ellipse at 67% 44%, #f2cbdc 0 14%, transparent 15%),
+    radial-gradient(ellipse at 59% 61%, #f8dee9 0 14%, transparent 15%),
+    radial-gradient(ellipse at 39% 59%, #edc4d4 0 14%, transparent 15%),
+    radial-gradient(ellipse at 37% 40%, #f7d8e4 0 14%, transparent 15%),
+    linear-gradient(145deg, #a9c68b, #385f43);
+}
+
+@media (prefers-color-scheme: dark) {
+  .photos-grid {
+    opacity: 0.32;
+    background-image:
+      linear-gradient(to right, rgb(255 255 255 / 0.06) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(255 255 255 / 0.04) 1px, transparent 1px);
+  }
+}

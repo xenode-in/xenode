@@ -1,10 +1,10 @@
 import { AccountShell } from "@/components/AccountShell";
 import { ProfileForm } from "@/components/ProfileForm";
 import { loadProfile } from "@/lib/hub-data";
-import { requireAccountsPageSession } from "@/lib/session";
+import { requireUnlockedAccountsPageSession } from "@/lib/session";
 
 export default async function ProfilePage() {
-  const session = await requireAccountsPageSession();
+  const session = await requireUnlockedAccountsPageSession("/profile");
   const profile = await loadProfile(session.user.id);
   return (
     <AccountShell user={session.user}>

@@ -29,6 +29,21 @@ export function usagePercent(used: number, limit: number | null): number {
   return Math.max(0, Math.min(100, Math.round((used / limit) * 100)));
 }
 
+const CONNECTED_DATE_FORMATTER = new Intl.DateTimeFormat("en-GB", {
+  day: "2-digit",
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+
+/**
+ * Use an explicit locale and timezone so Client Components produce the exact
+ * same text during SSR and browser hydration.
+ */
+export function connectedDateLabel(value: string | Date): string {
+  return CONNECTED_DATE_FORMATTER.format(new Date(value));
+}
+
 export function resumeAuthorizationPath(search: URLSearchParams): string {
   const allowed = new Set([
     "client_id", "redirect_uri", "response_type", "scope", "state", "nonce",

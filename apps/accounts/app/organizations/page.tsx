@@ -1,9 +1,9 @@
 import { AccountShell } from "@/components/AccountShell";
 import { loadOrganizations } from "@/lib/hub-data";
-import { requireAccountsPageSession } from "@/lib/session";
+import { requireUnlockedAccountsPageSession } from "@/lib/session";
 
 export default async function OrganizationsPage() {
-  const session = await requireAccountsPageSession();
+  const session = await requireUnlockedAccountsPageSession("/organizations");
   const organizations = await loadOrganizations(session.user.id);
   const driveOrigin = process.env.DRIVE_ORIGIN ?? "https://drive.xenode.in";
   return (

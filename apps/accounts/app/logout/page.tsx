@@ -13,6 +13,10 @@ async function finishLogout(
   signOutAccounts: boolean,
 ) {
   await clearCachedAccountRootKey().catch(() => undefined);
+  await fetch("/api/vault/unlock", {
+    method: "DELETE",
+    credentials: "include",
+  }).catch(() => undefined);
   if (signOutAccounts) {
     await fetch("/api/auth/sign-out", {
       method: "POST",

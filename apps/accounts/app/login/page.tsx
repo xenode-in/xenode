@@ -2,75 +2,14 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import {
-  derivePasswordWrappingKey,
-  openEnvelope,
-  type Argon2idParams,
-  type CryptoEnvelope,
-} from "@xenode/crypto-core";
 import { resumeAuthorizationPath } from "@/lib/presentation";
-import { deriveArgon2id } from "@/lib/argon2";
-import { cacheAccountRootKey } from "@/lib/ark-cache";
-import { enrollBrowserDevice, loadBrowserDeviceArk } from "@/lib/device-vault";
+import {
+  cacheArkFromLogin,
+  confirmVaultUnlock,
+} from "@/lib/password-vault";
 
 type Mode = "signin" | "signup";
 type SocialProvider = "google" | "github";
-
-type VaultResponse = {
-  accountId: string;
-  vault: {
-    vaultRevision: number;
-    passwordEnvelope: CryptoEnvelope & { kdfParams: Argon2idParams };
-    deviceEnvelopes: CryptoEnvelope[];
-  } | null;
-};
-
-/**
- * Seamless unlock: right after a successful sign-in, derive the Account Root Key
- * from the just-entered vault password and cache it (non-extractable) on this
- * origin. The key-handoff broker then unwraps product keys for Drive/Photos with
- * NO second password prompt — "authenticated ⇒ unlocked", like v1. Best-effort:
- * any failure just falls back to the broker's password form.
- */
-async function cacheArkFromLogin(pw: string): Promise<void> {
-  const response = await fetch("/api/vault", {
-    credentials: "include",
-    cache: "no-store",
-  });
-  if (!response.ok) return;
-  const data = (await response.json()) as VaultResponse;
-  if (!data.vault) return; // vault not set up yet — the setup flow caches it
-  const envelope = data.vault.passwordEnvelope;
-  const passwordKey = await derivePasswordWrappingKey(
-    pw,
-    envelope.kdfParams,
-    deriveArgon2id,
-  );
-  let ark: Uint8Array | undefined;
-  try {
-    ark = await openEnvelope(envelope, passwordKey, {
-      accountId: data.accountId,
-      keyId: "ark",
-      keyVersion: 1,
-      type: "password",
-    });
-    await cacheAccountRootKey(data.accountId, ark);
-    const enrolled = await loadBrowserDeviceArk(
-      data.accountId,
-      data.vault.deviceEnvelopes,
-    );
-    if (!enrolled) {
-      await enrollBrowserDevice(
-        data.accountId,
-        ark,
-        data.vault.vaultRevision,
-      ).catch(() => undefined);
-    }
-  } finally {
-    ark?.fill(0);
-    passwordKey.fill(0);
-  }
-}
 
 const TAGLINES = [
   "One identity for Drive, Photos, and every Xenode product.",
@@ -275,8 +214,15 @@ export default function LoginPage() {
         }
         // Cache the ARK from the login password so Drive/Photos unlock without a
         // second prompt. Best-effort — never block sign-in on it.
-        await cacheArkFromLogin(password).catch(() => undefined);
-        window.location.assign(resumePath);
+        try {
+          await cacheArkFromLogin(password, { trustDevice: rememberMe });
+          await confirmVaultUnlock("password", password);
+          window.location.assign(resumePath);
+        } catch {
+          window.location.assign(
+            `/auth/continue?next=${encodeURIComponent(resumePath)}`,
+          );
+        }
         return;
       }
 

@@ -22,6 +22,7 @@ import {
   type StorageRegion,
 } from "@xenode/config/storage";
 import { createAccountVault } from "@/lib/vault-setup";
+import { confirmVaultUnlock } from "@/lib/password-vault";
 import {
   generateAvatarBatch,
   type GeneratedAvatar,
@@ -240,6 +241,22 @@ export function OnboardingWizard({
     setError("");
     try {
       setTheme(themeChoice);
+      if (passwordSource === "onboarding") {
+        const credentialResponse = await fetch("/api/account/password", {
+          method: "POST",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ password }),
+        });
+        if (!credentialResponse.ok) {
+          const payload = (await credentialResponse
+            .json()
+            .catch(() => ({}))) as { error?: string };
+          throw new Error(
+            payload.error ?? "Could not create the Xenode password.",
+          );
+        }
+      }
       try {
         await createAccountVault({
           accountId,
@@ -277,6 +294,7 @@ export function OnboardingWizard({
       } catch {
         /* ignore */
       }
+      await confirmVaultUnlock("password", password);
       window.location.assign(next);
     } catch (finalError) {
       setError(

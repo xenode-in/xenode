@@ -1,3 +1,13 @@
+@layer scalar-base, scalar-theme, scalar-config, theme, base, components, utilities;
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "../../../packages/ui/src/styles/tokens.css";
+
+@source "../../../packages/ui/src/components";
+@source "./";
+@source "../components";
+
 /*
  * Xenode Account — design system.
  *
@@ -488,12 +498,12 @@ h2 {
 
 /* ── Page container ───────────────────────────────────────────────────────── */
 .page {
-  width: min(1040px, calc(100% - 40px));
+  width: min(1200px, calc(100% - 40px));
   margin: 0 auto;
-  padding: 56px 0 96px;
+  padding: 48px 0 96px;
 }
 .page-narrow {
-  width: min(640px, calc(100% - 40px));
+  width: min(720px, calc(100% - 40px));
 }
 
 /* ── Cards / grids ────────────────────────────────────────────────────────── */
@@ -860,6 +870,71 @@ h2 {
 }
 .auth-card h1 {
   font-size: 28px;
+}
+
+.vault-unlock-card {
+  width: min(480px, 100%);
+}
+.vault-unlock-icon {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  margin-bottom: 22px;
+  border: 1px solid color-mix(in srgb, var(--primary) 24%, var(--border));
+  border-radius: 19px;
+  background: color-mix(in srgb, var(--primary) 9%, var(--card));
+  color: var(--primary);
+}
+.vault-unlock-checking {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 24px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--muted-foreground);
+  background: var(--muted);
+  font-size: 14px;
+}
+.vault-unlock-pulse {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--primary);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 40%, transparent);
+  animation: handoff-pulse 1.8s ease-out infinite;
+}
+.vault-unlock-trust-title {
+  display: block;
+  color: var(--foreground);
+}
+.vault-unlock-card .checkbox-row small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+}
+.vault-unlock-footnote {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.vault-unlock-footnote svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+.vault-unlock-card .back-link {
+  margin-top: 18px;
 }
 
 /* ── Auth (two-panel) ─────────────────────────────────────────────────────── */

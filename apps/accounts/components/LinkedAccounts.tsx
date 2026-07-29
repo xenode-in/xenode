@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { connectedDateLabel } from "@/lib/presentation";
 
 type ProviderId = "google" | "github";
 type LinkedAccount = {
@@ -117,7 +118,7 @@ export function LinkedAccounts({
             {linked ? (
               <>
                 <p className="fine-print">
-                  Connected {new Date(linked.createdAt).toLocaleDateString()}.
+                  Connected {connectedDateLabel(linked.createdAt)}.
                   Granted scopes: {linked.scopes.join(", ") || "identity"}.
                 </p>
                 <button

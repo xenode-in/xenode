@@ -1,9 +1,10 @@
 import { AccountShell } from "@/components/AccountShell";
 import { LinkedAccounts } from "@/components/LinkedAccounts";
-import { requireAccountsPageSession } from "@/lib/session";
+import { requireUnlockedAccountsPageSession } from "@/lib/session";
 
 export default async function LinkedAccountsPage() {
-  const session = await requireAccountsPageSession();
+  const session =
+    await requireUnlockedAccountsPageSession("/linked-accounts");
   const googleConfigured = Boolean(
     process.env.GOOGLE_CLIENT_ID?.trim() && process.env.GOOGLE_CLIENT_SECRET?.trim(),
   );

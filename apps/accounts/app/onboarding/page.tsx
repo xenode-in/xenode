@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { AccountProfile, connectDatabase } from "@xenode/database";
+import { getAccountOnboardingReadiness } from "@xenode/database";
 import { requireAccountsPageSession } from "@/lib/session";
 import { OnboardingWizard } from "./OnboardingWizard";
 
@@ -21,11 +21,11 @@ export default async function OnboardingPage({
       `/verify-email?email=${encodeURIComponent(session.user.email)}&next=${encodeURIComponent(`/onboarding?next=${encodeURIComponent(next)}`)}`,
     );
   }
-  await connectDatabase();
-  const profile = await AccountProfile.findOne({
-    accountId: session.user.id,
-  }).lean();
-  if (profile?.onboarded) redirect(next);
+  const readiness = await getAccountOnboardingReadiness(session.user.id);
+  if (readiness.complete) redirect(next);
+  if (readiness.profileOnboarded && readiness.hasVault) {
+    redirect(`/auth/password?next=${encodeURIComponent(next)}`);
+  }
 
   return (
     <OnboardingWizard

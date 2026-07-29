@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   auditActionLabel,
   bytesLabel,
+  connectedDateLabel,
   resumeAuthorizationPath,
   usagePercent,
 } from "../lib/presentation";
@@ -20,6 +21,12 @@ describe("Accounts presentation helpers", () => {
     expect(usagePercent(75, 100)).toBe(75);
     expect(usagePercent(150, 100)).toBe(100);
     expect(usagePercent(10, null)).toBe(0);
+  });
+
+  it("formats linked-account dates deterministically for hydration", () => {
+    expect(connectedDateLabel("2026-07-28T23:30:00-07:00")).toBe(
+      "29 Jul 2026",
+    );
   });
 
   it("resumes only allowlisted OIDC authorization parameters", () => {

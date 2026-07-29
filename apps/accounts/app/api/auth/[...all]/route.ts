@@ -1,5 +1,7 @@
 import { toNextJsHandler } from "better-auth/next-js";
+import { getAccountOnboardingReadiness } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
+import { hasVaultUnlockConfirmation } from "@/lib/vault-unlock-session";
 
 function rejectsResourceIndicator(request: Request): boolean {
   const url = new URL(request.url);
@@ -17,7 +19,37 @@ export async function GET(request: Request) {
       { status: 400 },
     );
   }
-  return toNextJsHandler(await getAccountsAuth()).GET(request);
+  const auth = await getAccountsAuth();
+  const url = new URL(request.url);
+  if (url.pathname.endsWith("/oauth2/authorize")) {
+    const session = await auth.api.getSession({ headers: request.headers });
+    if (session) {
+      const readiness = await getAccountOnboardingReadiness(session.user.id);
+      if (!readiness.complete) {
+        const next = `${url.pathname}${url.search}`;
+        const destination =
+          readiness.profileOnboarded &&
+          readiness.hasVault &&
+          readiness.hasPasswordEnvelope
+            ? "/auth/password"
+            : "/onboarding";
+        const redirectUrl = new URL(destination, url.origin);
+        redirectUrl.searchParams.set("next", next);
+        return Response.redirect(redirectUrl);
+      }
+      const unlocked = await hasVaultUnlockConfirmation(request.headers, {
+        accountId: session.user.id,
+        sessionId: session.session.id,
+      });
+      if (!unlocked) {
+        const next = `${url.pathname}${url.search}`;
+        const redirectUrl = new URL("/auth/continue", url.origin);
+        redirectUrl.searchParams.set("next", next);
+        return Response.redirect(redirectUrl);
+      }
+    }
+  }
+  return toNextJsHandler(auth).GET(request);
 }
 
 export async function POST(request: Request) {

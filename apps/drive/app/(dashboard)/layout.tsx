@@ -34,12 +34,6 @@ export default async function DashboardLayout({
   // Email verification is enforced by the Accounts authority at sign-in —
   // Drive no longer hosts a verification flow.
 
-  // Redirect to onboarding if not completed
-  // Use loose check in case the field is undefined for older users
-  if ((session.user as { onboarded?: boolean }).onboarded === false) {
-    redirect("/onboarding");
-  }
-
   // Resolve the active workspace (personal or organization) for the sidebar +
   // switcher. activeOrganizationId lives on the better-auth session.
   const activeOrgId =

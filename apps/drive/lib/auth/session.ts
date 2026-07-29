@@ -1,7 +1,10 @@
 import { headers as nextHeaders } from "next/headers";
 import { type NextRequest } from "next/server";
 import mongoose from "mongoose";
-import { ProductSession } from "@xenode/database";
+import {
+  getAccountOnboardingReadiness,
+  ProductSession,
+} from "@xenode/database";
 import dbConnect from "@/lib/mongodb";
 import { parseDriveSessionCookie } from "@/lib/auth/product-cookie";
 import { User } from "@/models/User";
@@ -101,6 +104,10 @@ export async function getServerSession(
     expiresAt: { $gt: new Date() },
   }).lean();
   if (!productSession) return null;
+  const readiness = await getAccountOnboardingReadiness(
+    productSession.accountId,
+  );
+  if (!readiness.complete) return null;
 
   if (!mongoose.isValidObjectId(productSession.accountId)) return null;
   const user = await User.findById(productSession.accountId)

@@ -22,7 +22,7 @@ export async function GET(request: Request) {
   const verifier = jar.get("xenode_photos_pkce")?.value;
   const returnTo = sanitizeReturnTo(
     jar.get("xenode_photos_oidc_return")?.value,
-    "/",
+    "/library",
   );
   if (
     !code ||

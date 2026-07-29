@@ -1,10 +1,10 @@
 import { AccountShell } from "@/components/AccountShell";
 import { loadUsage } from "@/lib/hub-data";
 import { bytesLabel, usagePercent } from "@/lib/presentation";
-import { requireAccountsPageSession } from "@/lib/session";
+import { requireUnlockedAccountsPageSession } from "@/lib/session";
 
 export default async function UsagePage() {
-  const session = await requireAccountsPageSession();
+  const session = await requireUnlockedAccountsPageSession("/usage");
   const usage = await loadUsage(session.user.id);
   const percent = usagePercent(usage.storageBytes, usage.storageLimitBytes);
   return (
