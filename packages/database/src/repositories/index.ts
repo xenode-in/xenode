@@ -5,6 +5,7 @@ import { createAccountRepository } from "./accounts";
 export * from "./accounts";
 export * from "./browser-logout";
 export * from "./types";
+export * from "./storage-objects";
 
 export async function listExternalAccountsForUser(userId: string) {
   await connectDatabase();

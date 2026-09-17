@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { getDatabase } from "@xenode/database";
 
 // Mock the B2 object layer so no real network calls happen. `listObjects`
 // returns whatever blobs "exist" under a prefix; `deleteObjects` records what
@@ -49,7 +50,7 @@ function expired() {
 describe("cleanup-orphans: thumbnail protection", () => {
   beforeEach(() => {
     process.env.CRON_SECRET = CRON_SECRET;
-    deleteObjects.mockClear();
+    deleteObjects.mockReset();
     listObjects.mockClear();
   });
 
@@ -169,6 +170,62 @@ describe("cleanup-orphans: thumbnail protection", () => {
     expect(res.status).toBe(200);
     expect(deleteObjects).not.toHaveBeenCalled();
     expect(await UploadSession.countDocuments({ fileId: key })).toBe(1);
+  });
+
+  it.each(["trash", "photos", "chunk", "version", "version-chunk"])(
+    "protects a retained %s reference to a ledgered secondary key",
+    async (kind) => {
+      const userId = makeUserId();
+      const bucket = await seedBucket(userId, kind);
+      const fileId = `users/${userId}/abandoned`;
+      const key = `${fileId}-secondary`;
+      const fields = kind === "chunk" ? { chunks: [{ key }] }
+        : kind === "version" ? { versions: [{ key }] }
+          : kind === "version-chunk" ? { versions: [{ key: "old-logical", chunks: [{ key }] }] }
+            : { thumbnail: key };
+      await getDatabase().collection("storageobjects").insertOne({
+        bucketId: bucket._id, key: `users/${userId}/retained`,
+        productId: kind === "photos" ? "photos" : "drive",
+        ...(kind === "trash" ? { deletedAt: new Date() } : {}), ...fields,
+      });
+      await UploadSession.create({ userId, bucketId: bucket._id, fileId, keys: [fileId, key], status: "pending", expiresAt: expired() });
+      const response = await GET(cronRequest());
+      expect(response.status).toBe(200);
+      expect(deleteObjects).not.toHaveBeenCalled();
+      expect((await response.json()).skippedLive).toBe(1);
+    },
+  );
+
+  it("deletes only exact ledger keys, never every object sharing their prefix", async () => {
+    const userId = makeUserId();
+    const bucket = await seedBucket(userId, "prefix");
+    const fileId = `users/${userId}/prefix`;
+    await UploadSession.create({ userId, bucketId: bucket._id, fileId, keys: [fileId], status: "pending", expiresAt: expired() });
+    const response = await GET(cronRequest());
+    expect(response.status).toBe(200);
+    expect(listObjects).not.toHaveBeenCalled();
+    expect(deleteObjects).toHaveBeenCalledWith(bucket.b2BucketId, [fileId]);
+  });
+
+  it("retains the ledger if storage deletion fails", async () => {
+    const userId = makeUserId();
+    const bucket = await seedBucket(userId, "failure");
+    const fileId = `users/${userId}/failed`;
+    await UploadSession.create({ userId, bucketId: bucket._id, fileId, keys: [fileId], status: "pending", expiresAt: expired() });
+    deleteObjects.mockRejectedValueOnce(new Error("storage unavailable"));
+    expect((await GET(cronRequest())).status).toBe(500);
+    expect(await UploadSession.countDocuments({ fileId })).toBe(1);
+  });
+
+  it("retains the ledger when physical bucket metadata is unavailable", async () => {
+    const userId = makeUserId();
+    const bucket = await seedBucket(userId, "missing");
+    const fileId = `users/${userId}/missing-bucket`;
+    await UploadSession.create({ userId, bucketId: bucket._id, fileId, keys: [fileId], status: "pending", expiresAt: expired() });
+    await Bucket.deleteOne({ _id: bucket._id });
+    expect((await GET(cronRequest())).status).toBe(500);
+    expect(deleteObjects).not.toHaveBeenCalled();
+    expect(await UploadSession.countDocuments({ fileId })).toBe(1);
   });
 });
 

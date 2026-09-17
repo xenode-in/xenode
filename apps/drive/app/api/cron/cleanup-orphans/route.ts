@@ -12,9 +12,9 @@
  * `expiresAt` (24h — safely beyond the 1h presign window and any real upload),
  * this deletes its B2 keys and removes the row.
  *
- * Safety: a session whose logical key now belongs to a LIVE StorageObject
- * (upload actually finished but the ledger wasn't updated) is never deleted —
- * we drop the stale row and move on. Secured with the shared CRON_SECRET, same
+ * Safety: retained references across products, including Bin and version
+ * content, are never deleted. Only exact ledger keys are cleanup candidates.
+ * Secured with the shared CRON_SECRET, same
  * pattern as /api/cron/purge-bin. Register in vercel.json / docker cron.
  *
  * Processes in bounded batches so a large backlog can't blow up memory.
@@ -24,9 +24,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
-import StorageObject from "@/models/StorageObject";
+import { findReferencedStorageObjectKeys } from "@xenode/database";
 import UploadSession from "@/models/UploadSession";
-import { deleteObjects as deleteB2Objects, listObjects } from "@/lib/b2/objects";
+import { deleteObjects as deleteB2Objects } from "@/lib/b2/objects";
 
 export const dynamic = "force-dynamic";
 
@@ -79,54 +79,27 @@ export async function GET(req: NextRequest) {
       const processedIds: Types.ObjectId[] = [];
 
       for (const s of sessions) {
-        processedIds.push(s._id);
         const b2 = b2ByBucket.get(s.bucketId.toString());
+        // Missing routing metadata is not evidence that the physical bucket or
+        // its blobs disappeared. Keep the ledger so an operator can retry.
+        if (!b2) throw new Error("Upload cleanup bucket metadata is missing");
 
-        // Safety: if the upload actually completed, never delete its blobs —
-        // just retire the stale row. This matches not only a live StorageObject
-        // that OWNS this logical key, but also one that merely REFERENCES it as
-        // its thumbnail / optimized preview. The latter guards legacy thumbnail
-        // sessions (created before thumbnails attached to their parent's
-        // session) whose blob is still in active use by a live file.
-        const live = await StorageObject.findOne({
-          bucketId: s.bucketId,
-          deletedAt: { $exists: false },
-          $or: [
-            { key: s.fileId },
-            { thumbnail: s.fileId },
-            { optimizedKey: s.fileId },
-          ],
-        })
-          .select("_id")
-          .lean();
-        if (live) {
+        const keys = [...new Set([s.fileId, ...(s.keys ?? [])].filter(Boolean))];
+        const referenced = await findReferencedStorageObjectKeys({
+          bucketId: s.bucketId, keys,
+        });
+        if (referenced.size > 0) {
+          // Retire the stale session as a whole. Unreferenced secondary keys
+          // need reconciliation, not deletion alongside a retained upload.
           skippedLive++;
+          processedIds.push(s._id);
           continue;
         }
-
-        if (!b2) continue; // bucket gone — drop the row, nothing to delete
-
-        // Union the ledgered keys with whatever is actually under the prefix
-        // (belt-and-suspenders for any key not recorded), then batch-delete.
-        const keys = new Set<string>(s.keys ?? []);
-        try {
-          let continuationToken: string | undefined;
-          do {
-            const page = await listObjects(b2, s.fileId, 1000, continuationToken);
-            for (const obj of page.objects) keys.add(obj.key);
-            continuationToken = page.isTruncated
-              ? page.nextContinuationToken
-              : undefined;
-          } while (continuationToken);
-        } catch (err) {
-          console.warn(`[Cron] cleanup-orphans list failed for ${s.fileId}:`, err);
+        if (keys.length > 0) {
+          await deleteB2Objects(b2, keys);
+          keysDeleted += keys.length;
         }
-
-        const keyList = Array.from(keys).filter(Boolean);
-        if (keyList.length > 0) {
-          await deleteB2Objects(b2, keyList);
-          keysDeleted += keyList.length;
-        }
+        processedIds.push(s._id);
       }
 
       // Remove the processed session rows (both deleted and stale-live ones).

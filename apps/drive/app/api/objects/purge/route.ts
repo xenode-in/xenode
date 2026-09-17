@@ -27,15 +27,16 @@ import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject, { type IStorageObjectVersion } from "@/models/StorageObject";
 import {
-  collectVersionB2Keys,
   versionsTotalBytes,
 } from "@/lib/storage/versions";
+import { collectStorageObjectKeys } from "@/lib/storage/object-keys";
 import ShareLink from "@/models/ShareLink";
 import DirectShare from "@/models/DirectShare";
 import { removeObjectsFromAlbums } from "@/lib/albums/cleanup";
 import { deleteObjects as deleteB2Objects } from "@/lib/b2/objects";
 import { decrementStorageBulk, updateBucketStats } from "@/lib/metering/usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
+import { decrementOrgStorage } from "@/lib/orgs/billing/orgUsage";
 
 export const dynamic = "force-dynamic";
 
@@ -48,22 +49,13 @@ type PurgeDoc = {
   optimizedKey?: string;
   size?: number;
   versions?: IStorageObjectVersion[];
+  chunks?: Array<{ key: string }>;
 };
 
-const PURGE_PROJECTION = "_id key thumbnail optimizedKey size versions";
+const PURGE_PROJECTION = "_id key thumbnail optimizedKey size versions chunks";
 
 function collectB2Keys(docs: PurgeDoc[]): string[] {
-  const keys: string[] = [];
-  for (const d of docs) {
-    if (d.key) keys.push(d.key);
-    if (d.thumbnail && d.thumbnail.startsWith("users/")) keys.push(d.thumbnail);
-    if (d.optimizedKey) keys.push(d.optimizedKey);
-    // Version history blobs are freed too.
-    for (const v of d.versions ?? []) {
-      keys.push(...collectVersionB2Keys(v));
-    }
-  }
-  return keys;
+  return docs.flatMap(collectStorageObjectKeys);
 }
 
 export async function POST(request: NextRequest) {
@@ -203,9 +195,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, purgedCount: 0 });
     }
 
+    docs = [...new Map(docs.map((doc) => [String(doc._id), doc])).values()];
     const allDocIds = docs.map((d) => d._id);
 
-    // 1. Remove the encrypted blobs from B2 (batched, best-effort).
+    // 1. Confirm encrypted blob deletion before discarding the metadata.
     await deleteB2Objects(bucket.b2BucketId, collectB2Keys(docs));
 
     // 2. Hard-delete the documents.
@@ -221,7 +214,11 @@ export async function POST(request: NextRequest) {
       (sum, d) => sum + (d.size || 0) + versionsTotalBytes(d.versions ?? []),
       0,
     );
-    await decrementStorageBulk(userId, totalSize, allDocIds.length);
+    if (ctx.spaceType === "personal") {
+      await decrementStorageBulk(userId, totalSize, allDocIds.length);
+    } else {
+      await decrementOrgStorage(ctx.organizationId!, totalSize, allDocIds.length);
+    }
     await updateBucketStats(String(bucket._id), -allDocIds.length, -totalSize);
 
     return NextResponse.json({ success: true, purgedCount: allDocIds.length });

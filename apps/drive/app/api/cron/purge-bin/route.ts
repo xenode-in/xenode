@@ -19,6 +19,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
+import { Space } from "@xenode/database";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject, { type IStorageObjectVersion } from "@/models/StorageObject";
@@ -27,9 +28,10 @@ import DirectShare from "@/models/DirectShare";
 import { deleteObjects as deleteB2Objects } from "@/lib/b2/objects";
 import { decrementStorageBulk, updateBucketStats } from "@/lib/metering/usage";
 import {
-  collectVersionB2Keys,
   versionsTotalBytes,
 } from "@/lib/storage/versions";
+import { collectStorageObjectKeys } from "@/lib/storage/object-keys";
+import { decrementOrgStorage } from "@/lib/orgs/billing/orgUsage";
 
 export const dynamic = "force-dynamic";
 
@@ -40,12 +42,13 @@ const MAX_BATCHES = 10000; // defensive ceiling; deleteMany guarantees progress
 type ExpiredDoc = {
   _id: Types.ObjectId;
   bucketId: Types.ObjectId;
-  userId: string;
+  spaceId: string;
   key?: string;
   thumbnail?: string;
   optimizedKey?: string;
   size?: number;
   versions?: IStorageObjectVersion[];
+  chunks?: Array<{ key: string }>;
 };
 
 export async function GET(req: NextRequest) {
@@ -64,7 +67,7 @@ export async function GET(req: NextRequest) {
 
     for (let batch = 0; batch < MAX_BATCHES; batch++) {
       const docs = await StorageObject.find({ deletedAt: { $lte: cutoff } })
-        .select("_id bucketId userId key thumbnail optimizedKey size versions")
+        .select("_id bucketId spaceId key thumbnail optimizedKey size versions chunks")
         .limit(BATCH)
         .lean<ExpiredDoc[]>();
 
@@ -79,30 +82,34 @@ export async function GET(req: NextRequest) {
         .lean<{ _id: Types.ObjectId; b2BucketId: string }[]>();
       const b2ByBucket = new Map<string, string>();
       for (const b of buckets) b2ByBucket.set(b._id.toString(), b.b2BucketId);
+      const spaces = await Space.find({ _id: { $in: [...new Set(docs.map((doc) => doc.spaceId))] } }).lean();
+      const spaceById = new Map(spaces.map((space) => [space._id, space]));
 
       // Group B2 keys per physical bucket so we can batch-delete each.
       const keysByB2 = new Map<string, string[]>();
       // Aggregate metering deltas per user and per logical bucket.
       const userSize = new Map<string, number>();
       const userCount = new Map<string, number>();
+      const orgSize = new Map<string, number>();
+      const orgCount = new Map<string, number>();
       const bucketSize = new Map<string, number>();
       const bucketCount = new Map<string, number>();
 
       for (const d of docs) {
         const bid = d.bucketId.toString();
         const b2 = b2ByBucket.get(bid);
-        if (b2) {
-          const arr = keysByB2.get(b2) ?? [];
-          if (d.key) arr.push(d.key);
-          if (d.thumbnail && d.thumbnail.startsWith("users/"))
-            arr.push(d.thumbnail);
-          if (d.optimizedKey) arr.push(d.optimizedKey);
-          for (const v of d.versions ?? []) arr.push(...collectVersionB2Keys(v));
-          keysByB2.set(b2, arr);
-        }
+        if (!b2) throw new Error("Bin purge bucket metadata is missing");
+        const space = spaceById.get(d.spaceId);
+        const ownerId = space?.type === "personal" ? space.ownerAccountId : space?.organizationId;
+        if (!space || !ownerId) throw new Error("Bin purge Space owner is missing");
+        const arr = keysByB2.get(b2) ?? [];
+        arr.push(...collectStorageObjectKeys(d));
+        keysByB2.set(b2, arr);
         const sz = (d.size || 0) + versionsTotalBytes(d.versions ?? []);
-        userSize.set(d.userId, (userSize.get(d.userId) ?? 0) + sz);
-        userCount.set(d.userId, (userCount.get(d.userId) ?? 0) + 1);
+        const sizes = space.type === "personal" ? userSize : orgSize;
+        const counts = space.type === "personal" ? userCount : orgCount;
+        sizes.set(ownerId, (sizes.get(ownerId) ?? 0) + sz);
+        counts.set(ownerId, (counts.get(ownerId) ?? 0) + 1);
         bucketSize.set(bid, (bucketSize.get(bid) ?? 0) + sz);
         bucketCount.set(bid, (bucketCount.get(bid) ?? 0) + 1);
       }
@@ -121,6 +128,9 @@ export async function GET(req: NextRequest) {
       // 3. Metering.
       for (const [uid, size] of userSize) {
         await decrementStorageBulk(uid, size, userCount.get(uid) ?? 0);
+      }
+      for (const [orgId, size] of orgSize) {
+        await decrementOrgStorage(orgId, size, orgCount.get(orgId) ?? 0);
       }
       for (const [bid, size] of bucketSize) {
         await updateBucketStats(bid, -(bucketCount.get(bid) ?? 0), -size);

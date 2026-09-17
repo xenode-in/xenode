@@ -67,9 +67,9 @@ export async function deleteObject(
  * Delete many objects from a B2 bucket in one round trip per 1000 keys.
  *
  * S3's DeleteObjects API accepts up to 1000 keys per request, so we chunk.
- * Best-effort: a chunk that fails (or reports per-key errors) is logged but
- * doesn't throw — the caller (bulk-delete) has already decided the records
- * are going away, and any B2 key we miss is harmless orphaned ciphertext.
+ * Throws on transport or per-key failures. Callers must retain their metadata
+ * and cleanup ledger until every batch succeeds; S3 can return HTTP 200 with
+ * individual deletion errors.
  * Duplicate/empty keys are de-duped out first.
  */
 export async function deleteObjects(
@@ -82,21 +82,17 @@ export async function deleteObjects(
   const CHUNK = 1000;
   for (let i = 0; i < unique.length; i += CHUNK) {
     const slice = unique.slice(i, i + CHUNK);
-    try {
-      await getS3Client(regionForBucketName(bucketName)).send(
-        new DeleteObjectsCommand({
-          Bucket: bucketName,
-          Delete: {
-            Objects: slice.map((Key) => ({ Key })),
-            Quiet: true,
-          },
-        }),
-      );
-    } catch (e) {
-      console.error(
-        `[b2] deleteObjects chunk failed (${slice.length} keys):`,
-        e,
-      );
+    const response = await getS3Client(regionForBucketName(bucketName)).send(
+      new DeleteObjectsCommand({
+        Bucket: bucketName,
+        Delete: {
+          Objects: slice.map((Key) => ({ Key })),
+          Quiet: true,
+        },
+      }),
+    );
+    if (response.Errors?.length) {
+      throw new Error(`Object storage failed to delete ${response.Errors.length} requested objects`);
     }
   }
 }
