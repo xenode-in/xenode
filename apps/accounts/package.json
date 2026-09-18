@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@better-auth/oauth-provider": "^1.6.25",
+    "@better-auth/passkey": "^1.6.25",
     "@noble/hashes": "^2.2.0",
     "@simplewebauthn/browser": "^13.3.0",
     "@simplewebauthn/server": "^13.3.0",
@@ -33,6 +34,7 @@
     "pdf-lib": "^1.17.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "react-qr-code": "^2.0.18",
     "resend": "^6.9.4"
   },
   "devDependencies": {

@@ -28,7 +28,6 @@ import { AccountShell } from "@/components/AccountShell";
 import {
   loadOrganizations,
   loadProfile,
-  loadSecurityActivity,
   loadUsage,
 } from "@/lib/hub-data";
 import { bytesLabel, usagePercent } from "@/lib/presentation";
@@ -52,7 +51,7 @@ const sections = [
   {
     title: "Security",
     href: "/security",
-    description: "Review Vault changes, sign-ins, and encrypted handoffs.",
+    description: "Passkeys, authenticator verification, password, and Vault.",
     icon: ShieldCheck,
     accent: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300",
   },
@@ -81,11 +80,10 @@ const sections = [
 
 export default async function AccountsHome() {
   const session = await requireUnlockedAccountsPageSession("/");
-  const [profile, organizations, usage, activity] = await Promise.all([
+  const [profile, organizations, usage] = await Promise.all([
     loadProfile(session.user.id),
     loadOrganizations(session.user.id),
     loadUsage(session.user.id),
-    loadSecurityActivity(session.user.id),
   ]);
   const storagePercent = usagePercent(
     usage.storageBytes,
@@ -270,44 +268,6 @@ export default async function AccountsHome() {
                 >
                   <Link href="/security">
                     Review security
-                    <ArrowRight />
-                  </Link>
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card className="gap-4 bg-card/78 backdrop-blur">
-              <CardHeader>
-                <CardTitle className="flex items-center justify-between text-base">
-                  Recent activity
-                  <Badge variant="outline">{activity.length}</Badge>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {activity.slice(0, 3).map((event) => (
-                  <div
-                    key={event.id}
-                    className="flex items-start gap-3 border-b border-border/70 pb-4 last:border-0 last:pb-0"
-                  >
-                    <span className="mt-1.5 size-2 shrink-0 rounded-full bg-emerald-500" />
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">
-                        {event.label}
-                      </p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {event.productId ?? "Xenode Accounts"}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-                {!activity.length ? (
-                  <p className="text-sm text-muted-foreground">
-                    Security activity will appear here.
-                  </p>
-                ) : null}
-                <Button variant="ghost" className="w-full" asChild>
-                  <Link href="/security">
-                    View full activity
                     <ArrowRight />
                   </Link>
                 </Button>

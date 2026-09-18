@@ -2,6 +2,7 @@
 import { GlobalSearch } from "@/components/dashboard/GlobalSearch";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { Settings, LogOut, ChevronRight, Menu } from "lucide-react";
 import {
@@ -106,7 +107,7 @@ export function DashboardShell({
   const pathname = usePathname();
   const navItems = getSidebarNav(workspace);
   const activeOrgId =
-    workspace.kind === "organization" ? workspace.orgId ?? null : null;
+    workspace.kind === "organization" ? (workspace.orgId ?? null) : null;
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [signOutOpen, setSignOutOpen] = useState(false);
@@ -141,10 +142,16 @@ export function DashboardShell({
         {/* Logo */}
         <div className="px-6 py-5 border-b border-sidebar-border">
           <Link href="/dashboard" className="flex items-center gap-2">
-            <span className="text-xl font-brand italic text-sidebar-foreground">
-              Xenode
+            <span className="relative h-12 w-12 shrink-0 overflow-hidden">
+              <Image
+                src="/xenode-drive-logo.png"
+                alt="Xenode Drive"
+                width={130}
+                height={93}
+                className="absolute left-1/2 top-1/2 max-w-none -translate-x-1/2 -translate-y-1/2"
+              />
             </span>
-            <span className="text-sm font-normal text-sidebar-foreground/70">
+            <span className="text-3xl font-brand italic text-sidebar-foreground">
               Drive
             </span>
           </Link>
@@ -209,12 +216,20 @@ export function DashboardShell({
                     Main navigation menu
                   </SheetDescription>
                   <div className="px-6 py-5 border-b border-sidebar-border">
-                    <span className="text-xl font-brand italic text-sidebar-foreground">
-                      Xenode
-                    </span>
-                    <span className="ml-2 text-sm font-normal text-sidebar-foreground/70">
-                      Drive
-                    </span>
+                    <Link href="/dashboard" className="flex items-center gap-2">
+                      <span className="relative h-12 w-12 shrink-0 overflow-hidden sm:h-14 sm:w-14">
+                        <Image
+                          src="/xenode-drive-logo.png"
+                          alt="Xenode Drive"
+                          width={140}
+                          height={93}
+                          className="absolute left-1/2 top-1/2 max-w-none -translate-x-1/2 -translate-y-1/2"
+                        />
+                      </span>
+                      <span className="text-3xl font-brand italic text-sidebar-foreground sm:text-4xl">
+                        Drive
+                      </span>
+                    </Link>
                   </div>
                   {orgsEnabled && (
                     <div className="px-3 pt-3">
@@ -246,7 +261,6 @@ export function DashboardShell({
             <div className="flex-1 max-w-xl min-w-0">
               <GlobalSearch />
             </div>
-            
 
             {/* Notifications + theme + user dropdown */}
             <div className="ml-auto flex items-center gap-1 shrink-0">

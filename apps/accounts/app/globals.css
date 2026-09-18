@@ -1039,6 +1039,24 @@ h2 {
   font-size: 14px;
 }
 
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--border);
+}
+
 @media (min-width: 960px) {
   .auth-shell {
     grid-template-columns: 1.05fr 1fr;

@@ -2,6 +2,8 @@ import { toNextJsHandler } from "better-auth/next-js";
 import { getAccountOnboardingReadiness } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
 import { hasVaultUnlockConfirmation } from "@/lib/vault-unlock-session";
+import { needsSecondFactor } from "@/lib/session";
+import { applyTrustedSecondFactor } from "@/lib/trusted-second-factor";
 
 function rejectsResourceIndicator(request: Request): boolean {
   const url = new URL(request.url);
@@ -24,6 +26,15 @@ export async function GET(request: Request) {
   if (url.pathname.endsWith("/oauth2/authorize")) {
     const session = await auth.api.getSession({ headers: request.headers });
     if (session) {
+      if (
+        needsSecondFactor(session) &&
+        !(await applyTrustedSecondFactor(session, request.headers))
+      ) {
+        const next = `${url.pathname}${url.search}`;
+        const redirectUrl = new URL("/two-factor", url.origin);
+        redirectUrl.searchParams.set("next", next);
+        return Response.redirect(redirectUrl);
+      }
       const readiness = await getAccountOnboardingReadiness(session.user.id);
       if (!readiness.complete) {
         const next = `${url.pathname}${url.search}`;

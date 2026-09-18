@@ -67,6 +67,7 @@ export async function loadProfile(accountId: string) {
     email: user?.email ?? "",
     username: user?.username ?? "",
     displayUsername: user?.displayUsername ?? user?.username ?? "",
+    image: user?.image ?? null,
     emailVerified: user?.emailVerified === true,
     defaultEncrypt: preferences?.defaultEncrypt !== false,
     createdAt: user?.createdAt?.toISOString() ?? null,

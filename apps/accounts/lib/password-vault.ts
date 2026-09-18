@@ -23,12 +23,17 @@ type VaultResponse = {
     passwordEnvelope?:
       | (CryptoEnvelope & { kdfParams: Argon2idParams })
       | null;
+    pendingPasswordEnvelope?:
+      | (CryptoEnvelope & { kdfParams: Argon2idParams })
+      | null;
+    pendingPasswordMutationId?: string;
+    pendingPasswordExpiresAt?: string | Date;
     recoveryEnvelope: CryptoEnvelope;
     deviceEnvelopes: CryptoEnvelope[];
   } | null;
 };
 
-function randomPasswordParams(): Argon2idParams {
+export function randomPasswordParams(): Argon2idParams {
   return {
     algorithm: "argon2id",
     memoryKiB: 64 * 1024,
@@ -37,6 +42,98 @@ function randomPasswordParams(): Argon2idParams {
     salt: encodeBase64Url(crypto.getRandomValues(new Uint8Array(16))),
     outputLength: 32,
   };
+}
+
+export async function createPasswordEnvelopeForArk(
+  accountId: string,
+  ark: Uint8Array,
+  password: string,
+) {
+  const kdfParams = randomPasswordParams();
+  const passwordKey = await derivePasswordWrappingKey(
+    password,
+    kdfParams,
+    deriveArgon2id,
+  );
+  try {
+    return {
+      ...(await sealEnvelope(ark, passwordKey, {
+        accountId,
+        keyId: "ark",
+        keyVersion: 1,
+        type: "password",
+      })),
+      kdfParams,
+    };
+  } finally {
+    passwordKey.fill(0);
+  }
+}
+
+export async function openArkWithPassword(password: string): Promise<{
+  accountId: string;
+  ark: Uint8Array;
+  vaultRevision: number;
+}> {
+  const response = await fetch("/api/vault", {
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error("Could not load the encrypted Vault.");
+  const data = (await response.json()) as VaultResponse;
+  if (!data.vault || !data.vault.passwordEnvelope) {
+    throw new Error("This Vault does not have a password envelope.");
+  }
+  const pendingIsCurrent =
+    data.vault.pendingPasswordEnvelope &&
+    data.vault.pendingPasswordMutationId &&
+    data.vault.pendingPasswordExpiresAt &&
+    new Date(data.vault.pendingPasswordExpiresAt).getTime() > Date.now();
+  const candidates = [
+    ...(pendingIsCurrent && data.vault.pendingPasswordEnvelope
+      ? [{
+          envelope: data.vault.pendingPasswordEnvelope,
+          mutationId: data.vault.pendingPasswordMutationId,
+        }]
+      : []),
+    { envelope: data.vault.passwordEnvelope, mutationId: undefined },
+  ];
+  for (const candidate of candidates) {
+    const passwordKey = await derivePasswordWrappingKey(
+      password,
+      candidate.envelope.kdfParams,
+      deriveArgon2id,
+    );
+    try {
+      const ark = await openEnvelope(candidate.envelope, passwordKey, {
+        accountId: data.accountId,
+        keyId: "ark",
+        keyVersion: 1,
+        type: "password",
+      });
+      if (candidate.mutationId) {
+        await fetch("/api/account/password/change", {
+          method: "PUT",
+          credentials: "include",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            mutationId: candidate.mutationId,
+            revokeProductSessions: false,
+          }),
+        }).catch(() => undefined);
+      }
+      return {
+        accountId: data.accountId,
+        ark,
+        vaultRevision: data.vault.vaultRevision,
+      };
+    } catch {
+      // Try the other active/staged envelope without revealing which matched.
+    } finally {
+      passwordKey.fill(0);
+    }
+  }
+  throw new Error("That password could not unlock this Vault.");
 }
 
 /**
@@ -55,26 +152,9 @@ export async function cacheArkFromLogin(
   if (!response.ok) throw new Error("Could not load the encrypted Vault.");
   const data = (await response.json()) as VaultResponse;
   if (!data.vault) throw new Error("The encrypted Vault is not set up.");
-  const envelope = data.vault.passwordEnvelope;
-  if (!envelope) {
-    throw new Error(
-      "This Vault does not have a password envelope. Use recovery to add one.",
-    );
-  }
-
-  const passwordKey = await derivePasswordWrappingKey(
-    password,
-    envelope.kdfParams,
-    deriveArgon2id,
-  );
-  let ark: Uint8Array | undefined;
+  const opened = await openArkWithPassword(password);
+  const ark = opened.ark;
   try {
-    ark = await openEnvelope(envelope, passwordKey, {
-      accountId: data.accountId,
-      keyId: "ark",
-      keyVersion: 1,
-      type: "password",
-    });
     await cacheAccountRootKey(data.accountId, ark);
     if (options.trustDevice !== false) {
       const enrolled = await loadBrowserDeviceArk(
@@ -90,8 +170,7 @@ export async function cacheArkFromLogin(
       }
     }
   } finally {
-    ark?.fill(0);
-    passwordKey.fill(0);
+    ark.fill(0);
   }
 }
 

@@ -52,7 +52,7 @@ type ThemeChoice = "light" | "dark" | "system";
 
 async function downscaleToDataUri(file: File): Promise<string> {
   const bitmap = await createImageBitmap(file);
-  const size = 128;
+  const size = 256;
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
@@ -228,7 +228,7 @@ export function OnboardingWizard({
         setError("That image is too large — try a simpler one.");
         return;
       }
-      setAvatars((current) => [{ id: -1, url: uri }, ...current]);
+      setAvatars((current) => [{ id: "custom", url: uri }, ...current]);
       setAvatarUrl(uri);
     } catch {
       setError("Couldn't read that image.");

@@ -1,0 +1,2 @@
+export const ACCOUNT_PASSKEY_PRF_INPUT =
+  "eGVub2RlLWFjY291bnRzLXZhdWx0LXByZi12MQ";

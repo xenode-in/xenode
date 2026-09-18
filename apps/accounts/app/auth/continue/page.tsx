@@ -14,8 +14,8 @@ export default async function AuthContinuePage({
 }: {
   searchParams: Promise<{ next?: string }>;
 }) {
-  const session = await requireAccountsPageSession();
   const next = safeNext((await searchParams).next);
+  const session = await requireAccountsPageSession(next);
   if (session.user.emailVerified === false) {
     redirect(
       `/verify-email?email=${encodeURIComponent(session.user.email)}&next=${encodeURIComponent(`/auth/continue?next=${encodeURIComponent(next)}`)}`,

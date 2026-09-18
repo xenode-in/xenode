@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
+import { createPortal } from "react-dom";
 import {
   AlertCircle,
   ChevronLeft,
@@ -14,7 +22,15 @@ import {
   Play,
   X,
 } from "lucide-react";
-import { Button, cn } from "@xenode/ui";
+import {
+  Button,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+  cn,
+} from "@xenode/ui";
 import { useProductCrypto } from "@xenode/crypto-react";
 import type { TimelineAsset } from "./Timeline";
 import { decryptPhotoFile } from "@/lib/photo-encryption";
@@ -39,6 +55,148 @@ type ContentDescriptor = {
   variant?: ContentVariant | "thumbnail";
 };
 
+function ZoomablePhoto({
+  src,
+  alt,
+  onZoomIn,
+}: {
+  src: string;
+  alt: string;
+  onZoomIn?(): void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const transformRef = useRef({ scale: 1, x: 0, y: 0 });
+  const draggingRef = useRef(false);
+  const draggedRef = useRef(false);
+  const lastPointerRef = useRef({ x: 0, y: 0 });
+  const [transform, setTransform] = useState({ scale: 1, x: 0, y: 0 });
+  const [dragging, setDragging] = useState(false);
+
+  const applyZoom = useCallback(
+    (clientX: number, clientY: number, direction: number, step = 0.15) => {
+      const container = containerRef.current;
+      if (!container) return;
+      const bounds = container.getBoundingClientRect();
+      const pointerX = clientX - bounds.left - bounds.width / 2;
+      const pointerY = clientY - bounds.top - bounds.height / 2;
+      const previous = transformRef.current;
+      const previousScale = previous.scale;
+      const nextScale = Math.min(
+        8,
+        Math.max(1, previousScale * (1 + direction * step)),
+      );
+      if (nextScale === previousScale) return;
+
+      let nextTransform;
+      if (nextScale === 1) {
+        nextTransform = { scale: 1, x: 0, y: 0 };
+      } else {
+        const ratio = 1 - nextScale / previousScale;
+        nextTransform = {
+          scale: nextScale,
+          x: previous.x + (pointerX - previous.x) * ratio,
+          y: previous.y + (pointerY - previous.y) * ratio,
+        };
+        if (nextScale > previousScale) onZoomIn?.();
+      }
+      transformRef.current = nextTransform;
+      setTransform(nextTransform);
+    },
+    [onZoomIn],
+  );
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const handleWheel = (event: WheelEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      applyZoom(event.clientX, event.clientY, event.deltaY < 0 ? 1 : -1);
+    };
+    container.addEventListener("wheel", handleWheel, { passive: false });
+    return () => container.removeEventListener("wheel", handleWheel);
+  }, [applyZoom]);
+
+  const handleMouseDown = (event: ReactMouseEvent) => {
+    if (event.button !== 0) return;
+    draggingRef.current = true;
+    setDragging(true);
+    draggedRef.current = false;
+    lastPointerRef.current = { x: event.clientX, y: event.clientY };
+    event.preventDefault();
+  };
+  const handleMouseMove = (event: ReactMouseEvent) => {
+    if (!draggingRef.current) return;
+    const deltaX = event.clientX - lastPointerRef.current.x;
+    const deltaY = event.clientY - lastPointerRef.current.y;
+    if (Math.abs(deltaX) > 2 || Math.abs(deltaY) > 2) {
+      draggedRef.current = true;
+    }
+    lastPointerRef.current = { x: event.clientX, y: event.clientY };
+    if (transformRef.current.scale > 1) {
+      const nextTransform = {
+        ...transformRef.current,
+        x: transformRef.current.x + deltaX,
+        y: transformRef.current.y + deltaY,
+      };
+      transformRef.current = nextTransform;
+      setTransform(nextTransform);
+    }
+  };
+  const handleMouseUp = (event: ReactMouseEvent) => {
+    const shouldZoom =
+      draggingRef.current && !draggedRef.current && event.button === 0;
+    draggingRef.current = false;
+    setDragging(false);
+    draggedRef.current = false;
+    if (shouldZoom) applyZoom(event.clientX, event.clientY, 1, 0.5);
+  };
+  const resetZoom = (event: ReactMouseEvent) => {
+    event.preventDefault();
+    const nextTransform = { scale: 1, x: 0, y: 0 };
+    transformRef.current = nextTransform;
+    setTransform(nextTransform);
+  };
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative grid size-full select-none place-items-center overflow-hidden bg-black/40"
+      style={{
+        cursor: transform.scale > 1 ? (dragging ? "grabbing" : "grab") : "zoom-in",
+      }}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={() => {
+        draggingRef.current = false;
+        setDragging(false);
+        draggedRef.current = false;
+      }}
+      onDoubleClick={resetZoom}
+    >
+      {/* Plaintext exists only in this in-memory blob URL. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={alt}
+        draggable={false}
+        className="pointer-events-none max-h-full w-auto max-w-full object-contain"
+        style={{
+          transform: `translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+          transformOrigin: "center",
+          transition: dragging ? "none" : "transform 150ms ease-out",
+        }}
+      />
+      {transform.scale > 1 ? (
+        <span className="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs text-white/70 backdrop-blur-sm">
+          {Math.round(transform.scale * 100)}% · double-click to reset
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 export function Lightbox({
   asset,
   assets = [],
@@ -52,6 +210,9 @@ export function Lightbox({
 }) {
   const [isMinimized, setIsMinimized] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
+  const [toolbarElement, setToolbarElement] = useState<HTMLDivElement | null>(
+    null,
+  );
   const currentIndex = asset
     ? assets.findIndex((candidate) => candidate.id === asset.id)
     : -1;
@@ -77,9 +238,7 @@ export function Lightbox({
   useEffect(() => {
     if (!asset || isMinimized) return;
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        closePreview();
-      } else if (event.key === "ArrowLeft" && previous) {
+      if (event.key === "ArrowLeft" && previous) {
         event.preventDefault();
         selectPrevious();
       } else if (event.key === "ArrowRight" && next) {
@@ -89,7 +248,7 @@ export function Lightbox({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [asset, closePreview, isMinimized, next, previous, selectNext, selectPrevious]);
+  }, [asset, isMinimized, next, previous, selectNext, selectPrevious]);
 
   if (!asset) return null;
 
@@ -98,17 +257,28 @@ export function Lightbox({
   ).toLocaleDateString()}`;
 
   return (
-    <div
-      role="dialog"
-      aria-modal={!isMinimized}
-      aria-label="Photo preview"
-      className={cn(
-        "fixed z-50 flex flex-col overflow-hidden border bg-card text-card-foreground shadow-2xl",
-        isMinimized
-          ? "bottom-4 right-4 h-72 w-[min(24rem,calc(100vw-2rem))] rounded-xl"
-          : "inset-0 h-dvh w-screen",
-      )}
+    <Dialog
+      open
+      modal={false}
+      onOpenChange={(open) => {
+        if (!open) closePreview();
+      }}
     >
+      <DialogContent
+        showCloseButton={false}
+        overlayClassName={isMinimized ? "hidden" : undefined}
+        aria-label="Photo preview"
+        onPointerDownOutside={(event) => {
+          if (isMinimized) event.preventDefault();
+        }}
+        onFocusOutside={(event) => event.preventDefault()}
+        className={cn(
+          "z-[150] flex flex-col gap-0 overflow-hidden border bg-card p-0 text-card-foreground outline-none duration-200",
+          isMinimized
+            ? "fixed bottom-4 right-4 left-auto top-auto h-auto w-80 max-w-[calc(100vw-2rem)] translate-x-0 translate-y-0 rounded-xl shadow-2xl sm:w-96"
+            : "fixed inset-0 h-dvh w-screen max-h-none max-w-none translate-x-0 translate-y-0 rounded-none shadow-lg sm:max-w-none",
+        )}
+      >
       <header
         className={cn(
           "z-20 flex items-center justify-between gap-3 border-b bg-card/95 backdrop-blur",
@@ -116,7 +286,7 @@ export function Lightbox({
         )}
       >
         <div className="min-w-0 flex-1">
-          <h2
+          <DialogTitle
             className={cn(
               "flex items-center gap-1.5 truncate font-medium",
               isMinimized ? "text-xs" : "text-sm sm:text-base",
@@ -130,19 +300,25 @@ export function Lightbox({
               aria-label="Encrypted"
             />
             <span className="truncate">{title}</span>
-          </h2>
+          </DialogTitle>
           {!isMinimized ? (
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            <DialogDescription className="mt-0.5 truncate text-xs">
               {asset.mediaType}
               {asset.width && asset.height
                 ? ` · ${asset.width} × ${asset.height}`
                 : ""}
               {" · end-to-end encrypted"}
-            </p>
+            </DialogDescription>
           ) : null}
         </div>
 
         <div className="flex shrink-0 items-center gap-1">
+          {!isMinimized ? (
+            <div
+              ref={setToolbarElement}
+              className="mr-1 flex items-center gap-1.5"
+            />
+          ) : null}
           {!isMinimized ? (
             <Button
               variant={showInfo ? "secondary" : "ghost"}
@@ -159,7 +335,7 @@ export function Lightbox({
             variant="ghost"
             size="icon"
             className={isMinimized ? "size-6" : "size-8"}
-            aria-label={isMinimized ? "Restore preview" : "Minimize preview"}
+            aria-label="Toggle Minimize"
             onClick={() => setIsMinimized((minimized) => !minimized)}
           >
             {isMinimized ? (
@@ -168,21 +344,32 @@ export function Lightbox({
               <Minimize2 className="size-4" />
             )}
           </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={isMinimized ? "size-6" : "size-8"}
-            aria-label="Close preview"
-            onClick={closePreview}
-          >
-            <X className="size-4" />
-          </Button>
+          <DialogClose asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={isMinimized ? "size-6" : "size-8"}
+              aria-label="Close"
+            >
+              <X className="size-4" />
+            </Button>
+          </DialogClose>
         </div>
       </header>
 
-      <div className="relative flex min-h-0 flex-1 bg-black/5 dark:bg-black/20">
+      <div
+        className={cn(
+          "relative flex min-h-0 bg-black/5 dark:bg-black/20",
+          isMinimized ? "h-48" : "flex-1",
+        )}
+      >
         <div className="relative min-w-0 flex-1">
-          <LightboxContent key={asset.id} asset={asset} compact={isMinimized} />
+          <LightboxContent
+            key={asset.id}
+            asset={asset}
+            compact={isMinimized}
+            toolbarElement={toolbarElement}
+          />
 
           {previous && !isMinimized ? (
             <Button
@@ -222,7 +409,8 @@ export function Lightbox({
           </aside>
         ) : null}
       </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -238,9 +426,11 @@ function Detail({ label, value }: { label: string; value: string }) {
 function LightboxContent({
   asset,
   compact,
+  toolbarElement,
 }: {
   asset: TimelineAsset;
   compact: boolean;
+  toolbarElement: HTMLDivElement | null;
 }) {
   const productCrypto = useProductCrypto();
   const [displayUrl, setDisplayUrl] = useState(asset.previewUrl ?? "");
@@ -383,9 +573,15 @@ function LightboxContent({
     setError("");
     setWantOriginal((original) => !original);
   };
+  const requestOriginal = useCallback(() => {
+    if (asset.mediaType !== "image" || wantOriginal) return;
+    setLoading(true);
+    setError("");
+    setWantOriginal(true);
+  }, [asset.mediaType, wantOriginal]);
 
   return (
-    <div className="relative grid size-full place-items-center overflow-hidden">
+    <div className="relative grid size-full place-items-center overflow-hidden bg-black/40">
       {displayUrl ? (
         asset.mediaType === "video" ? (
           <video
@@ -396,15 +592,11 @@ function LightboxContent({
             playsInline
           />
         ) : (
-          <>
-            {/* Blob URLs contain plaintext only in memory and are revoked on unmount. */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={displayUrl}
-              alt=""
-              className="max-h-[calc(100dvh-8.5rem)] w-auto max-w-full object-contain"
-            />
-          </>
+          <ZoomablePhoto
+            src={displayUrl}
+            alt=""
+            onZoomIn={requestOriginal}
+          />
         )
       ) : asset.mediaType === "video" ? (
         <Play className="size-14 text-muted-foreground" />
@@ -430,13 +622,14 @@ function LightboxContent({
         </div>
       ) : null}
 
-      {!compact ? (
-        <div className="absolute right-3 top-3 z-20 flex items-center gap-2">
+      {!compact && toolbarElement
+        ? createPortal(
+            <>
           {asset.mediaType === "image" ? (
             <Button
               variant={wantOriginal ? "default" : "outline"}
               size="sm"
-              className="h-8 bg-card/90 shadow-sm backdrop-blur"
+              className="h-8"
               disabled={loading && wantOriginal}
               onClick={toggleOriginal}
               title="Toggle original full-resolution image"
@@ -450,7 +643,7 @@ function LightboxContent({
           <Button
             variant="outline"
             size="sm"
-            className="h-8 bg-card/90 shadow-sm backdrop-blur"
+            className="h-8"
             disabled={downloading}
             onClick={() => void handleDownload()}
           >
@@ -461,8 +654,10 @@ function LightboxContent({
             )}
             Download
           </Button>
-        </div>
-      ) : null}
+            </>,
+            toolbarElement,
+          )
+        : null}
 
       {loadedVariant === "original" && asset.mediaType === "image" && !compact ? (
         <span className="absolute bottom-3 rounded-full bg-black/50 px-3 py-1 text-[11px] text-white backdrop-blur">

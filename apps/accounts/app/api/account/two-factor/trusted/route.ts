@@ -1,0 +1,37 @@
+import { TrustedSecondFactor, connectDatabase } from "@xenode/database";
+import { getAccountsAuth } from "@/lib/auth";
+import { requireSameOrigin } from "@/lib/logout-coordinator";
+import { TRUSTED_SECOND_FACTOR_COOKIE } from "@/lib/trusted-second-factor";
+
+function accountsOrigin() {
+  return new URL(
+    process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in",
+  ).origin;
+}
+
+export async function DELETE(request: Request) {
+  try {
+    requireSameOrigin(request, accountsOrigin());
+  } catch (response) {
+    return response as Response;
+  }
+  const auth = await getAccountsAuth();
+  const session = await auth.api.getSession({ headers: request.headers });
+  if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  await connectDatabase();
+  await TrustedSecondFactor.updateMany(
+    {
+      accountId: session.user.id,
+      revokedAt: { $exists: false },
+    },
+    { $set: { revokedAt: new Date() } },
+  );
+  const response = Response.json({ ok: true });
+  response.headers.append(
+    "set-cookie",
+    `${TRUSTED_SECOND_FACTOR_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${
+      accountsOrigin().startsWith("https://") ? "; Secure" : ""
+    }`,
+  );
+  return response;
+}

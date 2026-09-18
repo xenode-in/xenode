@@ -5,8 +5,10 @@ import {
   emailOTP,
   generateExportedKeyPair,
   jwt,
+  twoFactor,
   username,
 } from "better-auth/plugins";
+import { passkey } from "@better-auth/passkey";
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { Resend } from "resend";
 import { AuditEvent, connectDatabase, getDatabase } from "@xenode/database";
@@ -14,6 +16,7 @@ import {
   resolveFirstPartyClients,
   validateUsername,
 } from "@xenode/identity-core";
+import { getAccountsWebAuthnConfig } from "./passkey-rp";
 
 const EMAIL_FROM = process.env.EMAIL_FROM ?? "Xenode <noreply@alerts.xenode.in>";
 const PRIMARY_RS256_KEY_ID = "xenode-accounts-rs256-v1";
@@ -190,9 +193,37 @@ async function createAccountsAuth() {
           allowUnlinkingAll: false,
         },
       },
+      session: {
+        additionalFields: {
+          authMethod: { type: "string", required: false, input: false },
+          twoFactorVerifiedAt: {
+            type: "date",
+            required: false,
+            input: false,
+          },
+        },
+      },
       databaseHooks: {
         session: {
           create: {
+            async before(session, context) {
+              const path = context?.path ?? "";
+              const authMethod = path.includes("passkey")
+                ? "passkey"
+                : path.includes("two-factor")
+                  ? "totp"
+                  : path.includes("/callback/")
+                    ? "oauth"
+                    : "password";
+              return {
+                data: {
+                  ...session,
+                  authMethod,
+                  twoFactorVerifiedAt:
+                    authMethod === "oauth" ? null : new Date(),
+                },
+              };
+            },
             async after(session, context) {
               await AuditEvent.create({
                 accountId: session.userId,
@@ -312,6 +343,24 @@ async function createAccountsAuth() {
               .filter((client) => client.clientId !== "xenode-mobile")
               .map((client) => client.clientId),
           ),
+        }),
+        twoFactor({
+          issuer: "Xenode Accounts",
+          trustDeviceMaxAge: 30 * 24 * 60 * 60,
+          accountLockout: {
+            enabled: true,
+            maxFailedAttempts: 10,
+            durationSeconds: 15 * 60,
+          },
+        }),
+        passkey({
+          origin: getAccountsWebAuthnConfig().origin,
+          rpID: getAccountsWebAuthnConfig().rpId,
+          rpName: getAccountsWebAuthnConfig().rpName,
+          authenticatorSelection: {
+            residentKey: "required",
+            userVerification: "required",
+          },
         }),
       ],
     });

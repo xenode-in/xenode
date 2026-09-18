@@ -2,11 +2,13 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { Fingerprint } from "lucide-react";
 import { resumeAuthorizationPath } from "@/lib/presentation";
 import {
   cacheArkFromLogin,
   confirmVaultUnlock,
 } from "@/lib/password-vault";
+import { signInAndUnlockWithPasskey } from "@/lib/account-passkeys";
 
 type Mode = "signin" | "signup";
 type SocialProvider = "google" | "github";
@@ -150,6 +152,23 @@ export default function LoginPage() {
     }
   }
 
+  async function continueWithPasskey() {
+    setBusy(true);
+    setMessage("");
+    try {
+      const resumePath = resumeAuthorizationPath(
+        new URLSearchParams(window.location.search),
+      );
+      await signInAndUnlockWithPasskey();
+      window.location.assign(resumePath);
+    } catch (error) {
+      setBusy(false);
+      setMessage(
+        error instanceof Error ? error.message : "Passkey sign-in failed.",
+      );
+    }
+  }
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setBusy(true);
@@ -210,6 +229,20 @@ export default function LoginPage() {
           }
           // Otherwise a generic response — never reveal whether the identity exists.
           setMessage("Those credentials didn't match. Please try again.");
+          return;
+        }
+        const success = (await response.json().catch(() => ({}))) as {
+          twoFactorRedirect?: boolean;
+        };
+        if (success.twoFactorRedirect) {
+          try {
+            sessionStorage.setItem("xenode-vault-pw", password);
+          } catch {
+            // The Vault continuation screen will ask again if storage is blocked.
+          }
+          window.location.assign(
+            `/two-factor?next=${encodeURIComponent(resumePath)}`,
+          );
           return;
         }
         // Cache the ARK from the login password so Drive/Photos unlock without a
@@ -352,7 +385,7 @@ export default function LoginPage() {
                   className="input"
                   id="identifier"
                   autoCapitalize="none"
-                  autoComplete="username"
+                  autoComplete={isSignin ? "username webauthn" : "username"}
                   required
                   value={identifier}
                   onChange={(event) => setIdentifier(event.target.value)}
@@ -471,6 +504,20 @@ export default function LoginPage() {
                   ? "Sign in"
                   : "Create account"}
             </button>
+            {isSignin ? (
+              <>
+                <div className="auth-divider"><span>or</span></div>
+                <button
+                  className="button button-secondary button-block"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void continueWithPasskey()}
+                >
+                  <Fingerprint size={18} />
+                  Sign in with a passkey
+                </button>
+              </>
+            ) : null}
           </form>
 
           <p className="auth-switch">

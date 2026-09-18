@@ -56,6 +56,20 @@ describe("Photos app isolation", () => {
     expect(source).not.toMatch(/apps\/drive|dashboard\/photos|@\/contexts\/CryptoContext/u);
   });
 
+  it("uses the shared preview dialog shell with Drive-style image controls", () => {
+    const lightbox = readFileSync(
+      join(process.cwd(), "app", "components", "Lightbox.tsx"),
+      "utf8",
+    );
+    expect(lightbox).toContain("<Dialog");
+    expect(lightbox).toContain("<DialogContent");
+    expect(lightbox).toContain('modal={false}');
+    expect(lightbox).toContain('aria-label="Toggle Minimize"');
+    expect(lightbox).toContain("function ZoomablePhoto");
+    expect(lightbox).toContain("double-click to reset");
+    expect(lightbox).toContain("createPortal(");
+  });
+
   it("encrypts photo bytes with a per-file key wrapped by the Photos Space key", async () => {
     const rawProductKey = crypto.getRandomValues(new Uint8Array(32));
     const productKey = await crypto.subtle.importKey(

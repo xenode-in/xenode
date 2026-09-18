@@ -7,15 +7,26 @@ import {
 import { normalizeUsername, validateUsername } from "@xenode/identity-core";
 import { getAccountsSession } from "@/lib/session";
 import { loadProfile, userFilter } from "@/lib/hub-data";
+import { isValidProfileImage } from "@/lib/profile-image";
 
 function parseBody(input: unknown) {
   if (!input || typeof input !== "object") return null;
   const value = input as Record<string, unknown>;
-  if (typeof value.name !== "string" || typeof value.username !== "string" || typeof value.defaultEncrypt !== "boolean") return null;
+  if (
+    typeof value.name !== "string" ||
+    typeof value.username !== "string" ||
+    typeof value.defaultEncrypt !== "boolean" ||
+    !isValidProfileImage(value.image)
+  ) return null;
   const name = value.name.trim();
   const username = normalizeUsername(value.username);
   if (name.length < 1 || name.length > 80 || !validateUsername(username)) return null;
-  return { name, username, defaultEncrypt: value.defaultEncrypt };
+  return {
+    name,
+    username,
+    defaultEncrypt: value.defaultEncrypt,
+    image: value.image,
+  };
 }
 
 export async function GET(request: Request) {
@@ -34,6 +45,7 @@ export async function PUT(request: Request) {
   const users = getDatabase().collection<{
     username?: string;
     displayUsername?: string;
+    image?: string | null;
   }>("user");
   const current = await users.findOne(userFilter(session.user.id));
   if (!current) return Response.json({ error: "Account not found" }, { status: 404 });
@@ -45,6 +57,7 @@ export async function PUT(request: Request) {
         name: body.name,
         username: body.username,
         displayUsername: body.username,
+        image: body.image,
         updatedAt: new Date(),
       },
     });
@@ -72,7 +85,11 @@ export async function PUT(request: Request) {
   await AuditEvent.create({
     accountId: session.user.id,
     action: "account.profile.updated",
-    metadata: { usernameChanged, defaultEncrypt: body.defaultEncrypt },
+    metadata: {
+      usernameChanged,
+      avatarChanged: current.image !== body.image,
+      defaultEncrypt: body.defaultEncrypt,
+    },
   }).catch(() => undefined);
 
   return Response.json(await loadProfile(session.user.id));

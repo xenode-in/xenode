@@ -8,13 +8,20 @@ export default async function ProfilePage() {
   const profile = await loadProfile(session.user.id);
   return (
     <AccountShell user={session.user}>
-      <main className="page page-narrow">
-        <p className="eyebrow">Identity</p>
-        <h1>Profile</h1>
-        <p className="lede">Your normalized username travels with you across Xenode products. Email changes require a separate verified flow.</p>
-        <section className="card" style={{ marginTop: 32 }}>
+      <main className="mx-auto w-full max-w-[1050px] px-5 py-10 md:px-8 md:py-14">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+          Profile
+        </p>
+        <h1 className="mt-3 text-3xl font-semibold tracking-tight md:text-5xl">
+          Make your account yours.
+        </h1>
+        <p className="mt-4 max-w-2xl text-base leading-7 text-muted-foreground">
+          Choose how you appear across Xenode while keeping your verified
+          identity and encryption preferences together.
+        </p>
+        <div className="mt-8">
           <ProfileForm initialProfile={profile} />
-        </section>
+        </div>
       </main>
     </AccountShell>
   );

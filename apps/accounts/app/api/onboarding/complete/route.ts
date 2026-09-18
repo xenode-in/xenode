@@ -8,16 +8,7 @@ import { isStorageRegion } from "@xenode/config/storage";
 import { normalizeUsername, validateUsername } from "@xenode/identity-core";
 import { getAccountsSession } from "@/lib/session";
 import { userFilter } from "@/lib/hub-data";
-
-// Cap the stored avatar so a data URI can't bloat the user record.
-const MAX_IMAGE_LENGTH = 24_000;
-
-function validImage(value: unknown): string | null {
-  if (typeof value !== "string" || value.length > MAX_IMAGE_LENGTH) return null;
-  if (/^https:\/\/[^\s]+$/u.test(value)) return value;
-  if (/^data:image\/(svg\+xml|png|jpeg|webp)[,;]/u.test(value)) return value;
-  return null;
-}
+import { isValidProfileImage } from "@/lib/profile-image";
 
 /**
  * Finalize onboarding: mark the account onboarded and persist the chosen theme,
@@ -42,7 +33,7 @@ export async function POST(request: Request) {
       : undefined;
   const defaultEncrypt =
     typeof body.defaultEncrypt === "boolean" ? body.defaultEncrypt : undefined;
-  const image = validImage(body.image);
+  const image = isValidProfileImage(body.image) ? body.image : null;
   const region = isStorageRegion(body.region) ? body.region : undefined;
   const username =
     typeof body.username === "string"

@@ -33,6 +33,9 @@ export interface UserVaultRecord {
   accountId: string;
   vaultRevision: number;
   passwordEnvelope?: unknown | null;
+  pendingPasswordEnvelope?: unknown | null;
+  pendingPasswordMutationId?: string;
+  pendingPasswordExpiresAt?: Date;
   recoveryEnvelope: unknown;
   deviceEnvelopes: unknown[];
   sharingPublicKey: string;
@@ -48,6 +51,13 @@ const userVaultSchema = new Schema<UserVaultRecord>(
     accountId: { type: String, required: true, unique: true, index: true },
     vaultRevision: { type: Number, required: true, min: 1 },
     passwordEnvelope: { type: envelopeSchema, required: false, default: null },
+    pendingPasswordEnvelope: {
+      type: envelopeSchema,
+      required: false,
+      default: null,
+    },
+    pendingPasswordMutationId: String,
+    pendingPasswordExpiresAt: Date,
     recoveryEnvelope: { type: envelopeSchema, required: true },
     deviceEnvelopes: { type: [envelopeSchema], default: [] },
     sharingPublicKey: { type: String, required: true },
@@ -107,6 +117,60 @@ vaultPasskeySchema.index({ accountId: 1, status: 1, createdAt: -1 });
 export const VaultPasskey = getModel<VaultPasskeyRecord>(
   "VaultPasskey",
   vaultPasskeySchema,
+);
+
+export interface AccountPasskeyBindingRecord {
+  accountId: string;
+  passkeyId: string;
+  credentialId: string;
+  envelopeKeyId: string;
+  prfInput: string;
+  hkdfSalt: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const accountPasskeyBindingSchema = new Schema<AccountPasskeyBindingRecord>(
+  {
+    accountId: { type: String, required: true, index: true },
+    passkeyId: { type: String, required: true, unique: true, index: true },
+    credentialId: { type: String, required: true, unique: true, index: true },
+    envelopeKeyId: { type: String, required: true },
+    prfInput: { type: String, required: true },
+    hkdfSalt: { type: String, required: true },
+  },
+  { timestamps: true, collection: "accountPasskeyBindings" },
+);
+accountPasskeyBindingSchema.index({ accountId: 1, createdAt: -1 });
+export const AccountPasskeyBinding = getModel<AccountPasskeyBindingRecord>(
+  "AccountPasskeyBinding",
+  accountPasskeyBindingSchema,
+);
+
+export interface TrustedSecondFactorRecord {
+  accountId: string;
+  tokenHash: string;
+  expiresAt: Date;
+  lastUsedAt: Date;
+  revokedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const trustedSecondFactorSchema = new Schema<TrustedSecondFactorRecord>(
+  {
+    accountId: { type: String, required: true, index: true },
+    tokenHash: { type: String, required: true, unique: true, index: true },
+    expiresAt: { type: Date, required: true },
+    lastUsedAt: { type: Date, required: true },
+    revokedAt: Date,
+  },
+  { timestamps: true, collection: "trustedSecondFactors" },
+);
+trustedSecondFactorSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+export const TrustedSecondFactor = getModel<TrustedSecondFactorRecord>(
+  "TrustedSecondFactor",
+  trustedSecondFactorSchema,
 );
 
 export interface VaultPasskeyChallengeRecord {
