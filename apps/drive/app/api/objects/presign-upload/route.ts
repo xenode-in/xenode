@@ -21,7 +21,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
-    const ctx = await requireAccessContext(request);
+    const ctx = await requireAccessContext(request, "write");
     const userId = ctx.userId;
     await enforceStorageAccess(userId);
 

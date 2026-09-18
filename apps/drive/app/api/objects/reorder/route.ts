@@ -12,7 +12,7 @@ import StorageObject from "@/models/StorageObject";
 
 export async function PATCH(request: NextRequest) {
   try {
-    const ctx = await requireAccessContext(request);
+    const ctx = await requireAccessContext(request, "write");
     const body = await request.json();
     const { bucketId, items } = body;
 
@@ -47,7 +47,7 @@ export async function PATCH(request: NextRequest) {
     }
 
     return NextResponse.json({ success: true });
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (isAuthzError(error)) {
       return toJsonResponse(error);
     }

@@ -96,7 +96,7 @@ export function bucketFilter(
  * their bespoke queries and just swap in `objectFilter(ctx, id)` for the
  * `{ _id, userId }` literal.
  *
- * @param action carried for forward-compat (org RBAC); not branched on yet.
+ * @param action required role permission in the caller's Space.
  */
 export async function assertObjectAccess(
   ctx: AccessContext,
@@ -119,7 +119,7 @@ export async function assertObjectAccess(
 /**
  * Load a Bucket the caller is allowed to act on, or throw AuthzError(404).
  *
- * @param action carried for forward-compat (org RBAC); not branched on yet.
+ * @param action required role permission in the caller's Space.
  */
 export async function assertBucketAccess(
   ctx: AccessContext,
@@ -127,7 +127,7 @@ export async function assertBucketAccess(
   action: Action = "read",
   opts: { lean?: boolean } = {},
 ): Promise<IBucket> {
-  void action;
+  assertScopeAction(ctx, action);
   await dbConnect();
   const query = Bucket.findOne(bucketFilter(ctx, bucketId));
   const bucket = opts.lean

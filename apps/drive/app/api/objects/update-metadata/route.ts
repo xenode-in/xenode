@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const ctx = await requireAccessContext(request);
+    const ctx = await requireAccessContext(request, "write");
     userId = ctx.userId;
 
     const {
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
     // -------------------------
     // BUILD UPDATE DATA
     // -------------------------
-    const updateData: any = {};
+    const updateData: Record<string, unknown> = {};
 
     if (takenAt) {
       updateData.takenAt = new Date(Number(takenAt) * 1000);
@@ -105,18 +105,18 @@ export async function POST(request: NextRequest) {
         updatedAt: storageObject.updatedAt,
       },
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (isAuthzError(error)) {
       statusCode = error.status;
       errorMessage = error.message;
       return toJsonResponse(error);
     }
-    if (error.message === "Unauthorized") {
+    if (error instanceof Error && error.message === "Unauthorized") {
       statusCode = 401;
       errorMessage = "Unauthorized";
     } else {
       statusCode = 500;
-      errorMessage = error.message || "Internal server error";
+      errorMessage = error instanceof Error ? error.message : "Internal server error";
     }
 
     return NextResponse.json({ error: errorMessage }, { status: statusCode });

@@ -20,7 +20,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const ctx = await requireAccessContext(request);
+    const ctx = await requireAccessContext(request, "write");
     const { id } = await params;
     const { size } = await request.json();
 
@@ -50,10 +50,13 @@ export async function POST(
     }
 
     return NextResponse.json({ success: true, object });
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (isAuthzError(error)) {
       return toJsonResponse(error);
     }
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Failed to complete update" },
+      { status: 500 },
+    );
   }
 }

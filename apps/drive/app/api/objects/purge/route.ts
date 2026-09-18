@@ -21,6 +21,8 @@ import {
   requireAccessContext,
   bucketOwnershipClause,
   objectOwnershipClause,
+  isAuthzError,
+  toJsonResponse,
 } from "@/lib/authz";
 import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
@@ -65,7 +67,7 @@ export async function POST(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const ctx = await requireAccessContext(request);
+    const ctx = await requireAccessContext(request, "delete");
     userId = ctx.userId;
     await enforceStorageAccess(userId);
 
@@ -223,6 +225,11 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, purgedCount: allDocIds.length });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      statusCode = error.status;
+      errorMessage = error.message;
+      return toJsonResponse(error);
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       statusCode = 401;
       errorMessage = "Unauthorized";

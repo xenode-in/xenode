@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const ctx = await requireAccessContext(request);
+    const ctx = await requireAccessContext(request, "write");
     userId = ctx.userId;
     await enforceStorageAccess(userId);
 

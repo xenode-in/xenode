@@ -1,22 +1,23 @@
 import { spaceIdSchema } from "@xenode/contracts";
 import { PhotoAlbumV2 } from "@xenode/database";
 import { PhotosService } from "@xenode/photos";
-import { resolveSpaceAccess } from "@xenode/spaces";
+import { assertSpaceAction, resolveSpaceAccess, SpaceAuthorizationError, type SpaceAction } from "@xenode/spaces";
 import { MongoPhotosRepository } from "@/lib/photos-repository";
 import { getPhotosProductSession } from "@/lib/session";
 
-async function access(request: Request) {
+async function access(request: Request, action: SpaceAction = "read") {
   const session = await getPhotosProductSession();
   if (!session) return null;
   const parsed = spaceIdSchema.safeParse(
     new URL(request.url).searchParams.get("spaceId"),
   );
   if (!parsed.success) return null;
-  await resolveSpaceAccess({
+  const spaceAccess = await resolveSpaceAccess({
     accountId: session.accountId,
     spaceId: parsed.data,
     productId: "photos",
   });
+  assertSpaceAction(spaceAccess, action);
   return { session, spaceId: parsed.data };
 }
 
@@ -39,8 +40,11 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   let context;
   try {
-    context = await access(request);
-  } catch {
+    context = await access(request, "write");
+  } catch (error) {
+    if (error instanceof SpaceAuthorizationError && error.status === 403) {
+      return Response.json({ error: error.message, code: error.code }, { status: 403 });
+    }
     return Response.json({ error: "Space not found" }, { status: 404 });
   }
   if (!context) {

@@ -10,7 +10,9 @@ import {
   personalSpaceId,
   resolveSpaceAccess,
   SpaceAuthorizationError,
+  assertSpaceAction,
   type SpaceAccess,
+  type SpaceAction,
 } from "@xenode/spaces";
 import { getServerSession } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
@@ -48,6 +50,7 @@ function requestedSpaceId(
 
 export async function getAccessContext(
   request?: NextRequest,
+  action: SpaceAction = "read",
 ): Promise<AccessContext | null> {
   const session = await getServerSession(request);
   if (!session?.user?.id) return null;
@@ -66,6 +69,7 @@ export async function getAccessContext(
       spaceId,
       productId: "drive",
     });
+    assertSpaceAction(access, action);
     const base = {
       userId: accountId,
       accountId,
@@ -92,8 +96,9 @@ export async function getAccessContext(
 
 export async function requireAccessContext(
   request?: NextRequest,
+  action: SpaceAction = "read",
 ): Promise<AccessContext> {
-  const context = await getAccessContext(request);
+  const context = await getAccessContext(request, action);
   if (!context) {
     throw new AuthzError(401, "unauthorized", "Unauthorized");
   }

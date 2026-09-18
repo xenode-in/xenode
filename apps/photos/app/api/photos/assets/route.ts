@@ -1,7 +1,7 @@
 import { spaceIdSchema } from "@xenode/contracts";
 import { getDatabase, getMongoose } from "@xenode/database";
 import { PhotosService } from "@xenode/photos";
-import { resolveSpaceAccess } from "@xenode/spaces";
+import { assertSpaceAction, resolveSpaceAccess, SpaceAuthorizationError } from "@xenode/spaces";
 import { MongoPhotosRepository } from "@/lib/photos-repository";
 import { getPhotosProductSession } from "@/lib/session";
 
@@ -31,12 +31,16 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid photo asset" }, { status: 400 });
   }
   try {
-    await resolveSpaceAccess({
+    const access = await resolveSpaceAccess({
       accountId: session.accountId,
       spaceId: parsedSpaceId.data,
       productId: "photos",
     });
-  } catch {
+    assertSpaceAction(access, "write");
+  } catch (error) {
+    if (error instanceof SpaceAuthorizationError && error.status === 403) {
+      return Response.json({ error: error.message, code: error.code }, { status: 403 });
+    }
     return Response.json({ error: "Space not found" }, { status: 404 });
   }
   const objectId = new (getMongoose().Types.ObjectId)(body.storageObjectId);
