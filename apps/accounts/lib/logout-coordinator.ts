@@ -10,7 +10,12 @@ export async function revokeProductSessions(args: {
   accountId: string;
   issuerSessionId?: string;
   exceptIssuerSessionId?: string;
-  action: "browser_logout" | "device_revoked" | "sign_out_everywhere" | "password_changed";
+  action:
+    | "browser_logout"
+    | "device_revoked"
+    | "sign_out_everywhere"
+    | "password_changed"
+    | "issuer_session_revoked";
 }): Promise<number> {
   await connectDatabase();
   const filter = {
@@ -27,11 +32,18 @@ export async function revokeProductSessions(args: {
   const activeSessionIds = sessions
     .filter((session) => !session.revokedAt)
     .map((session) => session.sessionId);
+  let revokedProductSessionCount = 0;
   if (activeSessionIds.length) {
-    await ProductSession.updateMany(
-      { sessionId: { $in: activeSessionIds } },
+    const update = await ProductSession.updateMany(
+      {
+        ...filter,
+        sessionId: { $in: activeSessionIds },
+        revokedAt: { $exists: false },
+        expiresAt: { $gt: now },
+      },
       { $set: { revokedAt: now }, $inc: { sessionVersion: 1 } },
     );
+    revokedProductSessionCount = update.modifiedCount;
   }
   await Promise.all(
     sessions.flatMap((session) => {
@@ -52,11 +64,11 @@ export async function revokeProductSessions(args: {
     action: `account.${args.action}`,
     metadata: {
       issuerSessionId: args.issuerSessionId ?? null,
-      revokedProductSessionCount: activeSessionIds.length,
+      revokedProductSessionCount,
       notifiedProductSessionCount: sessions.length,
     },
   }).catch(() => undefined);
-  return activeSessionIds.length;
+  return revokedProductSessionCount;
 }
 
 export function requireSameOrigin(request: Request, expectedOrigin: string) {

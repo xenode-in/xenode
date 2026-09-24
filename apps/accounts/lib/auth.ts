@@ -17,6 +17,7 @@ import {
   validateUsername,
 } from "@xenode/identity-core";
 import { getAccountsWebAuthnConfig } from "./passkey-rp";
+import { revokeIssuerProductsBeforeSessionDelete } from "./issuer-session-revocation";
 
 const EMAIL_FROM = process.env.EMAIL_FROM ?? "Xenode <noreply@alerts.xenode.in>";
 const PRIMARY_RS256_KEY_ID = "xenode-accounts-rs256-v1";
@@ -238,6 +239,11 @@ async function createAccountsAuth() {
                         : "email",
                 },
               }).catch(() => undefined);
+            },
+          },
+          delete: {
+            async before(session) {
+              await revokeIssuerProductsBeforeSessionDelete(session);
             },
           },
         },

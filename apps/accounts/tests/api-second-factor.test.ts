@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   applyTrustedSecondFactor: vi.fn(),
   getAccountsAuth: vi.fn(),
   nativePost: vi.fn(),
+  revokeIssuerProductsBeforeSessionDelete: vi.fn(),
 }));
 vi.mock("better-auth/next-js", () => ({
   toNextJsHandler: () => ({ POST: mocks.nativePost }),
@@ -23,6 +24,10 @@ vi.mock("@/lib/trusted-second-factor", () => ({
   applyTrustedSecondFactor: mocks.applyTrustedSecondFactor,
 }));
 vi.mock("@/lib/auth", () => ({ getAccountsAuth: mocks.getAccountsAuth }));
+vi.mock("@/lib/issuer-session-revocation", () => ({
+  revokeIssuerProductsBeforeSessionDelete:
+    mocks.revokeIssuerProductsBeforeSessionDelete,
+}));
 
 import {
   authorizeAccountsApiRequest,
@@ -174,9 +179,61 @@ describe("Accounts API session step-up", () => {
     expect(mocks.nativePost).not.toHaveBeenCalled();
 
     mocks.nativePost.mockResolvedValueOnce(Response.json({ ok: true }));
-    mocks.getAccountsAuth.mockResolvedValueOnce({});
+    mocks.getAccountsAuth.mockResolvedValueOnce({
+      api: { getSession: vi.fn().mockResolvedValue(null) },
+    });
     const allowed = await nativeAuthPost(request("/api/auth/sign-out", "POST"));
     expect(allowed.status).toBe(200);
     expect(mocks.nativePost).toHaveBeenCalledOnce();
+  });
+
+  it("revokes issuer products before native sign-out can clear its cookie", async () => {
+    const getSession = vi.fn().mockResolvedValue({
+      user: { id: "account-1" },
+      session: { id: "session-1", userId: "account-1" },
+    });
+    mocks.getAccountsAuth.mockResolvedValueOnce({ api: { getSession } });
+    mocks.nativePost.mockResolvedValueOnce(Response.json({ success: true }));
+    const response = await nativeAuthPost(request("/api/auth/sign-out", "POST"));
+    expect(response.status).toBe(200);
+    expect(getSession).toHaveBeenCalledWith({
+      headers: expect.any(Headers),
+      query: { disableCookieCache: true },
+    });
+    expect(mocks.revokeIssuerProductsBeforeSessionDelete).toHaveBeenCalledWith({
+      id: "session-1",
+      userId: "account-1",
+    });
+    expect(mocks.nativePost).toHaveBeenCalledOnce();
+    expect(
+      mocks.revokeIssuerProductsBeforeSessionDelete.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.nativePost.mock.invocationCallOrder[0]);
+  });
+
+  it("rejects foreign-origin native sign-out before resolving its session", async () => {
+    const response = await nativeAuthPost(
+      request("/api/auth/sign-out", "POST", "https://attacker.test"),
+    );
+    expect(response.status).toBe(403);
+    expect(mocks.getAccountsAuth).not.toHaveBeenCalled();
+    expect(mocks.nativePost).not.toHaveBeenCalled();
+  });
+
+  it("does not call native sign-out when product revocation fails", async () => {
+    mocks.getAccountsAuth.mockResolvedValueOnce({
+      api: {
+        getSession: vi.fn().mockResolvedValue({
+          session: { id: "session-1", userId: "account-1" },
+          user: { id: "account-1" },
+        }),
+      },
+    });
+    mocks.revokeIssuerProductsBeforeSessionDelete.mockRejectedValueOnce(
+      new Error("storage unavailable"),
+    );
+    await expect(nativeAuthPost(request("/api/auth/sign-out", "POST"))).rejects.toThrow(
+      "storage unavailable",
+    );
+    expect(mocks.nativePost).not.toHaveBeenCalled();
   });
 });

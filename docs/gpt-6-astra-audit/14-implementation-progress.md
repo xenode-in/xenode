@@ -18,6 +18,7 @@ The audit is a snapshot of the pre-remediation working tree. Findings are not cl
 | 0D | Normalize Better Auth Mongo IDs for passkey and second-factor records | Committed as `18709ac`; full suite passed |
 | 0E | Keep root, product and Drive sharing keys in memory; opt into browser-device trust | Complete; full suite passed |
 | 0F | Require OAuth second-factor completion and same-origin mutations at Accounts API boundaries | Complete; full suite passed |
+| 0G | Revoke ProductSessions when Better Auth deletes issuer sessions | Complete; full suite passed |
 
 The rest of the roadmap remains open. F09/F10 also require durable claim/reconciliation across concurrent finalize/restore/purge operations; a deletion confirmation patch alone is not complete lifecycle safety.
 
@@ -99,3 +100,12 @@ Commit: `18709ac`.
 - Direct-route regression tests exercise every guarded handler, the native wrapper, origin rejection, trusted continuation and verified sessions. The existing real-adapter passkey test now checks that pending OAuth access fails before the verified session enrolls a passkey.
 - Final validation: all 15 test workspaces passed, **480 tests** (324 Drive, 86 Accounts, 9 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; Accounts lint and package boundaries passed. No live account or external OAuth provider was exercised.
 - F04 is only partially addressed: recent-auth policy for all security changes, native GET endpoint review, native issuer-session revocation convergence, rate limits on custom endpoints and end-to-end browser/provider checks remain.
+
+## 0G — Issuer-session revocation convergence
+
+- Better Auth's session-delete hook now revokes active Drive/Photos ProductSessions bound to the deleted issuer session before single or bulk browser-session deletion. The hook also covers internal deletion paths such as account-wide revocation; existing custom logout flows remain able to revoke orphaned product sessions when a browser session is already absent.
+- Native `/api/auth/sign-out` checks the Accounts origin and revokes its current issuer's product sessions before delegating to Better Auth. This preflight is necessary because the installed Better Auth sign-out endpoint catches session-deletion errors and still clears the browser cookie; a failed product-session database write must stop that route before sign-out proceeds.
+- Product-session updates re-check account/issuer scope, active state and expiry when writing, so concurrent revocations increment each session version at most once. Realtime revocation events remain best-effort; Drive and Photos authorization reads the durable `ProductSession` row.
+- Disposable Mongo integration tests exercise adapter-created session IDs, single and bulk Better Auth deletion hooks, Drive/Photos scope isolation, and concurrent revocation. Direct-route tests cover native sign-out ordering, foreign-origin rejection and failure before cookie clearing.
+- Final validation: all 15 test workspaces passed, **486 tests** (324 Drive, 92 Accounts, 9 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; Accounts lint and package boundaries passed. No live browser session or Redis publisher was exercised.
+- F04 still needs recent-auth policy consistency, native GET endpoint review, custom endpoint rate limits and browser/provider end-to-end checks. Raw database deletion outside Better Auth hooks is outside this path; operational reconciliation remains a separate lifecycle concern.

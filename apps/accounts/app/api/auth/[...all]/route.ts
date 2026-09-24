@@ -5,6 +5,8 @@ import { hasVaultUnlockConfirmation } from "@/lib/vault-unlock-session";
 import { needsSecondFactor } from "@/lib/session";
 import { applyTrustedSecondFactor } from "@/lib/trusted-second-factor";
 import { authorizeNativeAuthPost } from "@/lib/api-session";
+import { revokeIssuerProductsBeforeSessionDelete } from "@/lib/issuer-session-revocation";
+import { requireSameOrigin } from "@/lib/logout-coordinator";
 import { POST as changeSignInPassword } from "@/app/api/account/password/change/route";
 
 function rejectsResourceIndicator(request: Request): boolean {
@@ -83,5 +85,25 @@ export async function POST(request: Request) {
   }
   const denied = await authorizeNativeAuthPost(request);
   if (denied) return denied;
+  if (url.pathname.endsWith("/sign-out")) {
+    try {
+      requireSameOrigin(
+        request,
+        new URL(process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in")
+          .origin,
+      );
+    } catch (response) {
+      return response as Response;
+    }
+    const auth = await getAccountsAuth();
+    const session = await auth.api.getSession({
+      headers: request.headers,
+      query: { disableCookieCache: true },
+    });
+    if (session) {
+      await revokeIssuerProductsBeforeSessionDelete(session.session);
+    }
+    return toNextJsHandler(auth).POST(request);
+  }
   return toNextJsHandler(await getAccountsAuth()).POST(request);
 }
