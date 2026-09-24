@@ -86,7 +86,9 @@ export function OnboardingWizard({
   const [error, setError] = useState("");
 
   // Recovery kit — generated once, shown at step 2, sealed into the vault at the end.
-  const [kit, setKit] = useState<{ words: string; secret: Uint8Array } | null>(null);
+  const [kit, setKit] = useState<{ words: string; secret: Uint8Array } | null>(
+    null,
+  );
   const [kitSaved, setKitSaved] = useState(false);
   const [copied, setCopied] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
@@ -94,6 +96,7 @@ export function OnboardingWizard({
   // Vault secrets are collected separately and never reused for sign-in.
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [trustBrowser, setTrustBrowser] = useState(false);
   const [usernameChoice, setUsernameChoice] = useState(username);
 
   const { theme, setTheme } = useTheme();
@@ -109,7 +112,11 @@ export function OnboardingWizard({
 
   useEffect(() => {
     if (!hasExistingVault) void generateRecoveryMnemonic().then(setKit);
-    try { sessionStorage.removeItem("xenode-vault-pw"); } catch { /* obsolete secret cache */ }
+    try {
+      sessionStorage.removeItem("xenode-vault-pw");
+    } catch {
+      /* obsolete secret cache */
+    }
   }, [hasExistingVault]);
 
   // Load avatar options the first time the avatar step opens.
@@ -123,11 +130,16 @@ export function OnboardingWizard({
     }
   }, [step, avatars.length, avatarUrl]);
 
-  const firstName = useMemo(() => name.trim().split(/\s+/)[0] || "there", [name]);
+  const firstName = useMemo(
+    () => name.trim().split(/\s+/)[0] || "there",
+    [name],
+  );
 
   function nextStep() {
     setError("");
-    setStep((s) => Math.min(s === 1 && hasExistingVault ? 3 : s + 1, TOTAL_STEPS));
+    setStep((s) =>
+      Math.min(s === 1 && hasExistingVault ? 3 : s + 1, TOTAL_STEPS),
+    );
   }
   function prevStep() {
     setError("");
@@ -136,7 +148,9 @@ export function OnboardingWizard({
 
   function handleWelcomeContinue() {
     if (!username && !/^[a-zA-Z0-9_]{3,30}$/u.test(usernameChoice)) {
-      setError("Choose a username using 3–30 letters, numbers, or underscores.");
+      setError(
+        "Choose a username using 3–30 letters, numbers, or underscores.",
+      );
       return;
     }
     if (!hasExistingVault) {
@@ -231,6 +245,7 @@ export function OnboardingWizard({
           accountId,
           password,
           recoverySecret: kit.secret,
+          trustDevice: trustBrowser,
         });
       }
       const completionResponse = await fetch("/api/onboarding/complete", {
@@ -296,13 +311,15 @@ export function OnboardingWizard({
                 <p className="eyebrow">Welcome to Xenode</p>
                 <h1>Hi {firstName}, let&rsquo;s set up your account</h1>
                 <p className="lede">
-                  A few quick steps to secure your end-to-end encrypted vault and
-                  make Xenode yours.
+                  A few quick steps to secure your end-to-end encrypted vault
+                  and make Xenode yours.
                 </p>
                 {!username && (
                   <div className="onb-form">
                     <div className="field">
-                      <label htmlFor="onb-username">Choose your Xenode username</label>
+                      <label htmlFor="onb-username">
+                        Choose your Xenode username
+                      </label>
                       <input
                         id="onb-username"
                         className="input"
@@ -358,6 +375,17 @@ export function OnboardingWizard({
                       unlocks your Vault locally and is never sent to Xenode or
                       your sign-in provider.
                     </p>
+                    <label className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={trustBrowser}
+                        onChange={(event) =>
+                          setTrustBrowser(event.target.checked)
+                        }
+                      />
+                      Trust this browser to unlock after later sign-ins. Leave
+                      this unchecked on a shared device.
+                    </label>
                   </div>
                 )}
                 <button
@@ -448,7 +476,9 @@ export function OnboardingWizard({
                     checked={kitSaved}
                     onChange={(e) => setKitSaved(e.target.checked)}
                   />
-                  <span>I&rsquo;ve saved my recovery phrase somewhere safe</span>
+                  <span>
+                    I&rsquo;ve saved my recovery phrase somewhere safe
+                  </span>
                 </label>
                 <button
                   className="button button-block"
@@ -472,7 +502,9 @@ export function OnboardingWizard({
                 <PreferencesScene className="onb-art" />
                 <p className="eyebrow">Appearance</p>
                 <h1>Choose your theme</h1>
-                <p className="lede">Pick how Xenode looks. You can change it anytime.</p>
+                <p className="lede">
+                  Pick how Xenode looks. You can change it anytime.
+                </p>
                 <div className="onb-themes">
                   {(
                     [
@@ -513,8 +545,8 @@ export function OnboardingWizard({
                 <p className="eyebrow">Storage region</p>
                 <h1>Where should your files live?</h1>
                 <p className="lede">
-                  Your files are stored in this region. Choose the one closest to
-                  you — <strong>this can&rsquo;t be changed later</strong>.
+                  Your files are stored in this region. Choose the one closest
+                  to you — <strong>this can&rsquo;t be changed later</strong>.
                 </p>
                 <div className="onb-themes onb-regions">
                   {STORAGE_REGIONS.map((value) => (
@@ -618,8 +650,8 @@ export function OnboardingWizard({
                 <p className="eyebrow">All set</p>
                 <h1>You&rsquo;re ready, {firstName}</h1>
                 <p className="lede">
-                  Your encrypted vault will be created on this device and unlocked
-                  automatically across Drive and Photos.
+                  Your encrypted vault will be created on this device and
+                  unlocked automatically across Drive and Photos.
                 </p>
                 <button
                   className="button button-block"

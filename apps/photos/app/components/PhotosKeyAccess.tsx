@@ -7,10 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import {
-  ProductCryptoProvider,
-  useProductCrypto,
-} from "@xenode/crypto-react";
+import { ProductCryptoProvider, useProductCrypto } from "@xenode/crypto-react";
 import { SecureUnlockOverlay } from "@xenode/ui";
 import {
   consumeProductSpaceKey,
@@ -40,10 +37,7 @@ export function PhotosKeyAccess({ children }: { children: ReactNode }) {
   const unwrapHandoff = useCallback(
     async (productId: string, spaceId: string, value: unknown) => {
       const payload = value as Partial<UnlockPayload>;
-      if (
-        typeof payload.transactionId !== "string" ||
-        !payload.sealed
-      ) {
+      if (typeof payload.transactionId !== "string" || !payload.sealed) {
         throw new Error("Invalid product key handoff.");
       }
       const request = pending.current.get(payload.transactionId);
@@ -57,8 +51,7 @@ export function PhotosKeyAccess({ children }: { children: ReactNode }) {
       }
       const sealed = parseSealedHandoff(payload.sealed);
       if (
-        sealed.destinationKeyFingerprint !==
-        request.destinationKeyFingerprint
+        sealed.destinationKeyFingerprint !== request.destinationKeyFingerprint
       ) {
         throw new Error("Destination key fingerprint mismatch.");
       }
@@ -73,10 +66,7 @@ export function PhotosKeyAccess({ children }: { children: ReactNode }) {
   );
 
   return (
-    <ProductCryptoProvider
-      productId="photos"
-      unwrapHandoff={unwrapHandoff}
-    >
+    <ProductCryptoProvider productId="photos" unwrapHandoff={unwrapHandoff}>
       <UnlockControl pending={pending}>{children}</UnlockControl>
     </ProductCryptoProvider>
   );
@@ -100,8 +90,7 @@ function UnlockControl({
   const handoffInFlight = useRef(false);
   const bootstrappedSession = useRef<string | null>(null);
   const accountsOrigin = new URL(
-    process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ??
-      "https://accounts.xenode.in",
+    process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in",
   ).origin;
 
   const consumeRequest = useCallback(
@@ -131,8 +120,7 @@ function UnlockControl({
       if (
         payload.ephemeralPublicKeyFingerprint !==
           request.destinationKeyFingerprint ||
-        sealed.destinationKeyFingerprint !==
-          request.destinationKeyFingerprint
+        sealed.destinationKeyFingerprint !== request.destinationKeyFingerprint
       ) {
         throw new Error("Handoff fingerprint mismatch.");
       }
@@ -160,10 +148,7 @@ function UnlockControl({
       setStatus("Sign in to Photos first.");
       return;
     }
-    if (
-      handoffInFlight.current ||
-      productCrypto.isUnlocked(session.spaceId)
-    ) {
+    if (handoffInFlight.current || productCrypto.isUnlocked(session.spaceId)) {
       return;
     }
     handoffInFlight.current = true;
@@ -186,7 +171,9 @@ function UnlockControl({
     } catch (error) {
       handoffInFlight.current = false;
       setUnlockError(true);
-      setStatus(error instanceof Error ? error.message : "Could not start handoff.");
+      setStatus(
+        error instanceof Error ? error.message : "Could not start handoff.",
+      );
     }
   }, [accountsOrigin, pending, productCrypto, session]);
 
@@ -246,7 +233,7 @@ function UnlockControl({
     if (bootstrappedSession.current === bootstrapKey) return;
     bootstrappedSession.current = bootstrapKey;
     let cancelled = false;
-    setStatus("Restoring Photos encryption…");
+    setStatus("Checking Photos encryption…");
     void restoreProductKey(session.spaceId)
       .then((restored) => {
         if (cancelled) return;
@@ -326,9 +313,7 @@ function UnlockControl({
     return () => window.removeEventListener("message", receiveHandoff);
   }, [accountsOrigin, consumeRequest, pending]);
 
-  const unlocked = session
-    ? productCrypto.isUnlocked(session.spaceId)
-    : false;
+  const unlocked = session ? productCrypto.isUnlocked(session.spaceId) : false;
   if (unlocked) {
     return (
       <>

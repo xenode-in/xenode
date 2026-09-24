@@ -38,6 +38,7 @@ export async function createAccountVault(params: {
   accountId: string;
   password: string;
   recoverySecret: Uint8Array;
+  trustDevice?: boolean;
 }): Promise<{ vaultRevision: number }> {
   const { accountId, password, recoverySecret } = params;
   if (password.length < 12 || password.length > 128) {
@@ -105,10 +106,9 @@ export async function createAccountVault(params: {
         type: "sharing-private-key",
       },
     );
-    const browserDeviceEnvelope = await createBrowserDeviceEnvelope(
-      accountId,
-      ark,
-    );
+    const browserDeviceEnvelope = params.trustDevice
+      ? await createBrowserDeviceEnvelope(accountId, ark)
+      : null;
     const personalSpace = personalSpaceId(accountId);
     for (const productId of ["drive", "photos"] as const) {
       const productKey = generateProductSpaceKey();
@@ -150,7 +150,7 @@ export async function createAccountVault(params: {
         passwordEnvelope,
         passwordMode: "separate",
         recoveryEnvelope,
-        deviceEnvelopes: [browserDeviceEnvelope],
+        deviceEnvelopes: browserDeviceEnvelope ? [browserDeviceEnvelope] : [],
         sharingPublicKey: encodeBase64Url(new Uint8Array(sharingPublicKey)),
         wrappedSharingPrivateKey,
       }),

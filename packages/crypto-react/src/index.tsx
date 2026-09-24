@@ -12,12 +12,7 @@ import {
 } from "react";
 import { importProductKey } from "@xenode/crypto-core";
 import { ProductKeyStore } from "./key-store";
-import {
-  clearPersistedKeys,
-  deletePersistedKey,
-  loadPersistedKey,
-  savePersistedKey,
-} from "./persistent-store";
+import { clearPersistedKeys, deletePersistedKey } from "./persistent-store";
 
 export { ProductKeyStore } from "./key-store";
 export {
@@ -33,10 +28,10 @@ export {
 export interface ProductCryptoContextValue {
   productId: string;
   isUnlocked(spaceId: string): boolean;
-  /** Restore a cached, non-extractable product key into memory. */
+  /** Check this tab's memory only; a fresh tab requires a new handoff. */
   restore(spaceId: string): Promise<boolean>;
   unlock(spaceId: string, handoffCiphertext: unknown): Promise<void>;
-  /** Forget a space (or all) in memory and remove its persisted key cache. */
+  /** Forget a space (or all) in memory and clear any legacy key records. */
   lock(spaceId?: string): Promise<void>;
   withProductKey<T>(
     spaceId: string,
@@ -44,8 +39,9 @@ export interface ProductCryptoContextValue {
   ): Promise<T>;
 }
 
-const ProductCryptoContext =
-  createContext<ProductCryptoContextValue | null>(null);
+const ProductCryptoContext = createContext<ProductCryptoContextValue | null>(
+  null,
+);
 
 export function ProductCryptoProvider({
   productId,
@@ -66,12 +62,13 @@ export function ProductCryptoProvider({
   // a new identity on every unrelated render.
   const [version, setVersion] = useState(0);
 
-  // Crypto operations use the in-memory store. A non-extractable CryptoKey may
-  // also be restored from IndexedDB after the product session is validated.
+  // Product keys live only in this tab. Clean up older persisted product keys
+  // but never read them into the new session.
   useEffect(() => {
+    void clearPersistedKeys(productId);
     const current = store.current;
     return () => current.clear();
-  }, []);
+  }, [productId]);
 
   useEffect(() => {
     if (typeof BroadcastChannel === "undefined") return;
@@ -86,34 +83,21 @@ export function ProductCryptoProvider({
     return () => channel.close();
   }, [productId]);
 
-  const restore = useCallback(
-    async (spaceId: string) => {
-      if (store.current.has(spaceId)) return true;
-      const key = await loadPersistedKey(productId, spaceId);
-      if (!key) return false;
-      try {
-        store.current.set(spaceId, key);
-      } catch {
-        await deletePersistedKey(productId, spaceId);
-        return false;
-      }
-      setVersion((value) => value + 1);
-      return true;
-    },
-    [productId],
-  );
+  const restore = useCallback(async (spaceId: string) => {
+    if (store.current.has(spaceId)) return true;
+    return false;
+  }, []);
 
   const unlock = useCallback(
     async (spaceId: string, ciphertext: unknown) => {
-      const raw = await unwrapHandoff(productId, spaceId, ciphertext);
-      let key: CryptoKey;
-      try {
-        key = await importProductKey(raw);
-      } finally {
-        raw.fill(0);
-      }
-      store.current.set(spaceId, key);
-      await savePersistedKey(productId, spaceId, key);
+      await store.current.unlock(spaceId, async () => {
+        const raw = await unwrapHandoff(productId, spaceId, ciphertext);
+        try {
+          return await importProductKey(raw);
+        } finally {
+          raw.fill(0);
+        }
+      });
       setVersion((value) => value + 1);
     },
     [productId, unwrapHandoff],
@@ -165,7 +149,9 @@ export function ProductCryptoProvider({
 export function useProductCrypto(): ProductCryptoContextValue {
   const context = useContext(ProductCryptoContext);
   if (!context) {
-    throw new Error("useProductCrypto must be used within ProductCryptoProvider");
+    throw new Error(
+      "useProductCrypto must be used within ProductCryptoProvider",
+    );
   }
   return context;
 }

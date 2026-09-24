@@ -15,7 +15,8 @@ The audit is a snapshot of the pre-remediation working tree. Findings are not cl
 | 0A | Confirm storage deletion, protect retained references during orphan cleanup, enumerate chunked purge content | Complete; see validation below |
 | 0B | Enforce action permissions on generic storage mutations | Complete; full test suite passed |
 | 0C | Separate local Vault password and migrate existing envelopes without changing root keys | Committed as `dae2945`; rollout notes below |
-| 0D | Normalize Better Auth Mongo IDs for passkey and second-factor records | Complete; full suite passed |
+| 0D | Normalize Better Auth Mongo IDs for passkey and second-factor records | Committed as `18709ac`; full suite passed |
+| 0E | Keep root, product and Drive sharing keys in memory; opt into browser-device trust | Complete; full suite passed |
 
 The rest of the roadmap remains open. F09/F10 also require durable claim/reconciliation across concurrent finalize/restore/purge operations; a deletion confirmation patch alone is not complete lifecycle safety.
 
@@ -72,8 +73,19 @@ Commit: `dae2945`.
 
 ## 0D — Better Auth Mongo record mapping
 
+Commit: `18709ac`.
+
 - A shared `@xenode/database` repository maps Better Auth's external string IDs to raw Mongo `_id` and `userId` fields. Passkey lookup/listing now uses this repository and checks both account and credential ID. Both native ObjectId and historical string IDs remain readable.
 - The combined passkey binding route now finds actual adapter-created passkeys. A duplicate binding request can no longer delete the first request's winning binding during compensation. Reading a Vault passkey envelope also checks that its native passkey is still registered.
 - OAuth second-factor verification and trusted-device continuation update the actual native session row, require the current account/session pair and an unexpired session, and fail closed if that write cannot be confirmed.
 - Eight disposable Mongo integration tests create users, sessions and passkeys through the installed Better Auth adapter. They cover owner and credential isolation, duplicate binding, both TOTP/backup route branches with mocked code verification, trusted-device persistence, missing/expired sessions and historical string IDs. Real WebAuthn and authenticator ceremonies are still a later integration gate.
 - Targeted integration tests pass (8/8). Full `npm run test -- --force` passed all 15 workspaces: **441 tests** (324 Drive, 49 Accounts, 9 Photos app, 59 packages). Root typecheck passed 16/16 workspaces. Accounts/database lint and package boundaries pass.
+
+## 0E — Key lifetime and explicit browser trust
+
+- `ProductCryptoProvider` no longer restores or persists Drive/Photos product keys. A fresh tab performs another Accounts handoff. In-flight handoffs lose a race against lock/logout through a generation check, including Drive's sharing-key state.
+- Accounts ARK cache is a per-tab memory map. Switching account clears the prior entry; sign-out clears it. New code never loads the old persisted ARK and attempts removal of the historical IndexedDB database.
+- Drive's RSA sharing-private, sharing-public and metadata keys are held in component memory after handoff. Old auxiliary IndexedDB databases are cleanup targets only. Shared persistence functions reject writes except for the Accounts browser-device wrapping-key store.
+- New-account onboarding does not enroll a persistent browser device by default. The user may explicitly select “Trust this browser.” The handoff broker no longer silently enrolls a device after password/recovery unlock. Existing consented device wraps remain usable.
+- Tests verify lock versus an unfinished handoff, refusal to persist product/ARK keys, in-memory ARK clearing/account switch, and opt-in device-envelope creation. The full suite passed all 15 workspaces: **446 tests** (324 Drive, 52 Accounts, 9 Photos app, 61 shared packages). Root typecheck passed 16/16 workspaces; Accounts, Photos and crypto-react lint, scoped Drive lint and package boundaries passed.
+- Usability tradeoff: without browser trust, a full reload or cross-origin product navigation can require another local Vault unlock. Legacy IndexedDB deletion is best-effort when another old tab holds the database open. Do not claim remote erasure of usable keys already held by an offline or compromised browser.

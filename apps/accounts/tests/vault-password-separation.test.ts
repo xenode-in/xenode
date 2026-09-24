@@ -41,6 +41,7 @@ import {
 } from "../lib/password-vault";
 import { deriveArgon2id } from "../lib/argon2";
 import { createAccountVault } from "../lib/vault-setup";
+import { createBrowserDeviceEnvelope } from "../lib/device-vault";
 
 const accountId = "separation-test-account";
 const loginPassword = "synthetic-login-password-123";
@@ -52,7 +53,10 @@ const context = {
   type: "password" as const,
 };
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.clearAllMocks();
+});
 
 describe("Vault password separation", () => {
   it("creates a new Vault with a local-only password and never calls a credential endpoint", async () => {
@@ -82,8 +86,34 @@ describe("Vault password separation", () => {
     ).toBe(true);
     const body = JSON.parse(writes.at(-1)!.body);
     expect(body.passwordMode).toBe("separate");
+    expect(body.deviceEnvelopes).toEqual([]);
+    expect(createBrowserDeviceEnvelope).not.toHaveBeenCalled();
     expect(JSON.stringify(writes)).not.toContain(vaultPassword);
     expect(JSON.stringify(writes)).not.toContain(kit.words);
+    kit.secret.fill(0);
+  }, 60_000);
+
+  it("enrolls a persistent device wrapping key only when the browser is explicitly trusted", async () => {
+    const kit = await generateRecoveryMnemonic();
+    let storedVault: { deviceEnvelopes?: unknown[] } | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (!init?.method) return Response.json({ accountId, vault: null });
+        if (url === "/api/vault") storedVault = JSON.parse(String(init.body));
+        return Response.json(
+          url === "/api/vault" ? { vault: { vaultRevision: 1 } } : { ok: true },
+        );
+      }),
+    );
+    await createAccountVault({
+      accountId,
+      password: vaultPassword,
+      recoverySecret: kit.secret,
+      trustDevice: true,
+    });
+    expect(createBrowserDeviceEnvelope).toHaveBeenCalledOnce();
+    expect(storedVault?.deviceEnvelopes).toHaveLength(1);
     kit.secret.fill(0);
   }, 60_000);
   it("rewraps the same root key while sending only ciphertext, and the login password cannot open the new wrap", async () => {

@@ -8,6 +8,7 @@
  */
 export class ProductKeyStore {
   private readonly keys = new Map<string, CryptoKey>();
+  private generation = 0;
 
   constructor(readonly productId: string) {}
 
@@ -16,6 +17,16 @@ export class ProductKeyStore {
       throw new Error("ProductSpaceKey CryptoKey must be non-extractable");
     }
     this.keys.set(spaceId, key);
+  }
+
+  /** A lock or logout invalidates an in-flight handoff before it can install a key. */
+  async unlock(spaceId: string, load: () => Promise<CryptoKey>): Promise<void> {
+    const generation = this.generation;
+    const key = await load();
+    if (generation !== this.generation) {
+      throw new Error("ProductSpaceKey was locked during unlock");
+    }
+    this.set(spaceId, key);
   }
 
   has(spaceId: string): boolean {
@@ -36,10 +47,12 @@ export class ProductKeyStore {
   }
 
   delete(spaceId: string): void {
+    this.generation += 1;
     this.keys.delete(spaceId);
   }
 
   clear(): void {
+    this.generation += 1;
     this.keys.clear();
   }
 }

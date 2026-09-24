@@ -1,17 +1,16 @@
 /**
- * Persistent product-key cache backed by IndexedDB.
+ * IndexedDB storage for consented browser-device wrapping keys only.
  *
- * Stores NON-EXTRACTABLE AES-GCM `CryptoKey` objects. IndexedDB structured-clones
- * CryptoKeys, so an unlocked ProductSpaceKey survives page reloads WITHOUT its raw
- * bytes ever being written to disk — the key can be used for encrypt/decrypt but
- * can never be read back out. This is what lets Drive/Photos auto-unlock silently
- * after the first key-handoff (mirrors the v1 `keyCache` approach).
+ * Old product/ARK/sharing databases remain deletion targets but are never read
+ * or written by current code. Non-extractability does not prevent a stored key
+ * from decrypting, so it is insufficient protection for product keys at rest.
  *
  * One IndexedDB database per product (`xenode-keys-<productId>`), one record per
  * spaceId in the `keys` object store.
  */
 
 const STORE = "keys";
+const TRUSTED_DEVICE_STORE = "accounts-device-wrap";
 
 function dbName(productId: string): string {
   return `xenode-keys-${productId}`;
@@ -52,6 +51,7 @@ export async function loadPersistedKey(
   productId: string,
   spaceId: string,
 ): Promise<CryptoKey | null> {
+  if (productId !== TRUSTED_DEVICE_STORE) return null;
   if (!isBrowser()) return null;
   try {
     const db = await openDb(productId);
@@ -74,6 +74,11 @@ export async function savePersistedKey(
   spaceId: string,
   key: CryptoKey,
 ): Promise<void> {
+  if (productId !== TRUSTED_DEVICE_STORE) {
+    throw new Error(
+      "Only consented browser-device wrapping keys may be persisted",
+    );
+  }
   if (!isBrowser()) return;
   if (key.extractable) {
     // Refuse to persist an extractable key — that would put usable key material

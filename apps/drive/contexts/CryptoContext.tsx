@@ -14,8 +14,6 @@ import {
   useProductCrypto,
   clearPersistedKeys,
   clearPendingHandoff,
-  loadPersistedKey,
-  savePersistedKey,
 } from "@xenode/crypto-react";
 import { SecureUnlockOverlay } from "@xenode/ui";
 import {
@@ -57,10 +55,8 @@ type ImportedSharingKeys = {
   metadataKey: CryptoKey;
 };
 
-// The product-space key persists via the crypto-react ProductKeyStore cache.
-// Drive's gate also needs the RSA sharing keypair + derived metadata key, which
-// aren't recoverable from the (non-extractable) product key — so persist those
-// three non-extractable CryptoKeys too, keyed by spaceId, for silent re-unlock.
+// Previous releases persisted these keys. They are deletion targets only;
+// every new tab obtains sharing and metadata keys through Accounts handoff.
 const AUX_PRIVATE = "drive-sharing-private";
 const AUX_PUBLIC = "drive-sharing-public";
 const AUX_METADATA = "drive-metadata";
@@ -135,11 +131,15 @@ export function CryptoProvider({
   const accountId = initialUserId ?? "";
   const spaceId = accountId ? personalSpaceId(accountId) : "";
   const pending = useRef(new Map<string, PendingHandoff>());
+  const handoffGeneration = useRef(0);
   const replayStore = useRef(createOneTimeHandoffStore());
-  const [sharingKeys, setSharingKeys] = useState<ImportedSharingKeys | null>(null);
+  const [sharingKeys, setSharingKeys] = useState<ImportedSharingKeys | null>(
+    null,
+  );
 
   const unwrapHandoff = useCallback(
     async (productId: string, requestedSpaceId: string, value: unknown) => {
+      const generation = handoffGeneration.current;
       const payload = value as Partial<UnlockPayload>;
       if (typeof payload.transactionId !== "string" || !payload.sealed) {
         throw new Error("Invalid Drive key handoff.");
@@ -178,11 +178,9 @@ export function CryptoProvider({
           bundle.productSpaceKey,
           requestedSpaceId,
         );
-        await Promise.all([
-          savePersistedKey(AUX_PRIVATE, requestedSpaceId, keys.privateKey),
-          savePersistedKey(AUX_PUBLIC, requestedSpaceId, keys.publicKey),
-          savePersistedKey(AUX_METADATA, requestedSpaceId, keys.metadataKey),
-        ]);
+        if (generation !== handoffGeneration.current) {
+          throw new Error("Drive keys were locked during handoff.");
+        }
         setSharingKeys(keys);
         return bundle.productSpaceKey;
       } finally {
@@ -204,6 +202,9 @@ export function CryptoProvider({
         sharingKeys={sharingKeys}
         setSharingKeys={setSharingKeys}
         clearSharingKeys={() => setSharingKeys(null)}
+        invalidateHandoffs={() => {
+          handoffGeneration.current += 1;
+        }}
       >
         {children}
       </DriveKeyAccess>
@@ -218,6 +219,7 @@ function DriveKeyAccess({
   sharingKeys,
   setSharingKeys,
   clearSharingKeys,
+  invalidateHandoffs,
   children,
 }: {
   accountId: string;
@@ -226,6 +228,7 @@ function DriveKeyAccess({
   sharingKeys: ImportedSharingKeys | null;
   setSharingKeys: (keys: ImportedSharingKeys) => void;
   clearSharingKeys: () => void;
+  invalidateHandoffs: () => void;
   children: ReactNode;
 }) {
   const productCrypto = useProductCrypto();
@@ -236,9 +239,9 @@ function DriveKeyAccess({
   const [brokerUrl, setBrokerUrl] = useState<string | null>(null);
   const [interactionUrl, setInteractionUrl] = useState<string | null>(null);
   const [unlockError, setUnlockError] = useState(false);
-  const [cacheState, setCacheState] = useState<
-    "checking" | "miss" | "ready"
-  >(accountId && spaceId ? "checking" : "miss");
+  const [cacheState, setCacheState] = useState<"checking" | "miss" | "ready">(
+    accountId && spaceId ? "checking" : "miss",
+  );
   const handoffInFlight = useRef(false);
   const [isModalOpen, setModalOpen] = useState(false);
   const accountsOrigin = new URL(
@@ -272,7 +275,8 @@ function DriveKeyAccess({
       }
       const sealed = parseSealedHandoff(payload.ciphertext);
       if (
-        payload.ephemeralPublicKeyFingerprint !== request.destinationKeyFingerprint ||
+        payload.ephemeralPublicKeyFingerprint !==
+          request.destinationKeyFingerprint ||
         sealed.destinationKeyFingerprint !== request.destinationKeyFingerprint
       ) {
         throw new Error("Handoff fingerprint mismatch.");
@@ -280,7 +284,10 @@ function DriveKeyAccess({
       // Seed the in-memory map so unwrapHandoff (which reads `pending`) resolves
       // this transaction — after a redirect the map starts empty.
       pending.current.set(transactionId, request);
-      await unlockProductKey(spaceId, { transactionId, sealed } satisfies UnlockPayload);
+      await unlockProductKey(spaceId, {
+        transactionId,
+        sealed,
+      } satisfies UnlockPayload);
       setStatus("Drive is ready.");
       setBrokerUrl(null);
       setUnlockError(false);
@@ -333,7 +340,9 @@ function DriveKeyAccess({
     } catch (error) {
       handoffInFlight.current = false;
       setUnlockError(true);
-      setStatus(error instanceof Error ? error.message : "Could not start handoff.");
+      setStatus(
+        error instanceof Error ? error.message : "Could not start handoff.",
+      );
     }
   }, [accountId, accountsOrigin, isUnlocked, pending, spaceId]);
 
@@ -345,20 +354,11 @@ function DriveKeyAccess({
       setCacheState("checking");
       setStatus("Restoring Drive encryption…");
     });
-    void Promise.all([
-      restoreProductKey(spaceId),
-      loadPersistedKey(AUX_PRIVATE, spaceId),
-      loadPersistedKey(AUX_PUBLIC, spaceId),
-      loadPersistedKey(AUX_METADATA, spaceId),
-    ])
-      .then(async ([productRestored, privateKey, publicKey, metadataKey]) => {
+    void restoreProductKey(spaceId)
+      .then(async (productRestored) => {
         if (cancelled) return;
-        if (productRestored && privateKey && publicKey && metadataKey) {
-          setSharingKeys({ privateKey, publicKey, metadataKey });
-          setStatus("Drive is ready.");
-          setCacheState("ready");
-          return;
-        }
+        // A ProductSpaceKey alone cannot reconstruct the RSA sharing keypair.
+        // This tab needs the complete, bound Accounts handoff.
         if (productRestored) await lockProductKey(spaceId);
         await clearLegacySharingKeys();
         if (!cancelled) setCacheState("miss");
@@ -376,13 +376,7 @@ function DriveKeyAccess({
     return () => {
       cancelled = true;
     };
-  }, [
-    accountId,
-    lockProductKey,
-    restoreProductKey,
-    setSharingKeys,
-    spaceId,
-  ]);
+  }, [accountId, lockProductKey, restoreProductKey, setSharingKeys, spaceId]);
 
   useEffect(() => {
     if (cacheState !== "miss" || !accountId || !spaceId) return;
@@ -445,6 +439,7 @@ function DriveKeyAccess({
   }, [accountsOrigin, consumeRequest, pending]);
 
   const lock = useCallback(async () => {
+    invalidateHandoffs();
     if (accountId) {
       window.sessionStorage.setItem(`xenode:vault-lock:${accountId}`, "1");
     }
@@ -460,7 +455,14 @@ function DriveKeyAccess({
     clearThumbnailMemoryCache();
     setCacheState("miss");
     setStatus("Drive encryption is locked.");
-  }, [accountId, clearSharingKeys, pending, productCrypto, spaceId]);
+  }, [
+    accountId,
+    clearSharingKeys,
+    invalidateHandoffs,
+    pending,
+    productCrypto,
+    spaceId,
+  ]);
 
   const logout = useCallback(async () => {
     await lock();
