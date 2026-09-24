@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { sanitizeReturnTo } from "@xenode/identity-core";
 import { getAccountOnboardingReadiness } from "@xenode/database";
 import { requireAccountsPageSession } from "@/lib/session";
 import { OnboardingWizard } from "./OnboardingWizard";
@@ -6,7 +7,7 @@ import { OnboardingWizard } from "./OnboardingWizard";
 export const metadata = { title: "Welcome" };
 
 function safeNext(value: string | undefined): string {
-  return value && value.startsWith("/") && !value.startsWith("//") ? value : "/";
+  return sanitizeReturnTo(value, "/");
 }
 
 export default async function OnboardingPage({
@@ -24,12 +25,13 @@ export default async function OnboardingPage({
   const readiness = await getAccountOnboardingReadiness(session.user.id);
   if (readiness.complete) redirect(next);
   if (readiness.profileOnboarded && readiness.hasVault) {
-    redirect(`/auth/password?next=${encodeURIComponent(next)}`);
+    redirect(`/auth/continue?next=${encodeURIComponent(next)}`);
   }
 
   return (
     <OnboardingWizard
       accountId={session.user.id}
+      hasExistingVault={readiness.hasVault}
       email={session.user.email ?? ""}
       name={session.user.name ?? ""}
       username={

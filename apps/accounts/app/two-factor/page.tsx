@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { KeyRound, Loader2, ShieldCheck } from "lucide-react";
 import { Button, Card, CardContent, CardHeader, CardTitle, Input } from "@xenode/ui";
-import { cacheArkFromLogin, confirmVaultUnlock } from "@/lib/password-vault";
 
 export default function TwoFactorPage() {
   const [code, setCode] = useState("");
@@ -29,23 +28,6 @@ export default function TwoFactorPage() {
       if (!response.ok) throw new Error(payload.error ?? "Verification failed.");
       const next =
         new URLSearchParams(window.location.search).get("next") || "/";
-      let password = "";
-      try {
-        password = sessionStorage.getItem("xenode-vault-pw") ?? "";
-      } catch {
-        // The continuation screen will ask for the password.
-      }
-      if (password) {
-        try {
-          await cacheArkFromLogin(password, { trustDevice: true });
-          await confirmVaultUnlock("password", password);
-          sessionStorage.removeItem("xenode-vault-pw");
-          window.location.assign(next);
-          return;
-        } catch {
-          // Continue through the normal Vault unlock screen.
-        }
-      }
       window.location.assign(
         `/auth/continue?next=${encodeURIComponent(next)}`,
       );

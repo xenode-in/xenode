@@ -12,15 +12,7 @@ import {
   Input,
   Label,
 } from "@xenode/ui";
-import { cacheAccountRootKey } from "@/lib/ark-cache";
-import {
-  confirmVaultUnlock,
-  createPasswordEnvelopeForArk,
-  openArkWithPassword,
-} from "@/lib/password-vault";
-
 export function PasswordChangeDialog({
-  accountId,
   email,
   hasCredential,
   onStatus,
@@ -51,41 +43,8 @@ export function PasswordChangeDialog({
       return;
     }
     setBusy(true);
-    const mutationId = crypto.randomUUID().replaceAll("-", "");
-    let staged = false;
-    let credentialChanged = false;
-    const opened = await openArkWithPassword(currentPassword).catch((cause) => {
-      setBusy(false);
-      setError(cause instanceof Error ? cause.message : "Current password is incorrect.");
-      return null;
-    });
-    if (!opened) return;
     try {
-      if (opened.accountId !== accountId) throw new Error("Account changed.");
-      const passwordEnvelope = await createPasswordEnvelopeForArk(
-        accountId,
-        opened.ark,
-        newPassword,
-      );
-      const prepare = await fetch("/api/account/password/change", {
-        method: "POST",
-        credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          currentPassword,
-          expectedVaultRevision: opened.vaultRevision,
-          passwordEnvelope,
-          mutationId,
-        }),
-      });
-      if (!prepare.ok) {
-        const payload = (await prepare.json().catch(() => ({}))) as {
-          error?: string;
-        };
-        throw new Error(payload.error ?? "Could not prepare password change.");
-      }
-      staged = true;
-      const passwordResponse = await fetch("/api/auth/change-password", {
+      const response = await fetch("/api/account/password/change", {
         method: "POST",
         credentials: "include",
         headers: { "content-type": "application/json" },
@@ -95,54 +54,29 @@ export function PasswordChangeDialog({
           revokeOtherSessions,
         }),
       });
-      if (!passwordResponse.ok) {
-        const payload = (await passwordResponse.json().catch(() => ({}))) as {
-          message?: string;
-        };
-        throw new Error(payload.message ?? "Could not change the password.");
-      }
-      credentialChanged = true;
-      const commit = await fetch("/api/account/password/change", {
-        method: "PUT",
-        credentials: "include",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          mutationId,
-          revokeProductSessions: revokeOtherSessions,
-        }),
-      });
-      if (!commit.ok) {
+      const payload = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      if (!response.ok)
         throw new Error(
-          "Password changed, but Vault finalization was interrupted. Sign in with the new password to finish automatically.",
+          payload.error ?? "Could not change the sign-in password.",
         );
-      }
-      await cacheAccountRootKey(accountId, opened.ark);
-      await confirmVaultUnlock("password", newPassword);
       setOpen(false);
       setCurrentPassword("");
       setNewPassword("");
       setConfirm("");
       onStatus(
-        revokeOtherSessions
-          ? "Password changed and other devices were signed out."
-          : "Password changed.",
+        "Sign-in password changed. Your Vault password is unchanged.",
         false,
       );
-    } catch (changeError) {
-      if (staged && !credentialChanged) {
-        await fetch(
-          `/api/account/password/change?mutationId=${encodeURIComponent(mutationId)}`,
-          { method: "DELETE", credentials: "include" },
-        ).catch(() => undefined);
-      }
+    } catch (cause) {
       const message =
-        changeError instanceof Error
-          ? changeError.message
+        cause instanceof Error
+          ? cause.message
           : "Could not change the password.";
       setError(message);
       onStatus(message, true);
     } finally {
-      opened.ark.fill(0);
       setBusy(false);
     }
   }
@@ -172,14 +106,15 @@ export function PasswordChangeDialog({
           <DialogHeader>
             <DialogTitle>Change your password</DialogTitle>
             <DialogDescription>
-              This updates both sign-in and the password-wrapped Vault for{" "}
-              {email}.
+              This changes the sign-in password for {email}. Use a password
+              different from your Vault password; your encryption keys are
+              unchanged.
             </DialogDescription>
           </DialogHeader>
           <form className="space-y-4" onSubmit={change}>
             <PasswordField
               id="current-password"
-              label="Current password"
+              label="Current sign-in password"
               value={currentPassword}
               show={show}
               autoComplete="current-password"
@@ -187,7 +122,7 @@ export function PasswordChangeDialog({
             />
             <PasswordField
               id="new-password"
-              label="New password"
+              label="New sign-in password"
               value={newPassword}
               show={show}
               autoComplete="new-password"
@@ -206,19 +141,27 @@ export function PasswordChangeDialog({
               className="flex items-center gap-2 text-sm text-muted-foreground"
               onClick={() => setShow((value) => !value)}
             >
-              {show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+              {show ? (
+                <EyeOff className="size-4" />
+              ) : (
+                <Eye className="size-4" />
+              )}
               {show ? "Hide passwords" : "Show passwords"}
             </button>
             <label className="flex items-center gap-3 rounded-xl border p-3 text-sm">
               <input
                 type="checkbox"
                 checked={revokeOtherSessions}
-                onChange={(event) => setRevokeOtherSessions(event.target.checked)}
+                onChange={(event) =>
+                  setRevokeOtherSessions(event.target.checked)
+                }
               />
               Sign out other Accounts, Drive, and Photos sessions
             </label>
             {error ? (
-              <p className="text-sm text-destructive" role="alert">{error}</p>
+              <p className="text-sm text-destructive" role="alert">
+                {error}
+              </p>
             ) : null}
             <Button
               className="w-full"

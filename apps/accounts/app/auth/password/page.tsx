@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { sanitizeReturnTo } from "@xenode/identity-core";
 import {
   UserVault,
   connectDatabase,
@@ -8,7 +9,7 @@ import { requireAccountsPageSession } from "@/lib/session";
 import { PasswordCredentialForm } from "./PasswordCredentialForm";
 
 function safeNext(value: string | undefined) {
-  return value && value.startsWith("/") && !value.startsWith("//") ? value : "/";
+  return sanitizeReturnTo(value, "/");
 }
 
 export default async function OAuthPasswordPage({
@@ -34,7 +35,6 @@ export default async function OAuthPasswordPage({
   return (
     <PasswordCredentialForm
       accountLabel={session.user.email ?? session.user.name ?? "your account"}
-      needsRecovery={!vault.passwordEnvelope}
       next={next}
     />
   );

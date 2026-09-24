@@ -1,5 +1,8 @@
 "use client";
 
+import { VAULT_CLIENT_HEADERS } from "@/lib/vault-protocol";
+
+
 import {
   useEffect,
   useMemo,
@@ -41,6 +44,7 @@ type VaultResponse = {
   accountId: string;
   vault: {
     vaultRevision: number;
+    passwordMode?: "separate";
     passwordEnvelope?: VaultEnvelope | null;
     recoveryEnvelope: CryptoEnvelope;
     deviceEnvelopes: CryptoEnvelope[];
@@ -205,6 +209,7 @@ export default function KeyHandoffBrokerPage() {
         let cached = await loadCachedAccountRootKey(binding.accountId);
         if (!cached) {
           const response = await fetch("/api/vault", {
+          headers: VAULT_CLIENT_HEADERS,
             credentials: "include",
             cache: "no-store",
           });
@@ -256,6 +261,7 @@ export default function KeyHandoffBrokerPage() {
         parseBrokerRequest();
       const [vault, productKeyPayload] = await Promise.all([
         fetch("/api/vault", {
+          headers: VAULT_CLIENT_HEADERS,
           credentials: "include",
           cache: "no-store",
         }).then((response) => responseJson<VaultResponse>(response)),
@@ -266,6 +272,11 @@ export default function KeyHandoffBrokerPage() {
       ]);
       if (!vault.vault || vault.accountId !== binding.accountId) {
         throw new Error("Sign in to the account that started this handoff.");
+      }
+      if (vault.vault.passwordMode !== "separate") {
+        const next = `${window.location.pathname}${window.location.search}`;
+        if (mode !== "iframe") window.location.assign(`/auth/continue?next=${encodeURIComponent(next)}`);
+        throw new Error("Open Accounts and choose a separate Vault password first.");
       }
 
       // Obtain the ARK as a non-extractable CryptoKey: from the device cache

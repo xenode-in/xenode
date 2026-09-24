@@ -1,180 +1,110 @@
-import {
-  AuditEvent,
-  ProductSession,
-  TrustedSecondFactor,
-  UserVault,
-  connectDatabase,
-} from "@xenode/database";
+import { AuditEvent, TrustedSecondFactor, UserVault } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
-import { requireSameOrigin } from "@/lib/logout-coordinator";
-import { isAccountEnvelope } from "@/lib/vault-validation";
+import { needsSecondFactor } from "@/lib/session";
+import {
+  requireSameOrigin,
+  revokeProductSessions,
+} from "@/lib/logout-coordinator";
 
-const PENDING_TTL_MS = 15 * 60 * 1000;
-
-function accountsOrigin() {
-  return new URL(
-    process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in",
-  ).origin;
-}
-
-async function authenticated(request: Request) {
+/** Change sign-in credentials only; this endpoint never accepts a Vault wrap. */
+export async function POST(request: Request) {
   try {
-    requireSameOrigin(request, accountsOrigin());
+    requireSameOrigin(
+      request,
+      new URL(process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in")
+        .origin,
+    );
   } catch (response) {
-    return { response: response as Response };
+    return response as Response;
   }
   const auth = await getAccountsAuth();
   const session = await auth.api.getSession({ headers: request.headers });
-  if (!session) {
-    return {
-      response: Response.json({ error: "Unauthorized" }, { status: 401 }),
-    };
-  }
-  return { auth, session };
-}
-
-export async function POST(request: Request) {
-  const context = await authenticated(request);
-  if ("response" in context) return context.response;
-  const body = (await request.json().catch(() => null)) as
-    | {
-        currentPassword?: unknown;
-        expectedVaultRevision?: unknown;
-        passwordEnvelope?: unknown;
-        mutationId?: unknown;
-      }
-    | null;
+  if (!session)
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (needsSecondFactor(session))
+    return Response.json({ error: "Second factor required" }, { status: 403 });
+  const body = (await request.json().catch(() => null)) as Record<
+    string,
+    unknown
+  > | null;
   if (
     !body ||
+    Object.keys(body).some(
+      (key) =>
+        !["currentPassword", "newPassword", "revokeOtherSessions"].includes(
+          key,
+        ),
+    ) ||
     typeof body.currentPassword !== "string" ||
-    body.currentPassword.length < 12 ||
-    !Number.isInteger(body.expectedVaultRevision) ||
-    typeof body.mutationId !== "string" ||
-    !/^[A-Za-z0-9_-]{16,128}$/u.test(body.mutationId) ||
-    !isAccountEnvelope(body.passwordEnvelope, context.session.user.id, "password") ||
-    !body.passwordEnvelope.kdfParams ||
-    typeof body.passwordEnvelope.kdfParams !== "object"
+    typeof body.newPassword !== "string" ||
+    body.newPassword.length < 12 ||
+    body.newPassword.length > 128 ||
+    (body.revokeOtherSessions !== undefined &&
+      typeof body.revokeOtherSessions !== "boolean")
   ) {
-    return Response.json({ error: "Invalid password rotation" }, { status: 400 });
+    return Response.json(
+      { error: "Invalid sign-in password change" },
+      { status: 400 },
+    );
   }
+  if (
+    !(await UserVault.exists({
+      accountId: session.user.id,
+      passwordMode: "separate",
+    }))
+  ) {
+    return Response.json(
+      {
+        error:
+          "Separate your Vault password before changing your sign-in password.",
+        code: "vault_password_migration_required",
+      },
+      { status: 409 },
+    );
+  }
+  let result;
   try {
-    await context.auth.api.verifyPassword({
-      body: { password: body.currentPassword },
+    result = await auth.api.changePassword({
       headers: request.headers,
+      returnHeaders: true,
+      body: {
+        currentPassword: body.currentPassword,
+        newPassword: body.newPassword,
+        revokeOtherSessions: body.revokeOtherSessions === true,
+      },
     });
   } catch {
-    return Response.json({ error: "Current password is incorrect" }, { status: 401 });
+    return Response.json(
+      { error: "The sign-in password could not be changed." },
+      { status: 400 },
+    );
   }
-  await connectDatabase();
-  const vault = await UserVault.findOneAndUpdate(
-    {
-      accountId: context.session.user.id,
-      vaultRevision: Number(body.expectedVaultRevision),
-    },
-    {
-      $set: {
-        pendingPasswordEnvelope: body.passwordEnvelope,
-        pendingPasswordMutationId: body.mutationId,
-        pendingPasswordExpiresAt: new Date(Date.now() + PENDING_TTL_MS),
-      },
-      $inc: { vaultRevision: 1 },
-    },
-    { new: true, runValidators: true },
-  ).lean();
-  if (!vault) {
-    return Response.json({ error: "Vault revision conflict" }, { status: 409 });
-  }
-  return Response.json({ ok: true, vaultRevision: vault.vaultRevision });
-}
-
-export async function PUT(request: Request) {
-  const context = await authenticated(request);
-  if ("response" in context) return context.response;
-  const body = (await request.json().catch(() => null)) as
-    | { mutationId?: unknown; revokeProductSessions?: unknown }
-    | null;
-  if (
-    !body ||
-    typeof body.mutationId !== "string" ||
-    typeof body.revokeProductSessions !== "boolean"
-  ) {
-    return Response.json({ error: "Invalid password rotation" }, { status: 400 });
-  }
-  await connectDatabase();
-  const vault = await UserVault.findOneAndUpdate(
-    {
-      accountId: context.session.user.id,
-      pendingPasswordMutationId: body.mutationId,
-      pendingPasswordExpiresAt: { $gt: new Date() },
-      pendingPasswordEnvelope: { $ne: null },
-    },
-    [
-      {
-        $set: {
-          passwordEnvelope: "$pendingPasswordEnvelope",
-          lastMutationId: body.mutationId,
-          vaultRevision: { $add: ["$vaultRevision", 1] },
-        },
-      },
-      {
-        $unset: [
-          "pendingPasswordEnvelope",
-          "pendingPasswordMutationId",
-          "pendingPasswordExpiresAt",
-        ],
-      },
-    ],
-    { new: true },
-  ).lean();
-  if (!vault) {
-    return Response.json({ error: "Password rotation expired" }, { status: 409 });
-  }
-  if (body.revokeProductSessions) {
-    await Promise.all([
-      ProductSession.updateMany(
-        {
-          accountId: context.session.user.id,
-          revokedAt: { $exists: false },
-        },
-        { $set: { revokedAt: new Date() } },
-      ),
-      TrustedSecondFactor.updateMany(
-        {
-          accountId: context.session.user.id,
-          revokedAt: { $exists: false },
-        },
-        { $set: { revokedAt: new Date() } },
-      ),
-    ]);
+  if (body.revokeOtherSessions) {
+    await revokeProductSessions({
+      accountId: session.user.id,
+      exceptIssuerSessionId: session.session.id,
+      action: "password_changed",
+    });
+    await TrustedSecondFactor.updateMany(
+      { accountId: session.user.id, revokedAt: { $exists: false } },
+      { $set: { revokedAt: new Date() } },
+    );
   }
   await AuditEvent.create({
-    accountId: context.session.user.id,
+    accountId: session.user.id,
     action: "account.password.changed",
-    metadata: { revokedOtherDevices: body.revokeProductSessions },
+    metadata: { revokedOtherDevices: body.revokeOtherSessions === true },
   }).catch(() => undefined);
-  return Response.json({ ok: true });
+  const headers = new Headers(result.headers);
+  headers.set("content-type", "application/json");
+  return new Response(JSON.stringify({ ok: true }), { headers });
 }
 
-export async function DELETE(request: Request) {
-  const context = await authenticated(request);
-  if ("response" in context) return context.response;
-  const mutationId = new URL(request.url).searchParams.get("mutationId");
-  if (!mutationId) {
-    return Response.json({ error: "Mutation ID required" }, { status: 400 });
-  }
-  await connectDatabase();
-  await UserVault.updateOne(
-    {
-      accountId: context.session.user.id,
-      pendingPasswordMutationId: mutationId,
-    },
-    {
-      $unset: {
-        pendingPasswordEnvelope: 1,
-        pendingPasswordMutationId: 1,
-        pendingPasswordExpiresAt: 1,
-      },
-    },
+/** Old clients must reload; staged credential/envelope coupling is retired. */
+export function PUT() {
+  return Response.json(
+    { error: "Reload Xenode to use separate sign-in and Vault passwords." },
+    { status: 410 },
   );
-  return Response.json({ ok: true });
 }
+export const DELETE = PUT;

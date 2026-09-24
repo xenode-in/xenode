@@ -9,14 +9,15 @@ import { publishProductSessionRevoked } from "@/lib/realtime";
 export async function revokeProductSessions(args: {
   accountId: string;
   issuerSessionId?: string;
-  action: "browser_logout" | "device_revoked" | "sign_out_everywhere";
+  exceptIssuerSessionId?: string;
+  action: "browser_logout" | "device_revoked" | "sign_out_everywhere" | "password_changed";
 }): Promise<number> {
   await connectDatabase();
   const filter = {
     accountId: args.accountId,
     ...(args.issuerSessionId
       ? { issuerSessionId: args.issuerSessionId }
-      : {}),
+      : args.exceptIssuerSessionId ? { issuerSessionId: { $ne: args.exceptIssuerSessionId } } : {}),
     expiresAt: { $gt: new Date() },
   };
   const sessions = await ProductSession.find(filter).lean();

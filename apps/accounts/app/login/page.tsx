@@ -4,10 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Fingerprint } from "lucide-react";
 import { resumeAuthorizationPath } from "@/lib/presentation";
-import {
-  cacheArkFromLogin,
-  confirmVaultUnlock,
-} from "@/lib/password-vault";
 import { signInAndUnlockWithPasskey } from "@/lib/account-passkeys";
 
 type Mode = "signin" | "signup";
@@ -160,7 +156,7 @@ export default function LoginPage() {
         new URLSearchParams(window.location.search),
       );
       await signInAndUnlockWithPasskey();
-      window.location.assign(resumePath);
+      window.location.assign(`/auth/continue?next=${encodeURIComponent(resumePath)}`);
     } catch (error) {
       setBusy(false);
       setMessage(
@@ -177,17 +173,7 @@ export default function LoginPage() {
     const resumePath = resumeAuthorizationPath(
       new URLSearchParams(window.location.search),
     );
-    // Stash the just-entered password so vault setup can create the vault with
-    // it silently — the user never types a password twice.
-    const rememberPasswordForVault = () => {
-      try {
-        sessionStorage.setItem("xenode-vault-pw", password);
-      } catch {
-        /* private mode / storage disabled — vault will prompt instead */
-      }
-    };
     const goVerify = async (targetEmail: string) => {
-      rememberPasswordForVault();
       await fetch("/api/auth/email-otp/send-verification-otp", {
         method: "POST",
         credentials: "include",
@@ -235,27 +221,13 @@ export default function LoginPage() {
           twoFactorRedirect?: boolean;
         };
         if (success.twoFactorRedirect) {
-          try {
-            sessionStorage.setItem("xenode-vault-pw", password);
-          } catch {
-            // The Vault continuation screen will ask again if storage is blocked.
-          }
           window.location.assign(
             `/two-factor?next=${encodeURIComponent(resumePath)}`,
           );
           return;
         }
-        // Cache the ARK from the login password so Drive/Photos unlock without a
-        // second prompt. Best-effort — never block sign-in on it.
-        try {
-          await cacheArkFromLogin(password, { trustDevice: rememberMe });
-          await confirmVaultUnlock("password", password);
-          window.location.assign(resumePath);
-        } catch {
-          window.location.assign(
-            `/auth/continue?next=${encodeURIComponent(resumePath)}`,
-          );
-        }
+        setPassword("");
+        window.location.assign(`/auth/continue?next=${encodeURIComponent(resumePath)}`);
         return;
       }
 
@@ -453,7 +425,7 @@ export default function LoginPage() {
               </div>
               {!isSignin && (
                 <p className="fine-print">
-                  At least 12 characters — this password also unlocks your
+                  At least 12 characters. You will choose a separate password for your
                   encrypted Vault.
                 </p>
               )}

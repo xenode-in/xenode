@@ -4,6 +4,7 @@ import { getAccountsAuth } from "@/lib/auth";
 import { hasVaultUnlockConfirmation } from "@/lib/vault-unlock-session";
 import { needsSecondFactor } from "@/lib/session";
 import { applyTrustedSecondFactor } from "@/lib/trusted-second-factor";
+import { POST as changeSignInPassword } from "@/app/api/account/password/change/route";
 
 function rejectsResourceIndicator(request: Request): boolean {
   const url = new URL(request.url);
@@ -38,12 +39,8 @@ export async function GET(request: Request) {
       const readiness = await getAccountOnboardingReadiness(session.user.id);
       if (!readiness.complete) {
         const next = `${url.pathname}${url.search}`;
-        const destination =
-          readiness.profileOnboarded &&
-          readiness.hasVault &&
-          readiness.hasPasswordEnvelope
-            ? "/auth/password"
-            : "/onboarding";
+          const destination = readiness.profileOnboarded && readiness.hasVault
+            ? "/auth/continue" : "/onboarding";
         const redirectUrl = new URL(destination, url.origin);
         redirectUrl.searchParams.set("next", next);
         return Response.redirect(redirectUrl);
@@ -65,6 +62,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const url = new URL(request.url);
+  if (url.pathname.endsWith("/change-password")) return changeSignInPassword(request);
   if (url.pathname.endsWith("/oauth2/token")) {
     const contentType = request.headers.get("content-type") ?? "";
     if (contentType.includes("application/x-www-form-urlencoded")) {

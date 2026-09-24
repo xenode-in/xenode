@@ -1,5 +1,7 @@
 "use client";
 
+import { VAULT_CLIENT_HEADERS } from "@/lib/vault-protocol";
+
 import {
   deriveRecoveryKeyFromMnemonic,
   derivePasswordWrappingKey,
@@ -11,27 +13,32 @@ import {
 } from "@xenode/crypto-core";
 import { deriveArgon2id } from "@/lib/argon2";
 import { cacheAccountRootKey } from "@/lib/ark-cache";
-import {
-  enrollBrowserDevice,
-  loadBrowserDeviceArk,
-} from "@/lib/device-vault";
+import { enrollBrowserDevice, loadBrowserDeviceArk } from "@/lib/device-vault";
 
-type VaultResponse = {
+export type VaultResponse = {
   accountId: string;
   vault: {
     vaultRevision: number;
-    passwordEnvelope?:
-      | (CryptoEnvelope & { kdfParams: Argon2idParams })
-      | null;
+    passwordMode?: "separate";
+    passwordEnvelope?: (CryptoEnvelope & { kdfParams: Argon2idParams }) | null;
     pendingPasswordEnvelope?:
       | (CryptoEnvelope & { kdfParams: Argon2idParams })
       | null;
-    pendingPasswordMutationId?: string;
-    pendingPasswordExpiresAt?: string | Date;
     recoveryEnvelope: CryptoEnvelope;
+    wrappedSharingPrivateKey: CryptoEnvelope;
     deviceEnvelopes: CryptoEnvelope[];
   } | null;
 };
+
+async function loadVault(): Promise<VaultResponse> {
+  const response = await fetch("/api/vault", {
+    headers: VAULT_CLIENT_HEADERS,
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error("Could not load the encrypted Vault.");
+  return response.json();
+}
 
 export function randomPasswordParams(): Argon2idParams {
   return {
@@ -49,15 +56,17 @@ export async function createPasswordEnvelopeForArk(
   ark: Uint8Array,
   password: string,
 ) {
+  if (password.length < 12 || password.length > 128)
+    throw new Error("Use a Vault password between 12 and 128 characters.");
   const kdfParams = randomPasswordParams();
-  const passwordKey = await derivePasswordWrappingKey(
+  const key = await derivePasswordWrappingKey(
     password,
     kdfParams,
     deriveArgon2id,
   );
   try {
     return {
-      ...(await sealEnvelope(ark, passwordKey, {
+      ...(await sealEnvelope(ark, key, {
         accountId,
         keyId: "ark",
         keyVersion: 1,
@@ -66,177 +75,146 @@ export async function createPasswordEnvelopeForArk(
       kdfParams,
     };
   } finally {
-    passwordKey.fill(0);
+    key.fill(0);
   }
 }
 
-export async function openArkWithPassword(password: string): Promise<{
-  accountId: string;
-  ark: Uint8Array;
-  vaultRevision: number;
-}> {
-  const response = await fetch("/api/vault", {
-    credentials: "include",
-    cache: "no-store",
-  });
-  if (!response.ok) throw new Error("Could not load the encrypted Vault.");
-  const data = (await response.json()) as VaultResponse;
-  if (!data.vault || !data.vault.passwordEnvelope) {
-    throw new Error("This Vault does not have a password envelope.");
-  }
-  const pendingIsCurrent =
-    data.vault.pendingPasswordEnvelope &&
-    data.vault.pendingPasswordMutationId &&
-    data.vault.pendingPasswordExpiresAt &&
-    new Date(data.vault.pendingPasswordExpiresAt).getTime() > Date.now();
+async function openPasswordEnvelope(
+  data: VaultResponse,
+  password: string,
+): Promise<Uint8Array> {
+  if (!data.vault) throw new Error("The encrypted Vault is not set up.");
+  // Retain local recovery of old interrupted credential rotations even after
+  // their former TTL. Never finalize a login credential from this read path.
   const candidates = [
-    ...(pendingIsCurrent && data.vault.pendingPasswordEnvelope
-      ? [{
-          envelope: data.vault.pendingPasswordEnvelope,
-          mutationId: data.vault.pendingPasswordMutationId,
-        }]
+    ...(data.vault.passwordMode !== "separate" &&
+    data.vault.pendingPasswordEnvelope
+      ? [data.vault.pendingPasswordEnvelope]
       : []),
-    { envelope: data.vault.passwordEnvelope, mutationId: undefined },
+    ...(data.vault.passwordEnvelope ? [data.vault.passwordEnvelope] : []),
   ];
-  for (const candidate of candidates) {
-    const passwordKey = await derivePasswordWrappingKey(
+  for (const envelope of candidates) {
+    const key = await derivePasswordWrappingKey(
       password,
-      candidate.envelope.kdfParams,
+      envelope.kdfParams,
       deriveArgon2id,
     );
     try {
-      const ark = await openEnvelope(candidate.envelope, passwordKey, {
+      return await openEnvelope(envelope, key, {
         accountId: data.accountId,
         keyId: "ark",
         keyVersion: 1,
         type: "password",
       });
-      if (candidate.mutationId) {
-        await fetch("/api/account/password/change", {
-          method: "PUT",
-          credentials: "include",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            mutationId: candidate.mutationId,
-            revokeProductSessions: false,
-          }),
-        }).catch(() => undefined);
-      }
-      return {
-        accountId: data.accountId,
-        ark,
-        vaultRevision: data.vault.vaultRevision,
-      };
     } catch {
-      // Try the other active/staged envelope without revealing which matched.
+      // Another active/legacy wrap may match. No password leaves this tab.
     } finally {
-      passwordKey.fill(0);
+      key.fill(0);
     }
   }
-  throw new Error("That password could not unlock this Vault.");
+  throw new Error("That Vault password could not unlock this Vault.");
 }
 
-/**
- * Verify a Vault password locally and cache the unlocked ARK for handoffs.
- * The password is used only by Argon2id in this browser and is never sent by
- * this function.
- */
-export async function cacheArkFromLogin(
+/** Local Vault password only. Authentication credentials are a separate flow. */
+export async function openArkWithPassword(password: string) {
+  const data = await loadVault();
+  const ark = await openPasswordEnvelope(data, password);
+  return {
+    accountId: data.accountId,
+    ark,
+    vaultRevision: data.vault!.vaultRevision,
+  };
+}
+
+export async function unlockVaultWithPassword(
   password: string,
   options: { trustDevice?: boolean } = {},
 ): Promise<void> {
-  const response = await fetch("/api/vault", {
-    credentials: "include",
-    cache: "no-store",
-  });
-  if (!response.ok) throw new Error("Could not load the encrypted Vault.");
-  const data = (await response.json()) as VaultResponse;
-  if (!data.vault) throw new Error("The encrypted Vault is not set up.");
-  const opened = await openArkWithPassword(password);
-  const ark = opened.ark;
+  const data = await loadVault();
+  if (data.vault?.passwordMode !== "separate")
+    throw new Error("Choose a separate Vault password first.");
+  const ark = await openPasswordEnvelope(data, password);
   try {
     await cacheAccountRootKey(data.accountId, ark);
-    if (options.trustDevice !== false) {
-      const enrolled = await loadBrowserDeviceArk(
+    if (
+      options.trustDevice === true &&
+      !(await loadBrowserDeviceArk(data.accountId, data.vault.deviceEnvelopes))
+    ) {
+      await enrollBrowserDevice(
         data.accountId,
-        data.vault.deviceEnvelopes,
-      );
-      if (!enrolled) {
-        await enrollBrowserDevice(
-          data.accountId,
-          ark,
-          data.vault.vaultRevision,
-        ).catch(() => undefined);
-      }
+        ark,
+        data.vault.vaultRevision,
+      ).catch(() => undefined);
     }
   } finally {
     ark.fill(0);
   }
 }
 
+/** A navigation hint after local unlock, not server verification of a secret. */
 export async function confirmVaultUnlock(
-  method: "password" | "trusted-device",
-  password?: string,
+  method: "password" | "trusted-device" | "recovery",
 ): Promise<void> {
   const response = await fetch("/api/vault/unlock", {
     method: "POST",
     credentials: "include",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ method, ...(password ? { password } : {}) }),
+    body: JSON.stringify({ method }),
   });
-  if (!response.ok) {
-    throw new Error("Could not confirm the Vault unlock.");
-  }
+  if (!response.ok)
+    throw new Error("Could not continue after local Vault unlock.");
 }
 
-/**
- * Upgrade a legacy passwordless Vault without rotating its ARK or product keys.
- * Recovery opens the existing ARK locally; only a new encrypted password
- * envelope is sent to Accounts.
- */
-export async function addPasswordToVault(
-  password: string,
-  recoveryPhrase: string,
-): Promise<void> {
-  const response = await fetch("/api/vault", {
-    credentials: "include",
-    cache: "no-store",
-  });
-  if (!response.ok) throw new Error("Could not load the encrypted Vault.");
-  const data = (await response.json()) as VaultResponse;
-  if (!data.vault) throw new Error("The encrypted Vault is not set up.");
-  if (data.vault.passwordEnvelope) {
-    await cacheArkFromLogin(password);
-    return;
-  }
-
-  const recoveryKey = await deriveRecoveryKeyFromMnemonic(recoveryPhrase);
-  let ark: Uint8Array | undefined;
-  let passwordKey: Uint8Array | undefined;
-  try {
-    ark = await openEnvelope(data.vault.recoveryEnvelope, recoveryKey, {
-      accountId: data.accountId,
-      keyId: "ark",
-      keyVersion: 1,
-      type: "recovery",
-    });
-    const kdfParams = randomPasswordParams();
-    passwordKey = await derivePasswordWrappingKey(
-      password,
-      kdfParams,
-      deriveArgon2id,
+/** Rewrap the existing ARK; never regenerate product, file or recovery keys. */
+export async function updateVaultPassword(input: {
+  currentPassword?: string;
+  recoveryPhrase?: string;
+  newPassword: string;
+}): Promise<void> {
+  if (input.currentPassword && input.currentPassword === input.newPassword) {
+    throw new Error(
+      "Choose a different Vault password. Do not reuse your sign-in password.",
     );
-    const passwordEnvelope = {
-      ...(await sealEnvelope(ark, passwordKey, {
+  }
+  const data = await loadVault();
+  if (!data.vault) throw new Error("The encrypted Vault is not set up.");
+  let ark: Uint8Array | undefined;
+  try {
+    if (input.recoveryPhrase?.trim()) {
+      const key = await deriveRecoveryKeyFromMnemonic(input.recoveryPhrase);
+      try {
+        ark = await openEnvelope(data.vault.recoveryEnvelope, key, {
+          accountId: data.accountId,
+          keyId: "ark",
+          keyVersion: 1,
+          type: "recovery",
+        });
+      } finally {
+        key.fill(0);
+      }
+    } else {
+      ark = await openPasswordEnvelope(data, input.currentPassword ?? "");
+    }
+    // A legacy pending wrap must still open the existing key hierarchy. Never
+    // replace the only working password wrap with an unrelated recovered ARK.
+    const sharingKey = await openEnvelope(
+      data.vault.wrappedSharingPrivateKey,
+      ark,
+      {
         accountId: data.accountId,
-        keyId: "ark",
+        keyId: "sharing-private-key",
         keyVersion: 1,
-        type: "password",
-      })),
-      kdfParams,
-    };
-    const update = await fetch("/api/vault/password-envelope", {
-      method: "POST",
+        type: "sharing-private-key",
+      },
+    );
+    sharingKey.fill(0);
+    const passwordEnvelope = await createPasswordEnvelopeForArk(
+      data.accountId,
+      ark,
+      input.newPassword,
+    );
+    const request: RequestInit = {
+      method: "PUT",
       credentials: "include",
       headers: {
         "content-type": "application/json",
@@ -246,33 +224,18 @@ export async function addPasswordToVault(
         expectedVaultRevision: data.vault.vaultRevision,
         passwordEnvelope,
       }),
-    });
-    if (!update.ok) {
-      const payload = (await update.json().catch(() => ({}))) as {
-        error?: string;
-      };
-      throw new Error(payload.error ?? "Could not add a Vault password.");
-    }
+    };
+    const send = () => fetch("/api/vault/separate-password", request);
+    const response = await send().catch(send);
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: string;
+    };
+    if (!response.ok)
+      throw new Error(
+        payload.error ?? "Could not save the encrypted Vault envelope.",
+      );
     await cacheAccountRootKey(data.accountId, ark);
-    const enrolled = await loadBrowserDeviceArk(
-      data.accountId,
-      data.vault.deviceEnvelopes,
-    );
-    if (!enrolled) {
-      const payload = (await update.json().catch(() => ({}))) as {
-        vaultRevision?: number;
-      };
-      if (payload.vaultRevision) {
-        await enrollBrowserDevice(
-          data.accountId,
-          ark,
-          payload.vaultRevision,
-        ).catch(() => undefined);
-      }
-    }
   } finally {
     ark?.fill(0);
-    passwordKey?.fill(0);
-    recoveryKey.fill(0);
   }
 }

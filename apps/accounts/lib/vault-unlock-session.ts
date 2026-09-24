@@ -3,7 +3,9 @@ import { jwtVerify, SignJWT } from "jose";
 export const VAULT_UNLOCK_COOKIE = "xenode_vault_unlocked";
 export const VAULT_UNLOCK_TTL_SECONDS = 30 * 60;
 
-const PURPOSE = "vault-unlock";
+// Invalidate the old password-verification marker after secret separation.
+// This is a navigation hint, never proof of key possession or API authorization.
+const PURPOSE = "vault-local-unlock-v2";
 const AUDIENCE = "xenode-accounts";
 
 function accountsOrigin() {

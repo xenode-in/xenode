@@ -31,7 +31,7 @@ async function seedAccount() {
       sealEnvelope(ark, wrappingKey, { accountId, keyId: "ark", keyVersion: 1, type });
     await AccountProfile.create({ accountId, onboarded: true });
     await UserVault.create({
-      accountId, vaultRevision: 1, formatVersion: 2,
+      accountId, vaultRevision: 1, formatVersion: 2, passwordMode: "separate",
       passwordEnvelope: await envelope("password"),
       recoveryEnvelope: await envelope("recovery"),
       wrappedSharingPrivateKey: await envelope("sharing-private-key"),
@@ -77,7 +77,7 @@ async function requestWithCookie(sessionId: string) {
 }
 
 describe("Drive session resolution (real implementation)", () => {
-  it.each(["profile", "vault", "password-envelope", "credential"])(
+  it.each(["profile", "vault", "password-envelope", "separate-password"])(
     "rejects an authenticated account missing onboarding %s",
     async (missing) => {
       const accountId = await seedAccount();
@@ -85,7 +85,7 @@ describe("Drive session resolution (real implementation)", () => {
       if (missing === "profile") await AccountProfile.deleteOne({ accountId });
       if (missing === "vault") await UserVault.deleteOne({ accountId });
       if (missing === "password-envelope") await UserVault.updateOne({ accountId }, { $set: { passwordEnvelope: null } });
-      if (missing === "credential") await getDatabase().collection("account").deleteMany({});
+      if (missing === "separate-password") await UserVault.updateOne({ accountId }, { $unset: { passwordMode: 1 } });
       await expect(getServerSession(await requestWithCookie("resolution-incomplete"))).resolves.toBeNull();
     },
   );

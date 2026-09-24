@@ -16,6 +16,7 @@ export interface AccountOnboardingReadiness {
   profileOnboarded: boolean;
   hasVault: boolean;
   hasPasswordEnvelope: boolean;
+  hasSeparateVaultPassword: boolean;
   hasPasswordCredential: boolean;
   complete: boolean;
 }
@@ -24,8 +25,8 @@ export interface AccountOnboardingReadiness {
  * Canonical gate for issuing or accepting first-party product sessions.
  *
  * Authentication alone is intentionally insufficient: a user must also have
- * completed their Accounts profile and have both sides of the coordinated
- * password setup (the Better Auth credential and the password-wrapped ARK).
+ * completed their Accounts profile and migrated to a separate local Vault
+ * password. OAuth accounts need not add a password sign-in credential.
  */
 export async function getAccountOnboardingReadiness(
   accountId: string,
@@ -33,7 +34,7 @@ export async function getAccountOnboardingReadiness(
   await connectDatabase();
   const [profile, vault, accounts] = await Promise.all([
     AccountProfile.findOne({ accountId }).select("onboarded").lean(),
-    UserVault.findOne({ accountId }).select("passwordEnvelope").lean(),
+    UserVault.findOne({ accountId }).select("passwordEnvelope passwordMode").lean(),
     createAccountRepository(getDatabase()).listForUser(accountId),
   ]);
   const hasPasswordCredential = accounts.some(
@@ -45,16 +46,18 @@ export async function getAccountOnboardingReadiness(
   const profileOnboarded = profile?.onboarded === true;
   const hasVault = Boolean(vault);
   const hasPasswordEnvelope = Boolean(vault?.passwordEnvelope);
+  const hasSeparateVaultPassword = vault?.passwordMode === "separate";
 
   return {
     profileOnboarded,
     hasVault,
     hasPasswordEnvelope,
+    hasSeparateVaultPassword,
     hasPasswordCredential,
     complete:
       profileOnboarded &&
       hasVault &&
       hasPasswordEnvelope &&
-      hasPasswordCredential,
+      hasSeparateVaultPassword,
   };
 }

@@ -1,4 +1,31 @@
-import type { CryptoEnvelope } from "@xenode/crypto-core";
+import {
+  decodeBase64Url,
+  validateArgon2idParams,
+  type Argon2idParams,
+  type CryptoEnvelope,
+} from "@xenode/crypto-core";
+
+export function isPasswordEnvelope(
+  value: unknown,
+  accountId: string,
+): value is CryptoEnvelope & { kdfParams: Argon2idParams } {
+  if (
+    !isAccountEnvelope(value, accountId, "password") ||
+    value.keyId !== "ark" ||
+    value.keyVersion !== 1 ||
+    value.status !== "active"
+  )
+    return false;
+  try {
+    validateArgon2idParams(value.kdfParams as Argon2idParams);
+    return (
+      decodeBase64Url(value.iv).length === 12 &&
+      decodeBase64Url(value.ciphertext).length === 48
+    );
+  } catch {
+    return false;
+  }
+}
 
 export function isVaultEnvelope(value: unknown): value is CryptoEnvelope {
   if (!value || typeof value !== "object") return false;

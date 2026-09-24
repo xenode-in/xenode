@@ -32,6 +32,8 @@ const envelopeSchema = new Schema(
 export interface UserVaultRecord {
   accountId: string;
   vaultRevision: number;
+  /** Missing on Vaults that reused the login password; migrate in the browser. */
+  passwordMode?: "separate";
   passwordEnvelope?: unknown | null;
   pendingPasswordEnvelope?: unknown | null;
   pendingPasswordMutationId?: string;
@@ -50,6 +52,7 @@ const userVaultSchema = new Schema<UserVaultRecord>(
   {
     accountId: { type: String, required: true, unique: true, index: true },
     vaultRevision: { type: Number, required: true, min: 1 },
+    passwordMode: { type: String, enum: ["separate"], required: false },
     passwordEnvelope: { type: envelopeSchema, required: false, default: null },
     pendingPasswordEnvelope: {
       type: envelopeSchema,

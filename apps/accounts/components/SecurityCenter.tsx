@@ -220,7 +220,7 @@ export function SecurityCenter({
 
   async function disableTwoFactor() {
     const password = window.prompt(
-      "Enter your current password to disable authenticator verification.",
+      "Enter your sign-in password to disable authenticator verification.",
     );
     if (!password) return;
     setTwoFactorBusy(true);
@@ -241,7 +241,7 @@ export function SecurityCenter({
 
   async function regenerateBackupCodes() {
     const password = window.prompt(
-      "Enter your current password to replace your backup codes.",
+      "Enter your sign-in password to replace your backup codes.",
     );
     if (!password) return;
     const result = await authClient.twoFactor.generateBackupCodes({ password });
@@ -406,8 +406,8 @@ export function SecurityCenter({
             </span>
             <CardTitle>Password</CardTitle>
             <CardDescription className="mt-2 max-w-xl leading-6">
-              Your Xenode password also wraps the encrypted Account Root Key.
-              Changing it updates both safely.
+              Your sign-in password and local Vault password are separate.
+              Changing your sign-in password does not change your encryption keys.
             </CardDescription>
           </div>
           <PasswordChangeDialog
@@ -420,6 +420,7 @@ export function SecurityCenter({
             }}
           />
         </CardHeader>
+        <CardContent><Button variant="outline" asChild><a href="/security/vault">Change Vault password</a></Button></CardContent>
       </Card>
 
       <Dialog open={passkeyOpen} onOpenChange={setPasskeyOpen}>
@@ -427,7 +428,7 @@ export function SecurityCenter({
           <DialogHeader>
             <DialogTitle>Add a passkey</DialogTitle>
             <DialogDescription>
-              Confirm your password so this browser can rewrap the Vault key for
+              Enter your Vault password so this browser can rewrap the Vault key for
               the new passkey. The key never leaves this device.
             </DialogDescription>
           </DialogHeader>
@@ -442,7 +443,7 @@ export function SecurityCenter({
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="passkey-password">Current password</Label>
+              <Label htmlFor="passkey-password">Vault password (local only)</Label>
               <Input
                 id="passkey-password"
                 type="password"
@@ -520,7 +521,7 @@ export function SecurityCenter({
           ) : (
             <form className="space-y-4" onSubmit={beginTwoFactor}>
               <div className="grid gap-2">
-                <Label htmlFor="two-factor-password">Current password</Label>
+                <Label htmlFor="two-factor-password">Sign-in password</Label>
                 <Input
                   id="two-factor-password"
                   type="password"

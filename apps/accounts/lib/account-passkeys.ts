@@ -1,5 +1,8 @@
 "use client";
 
+import { VAULT_CLIENT_HEADERS } from "@/lib/vault-protocol";
+
+
 import { base64URLStringToBuffer } from "@simplewebauthn/browser";
 import {
   derivePasskeyWrappingKey,
@@ -156,7 +159,11 @@ export async function signInAndUnlockWithPasskey(): Promise<void> {
     });
     try {
       await cacheAccountRootKey(payload.accountId, ark);
-      await confirmVaultUnlock("trusted-device");
+      const vault = await fetch("/api/vault", {
+          headers: VAULT_CLIENT_HEADERS, credentials: "include", cache: "no-store" }).then((response) => response.json()) as { vault?: { passwordMode?: string } };
+      // Legacy accounts must migrate on the continuation screen even when a
+      // passkey can already unlock their existing root key.
+      if (vault.vault?.passwordMode === "separate") await confirmVaultUnlock("trusted-device");
     } finally {
       ark.fill(0);
     }

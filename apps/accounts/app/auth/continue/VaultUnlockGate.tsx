@@ -1,5 +1,8 @@
 "use client";
 
+import { VAULT_CLIENT_HEADERS } from "@/lib/vault-protocol";
+
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
@@ -12,14 +15,16 @@ import {
 import type { CryptoEnvelope } from "@xenode/crypto-core";
 import { loadBrowserDeviceArk } from "@/lib/device-vault";
 import {
-  cacheArkFromLogin,
+  unlockVaultWithPassword,
   confirmVaultUnlock,
 } from "@/lib/password-vault";
+import { VaultPasswordForm } from "@/components/VaultPasswordForm";
 
 type VaultResponse = {
   accountId: string;
   vault: {
     deviceEnvelopes: CryptoEnvelope[];
+    passwordMode?: "separate";
   } | null;
 };
 
@@ -32,11 +37,11 @@ export function VaultUnlockGate({
   accountLabel: string;
   next: string;
 }) {
-  const [phase, setPhase] = useState<"checking" | "password" | "unlocking">(
+  const [phase, setPhase] = useState<"checking" | "password" | "unlocking" | "migration" | "recovery">(
     "checking",
   );
   const [password, setPassword] = useState("");
-  const [trustDevice, setTrustDevice] = useState(true);
+  const [trustDevice, setTrustDevice] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const started = useRef(false);
@@ -48,9 +53,11 @@ export function VaultUnlockGate({
   useEffect(() => {
     if (started.current) return;
     started.current = true;
+    try { sessionStorage.removeItem("xenode-vault-pw"); } catch { /* retired sign-in secret cache */ }
     void (async () => {
       try {
         const response = await fetch("/api/vault", {
+          headers: VAULT_CLIENT_HEADERS,
           credentials: "include",
           cache: "no-store",
         });
@@ -58,6 +65,10 @@ export function VaultUnlockGate({
         const data = (await response.json()) as VaultResponse;
         if (!data.vault || data.accountId !== accountId) {
           throw new Error("Your encrypted Vault is not ready.");
+        }
+        if (data.vault.passwordMode !== "separate") {
+          setPhase("migration");
+          return;
         }
         const ark = await loadBrowserDeviceArk(
           accountId,
@@ -83,14 +94,14 @@ export function VaultUnlockGate({
   async function unlock(event: React.FormEvent) {
     event.preventDefault();
     if (password.length < 12) {
-      setError("Enter your Xenode password.");
+      setError("Enter your local Vault password.");
       return;
     }
     setPhase("unlocking");
     setError("");
     try {
-      await cacheArkFromLogin(password, { trustDevice });
-      await confirmVaultUnlock("password", password);
+      await unlockVaultWithPassword(password, { trustDevice });
+      await confirmVaultUnlock("password");
       continueToProduct();
     } catch {
       setError("That password could not unlock this Vault. Please try again.");
@@ -124,10 +135,12 @@ export function VaultUnlockGate({
             <span className="vault-unlock-pulse" />
             Checking for a trusted browser key…
           </div>
+        ) : phase === "migration" || phase === "recovery" ? (
+          <VaultPasswordForm migrating={phase === "migration"} initialRecovery={phase === "recovery"} onComplete={continueToProduct} />
         ) : (
           <form className="form" onSubmit={(event) => void unlock(event)}>
             <div className="field">
-              <label htmlFor="vault-unlock-password">Xenode password</label>
+              <label htmlFor="vault-unlock-password">Vault password (local only)</label>
               <div className="input-affix">
                 <input
                   id="vault-unlock-password"
@@ -180,6 +193,9 @@ export function VaultUnlockGate({
                   Unlock and continue
                 </>
               )}
+            </button>
+            <button className="button button-secondary" type="button" disabled={busy} onClick={() => setPhase("recovery")}>
+              Recover with my recovery phrase
             </button>
           </form>
         )}

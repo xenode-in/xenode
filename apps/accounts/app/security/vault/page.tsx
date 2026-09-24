@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { VAULT_CLIENT_HEADERS } from "@/lib/vault-protocol";
+
+
+import { useEffect, useState } from "react";
 import { generateRecoveryMnemonic } from "@xenode/crypto-core";
+import { VaultPasswordForm } from "@/components/VaultPasswordForm";
 import { createAccountVault } from "@/lib/vault-setup";
 
 type VaultState = {
   accountId: string;
-  vault: { vaultRevision: number } | null;
+  vault: { vaultRevision: number; passwordMode?: "separate" } | null;
 };
 
 export default function VaultPage() {
@@ -18,11 +22,6 @@ export default function VaultPage() {
   // Where to send the user after first-run vault setup (the OIDC handshake they
   // came from, or the hub). Only same-origin paths are honored.
   const [nextPath, setNextPath] = useState("/");
-  // True while creating the vault automatically from the signup password —
-  // the user is never prompted for a password a second time.
-  const [autoSetup, setAutoSetup] = useState(false);
-  const autoStarted = useRef(false);
-
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("next");
     if (requested && requested.startsWith("/")) {
@@ -31,7 +30,8 @@ export default function VaultPage() {
   }, []);
 
   useEffect(() => {
-    void fetch("/api/vault", { credentials: "include", cache: "no-store" })
+    void fetch("/api/vault", {
+          headers: VAULT_CLIENT_HEADERS, credentials: "include", cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) throw new Error("Sign in to manage your Vault.");
         return response.json() as Promise<VaultState>;
@@ -45,29 +45,9 @@ export default function VaultPage() {
       });
   }, []);
 
-  // Silent first-run: if the signup step stashed the password, create the vault
-  // with it automatically — no second password prompt.
-  useEffect(() => {
-    if (!state || state.vault || autoStarted.current) return;
-    let stashed = "";
-    try {
-      stashed = sessionStorage.getItem("xenode-vault-pw") ?? "";
-    } catch {
-      /* storage disabled */
-    }
-    if (stashed.length >= 12) {
-      autoStarted.current = true;
-      setAutoSetup(true);
-      setStatus("Setting up your encrypted vault…");
-      void createVault(stashed);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state]);
-
   async function createVault(pw: string = password) {
     if (!state || state.vault || pw.length < 12) {
       setStatus("Use a password of at least 12 characters.");
-      setAutoSetup(false);
       return;
     }
     setBusy(true);
@@ -91,7 +71,6 @@ export default function VaultPage() {
       }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Vault creation failed.");
-      setAutoSetup(false); // fall back to the manual password form
     } finally {
       setBusy(false);
     }
@@ -112,14 +91,7 @@ export default function VaultPage() {
           {status}
         </p>
       ) : null}
-      {!state?.vault && autoSetup && !recoverySecret ? (
-        <section className="card" style={{ marginTop: 24 }}>
-          <p className="muted" style={{ margin: 0 }}>
-            Creating your encrypted vault from your sign-up password…
-          </p>
-        </section>
-      ) : null}
-      {!state?.vault && !autoSetup ? (
+      {!state?.vault ? (
         <section className="card" style={{ marginTop: 24 }}>
           <form
             className="form"
@@ -148,6 +120,7 @@ export default function VaultPage() {
           </form>
         </section>
       ) : null}
+      {state?.vault && !recoverySecret ? <VaultPasswordForm migrating={state.vault.passwordMode !== "separate"} onComplete={() => window.location.assign(nextPath)} /> : null}
       {recoverySecret ? (
         <section className="callout callout-warning" style={{ marginTop: 24 }}>
           <strong className="callout-title">

@@ -1,0 +1,106 @@
+import { AuditEvent, UserVault, connectDatabase } from "@xenode/database";
+import { getAccountsSession, needsSecondFactor } from "@/lib/session";
+import { requireSameOrigin } from "@/lib/logout-coordinator";
+import { isPasswordEnvelope } from "@/lib/vault-validation";
+
+/** Replace only the password envelope. The ARK and all other key wraps stay put. */
+export async function PUT(request: Request) {
+  try {
+    requireSameOrigin(
+      request,
+      new URL(process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in")
+        .origin,
+    );
+  } catch (response) {
+    return response as Response;
+  }
+  const session = await getAccountsSession(request);
+  if (!session)
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (needsSecondFactor(session))
+    return Response.json({ error: "Second factor required" }, { status: 403 });
+  const authenticatedAt = new Date(session.session.createdAt).getTime();
+  if (
+    !Number.isFinite(authenticatedAt) ||
+    Date.now() - authenticatedAt > 10 * 60 * 1000
+  ) {
+    return Response.json(
+      {
+        error: "Sign in again before changing your Vault password.",
+        code: "recent_auth_required",
+      },
+      { status: 403 },
+    );
+  }
+  const body = (await request.json().catch(() => null)) as Record<
+    string,
+    unknown
+  > | null;
+  const mutationId = request.headers.get("idempotency-key");
+  if (
+    !body ||
+    Object.keys(body).some(
+      (key) => !["expectedVaultRevision", "passwordEnvelope"].includes(key),
+    ) ||
+    !mutationId ||
+    !/^[A-Za-z0-9_-]{16,128}$/u.test(mutationId) ||
+    !Number.isInteger(body.expectedVaultRevision) ||
+    Number(body.expectedVaultRevision) < 1 ||
+    !isPasswordEnvelope(body.passwordEnvelope, session.user.id)
+  ) {
+    return Response.json(
+      { error: "Invalid encrypted Vault password update" },
+      { status: 400 },
+    );
+  }
+  await connectDatabase();
+  const update = await UserVault.findOneAndUpdate(
+    {
+      accountId: session.user.id,
+      vaultRevision: Number(body.expectedVaultRevision),
+    },
+    {
+      $set: {
+        passwordEnvelope: body.passwordEnvelope,
+        passwordMode: "separate",
+        lastMutationId: mutationId,
+      },
+      $unset: {
+        pendingPasswordEnvelope: 1,
+        pendingPasswordMutationId: 1,
+        pendingPasswordExpiresAt: 1,
+      },
+      $inc: { vaultRevision: 1 },
+    },
+    { returnDocument: "after", runValidators: true },
+  ).lean();
+  if (!update) {
+    const prior = await UserVault.findOne({
+      accountId: session.user.id,
+      passwordMode: "separate",
+      lastMutationId: mutationId,
+      "passwordEnvelope.ciphertext": body.passwordEnvelope.ciphertext,
+      "passwordEnvelope.iv": body.passwordEnvelope.iv,
+    })
+      .select("vaultRevision")
+      .lean();
+    if (prior)
+      return Response.json({
+        vaultRevision: prior.vaultRevision,
+        idempotent: true,
+      });
+    return Response.json(
+      {
+        error: "Vault changed. Reload and try again.",
+        code: "vault_revision_conflict",
+      },
+      { status: 409 },
+    );
+  }
+  await AuditEvent.create({
+    accountId: session.user.id,
+    action: "vault.password.updated",
+    metadata: { revision: update.vaultRevision, passwordMode: "separate" },
+  }).catch(() => undefined);
+  return Response.json({ vaultRevision: update.vaultRevision });
+}

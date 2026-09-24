@@ -68,12 +68,14 @@ async function downscaleToDataUri(file: File): Promise<string> {
 
 export function OnboardingWizard({
   accountId,
+  hasExistingVault,
   email,
   name,
   username,
   next,
 }: {
   accountId: string;
+  hasExistingVault: boolean;
   email: string;
   name: string;
   username: string;
@@ -89,13 +91,9 @@ export function OnboardingWizard({
   const [copied, setCopied] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
 
-  // The signup password is stashed in sessionStorage; if it's missing (direct
-  // navigation or OAuth signup) the Welcome step collects a Vault password.
+  // Vault secrets are collected separately and never reused for sign-in.
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [passwordSource, setPasswordSource] = useState<
-    "checking" | "signup" | "onboarding"
-  >("checking");
   const [usernameChoice, setUsernameChoice] = useState(username);
 
   const { theme, setTheme } = useTheme();
@@ -110,21 +108,9 @@ export function OnboardingWizard({
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    void generateRecoveryMnemonic().then(setKit);
-    try {
-      const stashed = sessionStorage.getItem("xenode-vault-pw") ?? "";
-      if (stashed.length >= 12) {
-        queueMicrotask(() => {
-          setPassword(stashed);
-          setPasswordSource("signup");
-        });
-      } else {
-        queueMicrotask(() => setPasswordSource("onboarding"));
-      }
-    } catch {
-      queueMicrotask(() => setPasswordSource("onboarding"));
-    }
-  }, []);
+    if (!hasExistingVault) void generateRecoveryMnemonic().then(setKit);
+    try { sessionStorage.removeItem("xenode-vault-pw"); } catch { /* obsolete secret cache */ }
+  }, [hasExistingVault]);
 
   // Load avatar options the first time the avatar step opens.
   useEffect(() => {
@@ -141,11 +127,11 @@ export function OnboardingWizard({
 
   function nextStep() {
     setError("");
-    setStep((s) => Math.min(s + 1, TOTAL_STEPS));
+    setStep((s) => Math.min(s === 1 && hasExistingVault ? 3 : s + 1, TOTAL_STEPS));
   }
   function prevStep() {
     setError("");
-    setStep((s) => Math.max(s - 1, 1));
+    setStep((s) => Math.max(s === 3 && hasExistingVault ? 1 : s - 1, 1));
   }
 
   function handleWelcomeContinue() {
@@ -153,8 +139,7 @@ export function OnboardingWizard({
       setError("Choose a username using 3–30 letters, numbers, or underscores.");
       return;
     }
-    if (passwordSource === "checking") return;
-    if (passwordSource === "onboarding") {
+    if (!hasExistingVault) {
       if (password.length < 12) {
         setError("Create a Vault password using at least 12 characters.");
         return;
@@ -236,39 +221,17 @@ export function OnboardingWizard({
   }
 
   async function finalize() {
-    if (!kit) return;
+    if (!hasExistingVault && !kit) return;
     setBusy(true);
     setError("");
     try {
       setTheme(themeChoice);
-      if (passwordSource === "onboarding") {
-        const credentialResponse = await fetch("/api/account/password", {
-          method: "POST",
-          credentials: "include",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ password }),
-        });
-        if (!credentialResponse.ok) {
-          const payload = (await credentialResponse
-            .json()
-            .catch(() => ({}))) as { error?: string };
-          throw new Error(
-            payload.error ?? "Could not create the Xenode password.",
-          );
-        }
-      }
-      try {
+      if (!hasExistingVault && kit) {
         await createAccountVault({
           accountId,
-          password: password.length >= 12 ? password : undefined,
+          password,
           recoverySecret: kit.secret,
         });
-      } catch (vaultError) {
-        // A vault may already exist (re-entered onboarding) — tolerate that and
-        // still record the account preferences below.
-        const message =
-          vaultError instanceof Error ? vaultError.message : "";
-        if (!/revision|exist|conflict/iu.test(message)) throw vaultError;
       }
       const completionResponse = await fetch("/api/onboarding/complete", {
         method: "POST",
@@ -288,14 +251,14 @@ export function OnboardingWizard({
         };
         throw new Error(payload.error ?? "Could not finish account setup.");
       }
-      kit.secret.fill(0);
+      kit?.secret.fill(0);
       try {
         sessionStorage.removeItem("xenode-vault-pw");
       } catch {
         /* ignore */
       }
-      await confirmVaultUnlock("password", password);
-      window.location.assign(next);
+      if (!hasExistingVault) await confirmVaultUnlock("password");
+      window.location.assign(`/auth/continue?next=${encodeURIComponent(next)}`);
     } catch (finalError) {
       setError(
         finalError instanceof Error
@@ -357,7 +320,7 @@ export function OnboardingWizard({
                     </div>
                   </div>
                 )}
-                {passwordSource === "onboarding" ? (
+                {!hasExistingVault && (
                   <div className="onb-form">
                     <div className="field">
                       <label htmlFor="onb-vault-password">
@@ -391,16 +354,15 @@ export function OnboardingWizard({
                       />
                     </div>
                     <p className="fine-print">
-                      This password protects your encrypted Vault and never goes
-                      to Google or GitHub. You will still use your provider to
-                      sign in.
+                      Choose a different password from your sign-in password. It
+                      unlocks your Vault locally and is never sent to Xenode or
+                      your sign-in provider.
                     </p>
                   </div>
-                ) : null}
+                )}
                 <button
                   className="button button-block"
                   onClick={handleWelcomeContinue}
-                  disabled={passwordSource === "checking"}
                 >
                   Get started
                 </button>

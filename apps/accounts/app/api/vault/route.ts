@@ -1,6 +1,14 @@
 import { AuditEvent, UserVault, connectDatabase } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
-import { isAccountEnvelope, isVaultEnvelope } from "@/lib/vault-validation";
+import {
+  VAULT_CLIENT_HEADER,
+  VAULT_CLIENT_VERSION,
+} from "@/lib/vault-protocol";
+import {
+  isAccountEnvelope,
+  isPasswordEnvelope,
+  isVaultEnvelope,
+} from "@/lib/vault-validation";
 
 const RECENT_AUTH_WINDOW_MS = 10 * 60 * 1000;
 
@@ -10,8 +18,21 @@ async function sessionFor(request: Request) {
 }
 
 export async function GET(request: Request) {
+  // This is a compatibility check, not authentication. Older browser bundles
+  // must not receive a new local-only wrap and subsequently send its password
+  // through their retired server-confirmation flow.
+  if (request.headers.get(VAULT_CLIENT_HEADER) !== VAULT_CLIENT_VERSION) {
+    return Response.json(
+      {
+        error: "Reload Xenode to use separate Vault passwords.",
+        code: "vault_client_update_required",
+      },
+      { status: 409 },
+    );
+  }
   const session = await sessionFor(request);
-  if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session)
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
   await connectDatabase();
   const vault = await UserVault.findOne({ accountId: session.user.id }).lean();
   return Response.json({ accountId: session.user.id, vault: vault ?? null });
@@ -19,7 +40,8 @@ export async function GET(request: Request) {
 
 export async function PUT(request: Request) {
   const session = await sessionFor(request);
-  if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session)
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
 
   const authenticatedAt = new Date(session.session.createdAt).getTime();
   if (
@@ -40,18 +62,31 @@ export async function PUT(request: Request) {
     );
   }
 
-  const body = (await request.json().catch(() => null)) as
-    | {
-        expectedVaultRevision?: unknown;
-        passwordEnvelope?: unknown;
-        recoveryEnvelope?: unknown;
-        deviceEnvelopes?: unknown;
-        sharingPublicKey?: unknown;
-        wrappedSharingPrivateKey?: unknown;
-      }
-    | null;
+  const body = (await request.json().catch(() => null)) as {
+    expectedVaultRevision?: unknown;
+    passwordEnvelope?: unknown;
+    passwordMode?: unknown;
+    recoveryEnvelope?: unknown;
+    deviceEnvelopes?: unknown;
+    sharingPublicKey?: unknown;
+    wrappedSharingPrivateKey?: unknown;
+  } | null;
   if (
     !body ||
+    Object.keys(body).some(
+      (key) =>
+        ![
+          "expectedVaultRevision",
+          "passwordEnvelope",
+          "passwordMode",
+          "recoveryEnvelope",
+          "deviceEnvelopes",
+          "sharingPublicKey",
+          "wrappedSharingPrivateKey",
+        ].includes(key),
+    ) ||
+    body.passwordMode !== "separate" ||
+    !isPasswordEnvelope(body.passwordEnvelope, session.user.id) ||
     !Number.isInteger(body.expectedVaultRevision) ||
     Number(body.expectedVaultRevision) < 0 ||
     (body.passwordEnvelope !== null &&
@@ -65,7 +100,10 @@ export async function PUT(request: Request) {
     body.sharingPublicKey.length < 100 ||
     !isVaultEnvelope(body.wrappedSharingPrivateKey)
   ) {
-    return Response.json({ error: "Invalid Vault v2 payload" }, { status: 400 });
+    return Response.json(
+      { error: "Invalid Vault v2 payload" },
+      { status: 400 },
+    );
   }
 
   await connectDatabase();
@@ -91,6 +129,7 @@ export async function PUT(request: Request) {
   const expectedRevision = Number(body.expectedVaultRevision);
   const payload = {
     passwordEnvelope: body.passwordEnvelope,
+    passwordMode: "separate" as const,
     recoveryEnvelope: body.recoveryEnvelope,
     deviceEnvelopes: body.deviceEnvelopes,
     sharingPublicKey: body.sharingPublicKey,
@@ -139,5 +178,8 @@ export async function PUT(request: Request) {
     },
   }).catch(() => undefined);
 
-  return Response.json({ vault }, { status: expectedRevision === 0 ? 201 : 200 });
+  return Response.json(
+    { vault },
+    { status: expectedRevision === 0 ? 201 : 200 },
+  );
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { AuditEvent } from "@xenode/database";
+import { AuditEvent, UserVault } from "@xenode/database";
+import { needsSecondFactor } from "@/lib/session";
 import { getAccountsAuth } from "@/lib/auth";
 import { requireSameOrigin } from "@/lib/logout-coordinator";
 import {
@@ -9,9 +10,8 @@ import {
 } from "@/lib/vault-unlock-session";
 
 function accountsOrigin() {
-  return new URL(
-    process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in",
-  ).origin;
+  return new URL(process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in")
+    .origin;
 }
 
 export async function POST(request: Request) {
@@ -26,32 +26,37 @@ export async function POST(request: Request) {
   if (!session) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const body = (await request.json().catch(() => null)) as
-    | { method?: unknown; password?: unknown }
-    | null;
+  const body = (await request.json().catch(() => null)) as {
+    method?: unknown;
+  } | null;
   if (
     !body ||
-    (body.method !== "password" && body.method !== "trusted-device")
+    Object.keys(body).some((key) => key !== "method") ||
+    (body.method !== "password" &&
+      body.method !== "trusted-device" &&
+      body.method !== "recovery")
   ) {
     return Response.json({ error: "Invalid unlock method" }, { status: 400 });
   }
-  if (body.method === "password") {
-    if (
-      typeof body.password !== "string" ||
-      body.password.length < 12 ||
-      body.password.length > 128
-    ) {
-      return Response.json({ error: "Invalid password" }, { status: 400 });
-    }
-    try {
-      await auth.api.verifyPassword({
-        body: { password: body.password },
-        headers: request.headers,
-      });
-    } catch {
-      return Response.json({ error: "Invalid password" }, { status: 401 });
-    }
+  if (needsSecondFactor(session))
+    return Response.json({ error: "Second factor required" }, { status: 403 });
+  if (
+    !(await UserVault.exists({
+      accountId: session.user.id,
+      passwordMode: "separate",
+    }))
+  ) {
+    return Response.json(
+      {
+        error: "Choose a separate Vault password first.",
+        code: "vault_password_migration_required",
+      },
+      { status: 409 },
+    );
   }
+
+  // Navigation confirmation only: authentication/2FA authorize server actions;
+  // possession of client keys authorizes decryption. No Vault secret is sent here.
 
   const token = await createVaultUnlockToken({
     accountId: session.user.id,
@@ -67,7 +72,7 @@ export async function POST(request: Request) {
   });
   await AuditEvent.create({
     accountId: session.user.id,
-    action: "vault.unlocked",
+    action: "vault.local-unlock.continued",
     metadata: { method: body.method },
   }).catch(() => undefined);
   return response;
