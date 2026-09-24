@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import {
   AccountProfile,
   AuditEvent,
@@ -30,12 +31,16 @@ function parseBody(input: unknown) {
 }
 
 export async function GET(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const session = await getAccountsSession(request);
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
   return Response.json(await loadProfile(session.user.id));
 }
 
 export async function PUT(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const session = await getAccountsSession(request);
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const body = parseBody(await request.json().catch(() => null));

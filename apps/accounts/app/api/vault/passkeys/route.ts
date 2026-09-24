@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import {
   AuditEvent,
   UserVault,
@@ -12,6 +13,8 @@ async function sessionFor(request: Request) {
 }
 
 export async function GET(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const session = await sessionFor(request);
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
   await connectDatabase();
@@ -33,6 +36,8 @@ export async function GET(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const session = await sessionFor(request);
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const credentialId = new URL(request.url).searchParams.get("credentialId");

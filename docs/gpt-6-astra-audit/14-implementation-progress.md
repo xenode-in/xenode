@@ -17,6 +17,7 @@ The audit is a snapshot of the pre-remediation working tree. Findings are not cl
 | 0C | Separate local Vault password and migrate existing envelopes without changing root keys | Committed as `dae2945`; rollout notes below |
 | 0D | Normalize Better Auth Mongo IDs for passkey and second-factor records | Committed as `18709ac`; full suite passed |
 | 0E | Keep root, product and Drive sharing keys in memory; opt into browser-device trust | Complete; full suite passed |
+| 0F | Require OAuth second-factor completion and same-origin mutations at Accounts API boundaries | Complete; full suite passed |
 
 The rest of the roadmap remains open. F09/F10 also require durable claim/reconciliation across concurrent finalize/restore/purge operations; a deletion confirmation patch alone is not complete lifecycle safety.
 
@@ -89,3 +90,12 @@ Commit: `18709ac`.
 - New-account onboarding does not enroll a persistent browser device by default. The user may explicitly select “Trust this browser.” The handoff broker no longer silently enrolls a device after password/recovery unlock. Existing consented device wraps remain usable.
 - Tests verify lock versus an unfinished handoff, refusal to persist product/ARK keys, in-memory ARK clearing/account switch, and opt-in device-envelope creation. The full suite passed all 15 workspaces: **446 tests** (324 Drive, 52 Accounts, 9 Photos app, 61 shared packages). Root typecheck passed 16/16 workspaces; Accounts, Photos and crypto-react lint, scoped Drive lint and package boundaries passed.
 - Usability tradeoff: without browser trust, a full reload or cross-origin product navigation can require another local Vault unlock. Legacy IndexedDB deletion is best-effort when another old tab holds the database open. Do not claim remote erasure of usable keys already held by an offline or compromised browser.
+
+## 0F — Direct Accounts API second-factor boundary
+
+- A shared Accounts API guard rejects an OAuth session still awaiting its local second factor, including direct calls that never render an Accounts page. A consented, valid trusted-browser token can complete the step-up using the adapter-correct session update from 0D.
+- All 29 sensitive handlers across Vault, passkey, device, key-handoff, product-session, Space-key, onboarding and profile routes call this guard before their existing data operations. Cookie-authenticated mutations additionally require the exact Accounts origin. Vault reads retain their old-client compatibility response before the auth check.
+- The native Better Auth POST wrapper denies account-state mutations and OIDC consent for pending OAuth sessions. Sign-in, sign-up, second-factor verification, password recovery, token exchange and sign-out remain available so users can complete authentication or leave. Its trusted-browser path checks the origin before changing session state.
+- Direct-route regression tests exercise every guarded handler, the native wrapper, origin rejection, trusted continuation and verified sessions. The existing real-adapter passkey test now checks that pending OAuth access fails before the verified session enrolls a passkey.
+- Final validation: all 15 test workspaces passed, **480 tests** (324 Drive, 86 Accounts, 9 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; Accounts lint and package boundaries passed. No live account or external OAuth provider was exercised.
+- F04 is only partially addressed: recent-auth policy for all security changes, native GET endpoint review, native issuer-session revocation convergence, rate limits on custom endpoints and end-to-end browser/provider checks remain.

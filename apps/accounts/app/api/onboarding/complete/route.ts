@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import {
   AccountProfile,
   AuditEvent,
@@ -16,6 +17,8 @@ import { isValidProfileImage } from "@/lib/profile-image";
  * client-side (E2EE) before this call; here we only record account preferences.
  */
 export async function POST(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const session = await getAccountsSession(request);
   if (!session) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });

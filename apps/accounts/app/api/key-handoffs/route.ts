@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { productSlugSchema, spaceIdSchema } from "@xenode/contracts";
 import { AuditEvent, KeyHandoff, connectDatabase } from "@xenode/database";
 import { resolveFirstPartyClients } from "@xenode/identity-core";
@@ -19,6 +20,8 @@ async function hash(value: string): Promise<string> {
 }
 
 export async function POST(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const auth = await getAccountsAuth();
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });

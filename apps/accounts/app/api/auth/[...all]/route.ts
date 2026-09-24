@@ -4,6 +4,7 @@ import { getAccountsAuth } from "@/lib/auth";
 import { hasVaultUnlockConfirmation } from "@/lib/vault-unlock-session";
 import { needsSecondFactor } from "@/lib/session";
 import { applyTrustedSecondFactor } from "@/lib/trusted-second-factor";
+import { authorizeNativeAuthPost } from "@/lib/api-session";
 import { POST as changeSignInPassword } from "@/app/api/account/password/change/route";
 
 function rejectsResourceIndicator(request: Request): boolean {
@@ -39,8 +40,10 @@ export async function GET(request: Request) {
       const readiness = await getAccountOnboardingReadiness(session.user.id);
       if (!readiness.complete) {
         const next = `${url.pathname}${url.search}`;
-          const destination = readiness.profileOnboarded && readiness.hasVault
-            ? "/auth/continue" : "/onboarding";
+        const destination =
+          readiness.profileOnboarded && readiness.hasVault
+            ? "/auth/continue"
+            : "/onboarding";
         const redirectUrl = new URL(destination, url.origin);
         redirectUrl.searchParams.set("next", next);
         return Response.redirect(redirectUrl);
@@ -78,5 +81,7 @@ export async function POST(request: Request) {
       }
     }
   }
+  const denied = await authorizeNativeAuthPost(request);
+  if (denied) return denied;
   return toNextJsHandler(await getAccountsAuth()).POST(request);
 }

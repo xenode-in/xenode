@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import {
   AuditEvent,
   UserVault,
@@ -11,6 +12,8 @@ import {
 } from "@/lib/logout-coordinator";
 
 export async function POST(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const origin =
     process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
   try {

@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { productSlugSchema } from "@xenode/contracts";
 import {
   AuditEvent,
@@ -13,6 +14,8 @@ async function accountsSession(request: Request) {
 }
 
 export async function GET(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const session = await accountsSession(request);
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -40,6 +43,8 @@ export async function GET(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const session = await accountsSession(request);
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
 

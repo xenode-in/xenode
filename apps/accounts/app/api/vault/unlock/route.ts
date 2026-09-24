@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { NextResponse } from "next/server";
 import { AuditEvent, UserVault } from "@xenode/database";
 import { needsSecondFactor } from "@/lib/session";
@@ -15,6 +16,8 @@ function accountsOrigin() {
 }
 
 export async function POST(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   try {
     requireSameOrigin(request, accountsOrigin());
   } catch (response) {

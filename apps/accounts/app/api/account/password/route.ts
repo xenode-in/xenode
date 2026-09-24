@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import {
   AuditEvent,
   connectDatabase,
@@ -13,6 +14,8 @@ function accountsOrigin() {
 }
 
 export async function POST(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   try {
     requireSameOrigin(request, accountsOrigin());
   } catch (response) {

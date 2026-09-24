@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { randomBytes } from "node:crypto";
 import { generateAuthenticationOptions } from "@simplewebauthn/server";
 import {
@@ -10,6 +11,8 @@ import { getAccountsAuth } from "@/lib/auth";
 import { getAccountsWebAuthnConfig } from "@/lib/passkey-rp";
 
 export async function POST(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const auth = await getAccountsAuth();
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });

@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { AuditEvent, UserVault, connectDatabase } from "@xenode/database";
 import { getAccountsSession, needsSecondFactor } from "@/lib/session";
 import { requireSameOrigin } from "@/lib/logout-coordinator";
@@ -5,6 +6,8 @@ import { isPasswordEnvelope } from "@/lib/vault-validation";
 
 /** Replace only the password envelope. The ARK and all other key wraps stay put. */
 export async function PUT(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   try {
     requireSameOrigin(
       request,

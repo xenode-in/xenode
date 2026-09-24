@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { AuditEvent, UserVault, connectDatabase } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
 import {
@@ -30,6 +31,8 @@ export async function GET(request: Request) {
       { status: 409 },
     );
   }
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const session = await sessionFor(request);
   if (!session)
     return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -39,6 +42,8 @@ export async function GET(request: Request) {
 }
 
 export async function PUT(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const session = await sessionFor(request);
   if (!session)
     return Response.json({ error: "Unauthorized" }, { status: 401 });

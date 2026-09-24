@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import {
   SpaceProductKey,
   connectDatabase,
@@ -40,6 +41,8 @@ async function context(request: Request, url: URL) {
 }
 
 export async function GET(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   let keyContext;
   try {
     keyContext = await context(request, new URL(request.url));
@@ -61,6 +64,8 @@ export async function GET(request: Request) {
 }
 
 export async function PUT(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   let keyContext;
   try {
     keyContext = await context(request, new URL(request.url));

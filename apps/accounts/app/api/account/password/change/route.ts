@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { AuditEvent, TrustedSecondFactor, UserVault } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
 import { needsSecondFactor } from "@/lib/session";
@@ -8,6 +9,8 @@ import {
 
 /** Change sign-in credentials only; this endpoint never accepts a Vault wrap. */
 export async function POST(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   try {
     requireSameOrigin(
       request,

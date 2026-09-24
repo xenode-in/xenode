@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { verifyAuthenticationResponse } from "@simplewebauthn/server";
 import {
   AuditEvent,
@@ -15,6 +16,8 @@ import { getAccountsWebAuthnConfig } from "@/lib/passkey-rp";
 import { isAccountEnvelope } from "@/lib/vault-validation";
 
 export async function POST(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const auth = await getAccountsAuth();
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });

@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import {
   AccountPasskeyBinding,
   AuditEvent,
@@ -23,6 +24,8 @@ async function sessionFor(request: Request) {
 }
 
 export async function GET(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const session = await sessionFor(request);
   if (!session)
     return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -108,6 +111,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   try {
     requireSameOrigin(request, accountsOrigin());
   } catch (response) {
@@ -199,6 +204,8 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   try {
     requireSameOrigin(request, accountsOrigin());
   } catch (response) {

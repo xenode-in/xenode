@@ -279,6 +279,13 @@ describe("Better Auth Mongo security records", () => {
     };
     expect(
       (await bindPasskey(request("/api/account/passkeys", body))).status,
+    ).toBe(403);
+    expect(await AccountPasskeyBinding.countDocuments({
+      accountId: seeded.accountId,
+    })).toBe(0);
+    seeded.caller.session.twoFactorVerifiedAt = new Date();
+    expect(
+      (await bindPasskey(request("/api/account/passkeys", body))).status,
     ).toBe(200);
     expect(
       (await bindPasskey(request("/api/account/passkeys", body))).status,

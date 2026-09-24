@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { AuditEvent } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
 import {
@@ -7,6 +8,8 @@ import {
 import { getAccountsSession } from "@/lib/session";
 
 export async function DELETE(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const accountsOrigin =
     process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
   try {

@@ -1,3 +1,4 @@
+import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { AuditEvent, UserVault, connectDatabase } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
 import { isAccountEnvelope } from "@/lib/vault-validation";
@@ -8,6 +9,8 @@ async function sessionFor(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const session = await sessionFor(request);
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const idempotencyKey = request.headers.get("idempotency-key");
@@ -71,6 +74,8 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const denied = await authorizeAccountsApiRequest(request);
+  if (denied) return denied;
   const session = await sessionFor(request);
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const keyId = new URL(request.url).searchParams.get("keyId");
