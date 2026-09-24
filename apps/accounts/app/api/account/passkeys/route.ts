@@ -5,6 +5,7 @@ import {
   VaultPasskey,
   connectDatabase,
   getDatabase,
+  createAuthSecurityRepository,
 } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
 import { requireSameOrigin } from "@/lib/logout-coordinator";
@@ -12,9 +13,8 @@ import { isAccountEnvelope } from "@/lib/vault-validation";
 import { ACCOUNT_PASSKEY_PRF_INPUT } from "@/lib/passkey-constants";
 
 function accountsOrigin() {
-  return new URL(
-    process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in",
-  ).origin;
+  return new URL(process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in")
+    .origin;
 }
 
 async function sessionFor(request: Request) {
@@ -24,16 +24,26 @@ async function sessionFor(request: Request) {
 
 export async function GET(request: Request) {
   const session = await sessionFor(request);
-  if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session)
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
   await connectDatabase();
   const credentialId = new URL(request.url).searchParams.get("credentialId");
   if (credentialId) {
+    const nativePasskey = await createAuthSecurityRepository(
+      getDatabase(),
+    ).findPasskeyForUser({ accountId: session.user.id, credentialId });
+    if (!nativePasskey)
+      return Response.json({ error: "Passkey not found" }, { status: 404 });
     const binding = await AccountPasskeyBinding.findOne({
       accountId: session.user.id,
       credentialId,
+      passkeyId: nativePasskey.id,
     }).lean();
     if (!binding) {
-      return Response.json({ error: "Passkey binding not found" }, { status: 404 });
+      return Response.json(
+        { error: "Passkey binding not found" },
+        { status: 404 },
+      );
     }
     const vault = await UserVault.findOne({ accountId: session.user.id })
       .select("deviceEnvelopes")
@@ -46,7 +56,10 @@ export async function GET(request: Request) {
         value.keyId === binding.envelopeKeyId,
     );
     if (!envelope) {
-      return Response.json({ error: "Passkey envelope not found" }, { status: 404 });
+      return Response.json(
+        { error: "Passkey envelope not found" },
+        { status: 404 },
+      );
     }
     return Response.json({
       accountId: session.user.id,
@@ -56,17 +69,9 @@ export async function GET(request: Request) {
   }
 
   const [passkeys, bindings, legacy] = await Promise.all([
-    getDatabase()
-      .collection<{
-        id: string;
-        name?: string;
-        credentialID: string;
-        createdAt?: Date;
-        aaguid?: string;
-      }>("passkey")
-      .find({ userId: session.user.id })
-      .sort({ createdAt: -1 })
-      .toArray(),
+    createAuthSecurityRepository(getDatabase()).listPasskeysForUser(
+      session.user.id,
+    ),
     AccountPasskeyBinding.find({ accountId: session.user.id }).lean(),
     VaultPasskey.find({
       accountId: session.user.id,
@@ -75,18 +80,22 @@ export async function GET(request: Request) {
       .select("credentialId name createdAt lastUsedAt")
       .lean(),
   ]);
-  const byPasskey = new Map(bindings.map((binding) => [binding.passkeyId, binding]));
+  const byPasskey = new Map(
+    bindings.map((binding) => [binding.passkeyId, binding]),
+  );
   return Response.json({
     passkeys: passkeys.flatMap((passkey) => {
       const binding = byPasskey.get(passkey.id);
       return binding
-        ? [{
-            id: passkey.id,
-            name: passkey.name ?? "Passkey",
-            credentialId: passkey.credentialID,
-            createdAt: passkey.createdAt ?? binding.createdAt,
-            aaguid: passkey.aaguid ?? null,
-          }]
+        ? [
+            {
+              id: passkey.id,
+              name: passkey.name ?? "Passkey",
+              credentialId: passkey.credentialID,
+              createdAt: passkey.createdAt ?? binding.createdAt,
+              aaguid: passkey.aaguid ?? null,
+            },
+          ]
         : [];
     }),
     legacy: legacy.map((passkey) => ({
@@ -105,17 +114,16 @@ export async function POST(request: Request) {
     return response as Response;
   }
   const session = await sessionFor(request);
-  if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const body = (await request.json().catch(() => null)) as
-    | {
-        passkeyId?: unknown;
-        credentialId?: unknown;
-        expectedVaultRevision?: unknown;
-        envelope?: unknown;
-        prfInput?: unknown;
-        hkdfSalt?: unknown;
-      }
-    | null;
+  if (!session)
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
+  const body = (await request.json().catch(() => null)) as {
+    passkeyId?: unknown;
+    credentialId?: unknown;
+    expectedVaultRevision?: unknown;
+    envelope?: unknown;
+    prfInput?: unknown;
+    hkdfSalt?: unknown;
+  } | null;
   if (
     !body ||
     typeof body.passkeyId !== "string" ||
@@ -131,16 +139,19 @@ export async function POST(request: Request) {
     return Response.json({ error: "Invalid passkey binding" }, { status: 400 });
   }
   await connectDatabase();
-  const passkey = await getDatabase().collection("passkey").findOne({
-    id: body.passkeyId,
-    userId: session.user.id,
-    credentialID: body.credentialId,
+  const passkey = await createAuthSecurityRepository(
+    getDatabase(),
+  ).findPasskeyForUser({
+    passkeyId: body.passkeyId,
+    accountId: session.user.id,
+    credentialId: body.credentialId,
   });
   if (!passkey) {
     return Response.json({ error: "Passkey not found" }, { status: 404 });
   }
+  let createdBindingId: string | undefined;
   try {
-    await AccountPasskeyBinding.create({
+    const createdBinding = await AccountPasskeyBinding.create({
       accountId: session.user.id,
       passkeyId: body.passkeyId,
       credentialId: body.credentialId,
@@ -148,6 +159,7 @@ export async function POST(request: Request) {
       prfInput: body.prfInput,
       hkdfSalt: body.hkdfSalt,
     });
+    createdBindingId = String(createdBinding._id);
     const vault = await UserVault.findOneAndUpdate(
       {
         accountId: session.user.id,
@@ -168,10 +180,12 @@ export async function POST(request: Request) {
     }).catch(() => undefined);
     return Response.json({ ok: true, vaultRevision: vault.vaultRevision });
   } catch (error) {
-    await AccountPasskeyBinding.deleteOne({
-      accountId: session.user.id,
-      passkeyId: body.passkeyId,
-    }).catch(() => undefined);
+    // A duplicate request must not compensate by deleting the winning binding.
+    if (createdBindingId)
+      await AccountPasskeyBinding.deleteOne({
+        _id: createdBindingId,
+        accountId: session.user.id,
+      }).catch(() => undefined);
     return Response.json(
       {
         error:
@@ -191,9 +205,11 @@ export async function DELETE(request: Request) {
     return response as Response;
   }
   const session = await sessionFor(request);
-  if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
+  if (!session)
+    return Response.json({ error: "Unauthorized" }, { status: 401 });
   const id = new URL(request.url).searchParams.get("id");
-  if (!id) return Response.json({ error: "Passkey ID required" }, { status: 400 });
+  if (!id)
+    return Response.json({ error: "Passkey ID required" }, { status: 400 });
   await connectDatabase();
   const binding = await AccountPasskeyBinding.findOne({
     accountId: session.user.id,

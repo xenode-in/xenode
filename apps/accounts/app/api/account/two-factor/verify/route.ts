@@ -1,4 +1,8 @@
-import { connectDatabase, getDatabase } from "@xenode/database";
+import {
+  connectDatabase,
+  getDatabase,
+  createAuthSecurityRepository,
+} from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
 import { requireSameOrigin } from "@/lib/logout-coordinator";
 import {
@@ -8,9 +12,8 @@ import {
 } from "@/lib/trusted-second-factor";
 
 function accountsOrigin() {
-  return new URL(
-    process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in",
-  ).origin;
+  return new URL(process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in")
+    .origin;
 }
 
 export async function POST(request: Request) {
@@ -19,13 +22,11 @@ export async function POST(request: Request) {
   } catch (response) {
     return response as Response;
   }
-  const body = (await request.json().catch(() => null)) as
-    | {
-        code?: unknown;
-        trustDevice?: unknown;
-        method?: unknown;
-      }
-    | null;
+  const body = (await request.json().catch(() => null)) as {
+    code?: unknown;
+    trustDevice?: unknown;
+    method?: unknown;
+  } | null;
   if (
     !body ||
     typeof body.code !== "string" ||
@@ -33,7 +34,10 @@ export async function POST(request: Request) {
     typeof body.trustDevice !== "boolean" ||
     (body.method !== "totp" && body.method !== "backup")
   ) {
-    return Response.json({ error: "Invalid verification code" }, { status: 400 });
+    return Response.json(
+      { error: "Invalid verification code" },
+      { status: 400 },
+    );
   }
   const auth = await getAccountsAuth();
   const existing = await auth.api.getSession({ headers: request.headers });
@@ -56,16 +60,17 @@ export async function POST(request: Request) {
           });
     if (existing) {
       await connectDatabase();
-      await getDatabase().collection("session").updateOne(
-        { id: existing.session.id, userId: existing.user.id },
-        {
-          $set: {
-            authMethod: "totp",
-            twoFactorVerifiedAt: new Date(),
-            updatedAt: new Date(),
-          },
-        },
-      );
+      const updated = await createAuthSecurityRepository(
+        getDatabase(),
+      ).markSecondFactorVerified({
+        accountId: existing.user.id,
+        sessionId: existing.session.id,
+      });
+      if (!updated)
+        return Response.json(
+          { error: "Session expired. Sign in again." },
+          { status: 401 },
+        );
     }
     const headers = new Headers(result.headers);
     if (body.trustDevice && existing) {

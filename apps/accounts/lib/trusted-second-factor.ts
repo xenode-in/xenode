@@ -3,6 +3,7 @@ import {
   TrustedSecondFactor,
   connectDatabase,
   getDatabase,
+  createAuthSecurityRepository,
 } from "@xenode/database";
 
 export const TRUSTED_SECOND_FACTOR_COOKIE =
@@ -72,10 +73,10 @@ export async function applyTrustedSecondFactor(
   ).lean();
   if (!trusted) return false;
   const verifiedAt = new Date();
-  await getDatabase().collection("session").updateOne(
-    { id: session.session.id, userId: session.user.id },
-    { $set: { authMethod: "totp", twoFactorVerifiedAt: verifiedAt } },
-  );
+  const updated = await createAuthSecurityRepository(getDatabase()).markSecondFactorVerified({
+    accountId: session.user.id, sessionId: session.session.id, verifiedAt,
+  });
+  if (!updated) return false;
   session.session.authMethod = "totp";
   session.session.twoFactorVerifiedAt = verifiedAt;
   return true;

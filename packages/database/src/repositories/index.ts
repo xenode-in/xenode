@@ -3,6 +3,7 @@ import { AccountProfile, UserVault } from "../models";
 import { createAccountRepository } from "./accounts";
 
 export * from "./accounts";
+export * from "./auth-security";
 export * from "./browser-logout";
 export * from "./types";
 export * from "./storage-objects";

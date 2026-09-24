@@ -14,7 +14,8 @@ The audit is a snapshot of the pre-remediation working tree. Findings are not cl
 | --- | --- | --- |
 | 0A | Confirm storage deletion, protect retained references during orphan cleanup, enumerate chunked purge content | Complete; see validation below |
 | 0B | Enforce action permissions on generic storage mutations | Complete; full test suite passed |
-| 0C | Separate local Vault password and migrate existing envelopes without changing root keys | Implemented and validated; rollout notes below |
+| 0C | Separate local Vault password and migrate existing envelopes without changing root keys | Committed as `dae2945`; rollout notes below |
+| 0D | Normalize Better Auth Mongo IDs for passkey and second-factor records | Complete; full suite passed |
 
 The rest of the roadmap remains open. F09/F10 also require durable claim/reconciliation across concurrent finalize/restore/purge operations; a deletion confirmation patch alone is not complete lifecycle safety.
 
@@ -43,6 +44,8 @@ Commit: `6440e31`.
 
 ## 0C — Separate local Vault secret
 
+Commit: `dae2945`.
+
 - Signup/login/2FA no longer stash the authentication password or use it to unlock/create the Vault. Onboarding collects a separate local Vault password; OAuth accounts are not forced to submit it as a new sign-in credential.
 - Vault documents explicitly mark `passwordMode: separate`. Product readiness rejects unmigrated Vaults and sends users through Accounts continuation. Existing users open their original root key locally with the old Vault password or recovery phrase, then rewrap it under their new separate secret. Product, file, recovery and sharing key material is preserved.
 - The client verifies that the recovered root opens the existing sharing-key hierarchy before replacing its password wrap. Historical pending password wraps remain locally readable for migration even if their retired staging TTL expired.
@@ -66,3 +69,11 @@ Commit: `6440e31`.
 3. Migration rewrites only the password envelope. Back up encrypted Vault records before rollout; do not bulk-generate new ARKs or mark old rows separated without the client rewrap.
 4. Once users migrate, do **not** roll Accounts back to a client that transmits Vault passwords or assumes they match sign-in credentials. Prefer a forward fix retaining the separated-secret protocol and encrypted envelopes.
 5. Rewrapping does not revoke an ARK already learned by a previously compromised server and cannot erase old envelope backups. Retrospective compromise recovery requires a separately designed key/content rotation plan.
+
+## 0D — Better Auth Mongo record mapping
+
+- A shared `@xenode/database` repository maps Better Auth's external string IDs to raw Mongo `_id` and `userId` fields. Passkey lookup/listing now uses this repository and checks both account and credential ID. Both native ObjectId and historical string IDs remain readable.
+- The combined passkey binding route now finds actual adapter-created passkeys. A duplicate binding request can no longer delete the first request's winning binding during compensation. Reading a Vault passkey envelope also checks that its native passkey is still registered.
+- OAuth second-factor verification and trusted-device continuation update the actual native session row, require the current account/session pair and an unexpired session, and fail closed if that write cannot be confirmed.
+- Eight disposable Mongo integration tests create users, sessions and passkeys through the installed Better Auth adapter. They cover owner and credential isolation, duplicate binding, both TOTP/backup route branches with mocked code verification, trusted-device persistence, missing/expired sessions and historical string IDs. Real WebAuthn and authenticator ceremonies are still a later integration gate.
+- Targeted integration tests pass (8/8). Full `npm run test -- --force` passed all 15 workspaces: **441 tests** (324 Drive, 49 Accounts, 9 Photos app, 59 packages). Root typecheck passed 16/16 workspaces. Accounts/database lint and package boundaries pass.

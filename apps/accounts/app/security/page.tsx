@@ -3,6 +3,7 @@ import {
   VaultPasskey,
   connectDatabase,
   getDatabase,
+  createAuthSecurityRepository,
   listExternalAccountsForUser,
 } from "@xenode/database";
 import { AccountShell } from "@/components/AccountShell";
@@ -14,16 +15,7 @@ export default async function SecurityPage() {
   await connectDatabase();
   const [accounts, passkeyRows, bindings, legacyRows] = await Promise.all([
     listExternalAccountsForUser(session.user.id),
-    getDatabase()
-      .collection<{
-        id: string;
-        name?: string;
-        credentialID: string;
-        createdAt?: Date;
-      }>("passkey")
-      .find({ userId: session.user.id })
-      .sort({ createdAt: -1 })
-      .toArray(),
+    createAuthSecurityRepository(getDatabase()).listPasskeysForUser(session.user.id),
     AccountPasskeyBinding.find({ accountId: session.user.id }).lean(),
     VaultPasskey.find({
       accountId: session.user.id,
