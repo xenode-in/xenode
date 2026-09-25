@@ -5,6 +5,7 @@ The audit is a snapshot of the pre-remediation working tree. Findings are not cl
 ## Decisions
 
 - The user selected a **separate Vault password, entered locally only**, for F01. Preserve existing ARKs and file access during migration; never send the new Vault password through Better Auth or server unlock verification.
+- The user later clarified that Xenode has **no real users or production data**. Future implementation should favor the clean target architecture over legacy compatibility, migration, or rollback scaffolding for disposable development data. This supersedes the earlier production-rollout cautions as planning constraints; they remain historical context for the code already written.
 - Commit each completed implementation increment, including regression tests and its validation record.
 - Preserve pre-existing Accounts/UI work separately from remediation. It was checkpointed unchanged as `f928e94` before the overlapping Vault migration; this is a baseline commit, not a claim that its audited issues were fixed.
 
@@ -21,6 +22,7 @@ The audit is a snapshot of the pre-remediation working tree. Findings are not cl
 | 0G | Revoke ProductSessions when Better Auth deletes issuer sessions | Complete; full suite passed |
 | 0H | Deny presign collisions with referenced ciphertext and bound multipart inputs | Complete; full suite passed |
 | 0I | Bind generic upload URL refresh and secondary blobs to pending reservations | Complete; full suite passed |
+| 0J | Enforce unique physical-key claims and record development-only architecture policy | Complete; full suite passed |
 
 The rest of the roadmap remains open. F09/F10 also require durable claim/reconciliation across concurrent finalize/restore/purge operations; a deletion confirmation patch alone is not complete lifecycle safety.
 
@@ -127,3 +129,11 @@ Commit: `18709ac`.
 - Direct-route tests cover missing, wrong-owner, completed and parent reservation denials; fresh and valid refresh paths; overlapping in-flight keys; and concurrent attempts to reserve the same logical key. Existing orphan-cleanup tests now assert that completed sessions cannot accept new secondary keys.
 - Final validation: all 15 test workspaces passed, **499 tests** (337 Drive, 92 Accounts, 9 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; scoped Drive lint passed with six pre-existing unused-value warnings, and package boundaries passed. The OpenAPI JSON parsed successfully.
 - This still relies on the existing unique `(bucketId, fileId)` index for atomic logical-key reservation. Overlapping secondary keys under different logical file IDs have an application-level conflict check but no unique physical-key claim, so concurrent cross-key races remain possible. A server-owned opaque-key format and atomic physical-key claim are the next F08 boundary. Completion must also bind metadata to the reservation, and presigned URLs issued before completion can be reused until they expire. Older persisted upload journals missing a reservation ID may need their upload restarted; deploy the route and browser change together.
+
+## 0J — Atomic physical-key claims and development policy
+
+- `AGENTS.md` now records the user's development-only decision: there are no real users or production records to preserve, so future work should implement the secure target contract directly and remove obsolete paths after callers move.
+- UploadSession now has a unique multikey `(bucketId, keys)` claim index. Presign code explicitly ensures that index before reserving or attaching keys and fails closed if an older non-unique development index exists. The previous overlap lookup remains a fast conflict check; the unique index makes concurrent claims across different logical file IDs atomic. Duplicate-key conflicts return a reservation denial before any URL is signed.
+- Synthetic Mongo tests race two different logical uploads claiming one physical key and two parents attaching one secondary key. Exactly one claim wins in each case, and the index's unique property is asserted.
+- Final validation: all 15 test workspaces passed, **501 tests** (339 Drive, 92 Accounts, 9 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; scoped Drive lint and package boundaries passed.
+- Existing development databases with the non-unique index should be reset/reseeded for this schema. Server-issued opaque object keys, completion-bound claims and post-completion URL replay protection remain F08 work.

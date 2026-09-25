@@ -26,6 +26,7 @@ import { PATCH as patchObject } from "@/app/api/objects/[id]/route";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import UploadSession from "@/models/UploadSession";
+import { attachToUploadSession, reserveUploadSession } from "@/lib/uploads/session";
 import { orgObjectKeyPrefix } from "@/lib/orgs/storage";
 
 const accountId = "permission-account";
@@ -266,5 +267,52 @@ describe("generic storage mutation permissions", () => {
     expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
     expect(sign).toHaveBeenCalledOnce();
     expect(await UploadSession.countDocuments({ bucketId: bucket._id })).toBe(1);
+  });
+
+  it("atomically claims a physical key across different logical uploads", async () => {
+    const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
+    const prefix = orgObjectKeyPrefix(organizationId);
+    const shared = `${prefix}shared-variant`;
+    const [first, second] = await Promise.all([
+      reserveUploadSession({
+        userId: accountId, bucketId: bucket._id, fileId: `${prefix}first`,
+        keys: [`${prefix}first`, shared],
+      }),
+      reserveUploadSession({
+        userId: accountId, bucketId: bucket._id, fileId: `${prefix}second`,
+        keys: [`${prefix}second`, shared],
+      }),
+    ]);
+    expect([first, second].filter(Boolean)).toHaveLength(1);
+    expect(await UploadSession.countDocuments({ bucketId: bucket._id })).toBe(1);
+    const index = (await UploadSession.collection.indexes()).find(
+      (entry) => entry.name === "bucketId_1_keys_1",
+    );
+    expect(index?.unique).toBe(true);
+  });
+
+  it("atomically claims a secondary key for only one parent upload", async () => {
+    const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
+    const prefix = orgObjectKeyPrefix(organizationId);
+    const parents = await Promise.all(["first", "second"].map(async (suffix) => {
+      const fileId = `${prefix}${suffix}`;
+      const sessionId = await reserveUploadSession({
+        userId: accountId, bucketId: bucket._id, fileId, keys: [fileId],
+      });
+      if (!sessionId) throw new Error("Could not reserve parent");
+      return { fileId, sessionId };
+    }));
+    const claimedKey = `${prefix}preview`;
+    const claims = await Promise.all(parents.map((parent) =>
+      attachToUploadSession({
+        userId: accountId, bucketId: bucket._id,
+        parentFileId: parent.fileId, parentSessionId: parent.sessionId,
+        key: claimedKey,
+      }),
+    ));
+    expect(claims.filter(Boolean)).toHaveLength(1);
+    expect(await UploadSession.countDocuments({
+      bucketId: bucket._id, keys: claimedKey,
+    })).toBe(1);
   });
 });

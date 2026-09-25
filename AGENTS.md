@@ -14,6 +14,16 @@ storage. The shipped applications are:
 Shared packages live in `packages/`. Do not create ad-hoc database clients or
 copy shared identity, Space, crypto, upload, or realtime logic into an app.
 
+## Development-stage architecture
+
+Xenode has no real users or production data yet. Implement the intended secure
+architecture directly. Do not preserve legacy routes, formats, schemas, or
+behavior solely for backward compatibility, and do not add migration/rollback
+machinery for disposable development data. When replacing a contract, update its
+clients, tests, API documentation, and development seed/reset path together;
+remove obsolete implementations after their callers move. Security, encryption,
+authorization, and data-integrity requirements still apply to the new design.
+
 ## Commands
 
 Run from the repository root unless noted.

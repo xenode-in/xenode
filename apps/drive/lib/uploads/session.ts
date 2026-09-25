@@ -6,6 +6,28 @@ import UploadSession from "@/models/UploadSession";
  * plus any realistic upload/resume duration. */
 export const UPLOAD_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
+let claimIndexPromise: Promise<void> | undefined;
+
+/** Fail closed if an older development database still has a non-unique index. */
+async function ensureClaimIndex(): Promise<void> {
+  claimIndexPromise ??= UploadSession.collection
+    .createIndex(
+      { bucketId: 1, keys: 1 },
+      { unique: true, name: "bucketId_1_keys_1" },
+    )
+    .then(() => undefined);
+  await claimIndexPromise;
+}
+
+function isDuplicateKeyError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "code" in error &&
+    error.code === 11000
+  );
+}
+
 /** Reserve a new upload key, or renew only the exact pending reservation. */
 export async function reserveUploadSession(params: {
   userId: string;
@@ -14,6 +36,7 @@ export async function reserveUploadSession(params: {
   keys: string[];
   sessionId?: string;
 }): Promise<string | null> {
+  await ensureClaimIndex();
   const now = new Date();
   const expiresAt = new Date(now.getTime() + UPLOAD_SESSION_TTL_MS);
   const keys = [...new Set(params.keys.filter(Boolean))];
@@ -25,19 +48,24 @@ export async function reserveUploadSession(params: {
   });
   if (conflicting) return null;
   if (params.sessionId !== undefined) {
-    const doc = await UploadSession.findOneAndUpdate(
-      {
-        _id: params.sessionId,
-        bucketId: params.bucketId,
-        fileId: params.fileId,
-        userId: params.userId,
-        status: "pending",
-        expiresAt: { $gt: now },
-      },
-      { $set: { expiresAt }, $addToSet: { keys: { $each: keys } } },
-      { returnDocument: "after" },
-    );
-    return doc?._id.toString() ?? null;
+    try {
+      const doc = await UploadSession.findOneAndUpdate(
+        {
+          _id: params.sessionId,
+          bucketId: params.bucketId,
+          fileId: params.fileId,
+          userId: params.userId,
+          status: "pending",
+          expiresAt: { $gt: now },
+        },
+        { $set: { expiresAt }, $addToSet: { keys: { $each: keys } } },
+        { returnDocument: "after" },
+      );
+      return doc?._id.toString() ?? null;
+    } catch (error) {
+      if (isDuplicateKeyError(error)) return null;
+      throw error;
+    }
   }
   try {
     const doc = await UploadSession.create({
@@ -50,10 +78,7 @@ export async function reserveUploadSession(params: {
     });
     return doc._id.toString();
   } catch (error) {
-    if (
-      error && typeof error === "object" && "code" in error &&
-      error.code === 11000
-    ) return null;
+    if (isDuplicateKeyError(error)) return null;
     throw error;
   }
 }
@@ -70,6 +95,7 @@ export async function attachToUploadSession(params: {
   parentSessionId: string;
   key: string;
 }): Promise<string | null> {
+  await ensureClaimIndex();
   if (!Types.ObjectId.isValid(params.parentSessionId)) return null;
   const conflicting = await UploadSession.exists({
     bucketId: params.bucketId,
@@ -77,19 +103,24 @@ export async function attachToUploadSession(params: {
     _id: { $ne: params.parentSessionId },
   });
   if (conflicting) return null;
-  const doc = await UploadSession.findOneAndUpdate(
-    {
-      _id: params.parentSessionId,
-      bucketId: params.bucketId,
-      fileId: params.parentFileId,
-      userId: params.userId,
-      status: "pending",
-      expiresAt: { $gt: new Date() },
-    },
-    { $addToSet: { keys: params.key } },
-    { returnDocument: "after" },
-  );
-  return doc?._id.toString() ?? null;
+  try {
+    const doc = await UploadSession.findOneAndUpdate(
+      {
+        _id: params.parentSessionId,
+        bucketId: params.bucketId,
+        fileId: params.parentFileId,
+        userId: params.userId,
+        status: "pending",
+        expiresAt: { $gt: new Date() },
+      },
+      { $addToSet: { keys: params.key } },
+      { returnDocument: "after" },
+    );
+    return doc?._id.toString() ?? null;
+  } catch (error) {
+    if (isDuplicateKeyError(error)) return null;
+    throw error;
+  }
 }
 
 /**

@@ -55,7 +55,9 @@ const UploadSessionSchema = new Schema<IUploadSession>(
 // One ledger row per logical upload key per bucket — lets presign upsert cleanly
 // and lets resume/complete look it up deterministically.
 UploadSessionSchema.index({ bucketId: 1, fileId: 1 }, { unique: true });
-UploadSessionSchema.index({ bucketId: 1, keys: 1 });
+// A physical B2 key belongs to one upload ledger row, even when it is a
+// thumbnail/chunk rather than the logical fileId. Keep completed claims too.
+UploadSessionSchema.index({ bucketId: 1, keys: 1 }, { unique: true });
 // Drives the cleanup-orphans cron scan: pending sessions past their deadline.
 UploadSessionSchema.index({ status: 1, expiresAt: 1 });
 
