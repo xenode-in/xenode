@@ -28,6 +28,22 @@ function isDuplicateKeyError(error: unknown): boolean {
   );
 }
 
+/** Resolve an upload identity from its reservation, never from caller key text. */
+export async function findPendingUploadSession(params: {
+  userId: string;
+  bucketId: Types.ObjectId | string;
+  sessionId: string;
+}) {
+  if (!/^[0-9a-f]{24}$/iu.test(params.sessionId)) return null;
+  return UploadSession.findOne({
+    _id: params.sessionId,
+    userId: params.userId,
+    bucketId: params.bucketId,
+    status: "pending",
+    expiresAt: { $gt: new Date() },
+  }).select("_id fileId keys").lean();
+}
+
 /** Reserve a new upload key, or renew only the exact pending reservation. */
 export async function reserveUploadSession(params: {
   userId: string;

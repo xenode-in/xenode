@@ -15,7 +15,7 @@ import Bucket from "@/models/Bucket";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
 import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
-import { reserveUploadSession } from "@/lib/uploads/session";
+import { reserveUploadSession, findPendingUploadSession } from "@/lib/uploads/session";
 import { findReferencedStorageObjectKeys } from "@xenode/database";
 
 export const dynamic = "force-dynamic";
@@ -35,7 +35,6 @@ export async function POST(request: NextRequest) {
       bucketId,
       chunkCount,
       prefix,
-      fileName,
       chunkSize: clientChunkSize,
       sessionId: resumeSessionId,
     } = await request.json();
@@ -55,6 +54,9 @@ export async function POST(request: NextRequest) {
     }
     if (!Number.isSafeInteger(fileSize) || fileSize < 1) {
       return NextResponse.json({ error: "Valid fileSize required" }, { status: 400 });
+    }
+    if (resumeSessionId !== undefined && typeof resumeSessionId !== "string") {
+      return NextResponse.json({ error: "Invalid sessionId" }, { status: 400 });
     }
     if (
       clientChunkSize !== undefined &&
@@ -134,17 +136,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fallback to random hex if no filename is provided
-    let safeFileName = fileName || randomBytes(16).toString("hex");
-
-    // Sanitize filename to prevent directory traversal
-    safeFileName = safeFileName.replace(/[\/\\]/g, "_");
-
-    const logicalKey = `${basePrefix}${safeFileName}`;
+    const existing = resumeSessionId
+      ? await findPendingUploadSession({
+          userId,
+          bucketId: bucket._id,
+          sessionId: resumeSessionId,
+        })
+      : null;
+    if (resumeSessionId && !existing) {
+      return NextResponse.json(
+        { error: "Upload reservation is missing or no longer pending", code: "upload_reservation_conflict" },
+        { status: 409 },
+      );
+    }
+    const logicalKey = existing?.fileId ?? `${basePrefix}${randomBytes(16).toString("hex")}`;
+    if (!logicalKey.startsWith(allowedPrefix)) {
+      return NextResponse.json({ error: "Upload Space mismatch" }, { status: 403 });
+    }
     const chunkKeys = Array.from(
       { length: chunkCount },
       (_, index) => `${logicalKey}-chunk-${index}`,
     );
+    if (
+      existing &&
+      existing.keys.filter((key) => key.startsWith(`${logicalKey}-chunk-`)).length !== chunkCount
+    ) {
+      return NextResponse.json({ error: "Chunk layout changed" }, { status: 409 });
+    }
     const referenced = await findReferencedStorageObjectKeys({
       bucketId: bucket._id,
       keys: [logicalKey, ...chunkKeys, `${logicalKey}-thumb`],
@@ -161,7 +179,7 @@ export async function POST(request: NextRequest) {
       bucketId: bucket._id,
       fileId: logicalKey,
       keys: [logicalKey, ...chunkKeys, `${logicalKey}-thumb`],
-      sessionId: typeof resumeSessionId === "string" ? resumeSessionId : undefined,
+      sessionId: resumeSessionId,
     });
     if (!sessionId) {
       return NextResponse.json(

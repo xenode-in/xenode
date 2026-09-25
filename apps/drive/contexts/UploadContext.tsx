@@ -407,8 +407,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       parentSessionId?: string,
     ): Promise<string | undefined> => {
       try {
-        const thumbKey = `${fileStorageKey}-thumb`;
-
         // Convert encrypted string to bytes for upload
         const bytes = new TextEncoder().encode(encryptedDataUrl);
         const blob = new Blob([bytes], { type: "application/octet-stream" });
@@ -417,20 +415,16 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            fileName: `${fileStorageKey.split("/").pop()}-thumb`,
             fileSize: blob.size,
             fileType: "application/octet-stream",
             bucketId,
             prefix: fileStorageKey.includes("/")
               ? fileStorageKey.substring(0, fileStorageKey.lastIndexOf("/") + 1)
               : `users/${sessionRef.current?.user?.id}/`,
-            // Attach this thumbnail to the parent file's cleanup session so it
-            // is protected by the parent's completion (and reclaimed with it if
-            // the upload is abandoned). Without this the thumbnail spawns its
-            // own session that never flips to `completed`, and cleanup-orphans
-            // deletes the live thumbnail ~24h later.
-            sessionFileId: fileStorageKey,
+            // The parent reservation determines this thumbnail's B2 key and
+            // keeps it protected through completion or orphan cleanup.
             parentSessionId,
+            variant: "thumbnail",
           }),
         });
         if (!presign.ok) throw new Error("Thumbnail upload reservation expired");
@@ -441,7 +435,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           body: blob,
         });
 
-        return objectKey ?? thumbKey;
+        return objectKey;
       } catch (err) {
         console.error("Failed to upload thumbnail to B2:", err);
         return undefined;
@@ -850,12 +844,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           ),
         );
 
-        // Stable presign filename — reused if we have to re-presign (URL expiry
-        // during a long pause) so the same B2 chunk keys are hit.
-        const presignFileName = shouldEncryptNow()
-          ? crypto.randomUUID()
-          : task.file.name;
-
         let sessionId: string | undefined = undefined;
         const presignMultipart = async () => {
           const res = await scopedFetchRef.current(
@@ -864,7 +852,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                fileName: presignFileName,
                 fileSize: uploadBody.size,
                 fileType: uploadContentType,
                 bucketId: task.bucketId,
@@ -1137,18 +1124,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       let rawThumbnail: string | undefined;
       let thumbnail: string | undefined;
 
-      // Step 1: Get presigned URL from server. Stable filename so a re-presign
-      // (URL expiry during a long pause) reuses the same B2 key.
-      const mainFileName = shouldEncryptNow()
-        ? crypto.randomUUID()
-        : task.file.name;
+      // The server creates the opaque key; refreshes use the reservation ID.
       let mainSessionId: string | undefined = undefined;
       const presignMain = async () => {
         const res = await scopedFetchRef.current("/api/objects/presign-upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            fileName: mainFileName,
             fileSize: task.file.size,
             fileType: shouldEncryptNow()
               ? "application/octet-stream"
@@ -1476,11 +1458,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         setTasks((prev) =>
           prev.map((t) => (t.id === rec.id ? { ...t, ...patch } : t)),
         );
-      const fileNameFor = (key: string) =>
-        key.startsWith(rec.prefix)
-          ? key.slice(rec.prefix.length)
-          : (key.split("/").pop() ?? key);
-
       setTask({
         status: pausedRef.current ? "paused" : "uploading",
         statusText: "Resuming…",
@@ -1517,7 +1494,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             throw new Error("Missing chunk metadata");
           const total = rec.mainBytes.size;
           const presignBody = {
-            fileName: fileNameFor(rec.fileId),
             fileSize: total,
             fileType: rec.uploadContentType,
             bucketId: rec.bucketId,
@@ -1626,26 +1602,26 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           await upsertLocalObject(userId, cd.object, rec.bucketId);
         } else {
           const total = rec.mainBytes.size;
+          let optimizedKey: string | undefined = undefined;
           // Optimized preview (best-effort).
           if (rec.optimizedBytes && rec.optimizedKey) {
             try {
-              const op = await (
-                await fetch("/api/objects/presign-upload", {
+              const optimizedPresign = await fetch("/api/objects/presign-upload", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
-                    fileName: fileNameFor(rec.optimizedKey),
                     fileSize: rec.optimizedBytes.size,
                     fileType: rec.isEncrypted
                       ? "application/octet-stream"
                       : rec.optimizedContentType,
                     bucketId: rec.bucketId,
                     prefix: rec.prefix,
-                    sessionFileId: rec.fileId,
                     parentSessionId: rec.sessionId,
+                    variant: "optimized",
                   }),
-                })
-              ).json();
+                });
+              if (!optimizedPresign.ok) throw new Error("Could not reserve optimized variant");
+              const op = await optimizedPresign.json();
               await putWithRetry(
                 rec.optimizedBytes,
                 rec.isEncrypted
@@ -1658,6 +1634,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                   waitWhilePaused,
                 },
               );
+              optimizedKey = op.objectKey;
             } catch (e) {
               if (isCancelled()) throw e;
               console.warn("[Resume] optimized upload failed, skipping", e);
@@ -1669,7 +1646,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  fileName: fileNameFor(rec.fileId),
                   fileSize: total,
                   fileType: rec.uploadContentType,
                   bucketId: rec.bucketId,
@@ -1714,7 +1690,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               iv: rec.iv,
               encryptedName: rec.encryptedName,
               encryptedMetadata: rec.encryptedMetadata,
-              optimizedKey: rec.optimizedKey,
+              optimizedKey,
               optimizedSize: rec.optimizedSize,
               optimizedContentType: rec.optimizedContentType,
               optimizedIV: rec.optimizedIV,

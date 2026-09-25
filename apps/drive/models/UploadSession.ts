@@ -22,7 +22,7 @@ export interface IUploadSession extends Document {
   _id: mongoose.Types.ObjectId;
   userId: string;
   bucketId: mongoose.Types.ObjectId;
-  /** Logical/main object key, e.g. `users/{userId}/{uuid}`. Stable across resume. */
+  /** Server-issued logical key, e.g. `users/{userId}/{randomHex32}`. */
   fileId: string;
   /** Every B2 key this upload writes: main, `${fileId}-chunk-{i}`, `${fileId}-thumb`, optimized key. */
   keys: string[];

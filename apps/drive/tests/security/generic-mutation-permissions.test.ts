@@ -96,7 +96,7 @@ describe("generic storage mutation permissions", () => {
     expect((await StorageObject.findById(object._id))?.position).toBe(9);
   });
 
-  it("does not sign a PUT over a binned Photos ciphertext key", async () => {
+  it("does not derive a PUT key from a binned Photos filename", async () => {
     await setRole("member");
     const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
     const prefix = orgObjectKeyPrefix(organizationId);
@@ -108,12 +108,14 @@ describe("generic storage mutation permissions", () => {
     const response = await presign(request("POST", {
       bucketId: String(bucket._id), prefix, fileName: "known", fileSize: 16,
     }));
-    expect(response.status).toBe(409);
-    expect((await response.json()).code).toBe("upload_key_conflict");
-    expect(sign).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    const { objectKey } = await response.json();
+    expect(objectKey).toMatch(/^workspaces\/permission-org\/objects\/[0-9a-f]{32}$/u);
+    expect(objectKey).not.toBe(`${prefix}known`);
+    expect(sign).toHaveBeenCalledOnce();
   });
 
-  it("does not sign multipart PUTs over a referenced chunk", async () => {
+  it("does not derive multipart chunk keys from a referenced name", async () => {
     await setRole("member");
     const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
     const prefix = orgObjectKeyPrefix(organizationId);
@@ -126,9 +128,12 @@ describe("generic storage mutation permissions", () => {
       bucketId: String(bucket._id), prefix, fileName: "known", fileSize: 16,
       chunkCount: 1, chunkSize: 2 * 1024 * 1024,
     }));
-    expect(response.status).toBe(409);
-    expect((await response.json()).code).toBe("upload_key_conflict");
-    expect(sign).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    const { fileId, urls } = await response.json();
+    expect(fileId).toMatch(/^workspaces\/permission-org\/objects\/[0-9a-f]{32}$/u);
+    expect(urls[0].key).toBe(`${fileId}-chunk-0`);
+    expect(urls[0].key).not.toBe(`${prefix}known-chunk-0`);
+    expect(sign).toHaveBeenCalledOnce();
   });
 
   it.each([0, 0.5, 4097, "100", null])(
@@ -164,7 +169,7 @@ describe("generic storage mutation permissions", () => {
       fileType: "application/octet-stream",
     }));
     expect(single.status).toBe(200);
-    expect((await single.json()).objectKey).toBe(`${prefix}fresh-single`);
+    expect((await single.json()).objectKey).toMatch(/^workspaces\/permission-org\/objects\/[0-9a-f]{32}$/u);
     const chunked = await multipart(request("POST", {
       bucketId: String(bucket._id), prefix, fileName: "fresh-chunked", fileSize: 4_000_000,
       fileType: "application/octet-stream", chunkCount: 2, chunkSize: 2 * 1024 * 1024,
@@ -179,17 +184,22 @@ describe("generic storage mutation permissions", () => {
     sign.mockResolvedValue("https://upload.example.test/presigned");
     const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
     const prefix = orgObjectKeyPrefix(organizationId);
-    const body = { bucketId: String(bucket._id), prefix, fileName: "reserved", fileSize: 16 };
+    const body = { bucketId: String(bucket._id), prefix, fileSize: 16 };
     const first = await presign(request("POST", body));
     expect(first.status).toBe(200);
-    const { sessionId } = await first.json();
+    const { sessionId, objectKey } = await first.json();
     expect(sessionId).toMatch(/^[0-9a-f]{24}$/);
+    expect(objectKey).toMatch(/^workspaces\/permission-org\/objects\/[0-9a-f]{32}$/u);
 
-    expect((await presign(request("POST", body))).status).toBe(409);
+    const another = await presign(request("POST", body));
+    expect(another.status).toBe(200);
+    expect((await another.json()).objectKey).not.toBe(objectKey);
     expect((await presign(request("POST", { ...body, sessionId: "000000000000000000000001" }))).status).toBe(409);
-    expect(sign).toHaveBeenCalledTimes(1);
-    expect((await presign(request("POST", { ...body, sessionId }))).status).toBe(200);
     expect(sign).toHaveBeenCalledTimes(2);
+    const refreshed = await presign(request("POST", { ...body, sessionId, fileName: "tampered-name" }));
+    expect(refreshed.status).toBe(200);
+    expect((await refreshed.json()).objectKey).toBe(objectKey);
+    expect(sign).toHaveBeenCalledTimes(3);
 
     await getDatabase().collection("member").insertOne({
       userId: "other-member", organizationId, role: "member",
@@ -198,7 +208,7 @@ describe("generic storage mutation permissions", () => {
       user: { id: "other-member" }, session: { id: "other-session" },
     } as unknown as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
     expect((await presign(request("POST", { ...body, sessionId }))).status).toBe(409);
-    expect(sign).toHaveBeenCalledTimes(2);
+    expect(sign).toHaveBeenCalledTimes(3);
 
     mockedSession.mockResolvedValue({
       user: { id: accountId }, session: { id: "permission-session" },
@@ -213,21 +223,24 @@ describe("generic storage mutation permissions", () => {
     const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
     const prefix = orgObjectKeyPrefix(organizationId);
     const main = await presign(request("POST", {
-      bucketId: String(bucket._id), prefix, fileName: "main", fileSize: 16,
+      bucketId: String(bucket._id), prefix, fileSize: 16,
     }));
     expect(main.status).toBe(200);
     const { objectKey, sessionId } = await main.json();
     const body = {
-      bucketId: String(bucket._id), prefix, fileName: "main-thumb", fileSize: 16,
-      sessionFileId: objectKey,
+      bucketId: String(bucket._id), prefix, fileSize: 16, variant: "thumbnail",
     };
-    expect((await presign(request("POST", {
-      bucketId: String(bucket._id), prefix, fileName: "main-thumb", fileSize: 16,
-    }))).status).toBe(409);
-    expect((await presign(request("POST", body))).status).toBe(409);
+    expect((await presign(request("POST", body))).status).toBe(400);
     expect((await presign(request("POST", { ...body, parentSessionId: "000000000000000000000001" }))).status).toBe(409);
     expect(sign).toHaveBeenCalledTimes(1);
-    expect((await presign(request("POST", { ...body, parentSessionId: sessionId }))).status).toBe(200);
+    const thumbnail = await presign(request("POST", { ...body, parentSessionId: sessionId }));
+    expect(thumbnail.status).toBe(200);
+    expect((await thumbnail.json()).objectKey).toBe(`${objectKey}-thumb`);
+    const optimized = await presign(request("POST", {
+      ...body, parentSessionId: sessionId, variant: "optimized",
+    }));
+    expect(optimized.status).toBe(200);
+    expect((await optimized.json()).objectKey).toBe(`${objectKey}-optimized`);
     expect(await UploadSession.countDocuments({ bucketId: bucket._id })).toBe(1);
     await UploadSession.updateOne({ _id: sessionId }, { $set: { status: "completed" } });
     expect((await presign(request("POST", { ...body, parentSessionId: sessionId }))).status).toBe(409);
@@ -239,20 +252,24 @@ describe("generic storage mutation permissions", () => {
     const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
     const body = {
       bucketId: String(bucket._id), prefix: orgObjectKeyPrefix(organizationId),
-      fileName: "chunked", fileSize: 4_000_000, chunkCount: 2,
+      fileSize: 4_000_000, chunkCount: 2,
       chunkSize: 2 * 1024 * 1024,
     };
     const first = await multipart(request("POST", body));
     expect(first.status).toBe(200);
-    const { sessionId } = await first.json();
+    const { sessionId, fileId } = await first.json();
     expect(sign).toHaveBeenCalledTimes(2);
-    expect((await multipart(request("POST", body))).status).toBe(409);
-    expect(sign).toHaveBeenCalledTimes(2);
-    expect((await multipart(request("POST", { ...body, sessionId }))).status).toBe(200);
+    const another = await multipart(request("POST", body));
+    expect(another.status).toBe(200);
+    expect((await another.json()).fileId).not.toBe(fileId);
     expect(sign).toHaveBeenCalledTimes(4);
+    const refreshed = await multipart(request("POST", { ...body, sessionId }));
+    expect(refreshed.status).toBe(200);
+    expect((await refreshed.json()).fileId).toBe(fileId);
+    expect(sign).toHaveBeenCalledTimes(6);
   });
 
-  it("allows only one concurrent reservation for a chosen key", async () => {
+  it("issues distinct keys for concurrent requests carrying the same filename", async () => {
     await setRole("member");
     sign.mockResolvedValue("https://upload.example.test/presigned");
     const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
@@ -264,9 +281,12 @@ describe("generic storage mutation permissions", () => {
       presign(request("POST", body)),
       presign(request("POST", body)),
     ]);
-    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
-    expect(sign).toHaveBeenCalledOnce();
-    expect(await UploadSession.countDocuments({ bucketId: bucket._id })).toBe(1);
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    const keys = await Promise.all(responses.map(async (response) => (await response.json()).objectKey));
+    expect(new Set(keys).size).toBe(2);
+    expect(keys.every((key) => /^[\s\S]*\/[0-9a-f]{32}$/u.test(key))).toBe(true);
+    expect(sign).toHaveBeenCalledTimes(2);
+    expect(await UploadSession.countDocuments({ bucketId: bucket._id })).toBe(2);
   });
 
   it("atomically claims a physical key across different logical uploads", async () => {

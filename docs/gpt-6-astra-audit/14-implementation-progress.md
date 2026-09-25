@@ -23,6 +23,7 @@ The audit is a snapshot of the pre-remediation working tree. Findings are not cl
 | 0H | Deny presign collisions with referenced ciphertext and bound multipart inputs | Complete; full suite passed |
 | 0I | Bind generic upload URL refresh and secondary blobs to pending reservations | Complete; full suite passed |
 | 0J | Enforce unique physical-key claims and record development-only architecture policy | Complete; full suite passed |
+| 0K | Issue Drive upload keys on the server and resolve refreshes from reservations | Complete; full suite passed |
 
 The rest of the roadmap remains open. F09/F10 also require durable claim/reconciliation across concurrent finalize/restore/purge operations; a deletion confirmation patch alone is not complete lifecycle safety.
 
@@ -137,3 +138,11 @@ Commit: `18709ac`.
 - Synthetic Mongo tests race two different logical uploads claiming one physical key and two parents attaching one secondary key. Exactly one claim wins in each case, and the index's unique property is asserted.
 - Final validation: all 15 test workspaces passed, **501 tests** (339 Drive, 92 Accounts, 9 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; scoped Drive lint and package boundaries passed.
 - Existing development databases with the non-unique index should be reset/reseeded for this schema. Server-issued opaque object keys, completion-bound claims and post-completion URL replay protection remain F08 work.
+
+## 0K — Server-issued Drive upload identities
+
+- Generic single and multipart presign now append a server-generated 32-character random hex identity to an authorized destination prefix. Caller `fileName` no longer controls any new physical B2 key. A refresh resolves the existing key from the authenticated pending reservation instead of trusting a supplied name. Multipart refresh also checks that the reserved chunk count is unchanged.
+- A reserved parent controls its deterministic `-thumb` and `-optimized` variant keys through `parentSessionId` plus a constrained variant purpose. The Drive upload client no longer sends main filenames for presigning; thumbnail and optimized paths use the returned key. OpenAPI describes the new request contract.
+- Direct-route tests verify that a known Photos key or chunk name cannot be targeted through `fileName`, fresh requests with the same supplied name receive different keys, and reservation refreshes return the original key even if a different name is supplied.
+- Final validation: all 15 test workspaces passed, **501 tests** (339 Drive, 92 Accounts, 9 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; scoped Drive lint passed with four pre-existing unused-value warnings, package boundaries passed, and OpenAPI JSON parsed.
+- This does not yet remove folder prefixes from physical keys, bind completion to a reservation, prove encrypted personal metadata, or prevent reuse of an already-issued PUT URL after completion. The standalone share-thumbnail flow has a separate retention/lifecycle problem and remains for a dedicated fix; this change does not make that upload path succeed.

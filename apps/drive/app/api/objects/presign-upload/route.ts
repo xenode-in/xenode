@@ -15,7 +15,11 @@ import Bucket from "@/models/Bucket";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
 import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
-import { reserveUploadSession, attachToUploadSession } from "@/lib/uploads/session";
+import {
+  reserveUploadSession,
+  attachToUploadSession,
+  findPendingUploadSession,
+} from "@/lib/uploads/session";
 import { findReferencedStorageObjectKeys } from "@xenode/database";
 
 export const dynamic = "force-dynamic";
@@ -27,8 +31,8 @@ export async function POST(request: NextRequest) {
     await enforceStorageAccess(userId);
 
     const {
-      fileSize, fileType, bucketId, prefix, fileName, sessionFileId,
-      sessionId: resumeSessionId, parentSessionId,
+      fileSize, fileType, bucketId, prefix,
+      sessionId: resumeSessionId, parentSessionId, variant,
     } = await request.json();
 
     if (!bucketId) {
@@ -36,6 +40,15 @@ export async function POST(request: NextRequest) {
     }
     if (!Number.isSafeInteger(fileSize) || fileSize < 1) {
       return NextResponse.json({ error: "Valid fileSize required" }, { status: 400 });
+    }
+    if (
+      (resumeSessionId !== undefined && typeof resumeSessionId !== "string") ||
+      (parentSessionId !== undefined && typeof parentSessionId !== "string") ||
+      (resumeSessionId && parentSessionId) ||
+      (variant !== undefined && variant !== "thumbnail" && variant !== "optimized") ||
+      (Boolean(parentSessionId) !== Boolean(variant))
+    ) {
+      return NextResponse.json({ error: "Invalid upload reservation request" }, { status: 400 });
     }
 
     await dbConnect();
@@ -101,13 +114,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Fallback to random hex if no filename is provided
-    let safeFileName = fileName || randomBytes(16).toString("hex");
-
-    // Sanitize filename to prevent directory traversal
-    safeFileName = safeFileName.replace(/[\/\\]/g, "_");
-
-    const opaqueKey = `${basePrefix}${safeFileName}`;
+    const existing = parentSessionId || resumeSessionId
+      ? await findPendingUploadSession({
+          userId,
+          bucketId: bucket._id,
+          sessionId: parentSessionId || resumeSessionId,
+        })
+      : null;
+    if ((parentSessionId || resumeSessionId) && !existing) {
+      return NextResponse.json(
+        { error: "Upload reservation is missing or no longer pending", code: "upload_reservation_conflict" },
+        { status: 409 },
+      );
+    }
+    const opaqueKey = parentSessionId
+      ? `${existing!.fileId}-${variant === "thumbnail" ? "thumb" : "optimized"}`
+      : existing?.fileId ?? `${basePrefix}${randomBytes(16).toString("hex")}`;
+    if (!opaqueKey.startsWith(allowedPrefix)) {
+      return NextResponse.json({ error: "Upload Space mismatch" }, { status: 403 });
+    }
     const referenced = await findReferencedStorageObjectKeys({
       bucketId: bucket._id,
       keys: [opaqueKey, `${opaqueKey}-thumb`],
@@ -121,22 +146,20 @@ export async function POST(request: NextRequest) {
 
     // Reserve before signing: a duplicate or expired ledger cannot receive a
     // fresh PUT URL, and a secondary key needs its parent's reservation token.
-    const sessionId = typeof sessionFileId === "string" && sessionFileId
-      ? typeof parentSessionId === "string"
-        ? await attachToUploadSession({
-            userId,
-            bucketId: bucket._id,
-            parentFileId: sessionFileId,
-            parentSessionId,
-            key: opaqueKey,
-          })
-        : null
+    const sessionId = parentSessionId
+      ? await attachToUploadSession({
+          userId,
+          bucketId: bucket._id,
+          parentFileId: existing!.fileId,
+          parentSessionId,
+          key: opaqueKey,
+        })
       : await reserveUploadSession({
           userId,
           bucketId: bucket._id,
           fileId: opaqueKey,
           keys: [opaqueKey, `${opaqueKey}-thumb`],
-          sessionId: typeof resumeSessionId === "string" ? resumeSessionId : undefined,
+          sessionId: resumeSessionId,
         });
     if (!sessionId) {
       return NextResponse.json(
