@@ -1,4 +1,4 @@
-import { DeleteObjectsCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
+import { HeadObjectCommand } from "@aws-sdk/client-s3";
 import { PhotoAsset, getDatabase, getMongoose } from "@xenode/database";
 import { personalSpaceId, resolveSpaceAccess } from "@xenode/spaces";
 import { getPhotosProductSession } from "@/lib/session";
@@ -118,29 +118,6 @@ export async function POST(request: Request) {
       createdByAccountId: session.accountId,
     }).lean();
     if (existingAsset) {
-      const existingObject = getMongoose().Types.ObjectId.isValid(
-        existingAsset.storageObjectId,
-      )
-        ? await storageObjects.findOne({
-            _id: new (getMongoose().Types.ObjectId)(
-              existingAsset.storageObjectId,
-            ),
-            productId: "photos",
-          })
-        : null;
-      const referencedKeys = new Set(
-        [
-          existingObject?.key,
-          existingObject?.optimizedKey,
-          existingObject?.thumbnail,
-        ].filter((key): key is string => typeof key === "string"),
-      );
-      await deleteUploadedObjects(
-        storage,
-        variants
-          .map((variant) => variant.key)
-          .filter((key) => !referencedKeys.has(key)),
-      );
       return Response.json({ asset: existingAsset });
     }
 
@@ -159,10 +136,6 @@ export async function POST(request: Request) {
         (head, index) => head.ContentLength !== variants[index]?.size,
       )
     ) {
-      await deleteUploadedObjects(
-        storage,
-        variants.map((variant) => variant.key),
-      );
       return Response.json(
         { error: "Uploaded object size mismatch" },
         { status: 400 },
@@ -184,10 +157,6 @@ export async function POST(request: Request) {
       if (completedAsset) {
         return Response.json({ asset: completedAsset });
       }
-      await deleteUploadedObjects(
-        storage,
-        variants.map((variant) => variant.key),
-      );
       return Response.json(
         { error: "Upload metadata is incomplete; please upload the file again" },
         { status: 409 },
@@ -197,10 +166,6 @@ export async function POST(request: Request) {
     const usages = database.collection("usages");
     const usage = await usages.findOne({ userId: session.accountId });
     if (!usage || !Number.isFinite(usage.totalStorageBytes)) {
-      await deleteUploadedObjects(
-        storage,
-        variants.map((variant) => variant.key),
-      );
       return Response.json(
         { error: "Storage usage is not initialized; complete onboarding first" },
         { status: 409 },
@@ -222,10 +187,6 @@ export async function POST(request: Request) {
             }
           : null;
     if (!quotaFilter) {
-      await deleteUploadedObjects(
-        storage,
-        variants.map((variant) => variant.key),
-      );
       return Response.json(
         { error: "Storage limit is not initialized; complete onboarding first" },
         { status: 409 },
@@ -245,10 +206,6 @@ export async function POST(request: Request) {
       { returnDocument: "after" },
     );
     if (!reservedUsage) {
-      await deleteUploadedObjects(
-        storage,
-        variants.map((variant) => variant.key),
-      );
       return Response.json({ error: "Storage quota exceeded" }, { status: 402 });
     }
 
@@ -338,6 +295,7 @@ export async function POST(request: Request) {
           assetId: body.assetId,
           spaceId,
           createdByAccountId: session.accountId,
+          storageObjectId: objectId.toString(),
         }),
         storageObjects.deleteOne({ _id: objectId }),
         usages.updateOne(
@@ -363,10 +321,6 @@ export async function POST(request: Request) {
               },
             )
           : Promise.resolve(),
-        deleteUploadedObjects(
-          storage,
-          variants.map((variant) => variant.key),
-        ),
       ]);
       throw error;
     }
@@ -431,22 +385,4 @@ function isAccountObjectKey(key: string, accountId: string): boolean {
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-async function deleteUploadedObjects(
-  storage: Awaited<ReturnType<typeof getPhotosStorageContext>>,
-  keys: string[],
-) {
-  if (keys.length === 0) return;
-  await storage.client
-    .send(
-      new DeleteObjectsCommand({
-        Bucket: storage.bucket.b2BucketId,
-        Delete: {
-          Objects: keys.map((Key) => ({ Key })),
-          Quiet: true,
-        },
-      }),
-    )
-    .catch(() => {});
 }

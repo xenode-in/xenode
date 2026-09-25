@@ -42,6 +42,7 @@
     "@xenode/eslint-config": "*",
     "@xenode/tsconfig": "*",
     "eslint": "^9",
+    "mongodb-memory-server": "^11.3.0",
     "shadcn": "^3.8.4",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",

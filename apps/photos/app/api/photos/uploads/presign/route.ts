@@ -76,9 +76,6 @@ export async function POST(request: Request) {
       original,
       optimized,
       thumbnail,
-      // Kept temporarily for older clients during a rolling deployment.
-      uploadUrl: original.uploadUrl,
-      objectKey: original.objectKey,
       bucketId: storage.bucket._id.toString(),
     });
   } catch (error) {

@@ -222,18 +222,7 @@ export function UploadController({
             setStatus(`Uploaded ${completed} of ${files.length}`);
             return completedUpload.asset;
           } catch (error) {
-            void fetch("/api/photos/uploads/abort", {
-              method: "POST",
-              credentials: "include",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                bucketId: presign.bucketId,
-                objectKeys: uploadVariants.map(
-                  ({ signed }) => signed.objectKey,
-                ),
-              }),
-              keepalive: true,
-            }).catch(() => {});
+            setStatus("Upload failed");
             throw error;
           }
         },

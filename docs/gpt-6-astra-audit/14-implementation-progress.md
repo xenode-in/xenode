@@ -25,6 +25,7 @@ The audit is a snapshot of the pre-remediation working tree. Findings are not cl
 | 0J | Enforce unique physical-key claims and record development-only architecture policy | Complete; full suite passed |
 | 0K | Issue Drive upload keys on the server and resolve refreshes from reservations | Complete; full suite passed |
 | 0L | Bind generic Drive completion to claimed, Space-scoped uploads | Complete; full suite passed |
+| 0M | Stop losing Photos completions and aborts from deleting another upload | Complete; full suite passed |
 
 The rest of the roadmap remains open. F09/F10 also require durable claim/reconciliation across concurrent finalize/restore/purge operations; a deletion confirmation patch alone is not complete lifecycle safety.
 
@@ -157,3 +158,11 @@ Commit: `18709ac`.
 - Direct-route tests cover wrong account/Space, missing reservation, unclaimed variant, existing-object conflict, successful encrypted completion and repeat denial. The quota rollback test retains a real synthetic reservation; its former generic-overwrite expectations now assert conflict and unchanged billing.
 - Final validation: all 15 test workspaces passed, **505 tests** (343 Drive, 92 Accounts, 9 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; scoped Drive lint passed with six pre-existing unused-value warnings, package boundaries passed, and OpenAPI JSON parsed. Development databases need a reset/reseed for the new required UploadSession Space field.
 - The post-upload metadata, metering and reservation-state writes are still not one durable transaction. A process crash between them needs reconciliation, and a presigned URL may remain usable until expiry after completion. F11 quota/physical-byte verification and folder-prefix confidentiality also remain open.
+
+## 0M — Photos destructive-cleanup containment
+
+- Photos completion compensates only the `PhotoAsset` row tied to the StorageObject ID created by that request. A losing completion can no longer delete another request's winning asset with the same `assetId`.
+- Completion no longer deletes caller-submitted B2 keys on a size mismatch, duplicate/incomplete metadata, quota denial or uncertain write failure. Existing-asset retries return the asset without touching alternate uploaded keys. The unsafe Photos abort endpoint fails closed until a server-owned upload manifest can prove exact key ownership; the browser no longer calls it. The unused rolling-deployment presign aliases were removed under the development-only policy.
+- Disposable Mongo race tests force a winner to appear after a losing request's initial lookup and assert that its asset and ciphertext record survive. They also cover response-lost retry, size mismatch without B2 deletion and refusal to abort an arbitrary shared-bucket key.
+- Final validation: all 15 test workspaces passed, **509 tests** (343 Drive, 92 Accounts, 13 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; Photos lint and package boundaries passed. The new Photos integration tests use a disposable Mongo replica set.
+- This contains the immediate F12/F13 data-loss path but can leave abandoned ciphertext in B2. The next Photos phase needs a durable presign manifest, transaction-scoped metadata/usage writes and a reference-aware orphan reconciler. It must never infer deletion ownership merely from an account key prefix.
