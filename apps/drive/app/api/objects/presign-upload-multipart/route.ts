@@ -16,8 +16,12 @@ import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
 import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 import { recordUploadSession } from "@/lib/uploads/session";
+import { findReferencedStorageObjectKeys } from "@xenode/database";
 
 export const dynamic = "force-dynamic";
+const MAX_PRESIGNED_CHUNKS = 4096;
+const MIN_CHUNK = 2 * 1024 * 1024;
+const MAX_CHUNK = 64 * 1024 * 1024;
 
 export async function POST(request: NextRequest) {
   try {
@@ -38,11 +42,26 @@ export async function POST(request: NextRequest) {
     if (!bucketId) {
       return NextResponse.json({ error: "bucketId required" }, { status: 400 });
     }
-    if (!chunkCount || chunkCount <= 0) {
+    if (
+      !Number.isSafeInteger(chunkCount) ||
+      chunkCount < 1 ||
+      chunkCount > MAX_PRESIGNED_CHUNKS
+    ) {
       return NextResponse.json(
-        { error: "chunkCount required" },
+        { error: "Valid chunkCount required" },
         { status: 400 },
       );
+    }
+    if (!Number.isSafeInteger(fileSize) || fileSize < 1) {
+      return NextResponse.json({ error: "Valid fileSize required" }, { status: 400 });
+    }
+    if (
+      clientChunkSize !== undefined &&
+      (!Number.isSafeInteger(clientChunkSize) ||
+        clientChunkSize < MIN_CHUNK ||
+        clientChunkSize > MAX_CHUNK)
+    ) {
+      return NextResponse.json({ error: "Invalid chunkSize" }, { status: 400 });
     }
 
     await dbConnect();
@@ -98,12 +117,7 @@ export async function POST(request: NextRequest) {
     const s3Client = getS3Client(ctx.region);
     const regionBucket = activeStorageBucketName(ctx.region);
 
-    // Accept client-provided adaptive chunk size (validated 2 MB – 64 MB)
-    const MIN_CHUNK = 2 * 1024 * 1024;
-    const MAX_CHUNK = 64 * 1024 * 1024;
-    const chunkSize = clientChunkSize
-      ? Math.max(MIN_CHUNK, Math.min(MAX_CHUNK, Number(clientChunkSize)))
-      : MIN_CHUNK;
+    const chunkSize = clientChunkSize ?? MIN_CHUNK;
 
     const allowedPrefix =
       ctx.spaceType === "organization"
@@ -126,12 +140,24 @@ export async function POST(request: NextRequest) {
     safeFileName = safeFileName.replace(/[\/\\]/g, "_");
 
     const logicalKey = `${basePrefix}${safeFileName}`;
+    const chunkKeys = Array.from(
+      { length: chunkCount },
+      (_, index) => `${logicalKey}-chunk-${index}`,
+    );
+    const referenced = await findReferencedStorageObjectKeys({
+      bucketId: bucket._id,
+      keys: [logicalKey, ...chunkKeys, `${logicalKey}-thumb`],
+    });
+    if (referenced.size) {
+      return NextResponse.json(
+        { error: "Upload key is already in use", code: "upload_key_conflict" },
+        { status: 409 },
+      );
+    }
 
     const urls = [];
-    const chunkKeys: string[] = [];
     for (let i = 0; i < chunkCount; i++) {
-      const chunkKey = `${logicalKey}-chunk-${i}`;
-      chunkKeys.push(chunkKey);
+      const chunkKey = chunkKeys[i];
       const command = new PutObjectCommand({
         Bucket: regionBucket,
         Key: chunkKey,

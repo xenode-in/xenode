@@ -19,6 +19,7 @@ The audit is a snapshot of the pre-remediation working tree. Findings are not cl
 | 0E | Keep root, product and Drive sharing keys in memory; opt into browser-device trust | Complete; full suite passed |
 | 0F | Require OAuth second-factor completion and same-origin mutations at Accounts API boundaries | Complete; full suite passed |
 | 0G | Revoke ProductSessions when Better Auth deletes issuer sessions | Complete; full suite passed |
+| 0H | Deny presign collisions with referenced ciphertext and bound multipart inputs | Complete; full suite passed |
 
 The rest of the roadmap remains open. F09/F10 also require durable claim/reconciliation across concurrent finalize/restore/purge operations; a deletion confirmation patch alone is not complete lifecycle safety.
 
@@ -109,3 +110,11 @@ Commit: `18709ac`.
 - Disposable Mongo integration tests exercise adapter-created session IDs, single and bulk Better Auth deletion hooks, Drive/Photos scope isolation, and concurrent revocation. Direct-route tests cover native sign-out ordering, foreign-origin rejection and failure before cookie clearing.
 - Final validation: all 15 test workspaces passed, **486 tests** (324 Drive, 92 Accounts, 9 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; Accounts lint and package boundaries passed. No live browser session or Redis publisher was exercised.
 - F04 still needs recent-auth policy consistency, native GET endpoint review, custom endpoint rate limits and browser/provider end-to-end checks. Raw database deletion outside Better Auth hooks is outside this path; operational reconciliation remains a separate lifecycle concern.
+
+## 0H — Referenced upload-key collision and multipart bounds
+
+- Drive's generic single and multipart presign routes now query the shared cross-product ciphertext-reference repository before signing. They deny a requested main, thumbnail or chunk key already referenced by a Drive or Photos object, including Bin entries and retained versions. This stops a caller from obtaining a new generic PUT URL for a known live ciphertext key.
+- Both routes require a positive safe-integer byte count. Multipart requires a safe-integer chunk count from 1 to 4096 and, when supplied, a 2–64 MiB integer chunk size. Rejection occurs before any presigned URL is created.
+- Direct route tests cover a binned Photos key, a referenced Drive chunk, malformed/excessive counts and sizes, and successful fresh single/chunked uploads.
+- Final validation: all 15 test workspaces passed, **495 tests** (333 Drive, 92 Accounts, 9 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; scoped Drive lint and package boundaries passed.
+- This is a partial F08 fix. The protocol still accepts caller-selected new keys, allows pending-upload re-presign without an upload token, and does not prevent reuse of an already-issued URL before it expires. Server-owned opaque keys, reservation-bound resume and immutable completed content remain required. Ciphertext and personal metadata-format enforcement, plus complete-upload ownership checks, remain open. Existing presigned URLs are unaffected until their expiration.

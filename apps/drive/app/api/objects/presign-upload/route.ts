@@ -16,6 +16,7 @@ import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
 import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 import { recordUploadSession, attachToUploadSession } from "@/lib/uploads/session";
+import { findReferencedStorageObjectKeys } from "@xenode/database";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,9 @@ export async function POST(request: NextRequest) {
 
     if (!bucketId) {
       return NextResponse.json({ error: "bucketId required" }, { status: 400 });
+    }
+    if (!Number.isSafeInteger(fileSize) || fileSize < 1) {
+      return NextResponse.json({ error: "Valid fileSize required" }, { status: 400 });
     }
 
     await dbConnect();
@@ -102,6 +106,16 @@ export async function POST(request: NextRequest) {
     safeFileName = safeFileName.replace(/[\/\\]/g, "_");
 
     const opaqueKey = `${basePrefix}${safeFileName}`;
+    const referenced = await findReferencedStorageObjectKeys({
+      bucketId: bucket._id,
+      keys: [opaqueKey, `${opaqueKey}-thumb`],
+    });
+    if (referenced.size) {
+      return NextResponse.json(
+        { error: "Upload key is already in use", code: "upload_key_conflict" },
+        { status: 409 },
+      );
+    }
 
     // Region-aware: the client + physical bucket are resolved from the caller's
     // storage region (bound in requireAccessContext). Asia is unchanged.

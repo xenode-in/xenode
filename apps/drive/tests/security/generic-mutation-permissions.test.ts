@@ -25,6 +25,7 @@ import { POST as completeUpdate } from "@/app/api/objects/[id]/complete-update/r
 import { PATCH as patchObject } from "@/app/api/objects/[id]/route";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import { orgObjectKeyPrefix } from "@/lib/orgs/storage";
 
 const accountId = "permission-account";
 const organizationId = "permission-org";
@@ -91,5 +92,83 @@ describe("generic storage mutation permissions", () => {
     await setRole("member");
     expect((await reorder(request("PATCH", body))).status).toBe(200);
     expect((await StorageObject.findById(object._id))?.position).toBe(9);
+  });
+
+  it("does not sign a PUT over a binned Photos ciphertext key", async () => {
+    await setRole("member");
+    const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
+    const prefix = orgObjectKeyPrefix(organizationId);
+    await StorageObject.create({
+      bucketId: bucket._id, spaceId, productId: "photos", createdByAccountId: accountId,
+      key: `${prefix}known`, size: 16, b2FileId: "b2-existing", isEncrypted: true,
+      deletedAt: new Date(),
+    });
+    const response = await presign(request("POST", {
+      bucketId: String(bucket._id), prefix, fileName: "known", fileSize: 16,
+    }));
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("upload_key_conflict");
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it("does not sign multipart PUTs over a referenced chunk", async () => {
+    await setRole("member");
+    const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
+    const prefix = orgObjectKeyPrefix(organizationId);
+    await StorageObject.create({
+      bucketId: bucket._id, spaceId, createdByAccountId: accountId,
+      key: `${prefix}other`, size: 16, b2FileId: "b2-existing", isEncrypted: true,
+      chunks: [{ index: 0, key: `${prefix}known-chunk-0`, size: 16 }],
+    });
+    const response = await multipart(request("POST", {
+      bucketId: String(bucket._id), prefix, fileName: "known", fileSize: 16,
+      chunkCount: 1, chunkSize: 2 * 1024 * 1024,
+    }));
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("upload_key_conflict");
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 0.5, 4097, "100", null])(
+    "rejects invalid multipart chunkCount %s before signing",
+    async (chunkCount) => {
+      await setRole("member");
+      const response = await multipart(request("POST", {
+        bucketId: "bucket", fileSize: 16, chunkCount,
+      }));
+      expect(response.status).toBe(400);
+      expect(sign).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects invalid file sizes and chunk size before signing", async () => {
+    await setRole("member");
+    expect((await presign(request("POST", {
+      bucketId: "bucket", fileSize: -1,
+    }))).status).toBe(400);
+    expect((await multipart(request("POST", {
+      bucketId: "bucket", fileSize: 16, chunkCount: 1, chunkSize: "NaN",
+    }))).status).toBe(400);
+    expect(sign).not.toHaveBeenCalled();
+  });
+
+  it("still presigns fresh encrypted single and chunked uploads", async () => {
+    await setRole("member");
+    sign.mockResolvedValue("https://upload.example.test/presigned");
+    const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
+    const prefix = orgObjectKeyPrefix(organizationId);
+    const single = await presign(request("POST", {
+      bucketId: String(bucket._id), prefix, fileName: "fresh-single", fileSize: 16,
+      fileType: "application/octet-stream",
+    }));
+    expect(single.status).toBe(200);
+    expect((await single.json()).objectKey).toBe(`${prefix}fresh-single`);
+    const chunked = await multipart(request("POST", {
+      bucketId: String(bucket._id), prefix, fileName: "fresh-chunked", fileSize: 4_000_000,
+      fileType: "application/octet-stream", chunkCount: 2, chunkSize: 2 * 1024 * 1024,
+    }));
+    expect(chunked.status).toBe(200);
+    expect((await chunked.json()).urls).toHaveLength(2);
+    expect(sign).toHaveBeenCalledTimes(3);
   });
 });
