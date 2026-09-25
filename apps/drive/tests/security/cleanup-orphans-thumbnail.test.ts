@@ -252,25 +252,26 @@ describe("attachToUploadSession: session ownership", () => {
       userId,
       bucketId: bucket._id,
       parentFileId: mainKey,
+      parentSessionId: parent._id.toString(),
       key: `${mainKey}-thumb`,
     });
     expect(attached).toBe(parent._id.toString());
     expect(await UploadSession.countDocuments({ bucketId: bucket._id })).toBe(1);
 
-    // A different user cannot attach to it (returns undefined → caller owns its
-    // own session instead).
+    // A different user cannot attach to the reservation.
     const foreign = await attachToUploadSession({
       userId: otherUserId,
       bucketId: bucket._id,
       parentFileId: mainKey,
+      parentSessionId: parent._id.toString(),
       key: "malicious-key",
     });
-    expect(foreign).toBeUndefined();
+    expect(foreign).toBeNull();
     const reloaded = await UploadSession.findById(parent._id).lean();
     expect(reloaded?.keys).not.toContain("malicious-key");
   });
 
-  it("does not resurrect a completed parent session to pending", async () => {
+  it("does not attach new keys to a completed parent session", async () => {
     const { attachToUploadSession } = await import("@/lib/uploads/session");
     const userId = makeUserId();
     const bucket = await seedBucket(userId, "completed");
@@ -285,15 +286,17 @@ describe("attachToUploadSession: session ownership", () => {
       expiresAt: new Date(Date.now() - 1000),
     });
 
-    await attachToUploadSession({
+    const attached = await attachToUploadSession({
       userId,
       bucketId: bucket._id,
       parentFileId: mainKey,
+      parentSessionId: parent._id.toString(),
       key: `${mainKey}-thumb`,
     });
 
+    expect(attached).toBeNull();
     const reloaded = await UploadSession.findById(parent._id).lean();
     expect(reloaded?.status).toBe("completed");
-    expect(reloaded?.keys).toContain(`${mainKey}-thumb`);
+    expect(reloaded?.keys).not.toContain(`${mainKey}-thumb`);
   });
 });

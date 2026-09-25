@@ -20,6 +20,7 @@ The audit is a snapshot of the pre-remediation working tree. Findings are not cl
 | 0F | Require OAuth second-factor completion and same-origin mutations at Accounts API boundaries | Complete; full suite passed |
 | 0G | Revoke ProductSessions when Better Auth deletes issuer sessions | Complete; full suite passed |
 | 0H | Deny presign collisions with referenced ciphertext and bound multipart inputs | Complete; full suite passed |
+| 0I | Bind generic upload URL refresh and secondary blobs to pending reservations | Complete; full suite passed |
 
 The rest of the roadmap remains open. F09/F10 also require durable claim/reconciliation across concurrent finalize/restore/purge operations; a deletion confirmation patch alone is not complete lifecycle safety.
 
@@ -118,3 +119,11 @@ Commit: `18709ac`.
 - Direct route tests cover a binned Photos key, a referenced Drive chunk, malformed/excessive counts and sizes, and successful fresh single/chunked uploads.
 - Final validation: all 15 test workspaces passed, **495 tests** (333 Drive, 92 Accounts, 9 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; scoped Drive lint and package boundaries passed.
 - This is a partial F08 fix. The protocol still accepts caller-selected new keys, allows pending-upload re-presign without an upload token, and does not prevent reuse of an already-issued URL before it expires. Server-owned opaque keys, reservation-bound resume and immutable completed content remain required. Ciphertext and personal metadata-format enforcement, plus complete-upload ownership checks, remain open. Existing presigned URLs are unaffected until their expiration.
+
+## 0I — Pending upload reservations
+
+- Generic single and multipart presign now create an upload ledger reservation before signing any PUT URL. A duplicate key fails closed. A refresh must present the returned `sessionId` and match its pending, unexpired bucket, key and account. Secondary thumbnails and optimized blobs must present both the parent's key and reservation ID; invalid parents no longer create an unrelated fallback ledger.
+- The browser's live refresh and persisted-byte resume paths now send reservation IDs. A thumbnail uses the server-returned key, and the API reference documents the request/response contract. The ledger queries also reject keys already listed by another upload session; a bucket/key multikey index supports those lookups.
+- Direct-route tests cover missing, wrong-owner, completed and parent reservation denials; fresh and valid refresh paths; overlapping in-flight keys; and concurrent attempts to reserve the same logical key. Existing orphan-cleanup tests now assert that completed sessions cannot accept new secondary keys.
+- Final validation: all 15 test workspaces passed, **499 tests** (337 Drive, 92 Accounts, 9 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; scoped Drive lint passed with six pre-existing unused-value warnings, and package boundaries passed. The OpenAPI JSON parsed successfully.
+- This still relies on the existing unique `(bucketId, fileId)` index for atomic logical-key reservation. Overlapping secondary keys under different logical file IDs have an application-level conflict check but no unique physical-key claim, so concurrent cross-key races remain possible. A server-owned opaque-key format and atomic physical-key claim are the next F08 boundary. Completion must also bind metadata to the reservation, and presigned URLs issued before completion can be reused until they expire. Older persisted upload journals missing a reservation ID may need their upload restarted; deploy the route and browser change together.

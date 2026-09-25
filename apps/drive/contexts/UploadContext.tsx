@@ -404,6 +404,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       encryptedDataUrl: string,
       bucketId: string,
       fileStorageKey: string,
+      parentSessionId?: string,
     ): Promise<string | undefined> => {
       try {
         const thumbKey = `${fileStorageKey}-thumb`;
@@ -429,16 +430,18 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             // own session that never flips to `completed`, and cleanup-orphans
             // deletes the live thumbnail ~24h later.
             sessionFileId: fileStorageKey,
+            parentSessionId,
           }),
         });
-        const { uploadUrl } = await presign.json();
+        if (!presign.ok) throw new Error("Thumbnail upload reservation expired");
+        const { uploadUrl, objectKey } = await presign.json();
 
         await fetch(uploadUrl, {
           method: "PUT",
           body: blob,
         });
 
-        return thumbKey;
+        return objectKey ?? thumbKey;
       } catch (err) {
         console.error("Failed to upload thumbnail to B2:", err);
         return undefined;
@@ -853,6 +856,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           ? crypto.randomUUID()
           : task.file.name;
 
+        let sessionId: string | undefined = undefined;
         const presignMultipart = async () => {
           const res = await scopedFetchRef.current(
             "/api/objects/presign-upload-multipart",
@@ -867,6 +871,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 prefix: task.prefix,
                 chunkCount,
                 chunkSize,
+                sessionId,
               }),
             },
           );
@@ -882,7 +887,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         let urls: { index: number; key: string; url: string }[] = presign.urls;
         const returnedBucketId: string = presign.bucketId;
         const serverChunkSize: number = presign.chunkSize;
-        const sessionId: string | undefined = presign.sessionId;
+        sessionId = presign.sessionId;
 
         // Handle thumbnail upload to B2
         let thumbnailKey: string | undefined;
@@ -891,6 +896,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             thumbnail,
             returnedBucketId,
             fileId,
+            sessionId,
           );
         }
 
@@ -1136,6 +1142,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       const mainFileName = shouldEncryptNow()
         ? crypto.randomUUID()
         : task.file.name;
+      let mainSessionId: string | undefined = undefined;
       const presignMain = async () => {
         const res = await scopedFetchRef.current("/api/objects/presign-upload", {
           method: "POST",
@@ -1148,6 +1155,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               : task.file.type,
             bucketId: task.bucketId,
             prefix: task.prefix,
+            sessionId: mainSessionId,
           }),
         });
         if (!res.ok) {
@@ -1161,7 +1169,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       const objectKey: string = mainPresign.objectKey;
       const returnedBucketId: string = mainPresign.bucketId;
       let uploadUrl: string = mainPresign.uploadUrl;
-      const mainSessionId: string | undefined = mainPresign.sessionId;
+      mainSessionId = mainPresign.sessionId;
 
       let aspectRatio: number | undefined;
 
@@ -1260,6 +1268,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           thumbnail,
           returnedBucketId,
           objectKey,
+          mainSessionId,
         );
       }
 
@@ -1515,6 +1524,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             prefix: rec.prefix,
             chunkCount,
             chunkSize: rec.chunkSize,
+            sessionId: rec.sessionId,
           };
           const presignMultipart = async () => {
             const res = await fetch("/api/objects/presign-upload-multipart", {
@@ -1581,6 +1591,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               rec.thumbnail,
               rec.bucketId,
               rec.fileId,
+              rec.sessionId,
             );
 
           const comp = await fetch("/api/objects/complete-upload", {
@@ -1631,6 +1642,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                     bucketId: rec.bucketId,
                     prefix: rec.prefix,
                     sessionFileId: rec.fileId,
+                    parentSessionId: rec.sessionId,
                   }),
                 })
               ).json();
@@ -1662,6 +1674,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                   fileType: rec.uploadContentType,
                   bucketId: rec.bucketId,
                   prefix: rec.prefix,
+                  sessionId: rec.sessionId,
                 }),
               })
             ).json();
@@ -1680,6 +1693,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               rec.thumbnail,
               rec.bucketId,
               rec.fileId,
+              rec.sessionId,
             );
           const comp = await fetch("/api/objects/complete-upload", {
             method: "POST",

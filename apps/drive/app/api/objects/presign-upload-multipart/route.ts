@@ -15,7 +15,7 @@ import Bucket from "@/models/Bucket";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
 import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
-import { recordUploadSession } from "@/lib/uploads/session";
+import { reserveUploadSession } from "@/lib/uploads/session";
 import { findReferencedStorageObjectKeys } from "@xenode/database";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +37,7 @@ export async function POST(request: NextRequest) {
       prefix,
       fileName,
       chunkSize: clientChunkSize,
+      sessionId: resumeSessionId,
     } = await request.json();
 
     if (!bucketId) {
@@ -155,6 +156,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const sessionId = await reserveUploadSession({
+      userId,
+      bucketId: bucket._id,
+      fileId: logicalKey,
+      keys: [logicalKey, ...chunkKeys, `${logicalKey}-thumb`],
+      sessionId: typeof resumeSessionId === "string" ? resumeSessionId : undefined,
+    });
+    if (!sessionId) {
+      return NextResponse.json(
+        { error: "Upload reservation is missing or no longer pending", code: "upload_reservation_conflict" },
+        { status: 409 },
+      );
+    }
+
     const urls = [];
     for (let i = 0; i < chunkCount; i++) {
       const chunkKey = chunkKeys[i];
@@ -173,17 +188,6 @@ export async function POST(request: NextRequest) {
         url: presignedUrl,
       });
     }
-
-    // Ledger every B2 key this chunked upload will write (main logical key,
-    // each chunk, and the derived thumbnail) so the cleanup-orphans cron can
-    // reclaim them if the upload is abandoned. Re-presigning the same fileName
-    // on resume refreshes the same session and reuses the same chunk keys.
-    const sessionId = await recordUploadSession({
-      userId,
-      bucketId: bucket._id,
-      fileId: logicalKey,
-      keys: [logicalKey, ...chunkKeys, `${logicalKey}-thumb`],
-    });
 
     return NextResponse.json({
       fileId: logicalKey,

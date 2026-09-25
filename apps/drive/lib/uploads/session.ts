@@ -1,4 +1,4 @@
-import type { Types } from "mongoose";
+import { Types } from "mongoose";
 import UploadSession from "@/models/UploadSession";
 
 /** How long an in-flight upload's B2 blobs are protected before the cleanup
@@ -6,71 +6,90 @@ import UploadSession from "@/models/UploadSession";
  * plus any realistic upload/resume duration. */
 export const UPLOAD_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
-/**
- * Record (or extend) the ledger row for an in-flight upload. Called from the
- * presign routes with the B2 keys they are about to hand out. Idempotent:
- * re-presigning the same `fileId` (e.g. on resume) refreshes the deadline and
- * unions in any new keys. Best-effort — never throw into the upload path.
- */
-export async function recordUploadSession(params: {
+/** Reserve a new upload key, or renew only the exact pending reservation. */
+export async function reserveUploadSession(params: {
   userId: string;
   bucketId: Types.ObjectId | string;
   fileId: string;
   keys: string[];
-}): Promise<string | undefined> {
-  try {
-    const expiresAt = new Date(Date.now() + UPLOAD_SESSION_TTL_MS);
-    const cleanKeys = Array.from(
-      new Set(params.keys.filter((k): k is string => typeof k === "string" && !!k)),
-    );
+  sessionId?: string;
+}): Promise<string | null> {
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + UPLOAD_SESSION_TTL_MS);
+  const keys = [...new Set(params.keys.filter(Boolean))];
+  if (params.sessionId !== undefined && !Types.ObjectId.isValid(params.sessionId)) return null;
+  const conflicting = await UploadSession.exists({
+    bucketId: params.bucketId,
+    keys: { $in: keys },
+    ...(params.sessionId ? { _id: { $ne: params.sessionId } } : {}),
+  });
+  if (conflicting) return null;
+  if (params.sessionId !== undefined) {
     const doc = await UploadSession.findOneAndUpdate(
-      { bucketId: params.bucketId, fileId: params.fileId },
       {
-        $set: { userId: params.userId, status: "pending", expiresAt },
-        $addToSet: { keys: { $each: cleanKeys } },
+        _id: params.sessionId,
+        bucketId: params.bucketId,
+        fileId: params.fileId,
+        userId: params.userId,
+        status: "pending",
+        expiresAt: { $gt: now },
       },
-      { upsert: true, new: true },
+      { $set: { expiresAt }, $addToSet: { keys: { $each: keys } } },
+      { returnDocument: "after" },
     );
-    return doc?._id?.toString();
-  } catch (err) {
-    console.warn("[uploads] recordUploadSession failed (non-fatal):", err);
-    return undefined;
+    return doc?._id.toString() ?? null;
+  }
+  try {
+    const doc = await UploadSession.create({
+      userId: params.userId,
+      bucketId: params.bucketId,
+      fileId: params.fileId,
+      keys,
+      status: "pending",
+      expiresAt,
+    });
+    return doc._id.toString();
+  } catch (error) {
+    if (
+      error && typeof error === "object" && "code" in error &&
+      error.code === 11000
+    ) return null;
+    throw error;
   }
 }
 
 /**
  * Attach a secondary blob (thumbnail / optimized preview) to its PARENT upload's
- * existing ledger row, so it is protected by the parent's completion and
- * reclaimed together with it if the upload is abandoned. Only attaches when a
- * session for `parentFileId` already exists AND belongs to `userId` — this both
- * prevents piggybacking onto another user's session in a shared bucket and works
- * for any key prefix (personal `users/…` or org `workspaces/…`). Returns the
- * parent session id on success, or undefined when there is no such owned session
- * (the caller should then record its own). Best-effort — never throws.
+ * existing pending ledger row. The caller must present its reservation ID;
+ * an object key and account alone do not authorize re-presigning.
  */
 export async function attachToUploadSession(params: {
   userId: string;
   bucketId: Types.ObjectId | string;
   parentFileId: string;
+  parentSessionId: string;
   key: string;
-}): Promise<string | undefined> {
-  try {
-    // No upsert: match only an existing session owned by this user. Status is
-    // left untouched so a parent already flipped to `completed` stays completed.
-    const doc = await UploadSession.findOneAndUpdate(
-      {
-        bucketId: params.bucketId,
-        fileId: params.parentFileId,
-        userId: params.userId,
-      },
-      { $addToSet: { keys: params.key } },
-      { new: true },
-    );
-    return doc?._id?.toString();
-  } catch (err) {
-    console.warn("[uploads] attachToUploadSession failed (non-fatal):", err);
-    return undefined;
-  }
+}): Promise<string | null> {
+  if (!Types.ObjectId.isValid(params.parentSessionId)) return null;
+  const conflicting = await UploadSession.exists({
+    bucketId: params.bucketId,
+    keys: params.key,
+    _id: { $ne: params.parentSessionId },
+  });
+  if (conflicting) return null;
+  const doc = await UploadSession.findOneAndUpdate(
+    {
+      _id: params.parentSessionId,
+      bucketId: params.bucketId,
+      fileId: params.parentFileId,
+      userId: params.userId,
+      status: "pending",
+      expiresAt: { $gt: new Date() },
+    },
+    { $addToSet: { keys: params.key } },
+    { returnDocument: "after" },
+  );
+  return doc?._id.toString() ?? null;
 }
 
 /**

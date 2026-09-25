@@ -15,7 +15,7 @@ import Bucket from "@/models/Bucket";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
 import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
-import { recordUploadSession, attachToUploadSession } from "@/lib/uploads/session";
+import { reserveUploadSession, attachToUploadSession } from "@/lib/uploads/session";
 import { findReferencedStorageObjectKeys } from "@xenode/database";
 
 export const dynamic = "force-dynamic";
@@ -26,8 +26,10 @@ export async function POST(request: NextRequest) {
     const userId = ctx.userId;
     await enforceStorageAccess(userId);
 
-    const { fileSize, fileType, bucketId, prefix, fileName, sessionFileId } =
-      await request.json();
+    const {
+      fileSize, fileType, bucketId, prefix, fileName, sessionFileId,
+      sessionId: resumeSessionId, parentSessionId,
+    } = await request.json();
 
     if (!bucketId) {
       return NextResponse.json({ error: "bucketId required" }, { status: 400 });
@@ -117,6 +119,32 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Reserve before signing: a duplicate or expired ledger cannot receive a
+    // fresh PUT URL, and a secondary key needs its parent's reservation token.
+    const sessionId = typeof sessionFileId === "string" && sessionFileId
+      ? typeof parentSessionId === "string"
+        ? await attachToUploadSession({
+            userId,
+            bucketId: bucket._id,
+            parentFileId: sessionFileId,
+            parentSessionId,
+            key: opaqueKey,
+          })
+        : null
+      : await reserveUploadSession({
+          userId,
+          bucketId: bucket._id,
+          fileId: opaqueKey,
+          keys: [opaqueKey, `${opaqueKey}-thumb`],
+          sessionId: typeof resumeSessionId === "string" ? resumeSessionId : undefined,
+        });
+    if (!sessionId) {
+      return NextResponse.json(
+        { error: "Upload reservation is missing or no longer pending", code: "upload_reservation_conflict" },
+        { status: 409 },
+      );
+    }
+
     // Region-aware: the client + physical bucket are resolved from the caller's
     // storage region (bound in requireAccessContext). Asia is unchanged.
     const command = new PutObjectCommand({
@@ -128,31 +156,6 @@ export async function POST(request: NextRequest) {
     const presignedUrl = await getSignedUrl(getS3Client(ctx.region), command, {
       expiresIn: 3600,
     });
-
-    // Ledger the in-flight upload so the cleanup-orphans cron can reclaim its
-    // blobs if it never finishes. When `sessionFileId` names a parent upload
-    // (optimized preview / thumbnail of a main file), attach this blob's key to
-    // that parent's session so it is protected by the parent's completion and
-    // reclaimed with it — but only if the parent session actually exists and is
-    // owned by this user. Otherwise this key owns a fresh session and
-    // pre-registers its own derived `-thumb` key.
-    let sessionId: string | undefined;
-    if (typeof sessionFileId === "string" && sessionFileId) {
-      sessionId = await attachToUploadSession({
-        userId,
-        bucketId: bucket._id,
-        parentFileId: sessionFileId,
-        key: opaqueKey,
-      });
-    }
-    if (!sessionId) {
-      sessionId = await recordUploadSession({
-        userId,
-        bucketId: bucket._id,
-        fileId: opaqueKey,
-        keys: [opaqueKey, `${opaqueKey}-thumb`],
-      });
-    }
 
     return NextResponse.json({
       uploadUrl: presignedUrl,

@@ -622,7 +622,7 @@
       "post": {
         "tags": ["Uploads"],
         "summary": "Request pre-signed upload URL",
-        "description": "Generates a pre-signed URL for direct-to-B2 upload. Checks storage quotas.",
+        "description": "Reserves a pending upload key before signing a direct-to-B2 PUT. Refresh the same upload with its returned sessionId. A secondary key must provide sessionFileId and parentSessionId.",
         "requestBody": {
           "required": true,
           "content": {
@@ -635,7 +635,10 @@
                   "fileSize": { "type": "integer", "example": 1048576 },
                   "fileType": { "type": "string", "example": "image/jpeg" },
                   "fileName": { "type": "string", "example": "photo.jpg" },
-                  "prefix": { "type": "string", "description": "Optional virtual path prefix" }
+                  "prefix": { "type": "string", "description": "Optional virtual path prefix" },
+                  "sessionId": { "type": "string", "description": "Reservation ID required when refreshing an existing upload key" },
+                  "sessionFileId": { "type": "string", "description": "Parent object key for a secondary ciphertext blob" },
+                  "parentSessionId": { "type": "string", "description": "Parent reservation ID required with sessionFileId" }
                 }
               }
             }
@@ -651,13 +654,15 @@
                   "properties": {
                     "uploadUrl": { "type": "string", "format": "uri" },
                     "objectKey": { "type": "string" },
-                    "bucketId": { "type": "string" }
+                    "bucketId": { "type": "string" },
+                    "sessionId": { "type": "string" }
                   }
                 }
               }
             }
           },
-          "402": { "description": "Storage quota exceeded", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QuotaExceededError" } } } }
+          "402": { "description": "Storage quota exceeded", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/QuotaExceededError" } } } },
+          "409": { "description": "Key collision or invalid upload reservation" }
         }
       }
     },
@@ -666,28 +671,32 @@
       "post": {
         "tags": ["Uploads"],
         "summary": "Request multipart pre-signed upload URLs",
-        "description": "For very large files. Generates multipart pre-signed URLs for chunked direct-to-B2 upload.",
+        "description": "Reserves a pending chunked upload before signing URLs. Refresh the same key with its returned sessionId.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["bucketId", "fileSize", "fileType", "fileName"],
+                "required": ["bucketId", "fileSize", "fileType", "fileName", "chunkCount"],
                 "properties": {
                   "bucketId": { "type": "string" },
                   "fileSize": { "type": "integer" },
                   "fileType": { "type": "string" },
                   "fileName": { "type": "string" },
-                  "prefix": { "type": "string" }
+                  "prefix": { "type": "string" },
+                  "chunkCount": { "type": "integer", "minimum": 1, "maximum": 4096 },
+                  "chunkSize": { "type": "integer", "minimum": 2097152, "maximum": 67108864 },
+                  "sessionId": { "type": "string", "description": "Reservation ID required when refreshing an existing upload key" }
                 }
               }
             }
           }
         },
         "responses": {
-          "200": { "description": "Multipart upload URLs generated" },
-          "402": { "description": "Storage quota exceeded" }
+          "200": { "description": "Multipart upload URLs and sessionId generated" },
+          "402": { "description": "Storage quota exceeded" },
+          "409": { "description": "Key collision or invalid upload reservation" }
         }
       }
     },

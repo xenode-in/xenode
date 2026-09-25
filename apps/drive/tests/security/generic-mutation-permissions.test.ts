@@ -25,6 +25,7 @@ import { POST as completeUpdate } from "@/app/api/objects/[id]/complete-update/r
 import { PATCH as patchObject } from "@/app/api/objects/[id]/route";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import UploadSession from "@/models/UploadSession";
 import { orgObjectKeyPrefix } from "@/lib/orgs/storage";
 
 const accountId = "permission-account";
@@ -170,5 +171,100 @@ describe("generic storage mutation permissions", () => {
     expect(chunked.status).toBe(200);
     expect((await chunked.json()).urls).toHaveLength(2);
     expect(sign).toHaveBeenCalledTimes(3);
+  });
+
+  it("requires the owned pending reservation to refresh a single-file URL", async () => {
+    await setRole("member");
+    sign.mockResolvedValue("https://upload.example.test/presigned");
+    const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
+    const prefix = orgObjectKeyPrefix(organizationId);
+    const body = { bucketId: String(bucket._id), prefix, fileName: "reserved", fileSize: 16 };
+    const first = await presign(request("POST", body));
+    expect(first.status).toBe(200);
+    const { sessionId } = await first.json();
+    expect(sessionId).toMatch(/^[0-9a-f]{24}$/);
+
+    expect((await presign(request("POST", body))).status).toBe(409);
+    expect((await presign(request("POST", { ...body, sessionId: "000000000000000000000001" }))).status).toBe(409);
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect((await presign(request("POST", { ...body, sessionId }))).status).toBe(200);
+    expect(sign).toHaveBeenCalledTimes(2);
+
+    await getDatabase().collection("member").insertOne({
+      userId: "other-member", organizationId, role: "member",
+    });
+    mockedSession.mockResolvedValue({
+      user: { id: "other-member" }, session: { id: "other-session" },
+    } as unknown as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    expect((await presign(request("POST", { ...body, sessionId }))).status).toBe(409);
+    expect(sign).toHaveBeenCalledTimes(2);
+
+    mockedSession.mockResolvedValue({
+      user: { id: accountId }, session: { id: "permission-session" },
+    } as unknown as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
+    await UploadSession.updateOne({ _id: sessionId }, { $set: { status: "completed" } });
+    expect((await presign(request("POST", { ...body, sessionId }))).status).toBe(409);
+  });
+
+  it("requires a pending parent reservation for thumbnail presigning", async () => {
+    await setRole("member");
+    sign.mockResolvedValue("https://upload.example.test/presigned");
+    const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
+    const prefix = orgObjectKeyPrefix(organizationId);
+    const main = await presign(request("POST", {
+      bucketId: String(bucket._id), prefix, fileName: "main", fileSize: 16,
+    }));
+    expect(main.status).toBe(200);
+    const { objectKey, sessionId } = await main.json();
+    const body = {
+      bucketId: String(bucket._id), prefix, fileName: "main-thumb", fileSize: 16,
+      sessionFileId: objectKey,
+    };
+    expect((await presign(request("POST", {
+      bucketId: String(bucket._id), prefix, fileName: "main-thumb", fileSize: 16,
+    }))).status).toBe(409);
+    expect((await presign(request("POST", body))).status).toBe(409);
+    expect((await presign(request("POST", { ...body, parentSessionId: "000000000000000000000001" }))).status).toBe(409);
+    expect(sign).toHaveBeenCalledTimes(1);
+    expect((await presign(request("POST", { ...body, parentSessionId: sessionId }))).status).toBe(200);
+    expect(await UploadSession.countDocuments({ bucketId: bucket._id })).toBe(1);
+    await UploadSession.updateOne({ _id: sessionId }, { $set: { status: "completed" } });
+    expect((await presign(request("POST", { ...body, parentSessionId: sessionId }))).status).toBe(409);
+  });
+
+  it("requires the pending reservation to refresh multipart URLs", async () => {
+    await setRole("member");
+    sign.mockResolvedValue("https://upload.example.test/presigned");
+    const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
+    const body = {
+      bucketId: String(bucket._id), prefix: orgObjectKeyPrefix(organizationId),
+      fileName: "chunked", fileSize: 4_000_000, chunkCount: 2,
+      chunkSize: 2 * 1024 * 1024,
+    };
+    const first = await multipart(request("POST", body));
+    expect(first.status).toBe(200);
+    const { sessionId } = await first.json();
+    expect(sign).toHaveBeenCalledTimes(2);
+    expect((await multipart(request("POST", body))).status).toBe(409);
+    expect(sign).toHaveBeenCalledTimes(2);
+    expect((await multipart(request("POST", { ...body, sessionId }))).status).toBe(200);
+    expect(sign).toHaveBeenCalledTimes(4);
+  });
+
+  it("allows only one concurrent reservation for a chosen key", async () => {
+    await setRole("member");
+    sign.mockResolvedValue("https://upload.example.test/presigned");
+    const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
+    const body = {
+      bucketId: String(bucket._id), prefix: orgObjectKeyPrefix(organizationId),
+      fileName: "same-key", fileSize: 16,
+    };
+    const responses = await Promise.all([
+      presign(request("POST", body)),
+      presign(request("POST", body)),
+    ]);
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    expect(sign).toHaveBeenCalledOnce();
+    expect(await UploadSession.countDocuments({ bucketId: bucket._id })).toBe(1);
   });
 });
