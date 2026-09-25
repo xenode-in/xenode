@@ -21,6 +21,7 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 export interface IUploadSession extends Document {
   _id: mongoose.Types.ObjectId;
   userId: string;
+  spaceId: string;
   bucketId: mongoose.Types.ObjectId;
   /** Server-issued logical key, e.g. `users/{userId}/{randomHex32}`. */
   fileId: string;
@@ -35,6 +36,7 @@ export interface IUploadSession extends Document {
 const UploadSessionSchema = new Schema<IUploadSession>(
   {
     userId: { type: String, required: true, index: true },
+    spaceId: { type: String, required: true, index: true },
     bucketId: {
       type: Schema.Types.ObjectId,
       ref: "Bucket",

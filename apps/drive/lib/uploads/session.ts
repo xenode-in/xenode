@@ -31,6 +31,7 @@ function isDuplicateKeyError(error: unknown): boolean {
 /** Resolve an upload identity from its reservation, never from caller key text. */
 export async function findPendingUploadSession(params: {
   userId: string;
+  spaceId: string;
   bucketId: Types.ObjectId | string;
   sessionId: string;
 }) {
@@ -38,6 +39,7 @@ export async function findPendingUploadSession(params: {
   return UploadSession.findOne({
     _id: params.sessionId,
     userId: params.userId,
+    spaceId: params.spaceId,
     bucketId: params.bucketId,
     status: "pending",
     expiresAt: { $gt: new Date() },
@@ -47,6 +49,7 @@ export async function findPendingUploadSession(params: {
 /** Reserve a new upload key, or renew only the exact pending reservation. */
 export async function reserveUploadSession(params: {
   userId: string;
+  spaceId: string;
   bucketId: Types.ObjectId | string;
   fileId: string;
   keys: string[];
@@ -71,6 +74,7 @@ export async function reserveUploadSession(params: {
           bucketId: params.bucketId,
           fileId: params.fileId,
           userId: params.userId,
+          spaceId: params.spaceId,
           status: "pending",
           expiresAt: { $gt: now },
         },
@@ -86,6 +90,7 @@ export async function reserveUploadSession(params: {
   try {
     const doc = await UploadSession.create({
       userId: params.userId,
+      spaceId: params.spaceId,
       bucketId: params.bucketId,
       fileId: params.fileId,
       keys,
@@ -106,6 +111,7 @@ export async function reserveUploadSession(params: {
  */
 export async function attachToUploadSession(params: {
   userId: string;
+  spaceId: string;
   bucketId: Types.ObjectId | string;
   parentFileId: string;
   parentSessionId: string;
@@ -126,6 +132,7 @@ export async function attachToUploadSession(params: {
         bucketId: params.bucketId,
         fileId: params.parentFileId,
         userId: params.userId,
+        spaceId: params.spaceId,
         status: "pending",
         expiresAt: { $gt: new Date() },
       },
@@ -139,20 +146,25 @@ export async function attachToUploadSession(params: {
   }
 }
 
-/**
- * Flip the ledger row to `completed` once the StorageObject is persisted, so the
- * cleanup cron never touches a finished upload's blobs. Best-effort.
- */
-export async function completeUploadSession(
-  bucketId: Types.ObjectId | string,
-  fileId: string,
-): Promise<void> {
-  try {
-    await UploadSession.updateOne(
-      { bucketId, fileId },
-      { $set: { status: "completed" } },
-    );
-  } catch (err) {
-    console.warn("[uploads] completeUploadSession failed (non-fatal):", err);
-  }
+/** Mark only the actor's exact pending Space-bound upload completed. */
+export async function completeUploadSession(params: {
+  sessionId: string;
+  userId: string;
+  spaceId: string;
+  bucketId: Types.ObjectId | string;
+  fileId: string;
+}): Promise<boolean> {
+  const result = await UploadSession.updateOne(
+    {
+      _id: params.sessionId,
+      userId: params.userId,
+      spaceId: params.spaceId,
+      bucketId: params.bucketId,
+      fileId: params.fileId,
+      status: "pending",
+      expiresAt: { $gt: new Date() },
+    },
+    { $set: { status: "completed" } },
+  );
+  return result.modifiedCount === 1;
 }

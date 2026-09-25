@@ -117,6 +117,7 @@ export async function POST(request: NextRequest) {
     const existing = parentSessionId || resumeSessionId
       ? await findPendingUploadSession({
           userId,
+          spaceId: ctx.spaceId,
           bucketId: bucket._id,
           sessionId: parentSessionId || resumeSessionId,
         })
@@ -149,6 +150,7 @@ export async function POST(request: NextRequest) {
     const sessionId = parentSessionId
       ? await attachToUploadSession({
           userId,
+          spaceId: ctx.spaceId,
           bucketId: bucket._id,
           parentFileId: existing!.fileId,
           parentSessionId,
@@ -156,6 +158,7 @@ export async function POST(request: NextRequest) {
         })
       : await reserveUploadSession({
           userId,
+          spaceId: ctx.spaceId,
           bucketId: bucket._id,
           fileId: opaqueKey,
           keys: [opaqueKey, `${opaqueKey}-thumb`],

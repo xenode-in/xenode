@@ -75,6 +75,7 @@ describe("cleanup-orphans: thumbnail protection", () => {
     // their parent) that never flipped to completed and is now expired.
     await UploadSession.create({
       userId,
+      spaceId: `space_personal_${userId}`,
       bucketId: bucket._id,
       fileId: thumbKey,
       keys: [thumbKey],
@@ -111,6 +112,7 @@ describe("cleanup-orphans: thumbnail protection", () => {
 
     await UploadSession.create({
       userId,
+      spaceId: `space_personal_${userId}`,
       bucketId: bucket._id,
       fileId: optKey,
       keys: [optKey],
@@ -133,6 +135,7 @@ describe("cleanup-orphans: thumbnail protection", () => {
     // No StorageObject references this key — a true orphan.
     await UploadSession.create({
       userId,
+      spaceId: `space_personal_${userId}`,
       bucketId: bucket._id,
       fileId: orphanKey,
       keys: [orphanKey, `${orphanKey}-thumb`],
@@ -158,6 +161,7 @@ describe("cleanup-orphans: thumbnail protection", () => {
 
     await UploadSession.create({
       userId,
+      spaceId: `space_personal_${userId}`,
       bucketId: bucket._id,
       fileId: key,
       keys: [key],
@@ -188,7 +192,7 @@ describe("cleanup-orphans: thumbnail protection", () => {
         productId: kind === "photos" ? "photos" : "drive",
         ...(kind === "trash" ? { deletedAt: new Date() } : {}), ...fields,
       });
-      await UploadSession.create({ userId, bucketId: bucket._id, fileId, keys: [fileId, key], status: "pending", expiresAt: expired() });
+      await UploadSession.create({ userId, spaceId: `space_personal_${userId}`, bucketId: bucket._id, fileId, keys: [fileId, key], status: "pending", expiresAt: expired() });
       const response = await GET(cronRequest());
       expect(response.status).toBe(200);
       expect(deleteObjects).not.toHaveBeenCalled();
@@ -200,7 +204,7 @@ describe("cleanup-orphans: thumbnail protection", () => {
     const userId = makeUserId();
     const bucket = await seedBucket(userId, "prefix");
     const fileId = `users/${userId}/prefix`;
-    await UploadSession.create({ userId, bucketId: bucket._id, fileId, keys: [fileId], status: "pending", expiresAt: expired() });
+    await UploadSession.create({ userId, spaceId: `space_personal_${userId}`, bucketId: bucket._id, fileId, keys: [fileId], status: "pending", expiresAt: expired() });
     const response = await GET(cronRequest());
     expect(response.status).toBe(200);
     expect(listObjects).not.toHaveBeenCalled();
@@ -211,7 +215,7 @@ describe("cleanup-orphans: thumbnail protection", () => {
     const userId = makeUserId();
     const bucket = await seedBucket(userId, "failure");
     const fileId = `users/${userId}/failed`;
-    await UploadSession.create({ userId, bucketId: bucket._id, fileId, keys: [fileId], status: "pending", expiresAt: expired() });
+    await UploadSession.create({ userId, spaceId: `space_personal_${userId}`, bucketId: bucket._id, fileId, keys: [fileId], status: "pending", expiresAt: expired() });
     deleteObjects.mockRejectedValueOnce(new Error("storage unavailable"));
     expect((await GET(cronRequest())).status).toBe(500);
     expect(await UploadSession.countDocuments({ fileId })).toBe(1);
@@ -221,7 +225,7 @@ describe("cleanup-orphans: thumbnail protection", () => {
     const userId = makeUserId();
     const bucket = await seedBucket(userId, "missing");
     const fileId = `users/${userId}/missing-bucket`;
-    await UploadSession.create({ userId, bucketId: bucket._id, fileId, keys: [fileId], status: "pending", expiresAt: expired() });
+    await UploadSession.create({ userId, spaceId: `space_personal_${userId}`, bucketId: bucket._id, fileId, keys: [fileId], status: "pending", expiresAt: expired() });
     await Bucket.deleteOne({ _id: bucket._id });
     expect((await GET(cronRequest())).status).toBe(500);
     expect(deleteObjects).not.toHaveBeenCalled();
@@ -240,6 +244,7 @@ describe("attachToUploadSession: session ownership", () => {
     // Parent session created by the main upload.
     const parent = await UploadSession.create({
       userId,
+      spaceId: `space_personal_${userId}`,
       bucketId: bucket._id,
       fileId: mainKey,
       keys: [mainKey, `${mainKey}-thumb`],
@@ -250,6 +255,7 @@ describe("attachToUploadSession: session ownership", () => {
     // Owner can attach — key is unioned into the parent, no new row created.
     const attached = await attachToUploadSession({
       userId,
+      spaceId: `space_personal_${userId}`,
       bucketId: bucket._id,
       parentFileId: mainKey,
       parentSessionId: parent._id.toString(),
@@ -261,6 +267,7 @@ describe("attachToUploadSession: session ownership", () => {
     // A different user cannot attach to the reservation.
     const foreign = await attachToUploadSession({
       userId: otherUserId,
+      spaceId: `space_personal_${userId}`,
       bucketId: bucket._id,
       parentFileId: mainKey,
       parentSessionId: parent._id.toString(),
@@ -279,6 +286,7 @@ describe("attachToUploadSession: session ownership", () => {
 
     const parent = await UploadSession.create({
       userId,
+      spaceId: `space_personal_${userId}`,
       bucketId: bucket._id,
       fileId: mainKey,
       keys: [mainKey],
@@ -288,6 +296,7 @@ describe("attachToUploadSession: session ownership", () => {
 
     const attached = await attachToUploadSession({
       userId,
+      spaceId: `space_personal_${userId}`,
       bucketId: bucket._id,
       parentFileId: mainKey,
       parentSessionId: parent._id.toString(),

@@ -24,6 +24,7 @@ The audit is a snapshot of the pre-remediation working tree. Findings are not cl
 | 0I | Bind generic upload URL refresh and secondary blobs to pending reservations | Complete; full suite passed |
 | 0J | Enforce unique physical-key claims and record development-only architecture policy | Complete; full suite passed |
 | 0K | Issue Drive upload keys on the server and resolve refreshes from reservations | Complete; full suite passed |
+| 0L | Bind generic Drive completion to claimed, Space-scoped uploads | Complete; full suite passed |
 
 The rest of the roadmap remains open. F09/F10 also require durable claim/reconciliation across concurrent finalize/restore/purge operations; a deletion confirmation patch alone is not complete lifecycle safety.
 
@@ -146,3 +147,13 @@ Commit: `18709ac`.
 - Direct-route tests verify that a known Photos key or chunk name cannot be targeted through `fileName`, fresh requests with the same supplied name receive different keys, and reservation refreshes return the original key even if a different name is supplied.
 - Final validation: all 15 test workspaces passed, **501 tests** (339 Drive, 92 Accounts, 9 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; scoped Drive lint passed with four pre-existing unused-value warnings, package boundaries passed, and OpenAPI JSON parsed.
 - This does not yet remove folder prefixes from physical keys, bind completion to a reservation, prove encrypted personal metadata, or prevent reuse of an already-issued PUT URL after completion. The standalone share-thumbnail flow has a separate retention/lifecycle problem and remains for a dedicated fix; this change does not make that upload path succeed.
+
+## 0L — Space-bound upload completion
+
+- Upload reservations now record their Space. New and refreshed presign requests and secondary-key attachments must stay in that same Space. Generic completion requires the exact pending, unexpired reservation for its account, Space, bucket and server-issued object key before reading B2 or changing metadata.
+- Every B2 key named by completion—main, chunks, optimized variant and stored thumbnail—must be claimed by that reservation. Generic completion no longer overwrites an existing StorageObject; the dedicated revision flow owns content updates. A duplicate-key race on object creation also returns a conflict without deleting the winning blob.
+- New Drive objects are explicitly product-owned and require encrypted key/name fields. Successful completion marks only the matching reservation completed; a second attempt cannot re-meter the object. The browser sends its reservation ID in live and resumed completion requests, and the API reference describes the contract.
+- Content-fingerprint dedup queries now stay inside the same Drive Space/product, avoiding a cross-product or cross-Space match during completion.
+- Direct-route tests cover wrong account/Space, missing reservation, unclaimed variant, existing-object conflict, successful encrypted completion and repeat denial. The quota rollback test retains a real synthetic reservation; its former generic-overwrite expectations now assert conflict and unchanged billing.
+- Final validation: all 15 test workspaces passed, **505 tests** (343 Drive, 92 Accounts, 9 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; scoped Drive lint passed with six pre-existing unused-value warnings, package boundaries passed, and OpenAPI JSON parsed. Development databases need a reset/reseed for the new required UploadSession Space field.
+- The post-upload metadata, metering and reservation-state writes are still not one durable transaction. A process crash between them needs reconciliation, and a presigned URL may remain usable until expiry after completion. F11 quota/physical-byte verification and folder-prefix confidentiality also remain open.

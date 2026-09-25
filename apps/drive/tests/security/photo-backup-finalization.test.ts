@@ -11,6 +11,7 @@ import { POST } from "@/app/api/objects/complete-upload/route";
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import UploadSession from "@/models/UploadSession";
 import Usage from "@/models/Usage";
 import { createUsage, makeUserId } from "../helpers/factories";
 
@@ -56,8 +57,8 @@ async function createBucket(userId: string, suffix: string) {
   return bucket!;
 }
 
-function encryptedUpload(userId: string, bucketId: string) {
-  return {
+async function encryptedUpload(userId: string, bucketId: string) {
+  const body = {
     objectKey: `users/${userId}/original`,
     optimizedKey: `users/${userId}/optimized`,
     thumbnail: `users/${userId}/thumbnail`,
@@ -73,6 +74,16 @@ function encryptedUpload(userId: string, bucketId: string) {
     syncContentFp: "content-fingerprint",
     syncMetaFp: "meta-fingerprint",
   };
+  const reservation = await UploadSession.create({
+    userId,
+    spaceId: `space_personal_${userId}`,
+    bucketId,
+    fileId: body.objectKey,
+    keys: [body.objectKey, body.optimizedKey, body.thumbnail],
+    status: "pending",
+    expiresAt: new Date(Date.now() + 60_000),
+  });
+  return { ...body, sessionId: String(reservation._id) };
 }
 
 describe("photo backup complete-upload finalization", () => {
@@ -87,7 +98,7 @@ describe("photo backup complete-upload finalization", () => {
     });
     send.mockResolvedValue({});
 
-    const body = encryptedUpload(userId, String(bucket._id));
+    const body = await encryptedUpload(userId, String(bucket._id));
     const response = await POST(request(body));
 
     expect(response.status).toBe(402);
@@ -108,11 +119,11 @@ describe("photo backup complete-upload finalization", () => {
     );
   });
 
-  it("does not mutate an existing object when its size increase exceeds quota", async () => {
+  it("does not allow generic completion to overwrite an existing object", async () => {
     const userId = makeUserId();
     mockSession(userId);
     const bucket = await createBucket(userId, "existing-quota");
-    const body = encryptedUpload(userId, String(bucket._id));
+    const body = await encryptedUpload(userId, String(bucket._id));
     await StorageObject.create({
       bucketId: bucket._id,
       spaceId: `space_personal_${userId}`,
@@ -133,7 +144,7 @@ describe("photo backup complete-upload finalization", () => {
 
     const response = await POST(request(body));
 
-    expect(response.status).toBe(402);
+    expect(response.status).toBe(409);
     const existing = await StorageObject.findOne({ key: body.objectKey });
     const usage = await Usage.findOne({ userId });
     expect(existing?.size).toBe(500);
@@ -142,11 +153,11 @@ describe("photo backup complete-upload finalization", () => {
     expect(usage?.uploadCount).toBe(1);
   });
 
-  it("adjusts only bytes when an existing object changes size", async () => {
+  it("leaves billing unchanged when generic completion targets an existing object", async () => {
     const userId = makeUserId();
     mockSession(userId);
     const bucket = await createBucket(userId, "existing-resize");
-    const body = encryptedUpload(userId, String(bucket._id));
+    const body = await encryptedUpload(userId, String(bucket._id));
     await StorageObject.create({
       bucketId: bucket._id,
       spaceId: `space_personal_${userId}`,
@@ -167,9 +178,9 @@ describe("photo backup complete-upload finalization", () => {
 
     const response = await POST(request(body));
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(409);
     const usage = await Usage.findOne({ userId });
-    expect(usage?.totalStorageBytes).toBe(1_000);
+    expect(usage?.totalStorageBytes).toBe(500);
     expect(usage?.totalObjects).toBe(1);
     expect(usage?.uploadCount).toBe(1);
   });
@@ -182,7 +193,7 @@ describe("photo backup complete-upload finalization", () => {
 
     const response = await POST(
       request({
-        ...encryptedUpload(userId, String(bucket._id)),
+        ...(await encryptedUpload(userId, String(bucket._id))),
         thumbnail: "users/another-user/thumbnail",
       }),
     );

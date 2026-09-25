@@ -1002,6 +1002,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           body: JSON.stringify({
             objectKey: fileId,
             bucketId: returnedBucketId,
+            sessionId,
             size: totalSize,
             contentType: uploadFile.type || "application/octet-stream",
             originalContentType: uploadFile.type,
@@ -1326,6 +1327,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         body: JSON.stringify({
           objectKey,
           bucketId: returnedBucketId,
+          sessionId: mainSessionId,
           size: uploadBody instanceof Blob ? uploadBody.size : task.file.size,
           contentType: shouldEncryptNow()
             ? "application/octet-stream"
@@ -1576,6 +1578,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             body: JSON.stringify({
               objectKey: rec.fileId,
               bucketId: rec.bucketId,
+              sessionId: rec.sessionId,
               size: total,
               contentType: rec.type || "application/octet-stream",
               originalContentType: rec.type,
@@ -1677,6 +1680,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             body: JSON.stringify({
               objectKey: rec.fileId,
               bucketId: rec.bucketId,
+              sessionId: rec.sessionId,
               size: total,
               contentType: rec.isEncrypted
                 ? "application/octet-stream"

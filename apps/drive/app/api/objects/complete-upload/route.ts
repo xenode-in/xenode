@@ -8,8 +8,8 @@ import {
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import UploadSession from "@/models/UploadSession";
 import {
-  adjustStorageBytes,
   incrementStorage,
   updateBucketStats,
 } from "@/lib/metering/usage";
@@ -23,7 +23,6 @@ import {
   toSyncObjectSnapshot,
 } from "@/lib/realtime/publish";
 import {
-  adjustOrgStorage,
   incrementOrgStorage,
 } from "@/lib/orgs/billing/orgUsage";
 import {
@@ -105,7 +104,7 @@ function getMediaCategory(mimeType: string): MediaCategory {
 async function emitObjectChange(
   userId: string,
   object: InstanceType<typeof StorageObject>,
-  type: "FILE_CREATED" | "FILE_UPDATED",
+  type: "FILE_CREATED",
 ): Promise<void> {
   const key = object.key;
   await publishSyncEvent({
@@ -133,6 +132,7 @@ export async function POST(request: NextRequest) {
     const {
       objectKey,
       bucketId,
+      sessionId,
       size,
       contentType,
       originalContentType,
@@ -165,7 +165,8 @@ export async function POST(request: NextRequest) {
       uploadSource,
     } = await request.json();
 
-    if (!objectKey || !bucketId || !size) {
+    if (!objectKey || !bucketId || !size || typeof sessionId !== "string" ||
+      !/^[0-9a-f]{24}$/iu.test(sessionId)) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 },
@@ -219,6 +220,16 @@ export async function POST(request: NextRequest) {
         );
       }
     }
+    if (
+      isEncrypted !== true ||
+      typeof encryptedDEK !== "string" || !encryptedDEK.trim() ||
+      typeof encryptedName !== "string" || !encryptedName.trim()
+    ) {
+      return NextResponse.json(
+        { error: "Encrypted file metadata is required", code: "encrypted_upload_required" },
+        { status: 400 },
+      );
+    }
 
     await dbConnect();
 
@@ -229,6 +240,42 @@ export async function POST(request: NextRequest) {
 
     if (!bucket) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
+    }
+
+    const reservation = await UploadSession.findOne({
+      _id: sessionId,
+      userId,
+      spaceId: ctx.spaceId,
+      bucketId: bucket._id,
+      fileId: objectKey,
+      status: "pending",
+      expiresAt: { $gt: new Date() },
+    }).select("keys").lean();
+    if (!reservation) {
+      return NextResponse.json(
+        { error: "Upload reservation is missing or no longer pending", code: "upload_reservation_conflict" },
+        { status: 409 },
+      );
+    }
+    const claimedKeys = new Set(reservation.keys);
+    const physicalKeys = [
+      objectKey,
+      optimizedKey,
+      typeof thumbnail === "string" && thumbnail.startsWith(allowedPrefix)
+        ? thumbnail : null,
+      ...(Array.isArray(chunks) ? chunks.map((chunk) => chunk?.key) : []),
+    ].filter((key): key is string => typeof key === "string" && !!key);
+    if (physicalKeys.some((key) => !claimedKeys.has(key))) {
+      return NextResponse.json(
+        { error: "Blob key does not belong to this upload", code: "unclaimed_upload_key" },
+        { status: 403 },
+      );
+    }
+    if (await StorageObject.exists({ bucketId: bucket._id, key: objectKey })) {
+      return NextResponse.json(
+        { error: "Object key already completed", code: "object_key_conflict" },
+        { status: 409 },
+      );
     }
 
     const mediaCategory = getMediaCategory(originalContentType ?? contentType);
@@ -292,80 +339,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const existingObject = await StorageObject.findOne({
-      bucketId,
-      key: objectKey,
-    });
-
-    if (existingObject) {
-      const sizeDiff = size - existingObject.size;
-      if (sizeDiff !== 0) {
-        if (ctx.spaceType !== "personal") {
-          await adjustOrgStorage(ctx.organizationId!, sizeDiff);
-        } else {
-          await adjustStorageBytes(userId, sizeDiff);
-        }
-      }
-      existingObject.size = size;
-      existingObject.contentType = contentType;
-      existingObject.mediaCategory = mediaCategory;
-      existingObject.b2FileId = b2FileId;
-      if (thumbnail) existingObject.thumbnail = thumbnail;
-      if (isEncrypted) {
-        existingObject.isEncrypted = true;
-        if (encryptedContentType)
-          existingObject.encryptedContentType = encryptedContentType;
-        if (encryptedDEK) existingObject.encryptedDEK = encryptedDEK;
-        if (wrappedBy) existingObject.wrappedBy = wrappedBy;
-        if (spaceKeyVersion)
-          existingObject.spaceKeyVersion = Number(spaceKeyVersion);
-        if (spaceKeyWrapIv) existingObject.spaceKeyWrapIv = spaceKeyWrapIv;
-        if (iv) existingObject.iv = iv;
-        if (encryptedName) existingObject.encryptedName = encryptedName;
-        if (chunkSize) existingObject.chunkSize = chunkSize;
-        if (chunkCount) existingObject.chunkCount = chunkCount;
-        if (chunkIvs) existingObject.chunkIvs = chunkIvs;
-        if (isChunked && chunks) existingObject.chunks = chunks;
-        if (encryptedMetadata) existingObject.encryptedMetadata = encryptedMetadata;
-        if (optimizedKey) existingObject.optimizedKey = optimizedKey;
-        if (optimizedSize) existingObject.optimizedSize = optimizedSize;
-        if (optimizedContentType) existingObject.optimizedContentType = optimizedContentType;
-        if (optimizedIV) existingObject.optimizedIV = optimizedIV;
-        if (optimizedEncryptedDEK) existingObject.optimizedEncryptedDEK = optimizedEncryptedDEK;
-        if (optimizedSpaceKeyWrapIv) existingObject.optimizedSpaceKeyWrapIv = optimizedSpaceKeyWrapIv;
-        if (aspectRatio) existingObject.aspectRatio = aspectRatio;
-      }
-      if (isSidecar !== undefined) existingObject.isSidecar = isSidecar;
-      if (parentObjectId) existingObject.parentObjectId = parentObjectId;
-      if (syncContentFp) existingObject.syncContentFp = syncContentFp;
-      if (syncMetaFp) existingObject.syncMetaFp = syncMetaFp;
-      existingObject.uploadSource = normalizedUploadSource;
-      try {
-        await existingObject.save();
-      } catch (error) {
-        if (sizeDiff !== 0) {
-          const rollback =
-            ctx.spaceType === "organization"
-            || ctx.spaceType === "team"
-              ? adjustOrgStorage(ctx.organizationId!, -sizeDiff)
-              : adjustStorageBytes(userId, -sizeDiff);
-          await rollback.catch((rollbackError) =>
-            console.error(
-              "Failed to roll back storage byte adjustment:",
-              rollbackError,
-            ),
-          );
-        }
-        throw error;
-      }
-      if (sizeDiff !== 0) {
-        await updateBucketStats(bucketId, 0, sizeDiff);
-      }
-      await emitObjectChange(userId, existingObject, "FILE_UPDATED");
-      await completeUploadSession(bucketId, objectKey);
-      return NextResponse.json({ object: existingObject });
-    }
-
     // Content-fingerprint dedup guard. The mobile client already runs a
     // pre-upload sync-check, but two devices (or a retry racing the original)
     // can both upload the same content before either records it. If an object
@@ -376,6 +349,8 @@ export async function POST(request: NextRequest) {
     if (syncContentFp) {
       const dupe = await StorageObject.findOne({
         bucketId,
+        spaceId: ctx.spaceId,
+        productId: "drive",
         syncContentFp,
         deletedAt: { $exists: false },
       });
@@ -405,6 +380,7 @@ export async function POST(request: NextRequest) {
     try {
       storageObject = await StorageObject.create({
         bucketId,
+        productId: "drive",
         spaceId: ctx.spaceId,
         createdByAccountId: ctx.accountId,
         key: objectKey,
@@ -415,7 +391,7 @@ export async function POST(request: NextRequest) {
         mediaCategory,
         b2FileId,
         thumbnail,
-        isEncrypted: isEncrypted ?? false,
+        isEncrypted: true,
         encryptedDEK: encryptedDEK ?? undefined,
         wrappedBy: wrappedBy ?? (isEncrypted ? "user" : undefined),
         spaceKeyVersion:
@@ -445,10 +421,21 @@ export async function POST(request: NextRequest) {
         lastAccessedAt: new Date(),
       });
     } catch (error) {
+      if (
+        isDuplicateKeyError(error) &&
+        await StorageObject.exists({ bucketId: bucket._id, key: objectKey })
+      ) {
+        return NextResponse.json(
+          { error: "Object key already completed", code: "object_key_conflict" },
+          { status: 409 },
+        );
+      }
       if (!syncContentFp || !isDuplicateKeyError(error)) throw error;
 
       const winner = await StorageObject.findOne({
         bucketId,
+        spaceId: ctx.spaceId,
+        productId: "drive",
         syncContentFp,
         deletedAt: { $exists: false },
       });
@@ -496,8 +483,14 @@ export async function POST(request: NextRequest) {
       throw error;
     }
     await updateBucketStats(bucketId, 1, size);
+    const markedCompleted = await completeUploadSession({
+      sessionId, userId, spaceId: ctx.spaceId, bucketId: bucket._id,
+      fileId: objectKey,
+    });
+    if (!markedCompleted) {
+      throw new Error("Upload reservation could not be completed");
+    }
     await emitObjectChange(userId, storageObject, "FILE_CREATED");
-    await completeUploadSession(bucketId, objectKey);
 
     return NextResponse.json({ object: storageObject }, { status: 201 });
   } catch (error) {

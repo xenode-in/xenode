@@ -295,11 +295,11 @@ describe("generic storage mutation permissions", () => {
     const shared = `${prefix}shared-variant`;
     const [first, second] = await Promise.all([
       reserveUploadSession({
-        userId: accountId, bucketId: bucket._id, fileId: `${prefix}first`,
+        userId: accountId, spaceId, bucketId: bucket._id, fileId: `${prefix}first`,
         keys: [`${prefix}first`, shared],
       }),
       reserveUploadSession({
-        userId: accountId, bucketId: bucket._id, fileId: `${prefix}second`,
+        userId: accountId, spaceId, bucketId: bucket._id, fileId: `${prefix}second`,
         keys: [`${prefix}second`, shared],
       }),
     ]);
@@ -317,7 +317,7 @@ describe("generic storage mutation permissions", () => {
     const parents = await Promise.all(["first", "second"].map(async (suffix) => {
       const fileId = `${prefix}${suffix}`;
       const sessionId = await reserveUploadSession({
-        userId: accountId, bucketId: bucket._id, fileId, keys: [fileId],
+        userId: accountId, spaceId, bucketId: bucket._id, fileId, keys: [fileId],
       });
       if (!sessionId) throw new Error("Could not reserve parent");
       return { fileId, sessionId };
@@ -325,7 +325,7 @@ describe("generic storage mutation permissions", () => {
     const claimedKey = `${prefix}preview`;
     const claims = await Promise.all(parents.map((parent) =>
       attachToUploadSession({
-        userId: accountId, bucketId: bucket._id,
+        userId: accountId, spaceId, bucketId: bucket._id,
         parentFileId: parent.fileId, parentSessionId: parent.sessionId,
         key: claimedKey,
       }),
@@ -334,5 +334,80 @@ describe("generic storage mutation permissions", () => {
     expect(await UploadSession.countDocuments({
       bucketId: bucket._id, keys: claimedKey,
     })).toBe(1);
+  });
+
+  async function completionFixture(reservationOverrides: Record<string, unknown> = {}) {
+    await setRole("member");
+    const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
+    const objectKey = `${orgObjectKeyPrefix(organizationId)}reserved`;
+    const reservation = await UploadSession.create({
+      userId: accountId,
+      spaceId,
+      bucketId: bucket._id,
+      fileId: objectKey,
+      keys: [objectKey, `${objectKey}-thumb`],
+      status: "pending",
+      expiresAt: new Date(Date.now() + 60_000),
+      ...reservationOverrides,
+    });
+    const body = {
+      objectKey, bucketId: String(bucket._id), sessionId: String(reservation._id),
+      size: 16, contentType: "application/octet-stream", originalContentType: "image/png",
+      isEncrypted: true, encryptedDEK: "wrapped-key", encryptedName: "encrypted-name",
+      wrappedBy: "space", spaceKeyWrapIv: "wrap-iv", spaceKeyVersion: 1,
+    };
+    return { bucket, body, reservation };
+  }
+
+  it("requires an exact account and Space-bound upload reservation before B2 work", async () => {
+    const { body, reservation } = await completionFixture({ spaceId: "space_org_other" });
+    expect((await complete(request("POST", body))).status).toBe(409);
+    await UploadSession.updateOne(
+      { _id: reservation._id },
+      { $set: { spaceId, userId: "another-account" } },
+    );
+    expect((await complete(request("POST", body))).status).toBe(409);
+    expect((await complete(request("POST", { ...body, sessionId: undefined }))).status).toBe(400);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("rejects unclaimed variants before B2 work", async () => {
+    const { body } = await completionFixture();
+    const response = await complete(request("POST", {
+      ...body, thumbnail: `${body.objectKey}-unclaimed`,
+    }));
+    expect(response.status).toBe(403);
+    expect((await response.json()).code).toBe("unclaimed_upload_key");
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite an existing ciphertext object through completion", async () => {
+    const { bucket, body } = await completionFixture();
+    await StorageObject.create({
+      bucketId: bucket._id, spaceId, productId: "drive",
+      createdByAccountId: accountId, key: body.objectKey,
+      size: 8, b2FileId: "existing", isEncrypted: true,
+    });
+    const response = await complete(request("POST", body));
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("object_key_conflict");
+    expect((await StorageObject.findOne({ key: body.objectKey }))?.size).toBe(8);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("finalizes a claimed encrypted object and closes its reservation", async () => {
+    const { body, reservation } = await completionFixture();
+    send.mockResolvedValue({ VersionId: "ciphertext-version" });
+    const response = await complete(request("POST", body));
+    expect(response.status).toBe(201);
+    const object = await StorageObject.findOne({ key: body.objectKey }).lean();
+    expect(object).toMatchObject({
+      spaceId, productId: "drive", isEncrypted: true, size: 16,
+    });
+    expect((await UploadSession.findById(reservation._id))?.status).toBe("completed");
+    expect(send).toHaveBeenCalledOnce();
+    expect((await complete(request("POST", body))).status).toBe(409);
+    expect(await StorageObject.countDocuments({ key: body.objectKey })).toBe(1);
+    expect(send).toHaveBeenCalledOnce();
   });
 });

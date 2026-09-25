@@ -703,20 +703,21 @@
       "post": {
         "tags": ["Uploads"],
         "summary": "Complete upload (notify backend)",
-        "description": "After direct-to-B2 upload succeeds, notifies backend to save metadata, apply E2EE details, and increment storage quota.",
+        "description": "Finalizes only the caller's pending Space-bound upload reservation. Every physical blob key must be claimed by that reservation; existing objects use a separate revision flow.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["objectKey", "bucketId", "size", "contentType"],
+                "required": ["objectKey", "bucketId", "sessionId", "size", "contentType", "isEncrypted", "encryptedDEK", "encryptedName"],
                 "properties": {
-                  "objectKey": { "type": "string", "example": "users/user_id/folder/photo.jpg" },
+                  "objectKey": { "type": "string", "example": "users/account_id/0123456789abcdef0123456789abcdef" },
                   "bucketId": { "type": "string" },
+                  "sessionId": { "type": "string", "description": "Pending upload reservation returned by presign" },
                   "size": { "type": "integer", "example": 1048576 },
                   "contentType": { "type": "string", "example": "image/jpeg" },
-                  "isEncrypted": { "type": "boolean", "default": false },
+                  "isEncrypted": { "type": "boolean", "enum": [true] },
                   "encryptedDEK": { "type": "string", "description": "Base64 encrypted Data Encryption Key" },
                   "iv": { "type": "string", "description": "Base64 Initialization Vector" },
                   "encryptedName": { "type": "string" },
@@ -727,7 +728,8 @@
           }
         },
         "responses": {
-          "201": { "description": "Upload completed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StorageObject" } } } }
+          "201": { "description": "Upload completed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StorageObject" } } } },
+          "409": { "description": "Upload reservation is missing, completed, or conflicts with an existing object" }
         }
       }
     },

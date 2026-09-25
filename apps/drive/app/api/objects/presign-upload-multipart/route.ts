@@ -139,6 +139,7 @@ export async function POST(request: NextRequest) {
     const existing = resumeSessionId
       ? await findPendingUploadSession({
           userId,
+          spaceId: ctx.spaceId,
           bucketId: bucket._id,
           sessionId: resumeSessionId,
         })
@@ -176,6 +177,7 @@ export async function POST(request: NextRequest) {
 
     const sessionId = await reserveUploadSession({
       userId,
+      spaceId: ctx.spaceId,
       bucketId: bucket._id,
       fileId: logicalKey,
       keys: [logicalKey, ...chunkKeys, `${logicalKey}-thumb`],

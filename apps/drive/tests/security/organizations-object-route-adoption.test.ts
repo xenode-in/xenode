@@ -240,6 +240,7 @@ describe("organization object route adoption", () => {
         body: JSON.stringify({
           bucketId: String(bucket._id),
           objectKey: "workspaces/org_1/objects/file.txt",
+          sessionId: "000000000000000000000001",
           size: 10,
           contentType: "application/octet-stream",
           originalContentType: "text/plain",
