@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { MongoMemoryReplSet } from "mongodb-memory-server";
 import {
   PhotoAsset,
+  PhotoUpload,
   connectDatabase,
   disconnectDatabaseForTests,
   getDatabase,
@@ -13,7 +14,9 @@ const mocks = vi.hoisted(() => ({
   storage: vi.fn(),
   resolveAccess: vi.fn(),
   send: vi.fn(),
+  sign: vi.fn(),
 }));
+vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: mocks.sign }));
 vi.mock("@/lib/session", () => ({ getPhotosProductSession: mocks.session }));
 vi.mock("@/lib/storage-server", () => ({ getPhotosStorageContext: mocks.storage }));
 vi.mock("@xenode/spaces", async (importOriginal) => ({
@@ -23,6 +26,7 @@ vi.mock("@xenode/spaces", async (importOriginal) => ({
 
 import { POST as complete } from "../app/api/photos/uploads/complete/route";
 import { POST as abort } from "../app/api/photos/uploads/abort/route";
+import { POST as presign } from "../app/api/photos/uploads/presign/route";
 
 const accountId = "photos-race-account";
 const spaceId = `space_personal_${accountId}`;
@@ -36,9 +40,10 @@ function variantKey(hex: string) {
 
 function body(assetId = "same-asset") {
   return {
+    uploadId: `upload-${assetId}`,
     assetId,
     bucketId: bucketId.toString(),
-    mediaType: "image",
+    mediaType: "image" as const,
     takenAt: "2026-09-25T00:00:00.000Z",
     objectKey: variantKey("a"),
     size: 100,
@@ -61,6 +66,22 @@ function body(assetId = "same-asset") {
   };
 }
 
+async function reserve(value: ReturnType<typeof body>) {
+  return PhotoUpload.create({
+    uploadId: value.uploadId,
+    assetId: value.assetId,
+    accountId,
+    spaceId,
+    bucketId,
+    mediaType: value.mediaType,
+    original: { key: value.objectKey, size: value.size },
+    optimized: { key: value.optimizedKey, size: value.optimizedSize },
+    thumbnail: { key: value.thumbnailKey, size: value.thumbnailSize },
+    status: "pending",
+    expiresAt: new Date(Date.now() + 60_000),
+  });
+}
+
 function request(path: string, value: object) {
   return new Request(`https://photos.example.test/api/photos/uploads/${path}`, {
     method: "POST",
@@ -74,6 +95,7 @@ beforeAll(async () => {
   process.env.MONGODB_URI = server.getUri();
   await connectDatabase();
   await PhotoAsset.init();
+  await PhotoUpload.init();
   await getDatabase().collection("storageobjects").createIndex(
     { bucketId: 1, key: 1 }, { unique: true },
   );
@@ -89,6 +111,7 @@ beforeEach(async () => {
     client: { send: mocks.send },
   });
   mocks.send.mockResolvedValue({ ContentLength: 100, VersionId: "test-version" });
+  mocks.sign.mockResolvedValue("https://upload.example.test/signed");
   await getDatabase().collection("buckets").insertOne({
     _id: bucketId, b2BucketId: "photos-test-bucket",
     objectCount: 0, totalSizeBytes: 0,
@@ -114,6 +137,7 @@ afterAll(async () => {
 
 describe("Photos completion race safety", () => {
   it("keeps the winning asset when another completion loses its unique ID", async () => {
+    await reserve(body());
     let releaseHeads!: () => void;
     const held = new Promise<void>((resolve) => { releaseHeads = resolve; });
     let reachedHeads!: () => void;
@@ -156,6 +180,7 @@ describe("Photos completion race safety", () => {
   });
 
   it("returns an already completed asset without deleting alternate ciphertext", async () => {
+    await reserve(body());
     const winnerId = new (getMongoose().Types.ObjectId)();
     await PhotoAsset.create({
       assetId: "same-asset", spaceId, storageObjectId: winnerId.toString(),
@@ -168,6 +193,7 @@ describe("Photos completion race safety", () => {
   });
 
   it("retains uncertain blobs when a reported upload size is wrong", async () => {
+    await reserve(body("mismatched-asset"));
     mocks.send.mockResolvedValue({ ContentLength: 99, VersionId: "test-version" });
     const response = await complete(request("complete", body("mismatched-asset")));
     expect(response.status).toBe(400);
@@ -175,11 +201,80 @@ describe("Photos completion race safety", () => {
     expect(await getDatabase().collection("storageobjects").countDocuments({})).toBe(0);
   });
 
-  it("cannot abort arbitrary Drive keys from the shared bucket", async () => {
-    const response = await abort(request("abort", {
-      bucketId: bucketId.toString(), objectKeys: [variantKey("d")],
+  it("rejects a key that is not in the server-issued manifest", async () => {
+    const upload = body("manifest-mismatch");
+    await reserve(upload);
+    const response = await complete(request("complete", {
+      ...upload, objectKey: variantKey("d"),
     }));
-    expect(response.status).toBe(409);
+    expect(response.status).toBe(403);
     expect(mocks.send).not.toHaveBeenCalled();
+  });
+
+  it("aborts only server-manifested keys, never arbitrary Drive keys", async () => {
+    await reserve(body());
+    await getDatabase().collection("storageobjects").insertOne({
+      productId: "drive", bucketId, spaceId,
+      createdByAccountId: accountId, key: variantKey("d"),
+    });
+    const response = await abort(request("abort", {
+      uploadId: body().uploadId, objectKeys: [variantKey("d")],
+    }));
+    expect(response.status).toBe(200);
+    expect(mocks.send).toHaveBeenCalledOnce();
+    const deleted = mocks.send.mock.calls[0][0].input.Delete.Objects;
+    expect(deleted.map((entry: { Key: string }) => entry.Key).sort()).toEqual([
+      body().objectKey, body().optimizedKey, body().thumbnailKey,
+    ].sort());
+    expect(deleted).not.toContainEqual({ Key: variantKey("d") });
+    expect((await PhotoUpload.findOne({ uploadId: body().uploadId }))?.status).toBe("aborted");
+  });
+
+  it("reserves stable variant keys for an asset before signing URLs", async () => {
+    const requestBody = {
+      assetId: "presign-asset", fileSize: 100, mediaType: "image/png",
+      optimizedSize: 100, thumbnailSize: 100,
+    };
+    const [first, second] = await Promise.all([
+      presign(request("presign", requestBody)),
+      presign(request("presign", requestBody)),
+    ]);
+    expect(first.status).toBe(200);
+    const firstBody = await first.json();
+    expect(firstBody.uploadId).toBeTruthy();
+    expect(second.status).toBe(200);
+    const secondBody = await second.json();
+    expect(secondBody.uploadId).toBe(firstBody.uploadId);
+    expect(secondBody.original.objectKey).toBe(firstBody.original.objectKey);
+    expect(await PhotoUpload.countDocuments({ assetId: requestBody.assetId })).toBe(1);
+    expect(mocks.sign).toHaveBeenCalledTimes(6);
+  });
+
+  it("completes a manifest once and refuses to abort its stored ciphertext", async () => {
+    const upload = body("successful-asset");
+    await reserve(upload);
+    const response = await complete(request("complete", upload));
+    expect(response.status).toBe(201);
+    expect((await PhotoUpload.findOne({ uploadId: upload.uploadId }))?.status).toBe("completed");
+    expect(await PhotoAsset.countDocuments({ assetId: upload.assetId })).toBe(1);
+    const usage = await getDatabase().collection("usages").findOne({ userId: accountId });
+    expect(usage?.totalStorageBytes).toBe(300);
+    expect((await abort(request("abort", { uploadId: upload.uploadId }))).status).toBe(409);
+    expect(mocks.send).toHaveBeenCalledTimes(3);
+  });
+
+  it("permits only one database finalization for concurrent completion", async () => {
+    const upload = body("concurrent-asset");
+    await reserve(upload);
+    const responses = await Promise.all([
+      complete(request("complete", upload)),
+      complete(request("complete", upload)),
+    ]);
+    expect(responses.some((response) => response.status === 201)).toBe(true);
+    expect(responses.every((response) => [200, 201, 409].includes(response.status))).toBe(true);
+    expect(await PhotoAsset.countDocuments({ assetId: upload.assetId })).toBe(1);
+    const usage = await getDatabase().collection("usages").findOne({ userId: accountId });
+    expect(usage?.totalStorageBytes).toBe(300);
+    expect(usage?.uploadCount).toBe(1);
   });
 });

@@ -1,7 +1,9 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import { PhotoUpload } from "@xenode/database";
 import { requirePhotoMedia } from "@xenode/media-processing";
+import { assertSpaceAction, personalSpaceId, resolveSpaceAccess } from "@xenode/spaces";
 import { getPhotosProductSession } from "@/lib/session";
 import { getPhotosStorageContext } from "@/lib/storage-server";
 
@@ -37,6 +39,8 @@ export async function POST(request: Request) {
     );
   }
   if (
+    typeof body?.assetId !== "string" ||
+    !/^[A-Za-z0-9_-]{8,128}$/u.test(body.assetId) ||
     !Number.isSafeInteger(fileSize) ||
     fileSize <= 16 ||
     fileSize > MAX_DIRECT_UPLOAD_BYTES + 16
@@ -62,17 +66,51 @@ export async function POST(request: Request) {
   }
 
   try {
+    const spaceId = personalSpaceId(session.accountId);
+    const access = await resolveSpaceAccess({
+      accountId: session.accountId, spaceId, productId: "photos",
+    });
+    assertSpaceAction(access, "write");
     const storage = await getPhotosStorageContext(session.accountId);
-    const original = await createUploadVariant(session.accountId, storage);
-    const optimized =
-      mediaType === "image"
-        ? await createUploadVariant(session.accountId, storage)
-        : undefined;
-    const thumbnail =
-      mediaType === "image"
-        ? await createUploadVariant(session.accountId, storage)
-        : undefined;
+    await PhotoUpload.init();
+    const assetId = body.assetId as string;
+    let manifest = await PhotoUpload.findOne({ spaceId, assetId });
+    if (!manifest) {
+      try {
+        manifest = await PhotoUpload.create({
+          uploadId: randomUUID(), assetId, accountId: session.accountId,
+          spaceId, bucketId: storage.bucket._id, mediaType,
+          original: { key: newObjectKey(session.accountId), size: fileSize },
+          ...(mediaType === "image" ? {
+            optimized: { key: newObjectKey(session.accountId), size: optimizedSize },
+            thumbnail: { key: newObjectKey(session.accountId), size: thumbnailSize },
+          } : {}),
+          status: "pending",
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        });
+      } catch (error) {
+        if (!isDuplicateKeyError(error)) throw error;
+        manifest = await PhotoUpload.findOne({ spaceId, assetId });
+      }
+    }
+    if (
+      !manifest || manifest.accountId !== session.accountId ||
+      String(manifest.bucketId) !== String(storage.bucket._id) ||
+      manifest.status !== "pending" || manifest.expiresAt <= new Date() ||
+      manifest.mediaType !== mediaType || manifest.original.size !== fileSize ||
+      (mediaType === "image" &&
+        (manifest.optimized?.size !== optimizedSize ||
+          manifest.thumbnail?.size !== thumbnailSize))
+    ) {
+      return Response.json({ error: "Photo upload reservation conflict" }, { status: 409 });
+    }
+    const original = await signVariant(manifest.original.key, storage);
+    const optimized = manifest.optimized
+      ? await signVariant(manifest.optimized.key, storage) : undefined;
+    const thumbnail = manifest.thumbnail
+      ? await signVariant(manifest.thumbnail.key, storage) : undefined;
     return Response.json({
+      uploadId: manifest.uploadId,
       original,
       optimized,
       thumbnail,
@@ -89,11 +127,19 @@ export async function POST(request: Request) {
   }
 }
 
-async function createUploadVariant(
-  accountId: string,
+function newObjectKey(accountId: string): string {
+  return `users/${accountId}/${randomBytes(16).toString("hex")}`;
+}
+
+function isDuplicateKeyError(error: unknown): boolean {
+  return error !== null && typeof error === "object" &&
+    "code" in error && error.code === 11000;
+}
+
+async function signVariant(
+  objectKey: string,
   storage: Awaited<ReturnType<typeof getPhotosStorageContext>>,
 ): Promise<UploadVariant> {
-  const objectKey = `users/${accountId}/${randomBytes(16).toString("hex")}`;
   const uploadUrl = await getSignedUrl(
     storage.client,
     new PutObjectCommand({

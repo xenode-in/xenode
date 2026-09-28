@@ -1,4 +1,4 @@
-import { Schema } from "mongoose";
+import { Schema, type Types } from "mongoose";
 import { getModel } from "../model";
 
 const envelopeSchema = new Schema(
@@ -444,6 +444,55 @@ export const AuditEvent = getModel<AuditEventRecord>(
   "AuditEvent",
   auditEventSchema,
 );
+
+export interface PhotoUploadVariantRecord {
+  key: string;
+  size: number;
+}
+
+export interface PhotoUploadRecord {
+  uploadId: string;
+  assetId: string;
+  accountId: string;
+  spaceId: string;
+  bucketId: Types.ObjectId;
+  mediaType: "image" | "video";
+  original: PhotoUploadVariantRecord;
+  optimized?: PhotoUploadVariantRecord;
+  thumbnail?: PhotoUploadVariantRecord;
+  status: "pending" | "completing" | "completed" | "aborting" | "aborted";
+  expiresAt: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+const photoUploadVariantSchema = new Schema<PhotoUploadVariantRecord>(
+  { key: { type: String, required: true }, size: { type: Number, required: true } },
+  { _id: false },
+);
+const photoUploadSchema = new Schema<PhotoUploadRecord>(
+  {
+    uploadId: { type: String, required: true, unique: true, index: true },
+    assetId: { type: String, required: true },
+    accountId: { type: String, required: true },
+    spaceId: { type: String, required: true },
+    bucketId: { type: Schema.Types.ObjectId, required: true },
+    mediaType: { type: String, enum: ["image", "video"], required: true },
+    original: { type: photoUploadVariantSchema, required: true },
+    optimized: photoUploadVariantSchema,
+    thumbnail: photoUploadVariantSchema,
+    status: {
+      type: String,
+      enum: ["pending", "completing", "completed", "aborting", "aborted"],
+      required: true,
+      default: "pending",
+    },
+    expiresAt: { type: Date, required: true },
+  },
+  { timestamps: true, collection: "photoUploads" },
+);
+photoUploadSchema.index({ spaceId: 1, assetId: 1 }, { unique: true });
+photoUploadSchema.index({ status: 1, expiresAt: 1 });
+export const PhotoUpload = getModel<PhotoUploadRecord>("PhotoUpload", photoUploadSchema);
 
 export interface PhotoAssetRecord {
   assetId: string;

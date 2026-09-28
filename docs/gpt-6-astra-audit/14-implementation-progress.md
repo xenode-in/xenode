@@ -26,6 +26,7 @@ The audit is a snapshot of the pre-remediation working tree. Findings are not cl
 | 0K | Issue Drive upload keys on the server and resolve refreshes from reservations | Complete; full suite passed |
 | 0L | Bind generic Drive completion to claimed, Space-scoped uploads | Complete; full suite passed |
 | 0M | Stop losing Photos completions and aborts from deleting another upload | Complete; full suite passed |
+| 0N | Reserve Photos variant keys and bind completion/abort to a manifest | Complete; full suite passed |
 
 The rest of the roadmap remains open. F09/F10 also require durable claim/reconciliation across concurrent finalize/restore/purge operations; a deletion confirmation patch alone is not complete lifecycle safety.
 
@@ -166,3 +167,12 @@ Commit: `18709ac`.
 - Disposable Mongo race tests force a winner to appear after a losing request's initial lookup and assert that its asset and ciphertext record survive. They also cover response-lost retry, size mismatch without B2 deletion and refusal to abort an arbitrary shared-bucket key.
 - Final validation: all 15 test workspaces passed, **509 tests** (343 Drive, 92 Accounts, 13 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; Photos lint and package boundaries passed. The new Photos integration tests use a disposable Mongo replica set.
 - This contains the immediate F12/F13 data-loss path but can leave abandoned ciphertext in B2. The next Photos phase needs a durable presign manifest, transaction-scoped metadata/usage writes and a reference-aware orphan reconciler. It must never infer deletion ownership merely from an account key prefix.
+
+## 0N — Photos upload manifests
+
+- Presign now requires the client-generated asset ID and writes a server-owned `PhotoUpload` manifest with exact original/optimized/thumbnail keys, sizes, account, Space, bucket and expiry before signing B2 URLs. Re-presigning the same pending asset reuses its keys; a completed or incompatible manifest is rejected.
+- Completion requires `uploadId` and verifies every key and size against the manifest before B2 HEADs. A conditional pending-to-completing claim prevents simultaneous completion or abort from using the same upload. Successful completion marks the manifest completed; quota denial and caught failures release the claim for retry.
+- Abort accepts only `uploadId`, claims the manifest, checks shared Drive/Photos StorageObject references, and deletes only its reserved keys. B2 transport and per-key errors leave it retryable in `aborting` state; completed uploads cannot be aborted. The browser sends the ID through presign, completion and abort.
+- Disposable Mongo tests cover stable presign identities, manifest mismatch, successful completion, response-lost retry, a losing asset-ID race, and exact-key abort that cannot delete a supplied Drive key.
+- Final validation: all 15 test workspaces passed, **513 tests** (343 Drive, 92 Accounts, 17 Photos app, 61 shared packages). The final Photos rerun passed all 17 tests, including concurrent presign and completion. Root typecheck, Photos/database lint and package boundaries passed. The new API contract is recorded in `15-photos-upload-contract.md`.
+- Expired pending and interrupted `completing` manifests still need an authenticated cron reconciler. Metadata, Usage, bucket counters and manifest completion are not yet one database transaction. A referenced manifest that reaches abort currently remains blocked for operator review rather than risking deletion.

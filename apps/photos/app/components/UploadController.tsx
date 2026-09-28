@@ -70,6 +70,7 @@ export function UploadController({
             credentials: "include",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
+              assetId: input.id,
               fileSize: preparation.uploadSource.size + 16,
               mediaType: input.contentType,
               optimizedSize: derivatives
@@ -87,6 +88,7 @@ export function UploadController({
           };
           const presign = (await presignResponse.json().catch(() => ({}))) as {
             error?: string;
+            uploadId?: string;
             bucketId?: string;
             optimized?: UploadVariant;
             original?: UploadVariant;
@@ -95,6 +97,7 @@ export function UploadController({
           if (
             !presignResponse.ok ||
             !presign.original ||
+            !presign.uploadId ||
             !presign.bucketId
           ) {
             throw new Error(presign.error ?? "Could not prepare photo upload");
@@ -178,6 +181,7 @@ export function UploadController({
                 credentials: "include",
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify({
+                  uploadId: presign.uploadId,
                   assetId: input.id,
                   bucketId: presign.bucketId,
                   objectKey: presign.original.objectKey,
@@ -222,6 +226,13 @@ export function UploadController({
             setStatus(`Uploaded ${completed} of ${files.length}`);
             return completedUpload.asset;
           } catch (error) {
+            void fetch("/api/photos/uploads/abort", {
+              method: "POST",
+              credentials: "include",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ uploadId: presign.uploadId }),
+              keepalive: true,
+            }).catch(() => {});
             setStatus("Upload failed");
             throw error;
           }

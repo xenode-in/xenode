@@ -1,5 +1,5 @@
 import { HeadObjectCommand } from "@aws-sdk/client-s3";
-import { PhotoAsset, getDatabase, getMongoose } from "@xenode/database";
+import { PhotoAsset, PhotoUpload, getDatabase, getMongoose } from "@xenode/database";
 import { personalSpaceId, resolveSpaceAccess } from "@xenode/spaces";
 import { getPhotosProductSession } from "@/lib/session";
 import { getPhotosStorageContext } from "@/lib/storage-server";
@@ -8,6 +8,7 @@ const MAX_ENCRYPTED_UPLOAD_BYTES = 250 * 1024 * 1024 + 16;
 const MAX_ENCRYPTED_DERIVATIVE_BYTES = 25 * 1024 * 1024 + 16;
 
 type CompleteBody = {
+  uploadId?: unknown;
   assetId?: unknown;
   bucketId?: unknown;
   encryptedDEK?: unknown;
@@ -64,6 +65,8 @@ export async function POST(request: Request) {
   const isImage = body?.mediaType === "image";
   if (
     !body ||
+    typeof body.uploadId !== "string" ||
+    !body.uploadId ||
     typeof body.assetId !== "string" ||
     !body.assetId ||
     typeof body.bucketId !== "string" ||
@@ -112,6 +115,27 @@ export async function POST(request: Request) {
 
     const database = getDatabase();
     const storageObjects = database.collection("storageobjects");
+    const manifest = await PhotoUpload.findOne({
+      uploadId: body.uploadId,
+      assetId: body.assetId,
+      accountId: session.accountId,
+      spaceId,
+      bucketId: storage.bucket._id,
+    });
+    if (
+      !manifest ||
+      manifest.mediaType !== body.mediaType ||
+      manifest.original.key !== original.key ||
+      manifest.original.size !== original.size ||
+      Boolean(manifest.optimized) !== Boolean(optimized) ||
+      (optimized && (manifest.optimized?.key !== optimized.key ||
+        manifest.optimized.size !== optimized.size)) ||
+      Boolean(manifest.thumbnail) !== Boolean(thumbnail) ||
+      (thumbnail && (manifest.thumbnail?.key !== thumbnail.key ||
+        manifest.thumbnail.size !== thumbnail.size))
+    ) {
+      return Response.json({ error: "Photo upload manifest mismatch" }, { status: 403 });
+    }
     const existingAsset = await PhotoAsset.findOne({
       assetId: body.assetId,
       spaceId,
@@ -192,6 +216,14 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
+    const claimed = await PhotoUpload.findOneAndUpdate(
+      { _id: manifest._id, status: "pending", expiresAt: { $gt: new Date() } },
+      { $set: { status: "completing" } },
+      { returnDocument: "after" },
+    );
+    if (!claimed) {
+      return Response.json({ error: "Photo upload is already being finalized" }, { status: 409 });
+    }
     const now = new Date();
     const reservedUsage = await usages.findOneAndUpdate(
       quotaFilter,
@@ -206,6 +238,10 @@ export async function POST(request: Request) {
       { returnDocument: "after" },
     );
     if (!reservedUsage) {
+      await PhotoUpload.updateOne(
+        { _id: manifest._id, status: "completing" },
+        { $set: { status: "pending" } },
+      );
       return Response.json({ error: "Storage quota exceeded" }, { status: 402 });
     }
 
@@ -288,6 +324,11 @@ export async function POST(request: Request) {
         throw new Error("Regional bucket metadata disappeared during upload");
       }
       bucketStatsUpdated = true;
+      const completed = await PhotoUpload.updateOne(
+        { _id: manifest._id, status: "completing" },
+        { $set: { status: "completed" } },
+      );
+      if (completed.modifiedCount !== 1) throw new Error("Photo upload claim disappeared");
       return Response.json({ asset }, { status: 201 });
     } catch (error) {
       await Promise.all([
@@ -321,6 +362,10 @@ export async function POST(request: Request) {
               },
             )
           : Promise.resolve(),
+        PhotoUpload.updateOne(
+          { _id: manifest._id, status: "completing" },
+          { $set: { status: "pending" } },
+        ),
       ]);
       throw error;
     }
