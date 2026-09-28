@@ -7,6 +7,7 @@ export * from "./auth-security";
 export * from "./browser-logout";
 export * from "./types";
 export * from "./storage-objects";
+export * from "./photo-uploads";
 
 export async function listExternalAccountsForUser(userId: string) {
   await connectDatabase();

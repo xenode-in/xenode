@@ -28,6 +28,7 @@ The audit is a snapshot of the pre-remediation working tree. Findings are not cl
 | 0M | Stop losing Photos completions and aborts from deleting another upload | Complete; full suite passed |
 | 0N | Reserve Photos variant keys and bind completion/abort to a manifest | Complete; full suite passed |
 | 0O | Lease and reconcile expired Photos upload cleanup through authenticated cron | Complete; full suite passed |
+| 0P | Commit Photos manifests, metadata and usage in one database transaction | Complete; full suite passed |
 
 The rest of the roadmap remains open. F09/F10 also require durable claim/reconciliation across concurrent finalize/restore/purge operations; a deletion confirmation patch alone is not complete lifecycle safety.
 
@@ -185,3 +186,11 @@ Commit: `18709ac`.
 - `apps/photos/vercel.json` registers the hourly schedule for a Photos-root deployment. Tests authenticate the route, verify exact manifests, protect a Drive reference, retain per-key deletion failures, retry them, enforce one concurrent cleanup lease and recheck aborted keys after expiry.
 - Final validation: all 15 test workspaces passed, **520 tests** (343 Drive, 92 Accounts, 24 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; Photos/database lint, package boundaries and Photos cron JSON parsing passed.
 - Interrupted `completing` and completed manifests are not automatically deleted. Transactional finalization and a read-only/durable reconciler for interrupted or blocked records remain required; no live B2 delete or deployed cron was executed.
+
+## 0P — Transactional Photos finalization
+
+- A shared `@xenode/database` repository now atomically claims the pending Photos manifest, creates its StorageObject/PhotoAsset, increments Usage and bucket counters and marks completion in one Mongo transaction. The StorageObject ID is the manifest ID, making the completed asset relationship exact. The app route verifies B2 lengths then delegates the database commit.
+- The transaction helper explicitly uses snapshot reads, primary routing and majority commit. A replica set is required; no non-transactional fallback or compensating multi-delete branch remains. Quota, duplicate identity or missing bucket failure leaves all writes unchanged and the manifest pending.
+- A retry returns only the asset belonging to the exact completed manifest, without repeating B2 reads or metering. A conflicting asset ID returns 409 instead of returning unrelated upload metadata. Concurrent completion is committed once; abort winning before commit prevents finalization.
+- Disposable Mongo tests cover quota failure, bucket disappearance after metadata writes begin, conflicting asset IDs, concurrent completion, response-lost retry and abort during B2 verification. B2 PUT replay/immutability and review of blocked cleanup records remain separate storage work. Disposable records from prior development phases can be reset rather than migrated.
+- Final validation: all 15 test workspaces passed, **523 tests** (343 Drive, 92 Accounts, 27 Photos app, 61 shared packages). Root typecheck, Photos/database lint and package boundaries passed. `docker-compose.mongo.yaml` configuration validated; README and example URIs now require the replica set. No development database was started/reset and no live B2 or scheduler was exercised.

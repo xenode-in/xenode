@@ -169,7 +169,7 @@ describe("Photos completion race safety", () => {
       createdByAccountId: accountId,
     });
     releaseHeads();
-    expect((await pending).status).toBe(500);
+    expect((await pending).status).toBe(409);
 
     expect(await PhotoAsset.findOne({ assetId: "same-asset" }).lean()).toMatchObject({
       storageObjectId: winnerId.toString(),
@@ -182,20 +182,21 @@ describe("Photos completion race safety", () => {
     })).toBe(0);
     const usage = await getDatabase().collection("usages").findOne({ userId: accountId });
     expect(usage?.totalStorageBytes).toBe(0);
+    expect((await PhotoUpload.findOne({ uploadId: body().uploadId }))?.status).toBe("pending");
     expect(mocks.send).toHaveBeenCalledTimes(3);
   });
 
-  it("returns an already completed asset without deleting alternate ciphertext", async () => {
-    await reserve(body());
-    const winnerId = new (getMongoose().Types.ObjectId)();
-    await PhotoAsset.create({
-      assetId: "same-asset", spaceId, storageObjectId: winnerId.toString(),
-      mediaType: "image", takenAt: new Date(), uploadSource: "web",
-      createdByAccountId: accountId,
-    });
-    const response = await complete(request("complete", body()));
+  it("returns the completed manifest asset on a response-lost retry", async () => {
+    const upload = body();
+    await reserve(upload);
+    expect((await complete(request("complete", upload))).status).toBe(201);
+    mocks.send.mockClear();
+    const response = await complete(request("complete", upload));
     expect(response.status).toBe(200);
     expect(mocks.send).not.toHaveBeenCalled();
+    const usage = await getDatabase().collection("usages").findOne({ userId: accountId });
+    expect(usage?.totalStorageBytes).toBe(300);
+    expect(usage?.uploadCount).toBe(1);
   });
 
   it("retains uncertain blobs when a reported upload size is wrong", async () => {
@@ -288,6 +289,59 @@ describe("Photos completion race safety", () => {
     const usage = await getDatabase().collection("usages").findOne({ userId: accountId });
     expect(usage?.totalStorageBytes).toBe(300);
     expect(usage?.uploadCount).toBe(1);
+  });
+
+  it("aborts all finalization writes when quota is exhausted", async () => {
+    const upload = body("quota-rejection");
+    await reserve(upload);
+    await getDatabase().collection("usages").updateOne({ userId: accountId }, {
+      $set: { storageLimitBytes: 200 },
+    });
+    expect((await complete(request("complete", upload))).status).toBe(402);
+    expect(await PhotoAsset.countDocuments({})).toBe(0);
+    expect(await getDatabase().collection("storageobjects").countDocuments({})).toBe(0);
+    expect((await PhotoUpload.findOne({ uploadId: upload.uploadId }))?.status).toBe("pending");
+    const usage = await getDatabase().collection("usages").findOne({ userId: accountId });
+    expect(usage?.totalStorageBytes).toBe(0);
+    expect(usage?.uploadCount).toBe(0);
+  });
+
+  it("rolls back usage and metadata when bucket metadata disappears before commit", async () => {
+    const upload = body("missing-bucket");
+    await reserve(upload);
+    await getDatabase().collection("buckets").deleteOne({ _id: bucketId });
+    expect((await complete(request("complete", upload))).status).toBe(409);
+    expect(await PhotoAsset.countDocuments({})).toBe(0);
+    expect(await getDatabase().collection("storageobjects").countDocuments({})).toBe(0);
+    expect((await PhotoUpload.findOne({ uploadId: upload.uploadId }))?.status).toBe("pending");
+    const usage = await getDatabase().collection("usages").findOne({ userId: accountId });
+    expect(usage?.totalStorageBytes).toBe(0);
+    expect(usage?.totalObjects).toBe(0);
+  });
+
+  it("does not finalize after abort wins while B2 verification is in flight", async () => {
+    const upload = body("abort-before-commit");
+    await reserve(upload);
+    let releaseHeads!: () => void;
+    const held = new Promise<void>((resolve) => { releaseHeads = resolve; });
+    let reachedHeads!: () => void;
+    const started = new Promise<void>((resolve) => { reachedHeads = resolve; });
+    let headCount = 0;
+    mocks.send.mockImplementation(async (command) => {
+      if (command.input.Delete) return {};
+      headCount++;
+      if (headCount === 3) reachedHeads();
+      await held;
+      return { ContentLength: 100, VersionId: "test-version" };
+    });
+    const pending = complete(request("complete", upload));
+    await started;
+    expect((await abort(request("abort", { uploadId: upload.uploadId }))).status).toBe(200);
+    releaseHeads();
+    expect((await pending).status).toBe(409);
+    expect(await PhotoAsset.countDocuments({ assetId: upload.assetId })).toBe(0);
+    const usage = await getDatabase().collection("usages").findOne({ userId: accountId });
+    expect(usage?.totalStorageBytes).toBe(0);
   });
 
   function cronRequest(authorized = true) {

@@ -1,5 +1,7 @@
 import { HeadObjectCommand } from "@aws-sdk/client-s3";
-import { PhotoAsset, PhotoUpload, getDatabase, getMongoose } from "@xenode/database";
+import {
+  PhotoAsset, PhotoUpload, PhotoUploadCommitError, commitPhotoUpload, getMongoose,
+} from "@xenode/database";
 import { personalSpaceId, resolveSpaceAccess } from "@xenode/spaces";
 import { getPhotosProductSession } from "@/lib/session";
 import { getPhotosStorageContext } from "@/lib/storage-server";
@@ -113,8 +115,6 @@ export async function POST(request: Request) {
       );
     }
 
-    const database = getDatabase();
-    const storageObjects = database.collection("storageobjects");
     const manifest = await PhotoUpload.findOne({
       uploadId: body.uploadId,
       assetId: body.assetId,
@@ -136,247 +136,69 @@ export async function POST(request: Request) {
     ) {
       return Response.json({ error: "Photo upload manifest mismatch" }, { status: 403 });
     }
-    const existingAsset = await PhotoAsset.findOne({
-      assetId: body.assetId,
-      spaceId,
-      createdByAccountId: session.accountId,
-    }).lean();
-    if (existingAsset) {
+    if (manifest.status === "completed") {
+      const existingAsset = await PhotoAsset.findOne({
+        assetId: manifest.assetId, spaceId, createdByAccountId: session.accountId,
+        storageObjectId: manifest._id.toString(),
+      }).lean();
+      if (!existingAsset) {
+        return Response.json({ error: "Completed upload metadata is missing" }, { status: 409 });
+      }
       return Response.json({ asset: existingAsset });
     }
 
     const heads = await Promise.all(
-      variants.map((variant) =>
-        storage.client.send(
-          new HeadObjectCommand({
-            Bucket: storage.bucket.b2BucketId,
-            Key: variant.key,
-          }),
-        ),
-      ),
+      variants.map((variant) => storage.client.send(new HeadObjectCommand({
+        Bucket: storage.bucket.b2BucketId, Key: variant.key,
+      }))),
     );
-    if (
-      heads.some(
-        (head, index) => head.ContentLength !== variants[index]?.size,
-      )
-    ) {
-      return Response.json(
-        { error: "Uploaded object size mismatch" },
-        { status: 400 },
-      );
+    if (heads.some((head, index) => head.ContentLength !== variants[index]?.size)) {
+      return Response.json({ error: "Uploaded object size mismatch" }, { status: 400 });
     }
-
-    const objectWithKey = await storageObjects.findOne({
-      key: original.key,
-      productId: "photos",
+    const result = await commitPhotoUpload({
+      uploadId: manifest.uploadId,
+      accountId: session.accountId,
       spaceId,
-      createdByAccountId: session.accountId,
-    });
-    if (objectWithKey) {
-      const completedAsset = await PhotoAsset.findOne({
-        storageObjectId: objectWithKey._id.toString(),
-        spaceId,
-        createdByAccountId: session.accountId,
-      }).lean();
-      if (completedAsset) {
-        return Response.json({ asset: completedAsset });
-      }
-      return Response.json(
-        { error: "Upload metadata is incomplete; please upload the file again" },
-        { status: 409 },
-      );
-    }
-
-    const usages = database.collection("usages");
-    const usage = await usages.findOne({ userId: session.accountId });
-    if (!usage || !Number.isFinite(usage.totalStorageBytes)) {
-      return Response.json(
-        { error: "Storage usage is not initialized; complete onboarding first" },
-        { status: 409 },
-      );
-    }
-    const totalStorageSize = variants.reduce(
-      (total, variant) => total + variant.size,
-      0,
-    );
-    const quotaFilter =
-      usage.storageLimitBytes === null
-        ? { userId: session.accountId }
-        : typeof usage.storageLimitBytes === "number"
-          ? {
-              userId: session.accountId,
-              totalStorageBytes: {
-                $lte: usage.storageLimitBytes - totalStorageSize,
-              },
-            }
-          : null;
-    if (!quotaFilter) {
-      return Response.json(
-        { error: "Storage limit is not initialized; complete onboarding first" },
-        { status: 409 },
-      );
-    }
-    const claimed = await PhotoUpload.findOneAndUpdate(
-      { _id: manifest._id, status: "pending", expiresAt: { $gt: new Date() } },
-      { $set: { status: "completing" } },
-      { returnDocument: "after" },
-    );
-    if (!claimed) {
-      return Response.json({ error: "Photo upload is already being finalized" }, { status: 409 });
-    }
-    const now = new Date();
-    const reservedUsage = await usages.findOneAndUpdate(
-      quotaFilter,
-      {
-        $inc: {
-          totalStorageBytes: totalStorageSize,
-          totalObjects: 1,
-          uploadCount: 1,
-        },
-        $set: { lastActiveAt: now, updatedAt: now },
-      },
-      { returnDocument: "after" },
-    );
-    if (!reservedUsage) {
-      await PhotoUpload.updateOne(
-        { _id: manifest._id, status: "completing" },
-        { $set: { status: "pending" } },
-      );
-      return Response.json({ error: "Storage quota exceeded" }, { status: 402 });
-    }
-
-    const objectId = new (getMongoose().Types.ObjectId)();
-    let bucketStatsUpdated = false;
-    try {
-      await storageObjects.insertOne({
-        _id: objectId,
-        productId: "photos",
-        bucketId: storage.bucket._id,
-        spaceId,
-        createdByAccountId: session.accountId,
+      bucketId: storage.bucket._id,
+      storageObject: {
         key: original.key,
         size: original.size,
         contentType: "application/octet-stream",
         originalContentType: original.contentType,
         mediaCategory: body.mediaType,
-        b2FileId:
-          heads[0]?.VersionId ??
-          `${storage.bucket.b2BucketId}/${original.key}`,
-        tags: [],
-        position: 0,
-        uploadSource: "web",
-        isEncrypted: true,
+        b2FileId: heads[0]?.VersionId ?? `${storage.bucket.b2BucketId}/${original.key}`,
+        tags: [], position: 0, uploadSource: "web", isEncrypted: true,
         encryptedDEK: original.encryptedDEK,
-        wrappedBy: "space",
-        spaceKeyVersion: 1,
-        spaceKeyWrapIv: original.spaceKeyWrapIv,
-        iv: original.iv,
-        optimizedKey: optimized?.key,
-        optimizedSize: optimized?.size,
+        wrappedBy: "space", spaceKeyVersion: 1,
+        spaceKeyWrapIv: original.spaceKeyWrapIv, iv: original.iv,
+        optimizedKey: optimized?.key, optimizedSize: optimized?.size,
         optimizedContentType: optimized?.contentType,
         optimizedEncryptedDEK: optimized?.encryptedDEK,
         optimizedIV: optimized?.iv,
         optimizedSpaceKeyWrapIv: optimized?.spaceKeyWrapIv,
-        thumbnail: thumbnail?.key,
-        thumbnailSize: thumbnail?.size,
+        thumbnail: thumbnail?.key, thumbnailSize: thumbnail?.size,
         thumbnailContentType: thumbnail?.contentType,
         thumbnailEncryptedDEK: thumbnail?.encryptedDEK,
         thumbnailIV: thumbnail?.iv,
         thumbnailSpaceKeyWrapIv: thumbnail?.spaceKeyWrapIv,
         takenAt,
-        aspectRatio:
-          typeof body.width === "number" &&
-          typeof body.height === "number" &&
-          body.width > 0 &&
-          body.height > 0
-            ? body.width / body.height
-            : undefined,
+        aspectRatio: typeof body.width === "number" && typeof body.height === "number" &&
+          body.width > 0 && body.height > 0 ? body.width / body.height : undefined,
         revision: 1,
-        createdAt: now,
-        updatedAt: now,
-      });
-      const asset = await PhotoAsset.create({
-        assetId: body.assetId,
-        spaceId,
-        storageObjectId: objectId.toString(),
-        mediaType: body.mediaType,
-        takenAt,
-        width:
-          typeof body.width === "number" && body.width > 0
-            ? Math.round(body.width)
-            : undefined,
-        height:
-          typeof body.height === "number" && body.height > 0
-            ? Math.round(body.height)
-            : undefined,
-        uploadSource: "web",
-        status: "active",
-        createdByAccountId: session.accountId,
-      });
-      const bucketUpdate = await database.collection("buckets").updateOne(
-        { _id: storage.bucket._id },
-        {
-          $inc: { objectCount: 1, totalSizeBytes: totalStorageSize },
-          $set: { updatedAt: new Date() },
-        },
-      );
-      if (bucketUpdate.matchedCount !== 1) {
-        throw new Error("Regional bucket metadata disappeared during upload");
-      }
-      bucketStatsUpdated = true;
-      const completed = await PhotoUpload.updateOne(
-        { _id: manifest._id, status: "completing" },
-        { $set: { status: "completed" } },
-      );
-      if (completed.modifiedCount !== 1) throw new Error("Photo upload claim disappeared");
-      return Response.json({ asset }, { status: 201 });
-    } catch (error) {
-      await Promise.all([
-        PhotoAsset.deleteOne({
-          assetId: body.assetId,
-          spaceId,
-          createdByAccountId: session.accountId,
-          storageObjectId: objectId.toString(),
-        }),
-        storageObjects.deleteOne({ _id: objectId }),
-        usages.updateOne(
-          { userId: session.accountId },
-          {
-            $inc: {
-              totalStorageBytes: -totalStorageSize,
-              totalObjects: -1,
-              uploadCount: -1,
-            },
-            $set: { updatedAt: new Date() },
-          },
-        ),
-        bucketStatsUpdated
-          ? database.collection("buckets").updateOne(
-              { _id: storage.bucket._id },
-              {
-                $inc: {
-                  objectCount: -1,
-                  totalSizeBytes: -totalStorageSize,
-                },
-                $set: { updatedAt: new Date() },
-              },
-            )
-          : Promise.resolve(),
-        PhotoUpload.updateOne(
-          { _id: manifest._id, status: "completing" },
-          { $set: { status: "pending" } },
-        ),
-      ]);
-      throw error;
-    }
-  } catch (error) {
-    return Response.json(
-      {
-        error:
-          error instanceof Error ? error.message : "Could not complete upload",
       },
-      { status: 500 },
-    );
+      asset: {
+        mediaType: body.mediaType as "image" | "video",
+        takenAt,
+        width: typeof body.width === "number" && body.width > 0 ? Math.round(body.width) : undefined,
+        height: typeof body.height === "number" && body.height > 0 ? Math.round(body.height) : undefined,
+      },
+    });
+    return Response.json({ asset: result.asset }, { status: result.created ? 201 : 200 });
+  } catch (error) {
+    if (error instanceof PhotoUploadCommitError) {
+      return Response.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    return Response.json({ error: "Could not complete upload" }, { status: 500 });
   }
 }
 

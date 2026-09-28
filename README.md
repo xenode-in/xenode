@@ -44,7 +44,18 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and
 
 ## Local development
 
-Requirements: Node.js 20+, npm, MongoDB, Redis, and an S3-compatible bucket.
+Requirements: Node.js 20+, npm, a MongoDB replica set (Atlas or local), Redis,
+and an S3-compatible bucket. Photos finalization requires transactions; a
+standalone MongoDB server is unsupported.
+
+For a local development replica set:
+
+```powershell
+docker compose -f docker-compose.mongo.yaml up -d
+```
+
+The service binds only to localhost and initializes `rs0`. The example database
+URIs use `directConnection=true` because the applications run on the host.
 
 ```powershell
 npm install
@@ -63,6 +74,10 @@ npm run dev --workspace @xenode/photos-web
 
 Use deployment-declared local origins (`ACCOUNTS_ORIGIN`, `DRIVE_ORIGIN`, and
 `PHOTOS_ORIGIN`) so OIDC callback allowlists remain exact.
+
+Development data is disposable. A schema reset may use a new database name in
+the local URI and then rerun the normal onboarding/seed flow; do not add old-format
+compatibility or production-data migration scaffolding.
 
 ## Verification
 

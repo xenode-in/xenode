@@ -30,12 +30,13 @@ and the encrypted variant metadata. It verifies account, Space, regional bucket,
 media type, every key and every size against the reserved manifest. B2 HEAD
 responses must confirm the exact encrypted byte counts.
 
-The manifest is conditionally claimed from `pending` to `completing` before
-quota or metadata writes. A competing completion or abort cannot acquire the
-same pending upload. A completed asset retry returns the existing asset without
-deleting alternate ciphertext. Success creates the Photos-owned StorageObject
-and PhotoAsset, updates Usage and bucket counters, and marks the manifest
-`completed`.
+The shared database repository claims the manifest inside one Mongo transaction.
+That transaction creates the Photos-owned StorageObject and PhotoAsset, reserves
+Usage bytes, updates bucket counters and marks the manifest `completed` together.
+The StorageObject ID is the manifest's ID. A competing completion or abort cannot
+commit the same pending upload. A completed-manifest retry returns its exact
+existing asset without new B2 HEADs or duplicate metering. An asset ID belonging
+to another object returns 409; there is no destructive compensation path.
 
 ## Abort
 
@@ -53,7 +54,7 @@ the manifest retryable in `aborting`; confirmed deletion marks it `aborted`.
 | State | Meaning |
 | --- | --- |
 | `pending` | URLs may be issued and completion or abort may claim the upload |
-| `completing` | One completion attempt owns database finalization |
+| `completing` | Internal transaction claim; no partial finalization is committed |
 | `completed` | Metadata and counters were written; client abort is denied |
 | `aborting` | Exact-key deletion is in progress or must be retried |
 | `aborted` | B2 reported no deletion failures |
@@ -72,10 +73,15 @@ The Photos deployment's `apps/photos/vercel.json` schedules the route hourly;
 the deployment must use the Photos app as its root and configure `CRON_SECRET`.
 No live scheduler invocation is part of local validation.
 
-Automatic cleanup leaves `completing` and `completed` manifests alone. The
-current multi-record completion writes are not yet a single database
-transaction, so interrupted completing and blocked records need a separate
-reconciler. Issued PUT URLs remain usable until their expiry; completed-content
+Automatic cleanup leaves `completing` and `completed` manifests alone. New
+finalization uses snapshot reads, primary routing and majority commit through
+the shared transaction helper. MongoDB must run as a replica set; there is no
+standalone-database fallback. A transaction abort leaves the manifest pending
+and its counters/metadata unchanged. Disposable development records from earlier
+non-transactional code can be reset/reseeded rather than migrated.
+
+B2 is outside the database transaction. Blocked cleanup records still require
+review, and issued PUT URLs remain usable until their expiry; completed-content
 immutability is not claimed by this contract yet.
 
 Development uses the new `photoUploads` collection and its unique
