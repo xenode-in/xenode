@@ -104,6 +104,15 @@ export async function POST(request: Request) {
     ) {
       return Response.json({ error: "Photo upload reservation conflict" }, { status: 409 });
     }
+    const renewed = await PhotoUpload.findOneAndUpdate(
+      { _id: manifest._id, status: "pending", expiresAt: { $gt: new Date() } },
+      { $set: { expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) } },
+      { returnDocument: "after" },
+    );
+    if (!renewed) {
+      return Response.json({ error: "Photo upload is no longer pending" }, { status: 409 });
+    }
+    manifest = renewed;
     const original = await signVariant(manifest.original.key, storage);
     const optimized = manifest.optimized
       ? await signVariant(manifest.optimized.key, storage) : undefined;

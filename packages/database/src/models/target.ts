@@ -460,7 +460,9 @@ export interface PhotoUploadRecord {
   original: PhotoUploadVariantRecord;
   optimized?: PhotoUploadVariantRecord;
   thumbnail?: PhotoUploadVariantRecord;
-  status: "pending" | "completing" | "completed" | "aborting" | "aborted";
+  status: "pending" | "completing" | "completed" | "aborting" | "aborted" | "blocked";
+  cleanupLeaseId?: string;
+  cleanupLeaseExpiresAt?: Date;
   expiresAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -482,11 +484,13 @@ const photoUploadSchema = new Schema<PhotoUploadRecord>(
     thumbnail: photoUploadVariantSchema,
     status: {
       type: String,
-      enum: ["pending", "completing", "completed", "aborting", "aborted"],
+      enum: ["pending", "completing", "completed", "aborting", "aborted", "blocked"],
       required: true,
       default: "pending",
     },
     expiresAt: { type: Date, required: true },
+    cleanupLeaseId: String,
+    cleanupLeaseExpiresAt: Date,
   },
   { timestamps: true, collection: "photoUploads" },
 );

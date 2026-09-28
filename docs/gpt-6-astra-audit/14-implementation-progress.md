@@ -27,6 +27,7 @@ The audit is a snapshot of the pre-remediation working tree. Findings are not cl
 | 0L | Bind generic Drive completion to claimed, Space-scoped uploads | Complete; full suite passed |
 | 0M | Stop losing Photos completions and aborts from deleting another upload | Complete; full suite passed |
 | 0N | Reserve Photos variant keys and bind completion/abort to a manifest | Complete; full suite passed |
+| 0O | Lease and reconcile expired Photos upload cleanup through authenticated cron | Complete; full suite passed |
 
 The rest of the roadmap remains open. F09/F10 also require durable claim/reconciliation across concurrent finalize/restore/purge operations; a deletion confirmation patch alone is not complete lifecycle safety.
 
@@ -176,3 +177,11 @@ Commit: `18709ac`.
 - Disposable Mongo tests cover stable presign identities, manifest mismatch, successful completion, response-lost retry, a losing asset-ID race, and exact-key abort that cannot delete a supplied Drive key.
 - Final validation: all 15 test workspaces passed, **513 tests** (343 Drive, 92 Accounts, 17 Photos app, 61 shared packages). The final Photos rerun passed all 17 tests, including concurrent presign and completion. Root typecheck, Photos/database lint and package boundaries passed. The new API contract is recorded in `15-photos-upload-contract.md`.
 - Expired pending and interrupted `completing` manifests still need an authenticated cron reconciler. Metadata, Usage, bucket counters and manifest completion are not yet one database transaction. A referenced manifest that reaches abort currently remains blocked for operator review rather than risking deletion.
+
+## 0O — Leased Photos orphan cleanup
+
+- Client abort and cron now use one manifest-owned cleanup service. It takes a five-minute conditional lease, confirms exact-key B2 deletion, checks every product/retained StorageObject reference and retains retry state on transport or per-key failure. Referenced manifests become `blocked` and are excluded from destructive cleanup.
+- The authenticated Photos HTTP cron handles one bounded batch of 100 expired pending/aborting/aborted manifests. Confirmed deletion precedes removal of the ledger. Aborted manifests remain until the grace window expires, then their keys are checked/deleted again to reclaim bytes replayed through an old PUT URL. Presign renews that grace window whenever it issues URLs.
+- `apps/photos/vercel.json` registers the hourly schedule for a Photos-root deployment. Tests authenticate the route, verify exact manifests, protect a Drive reference, retain per-key deletion failures, retry them, enforce one concurrent cleanup lease and recheck aborted keys after expiry.
+- Final validation: all 15 test workspaces passed, **520 tests** (343 Drive, 92 Accounts, 24 Photos app, 61 shared packages). Root typecheck passed all 16 workspaces; Photos/database lint, package boundaries and Photos cron JSON parsing passed.
+- Interrupted `completing` and completed manifests are not automatically deleted. Transactional finalization and a read-only/durable reconciler for interrupted or blocked records remain required; no live B2 delete or deployed cron was executed.

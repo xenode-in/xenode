@@ -20,7 +20,8 @@ response contains `uploadId`, `bucketId`, `original`, and optional `optimized`
 and `thumbnail` variants. Each variant contains `objectKey` and `uploadUrl`.
 Keys are server-generated `users/{accountId}/{randomHex32}` values. Repeating
 presign for the same pending asset and sizes returns the same upload ID and
-variant keys. An incompatible, expired or completed manifest returns 409.
+variant keys and renews the 24-hour cleanup grace window. An incompatible,
+expired or completed manifest returns 409.
 
 ## Completion
 
@@ -56,13 +57,26 @@ the manifest retryable in `aborting`; confirmed deletion marks it `aborted`.
 | `completed` | Metadata and counters were written; client abort is denied |
 | `aborting` | Exact-key deletion is in progress or must be retried |
 | `aborted` | B2 reported no deletion failures |
+| `blocked` | A claimed key is referenced by stored content; automatic deletion stops |
 
-The manifest has a 24-hour expiry and deliberately has no TTL index. A future
-authenticated cron must reconcile expired pending and interrupted completing
-records before removing them. The current multi-record completion writes are
-not yet a single database transaction. A process crash can therefore require
-reconciliation, and issued PUT URLs remain usable until their expiry. Phase 0N
-does not claim those durability properties are finished.
+The manifest has a 24-hour expiry and deliberately has no TTL index.
+`GET /api/cron/cleanup-photo-uploads` requires `Authorization: Bearer CRON_SECRET`
+and processes at most 100 expired pending, aborting or aborted manifests per
+invocation. Cleanup takes a five-minute lease, protects cross-product retained
+references and retires a manifest only after B2 confirms deletion. Failed
+deletions retain their manifest for retry. Aborted keys are checked again after
+the grace window so an upload replay through a previously issued URL cannot
+leave permanent orphaned ciphertext.
+
+The Photos deployment's `apps/photos/vercel.json` schedules the route hourly;
+the deployment must use the Photos app as its root and configure `CRON_SECRET`.
+No live scheduler invocation is part of local validation.
+
+Automatic cleanup leaves `completing` and `completed` manifests alone. The
+current multi-record completion writes are not yet a single database
+transaction, so interrupted completing and blocked records need a separate
+reconciler. Issued PUT URLs remain usable until their expiry; completed-content
+immutability is not claimed by this contract yet.
 
 Development uses the new `photoUploads` collection and its unique
 `(spaceId, assetId)` index. Disposable databases can be reset/reseeded; no
