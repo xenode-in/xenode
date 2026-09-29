@@ -21,7 +21,6 @@ import { PATCH as reorder } from "@/app/api/objects/reorder/route";
 import { POST as metadata } from "@/app/api/objects/update-metadata/route";
 import { POST as restore } from "@/app/api/objects/restore/route";
 import { POST as purge } from "@/app/api/objects/purge/route";
-import { POST as completeUpdate } from "@/app/api/objects/[id]/complete-update/route";
 import { PATCH as patchObject } from "@/app/api/objects/[id]/route";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
@@ -55,6 +54,7 @@ describe("generic storage mutation permissions", () => {
       user: { id: accountId }, session: { id: "permission-session" },
     } as unknown as NonNullable<Awaited<ReturnType<typeof getServerSession>>>);
     await Space.create({ _id: spaceId, type: "organization", organizationId, createdByAccountId: accountId });
+    await OrgUsage.create({ orgId: organizationId, accountId: `org:${organizationId}` });
     await setRole("guest");
   });
 
@@ -63,7 +63,6 @@ describe("generic storage mutation permissions", () => {
     ["complete upload", "POST", complete], ["legacy upload", "POST", upload],
     ["reorder", "PATCH", reorder], ["metadata", "POST", metadata],
     ["restore", "POST", restore], ["purge", "POST", purge],
-    ["complete update", "POST", (req) => completeUpdate(req, params)],
     ["patch object", "PATCH", (req) => patchObject(req, params)],
   ];
 
@@ -398,7 +397,6 @@ describe("generic storage mutation permissions", () => {
 
   it("finalizes a claimed encrypted object and closes its reservation", async () => {
     const { body, reservation } = await completionFixture();
-    await OrgUsage.create({ orgId: organizationId, accountId: `org:${organizationId}` });
     send.mockResolvedValue({ VersionId: "ciphertext-version", ContentLength: 16 });
     const response = await complete(request("POST", body));
     expect(response.status).toBe(201);

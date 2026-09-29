@@ -34,48 +34,6 @@ export async function getOrCreateOrgUsage(
   );
 }
 
-/** Throw 402 if adding `sizeBytes` would exceed the org ceiling (pre-check). */
-export async function assertOrgStorageHeadroom(orgId: string, sizeBytes: number) {
-  const usage = await getOrCreateOrgUsage(orgId);
-  if (usage.storageLimitBytes !== null) {
-    const projected = (usage.totalStorageBytes || 0) + sizeBytes;
-    if (projected > usage.storageLimitBytes) {
-      throw new AuthzError(
-        402,
-        "org_storage_quota_exceeded",
-        "Organization storage limit reached",
-      );
-    }
-  }
-  return usage;
-}
-
-/** Atomically increment org storage, enforcing the ceiling in the same write. */
-export async function incrementOrgStorage(orgId: string, sizeBytes: number) {
-  await dbConnect();
-  const usage = await getOrCreateOrgUsage(orgId);
-  const filter =
-    usage.storageLimitBytes === null || sizeBytes <= 0
-      ? { orgId }
-      : {
-          orgId,
-          totalStorageBytes: { $lte: usage.storageLimitBytes - sizeBytes },
-        };
-  const updated = await OrgUsage.findOneAndUpdate(
-    filter,
-    { $inc: { totalStorageBytes: sizeBytes, totalObjects: 1 } },
-    { new: true },
-  );
-  if (!updated) {
-    throw new AuthzError(
-      402,
-      "org_storage_quota_exceeded",
-      "Organization storage limit reached",
-    );
-  }
-  return updated;
-}
-
 /** Adjust org storage for an overwrite (positive deltas enforce the ceiling). */
 export async function adjustOrgStorage(orgId: string, sizeDelta: number) {
   await dbConnect();

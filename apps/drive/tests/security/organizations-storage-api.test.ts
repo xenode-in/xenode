@@ -2,11 +2,12 @@ import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET as bucketsGET } from "@/app/api/orgs/[orgId]/buckets/route";
 import { GET as objectsGET } from "@/app/api/orgs/[orgId]/objects/route";
-import { POST as completeUploadPOST } from "@/app/api/orgs/[orgId]/objects/complete-upload/route";
-import { POST as presignPOST } from "@/app/api/orgs/[orgId]/objects/presign-upload/route";
+import { POST as completeUploadPOST } from "@/app/api/objects/complete-upload/route";
+import { POST as presignPOST } from "@/app/api/objects/presign-upload/route";
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import OrgUsage from "@/models/OrgUsage";
 import { ensureOrganizationSpace } from "@xenode/spaces/repository";
 
 vi.mock("@/lib/b2/buckets", () => ({
@@ -15,7 +16,7 @@ vi.mock("@/lib/b2/buckets", () => ({
 
 vi.mock("@/lib/b2/client", () => ({
   getS3Client: vi.fn(() => ({
-    send: vi.fn(async () => ({ VersionId: "b2-version-1" })),
+    send: vi.fn(async () => ({ VersionId: "b2-version-1", ContentLength: 10 })),
   })),
 }));
 
@@ -55,6 +56,10 @@ async function createOrg(id = "org_1") {
     createdAt: new Date(),
     updatedAt: new Date(),
   });
+  await OrgUsage.findOneAndUpdate(
+    { orgId: id }, { $setOnInsert: { orgId: id, accountId: `org:${id}` } },
+    { upsert: true, returnDocument: "after", setDefaultsOnInsert: true },
+  );
 }
 
 async function addMember(userId: string, role = "member", orgId = "org_1") {
@@ -65,6 +70,7 @@ async function addMember(userId: string, role = "member", orgId = "org_1") {
     role,
     createdAt: new Date(),
   });
+  await ensureOrganizationSpace({ accountId: userId, organizationId: orgId });
 }
 
 async function createOrgBucket(orgId = "org_1") {
@@ -93,7 +99,10 @@ function request(path: string, method = "GET", body?: unknown) {
       ? {}
       : {
           body: JSON.stringify(body),
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            ...(path.startsWith("/api/objects/") ? { "x-xenode-space-id": "space_org_org_1" } : {}),
+          },
         }),
   });
 }
@@ -154,9 +163,10 @@ describe("organization storage API", () => {
     const bucket = await createOrgBucket();
 
     const response = await completeUploadPOST(
-      request("/api/orgs/org_1/objects/complete-upload", "POST", {
+      request("/api/objects/complete-upload", "POST", {
         bucketId: bucket!._id.toString(),
         objectKey: "workspaces/org_1/objects/file.txt",
+        sessionId: "000000000000000000000001",
         size: 10,
         contentType: "text/plain",
         isEncrypted: true,
@@ -164,14 +174,13 @@ describe("organization storage API", () => {
         encryptedDEK: "wrapped",
         spaceKeyVersion: 1,
       }),
-      params(),
     );
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
       error:
-        "Organization uploads must be encrypted and wrapped by the organization space key",
-      code: "org_space_wrapped_encryption_required",
+        "Organization and team uploads must be encrypted and wrapped by the workspace space key",
+      code: "workspace_space_wrapped_encryption_required",
     });
   });
 
@@ -186,20 +195,20 @@ describe("organization storage API", () => {
     const bucket = await createOrgBucket();
 
     const response = await presignPOST(
-      new NextRequest("http://localhost/api/orgs/org_1/objects/presign-upload", {
+      new NextRequest("http://localhost/api/objects/presign-upload", {
         method: "POST",
         body: JSON.stringify({
           bucketId: bucket!._id.toString(),
           fileName: "../leaky-name.txt",
-          fileType: "text/plain",
-          prefix: "users/member_1/",
+          fileType: "application/octet-stream",
+          fileSize: 10,
+          prefix: "workspaces/org_1/objects/",
         }),
         headers: {
           "content-type": "application/json",
           "x-xenode-space-id": "space_org_org_1",
         },
       }),
-      params(),
     );
     const body = await response.json();
 
@@ -208,7 +217,8 @@ describe("organization storage API", () => {
 
     expect(response.status).toBe(200);
     expect(body.uploadUrl).toBe("https://upload.example.test/presigned");
-    expect(body.objectKey).toMatch(/^workspaces\/org_1\/objects\//);
+    expect(body.objectKey).toMatch(/^workspaces\/org_1\/objects\/[0-9a-f]{32}$/u);
+    expect(body.sessionId).toMatch(/^[0-9a-f]{24}$/u);
     expect(body.objectKey).not.toContain("users/member_1");
     expect(body.spaceType).toBe("organization");
     expect(body.spaceId).toBe("space_org_org_1");
@@ -238,19 +248,25 @@ describe("organization storage API", () => {
       spaceKeyVersion: 1,
     });
 
+    const presign = await presignPOST(request("/api/objects/presign-upload", "POST", {
+      bucketId: bucket!._id.toString(), fileSize: 10, fileType: "application/octet-stream",
+    }));
+    expect(presign.status).toBe(200);
+    const reserved = await presign.json();
     const completeResponse = await completeUploadPOST(
-      request("/api/orgs/org_1/objects/complete-upload", "POST", {
+      request("/api/objects/complete-upload", "POST", {
         bucketId: bucket!._id.toString(),
-        objectKey: "workspaces/org_1/objects/file.txt",
+        objectKey: reserved.objectKey,
+        sessionId: reserved.sessionId,
         size: 10,
         contentType: "text/plain",
         isEncrypted: true,
         wrappedBy: "space",
         encryptedDEK: "space-wrapped-dek",
+        spaceKeyWrapIv: "wrap-iv",
         spaceKeyVersion: 2,
         encryptedName: "encrypted-name",
       }),
-      params("org_1"),
     );
     const completeBody = await completeResponse.json();
 
@@ -258,7 +274,7 @@ describe("organization storage API", () => {
     expect(completeBody.object).toMatchObject({
       spaceId: "space_org_org_1",
       createdByAccountId: "member_1",
-      key: "workspaces/org_1/objects/file.txt",
+      key: reserved.objectKey,
       wrappedBy: "space",
       spaceKeyVersion: 2,
       encryptedDEK: "space-wrapped-dek",
@@ -272,6 +288,6 @@ describe("organization storage API", () => {
 
     expect(listResponse.status).toBe(200);
     expect(listBody.objects).toHaveLength(1);
-    expect(listBody.objects[0].key).toBe("workspaces/org_1/objects/file.txt");
+    expect(listBody.objects[0].key).toBe(reserved.objectKey);
   });
 });

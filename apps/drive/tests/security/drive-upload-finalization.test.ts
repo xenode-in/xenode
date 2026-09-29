@@ -3,13 +3,16 @@ import { HeadObjectCommand } from "@aws-sdk/client-s3";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Space, getDatabase } from "@xenode/database";
 
-const { send, publish } = vi.hoisted(() => ({ send: vi.fn(), publish: vi.fn() }));
+const { send, publish, sign } = vi.hoisted(() => ({ send: vi.fn(), publish: vi.fn(), sign: vi.fn() }));
 vi.mock("@/lib/b2/client", () => ({ getS3Client: () => ({ send }) }));
+vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: sign }));
 vi.mock("@/lib/realtime/publish", () => ({
   publishSyncEvent: publish, parentPrefixForKey: vi.fn(), toSyncObjectSnapshot: vi.fn(),
 }));
 
 import { POST } from "@/app/api/objects/complete-upload/route";
+import { POST as presign } from "@/app/api/objects/presign-upload/route";
+import { POST as multipart } from "@/app/api/objects/presign-upload-multipart/route";
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import UploadSession from "@/models/UploadSession";
@@ -85,7 +88,10 @@ async function expectPendingUnmetered(input: Awaited<ReturnType<typeof fixture>>
 }
 
 describe("Drive verified transactional upload finalization", () => {
-  beforeEach(() => { send.mockReset(); publish.mockReset(); });
+  beforeEach(() => {
+    send.mockReset(); publish.mockReset(); sign.mockReset();
+    sign.mockResolvedValue("https://upload.example.test/presigned");
+  });
 
   it.each([99, undefined, -1, Number.MAX_SAFE_INTEGER + 1])("rejects invalid/mismatched B2 length %s before metadata or billing", async (length) => {
     const input = await fixture();
@@ -270,5 +276,51 @@ describe("Drive verified transactional upload finalization", () => {
     const usage = await recalculateUsage(input.accountId);
     expect(usage?.totalStorageBytes).toBe(230);
     expect(usage?.totalObjects).toBe(2);
+  });
+
+  const presignRoutes = [["single", presign], ["multipart", multipart]] as const;
+  function presignRequest(input: Awaited<ReturnType<typeof fixture>>) {
+    return request({ bucketId: String(input.bucket._id), fileSize: 100, chunkCount: 1 }, input.spaceId);
+  }
+
+  it.each(presignRoutes)("uses the organization's quota for %s presign even when the uploader's personal quota is full", async (_name, handler) => {
+    const input = await fixture({ organization: true });
+    await createUsage({ userId: input.accountId, totalStorageBytes: 100, storageLimitBytes: 100 });
+    const response = await handler(presignRequest(input));
+    expect(response.status).toBe(200);
+    expect((await response.json()).spaceId).toBe(input.spaceId);
+    expect(sign).toHaveBeenCalledOnce();
+    expect((await Usage.findOne({ userId: input.accountId }))?.totalStorageBytes).toBe(100);
+    expect((await OrgUsage.findOne({ orgId: input.organizationId }))?.totalStorageBytes).toBe(0);
+  });
+
+  it.each(presignRoutes)("rejects %s presign against a full organization quota before issuing a URL", async (_name, handler) => {
+    const input = await fixture({ organization: true, quota: 99 });
+    const response = await handler(presignRequest(input));
+    expect(response.status).toBe(402);
+    expect((await response.json()).code).toBe("storage_quota_exceeded");
+    expect(sign).not.toHaveBeenCalled();
+    expect(await UploadSession.countDocuments({})).toBe(1);
+  });
+
+  it.each(presignRoutes)("does not rewrite expired plan state during %s presign", async (_name, handler) => {
+    const input = await fixture();
+    await Usage.updateOne({ userId: input.accountId }, { $set: {
+      plan: "pro", storageLimitBytes: 1000, planExpiresAt: new Date(0), autopayActive: true,
+    } });
+    expect((await handler(presignRequest(input))).status).toBe(200);
+    expect((await Usage.findOne({ userId: input.accountId }))?.toObject()).toMatchObject({
+      plan: "pro", storageLimitBytes: 1000, planExpiresAt: new Date(0), autopayActive: true, totalStorageBytes: 0,
+    });
+  });
+
+  it.each(presignRoutes)("fails closed on uninitialized %s presign quota without creating usage or another claim", async (_name, handler) => {
+    const input = await fixture({ usage: false });
+    const response = await handler(presignRequest(input));
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("usage_not_initialized");
+    expect(sign).not.toHaveBeenCalled();
+    expect(await Usage.countDocuments({})).toBe(0);
+    expect(await UploadSession.countDocuments({})).toBe(1);
   });
 });

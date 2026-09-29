@@ -4,7 +4,8 @@ import { GET as teamsGET, POST as teamsPOST } from "@/app/api/orgs/[orgId]/teams
 import { DELETE as teamDELETE } from "@/app/api/orgs/[orgId]/teams/[teamId]/route";
 import { POST as teamMemberPOST } from "@/app/api/orgs/[orgId]/teams/[teamId]/members/route";
 import { DELETE as teamMemberDELETE } from "@/app/api/orgs/[orgId]/teams/[teamId]/members/[memberUserId]/route";
-import { POST as teamCompletePOST } from "@/app/api/orgs/[orgId]/teams/[teamId]/objects/complete-upload/route";
+import { POST as completeUploadPOST } from "@/app/api/objects/complete-upload/route";
+import { POST as presignUploadPOST } from "@/app/api/objects/presign-upload/route";
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
@@ -14,8 +15,9 @@ import OrgUsage from "@/models/OrgUsage";
 import mongoose from "mongoose";
 
 vi.mock("@/lib/b2/client", () => ({
-  getS3Client: vi.fn(() => ({ send: vi.fn(async () => ({ VersionId: "b2-v1" })) })),
+  getS3Client: vi.fn(() => ({ send: vi.fn(async () => ({ VersionId: "b2-v1", ContentLength: 500 })) })),
 }));
+vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: vi.fn(async () => "https://upload.example.test/presigned") }));
 
 const mockedGetServerSession = vi.mocked(getServerSession);
 
@@ -48,6 +50,7 @@ async function createOrg(id = "org_1") {
     createdAt: new Date(),
     updatedAt: new Date(),
   });
+  await OrgUsage.create({ orgId: id, accountId: `org:${id}` });
 }
 
 async function addOrgMember(userId: string, role = "member", orgId = "org_1") {
@@ -212,18 +215,26 @@ describe("organization teams & team drives", () => {
       { upsert: true, new: true },
     );
 
-    const res = await teamCompletePOST(
-      req(`/api/orgs/org_1/teams/${teamId}/objects/complete-upload`, {
+    const selectedSpace = teamSpaceId("org_1", teamId);
+    const presign = await presignUploadPOST(req(`/api/objects/presign-upload?spaceId=${selectedSpace}`, {
+      bucketId: bucket!._id.toString(), fileSize: 500, fileType: "application/octet-stream",
+    }));
+    expect(presign.status).toBe(200);
+    const reserved = await presign.json();
+    const res = await completeUploadPOST(
+      req(`/api/objects/complete-upload?spaceId=${selectedSpace}`, {
         bucketId: bucket!._id.toString(),
-        objectKey: `workspaces/org_1/teams/${teamId}/objects/file.bin`,
+        objectKey: reserved.objectKey,
+        sessionId: reserved.sessionId,
         size: 500,
         contentType: "text/plain",
         isEncrypted: true,
         wrappedBy: "space",
         encryptedDEK: "team-wrapped-dek",
+        encryptedName: "encrypted-name",
+        spaceKeyWrapIv: "wrap-iv",
         spaceKeyVersion: 1,
       }),
-      teamParams(teamId),
     );
     expect(res.status).toBe(201);
 

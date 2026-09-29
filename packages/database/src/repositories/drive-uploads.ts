@@ -1,5 +1,5 @@
-import type { Types } from "mongoose";
-import { getDatabase, withTransaction } from "../connection";
+import type { ClientSession, Types } from "mongoose";
+import { connectDatabase, getDatabase, withTransaction } from "../connection";
 import { DriveUploadSession, Space } from "../models";
 
 export class DriveUploadCommitError extends Error {
@@ -10,6 +10,36 @@ export class DriveUploadCommitError extends Error {
 }
 
 export interface VerifiedDriveBlob { key: string; size: number }
+
+async function loadSpaceUsage(spaceId: string, accountId: string, session?: ClientSession) {
+  const space = await Space.findOne({ _id: spaceId, status: "active" }).session(session ?? null).lean();
+  const personal = space?.type === "personal";
+  const ownerId = personal ? space?.ownerAccountId : space?.organizationId;
+  if (!ownerId || (personal && ownerId !== accountId)) {
+    throw new DriveUploadCommitError(409, "space_owner_missing", "Space storage owner is unavailable");
+  }
+  const usages = getDatabase().collection(personal ? "usages" : "orgusages");
+  const ownerFilter = personal ? { userId: ownerId } : { orgId: ownerId };
+  const usage = await usages.findOne(ownerFilter, { session });
+  if (!usage || !Number.isSafeInteger(usage.totalStorageBytes) || usage.totalStorageBytes < 0 ||
+    (usage.storageLimitBytes !== null && (!Number.isSafeInteger(usage.storageLimitBytes) || usage.storageLimitBytes < 0))) {
+    throw new DriveUploadCommitError(409, "usage_not_initialized", "Storage usage and limit must be initialized");
+  }
+  return { personal, usages, ownerFilter, usage };
+}
+
+/** Read-only preflight; authoritative quota is reserved by finalization's transaction. */
+export async function assertDriveUploadHeadroom(input: { spaceId: string; accountId: string; additionalBytes: number }) {
+  await connectDatabase();
+  const { usage } = await loadSpaceUsage(input.spaceId, input.accountId);
+  if (!Number.isSafeInteger(input.additionalBytes) || input.additionalBytes < 1 ||
+    !Number.isSafeInteger(usage.totalStorageBytes + input.additionalBytes)) {
+    throw new DriveUploadCommitError(400, "invalid_upload_size", "Invalid upload size");
+  }
+  if (usage.storageLimitBytes !== null && usage.totalStorageBytes + input.additionalBytes > usage.storageLimitBytes) {
+    throw new DriveUploadCommitError(402, "storage_quota_exceeded", "Storage quota exceeded");
+  }
+}
 
 /** Commit verified ciphertext, its owner counters and its reservation together. */
 export async function commitDriveUpload(input: {
@@ -69,24 +99,14 @@ export async function commitDriveUpload(input: {
         expectedBlobs.some((blob) => verifiedByKey.get(blob.key as string) !== blob.size)) {
         throw new DriveUploadCommitError(409, "upload_manifest_mismatch", "Verified blobs do not match the upload metadata");
       }
-      const space = await Space.findOne({ _id: input.spaceId, status: "active" }).session(session).lean();
-      const personal = space?.type === "personal";
-      const ownerId = personal ? space?.ownerAccountId : space?.organizationId;
-      if (!ownerId || (personal && ownerId !== input.accountId)) {
-        throw new DriveUploadCommitError(409, "space_owner_missing", "Space storage owner is unavailable");
-      }
+      const { personal, usages, ownerFilter, usage } = await loadSpaceUsage(input.spaceId, input.accountId, session);
       const claim = await DriveUploadSession.updateOne(
         { _id: manifest._id, status: "pending" }, { $set: { status: "completing" } }, { session },
       );
       if (claim.modifiedCount !== 1) {
         throw new DriveUploadCommitError(409, "upload_reservation_conflict", "Upload was claimed by another operation");
       }
-      const usages = database.collection(personal ? "usages" : "orgusages");
-      const ownerFilter = personal ? { userId: ownerId } : { orgId: ownerId };
-      const usage = await usages.findOne(ownerFilter, { session });
-      if (!usage || !Number.isSafeInteger(usage.totalStorageBytes) || usage.totalStorageBytes < 0 ||
-        (usage.storageLimitBytes !== null && (!Number.isSafeInteger(usage.storageLimitBytes) || usage.storageLimitBytes < 0)) ||
-        !Number.isSafeInteger(usage.totalStorageBytes + totalBytes)) {
+      if (!Number.isSafeInteger(usage.totalStorageBytes + totalBytes)) {
         throw new DriveUploadCommitError(409, "usage_not_initialized", "Storage usage and limit must be initialized");
       }
       const now = new Date();

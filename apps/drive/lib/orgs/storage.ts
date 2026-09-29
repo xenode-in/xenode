@@ -56,20 +56,6 @@ export async function requireOrgStorageMembership(args: {
   });
 }
 
-export function assertOrgObjectKey(args: { orgId: string; key: unknown }): string {
-  if (typeof args.key !== "string" || !args.key) {
-    throw new AuthzError(400, "object_key_required", "Object key is required");
-  }
-  if (!args.key.startsWith(orgObjectKeyPrefix(args.orgId))) {
-    throw new AuthzError(
-      403,
-      "invalid_org_object_key",
-      "Object key must stay inside this organization",
-    );
-  }
-  return args.key;
-}
-
 export async function loadOrgBucket(args: {
   orgId: string;
   bucketId: string;
@@ -110,24 +96,6 @@ export function teamObjectClause(
   teamId: string,
 ): Record<string, unknown> {
   return { spaceId: teamSpaceId(orgId, teamId) };
-}
-
-export function assertTeamObjectKey(args: {
-  orgId: string;
-  teamId: string;
-  key: unknown;
-}): string {
-  if (typeof args.key !== "string" || !args.key) {
-    throw new AuthzError(400, "object_key_required", "Object key is required");
-  }
-  if (!args.key.startsWith(teamObjectKeyPrefix(args.orgId, args.teamId))) {
-    throw new AuthzError(
-      403,
-      "invalid_team_object_key",
-      "Object key must stay inside this team",
-    );
-  }
-  return args.key;
 }
 
 /**

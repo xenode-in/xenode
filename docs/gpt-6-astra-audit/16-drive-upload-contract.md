@@ -1,9 +1,24 @@
 # Drive upload finalization contract
 
-Implemented in phase 0Q. This describes the generic direct-to-B2 Drive upload
-path; dedicated organization routes and revision flows still need separate review.
+Implemented in phases 0Q–0S. Personal, organization and team uploads use one
+direct-to-B2 Drive path; revision flows still need separate review.
 
 ## Presign and completion
+
+Use `/api/objects/presign-upload`, `presign-upload-multipart` and
+`complete-upload`, selecting the Space with `x-xenode-space-id` or
+`?spaceId=...`. The four separate organization/team presign/completion routes
+were removed in 0S, along with the unused `/api/objects/[id]/complete-update`
+endpoint that accepted an unverified size without charging Usage. No
+compatibility alias remains. Browser callers already use
+the canonical routes, and organization/team integration tests now do too.
+
+Both presign paths perform a read-only quota preflight against the same Space
+owner used by transactional completion. An organization member's personal
+quota/subscription fields do not control organization uploads. Missing quota
+state returns 409; exhausted headroom returns 402 before signing. Presign does
+not expire plans or initialize limits. Billing's canonical writer owns plan
+transitions. Presign responses include the resolved Space identity.
 
 - Presign returns the server-issued object key, bucket and Space-bound
   `sessionId`. Refresh and variant presign require the pending reservation.
@@ -87,7 +102,6 @@ not automatically discarded. The repository-root Vercel configuration requests
 hourly cleanup; this is configuration, not proof of an active deployment.
 
 Bin purge still needs durable transactional metadata/accounting after confirmed
-B2 deletion. Revision and dedicated
-organization upload routes are not covered by this generic route's transaction.
+B2 deletion. Revision routes are not covered by this upload transaction.
 Browser journal Space/crypto completeness, opaque folder-free keys and B2 PUT
 replay protection remain pending audit work.

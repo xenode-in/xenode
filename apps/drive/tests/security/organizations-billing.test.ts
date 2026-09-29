@@ -4,10 +4,6 @@ import { POST as checkoutPOST } from "@/app/api/orgs/[orgId]/billing/subscriptio
 import { POST as invitePOST } from "@/app/api/orgs/[orgId]/invitations/route";
 import { getServerSession } from "@/lib/auth/session";
 import { syncOrgSubscriptionState } from "@/lib/orgs/billing/service";
-import {
-  incrementOrgStorage,
-  getOrCreateOrgUsage,
-} from "@/lib/orgs/billing/orgUsage";
 import Subscription from "@/models/Subscription";
 import OrgUsage from "@/models/OrgUsage";
 import mongoose from "mongoose";
@@ -199,19 +195,4 @@ describe("organization billing & seats", () => {
     expect(usage?.autopayActive).toBe(true);
   });
 
-  it("enforces the org storage ceiling atomically", async () => {
-    await getOrCreateOrgUsage("org_1");
-    await OrgUsage.updateOne(
-      { orgId: "org_1" },
-      { $set: { storageLimitBytes: 100, totalStorageBytes: 0 } },
-    );
-
-    const after = await incrementOrgStorage("org_1", 60);
-    expect(after.totalStorageBytes).toBe(60);
-
-    await expect(incrementOrgStorage("org_1", 60)).rejects.toThrow();
-
-    const usage = await OrgUsage.findOne({ orgId: "org_1" }).lean();
-    expect(usage?.totalStorageBytes).toBe(60); // unchanged after rejection
-  });
 });

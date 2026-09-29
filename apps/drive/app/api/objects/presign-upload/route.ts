@@ -12,15 +12,13 @@ import { getS3Client } from "@/lib/b2/client";
 import { activeStorageBucketName } from "@/lib/storage/region-context";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
-import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
-import { enforceStorageAccess } from "@/lib/subscriptions/service";
 import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
 import {
   reserveUploadSession,
   attachToUploadSession,
   findPendingUploadSession,
 } from "@/lib/uploads/session";
-import { findReferencedStorageObjectKeys } from "@xenode/database";
+import { assertDriveUploadHeadroom, DriveUploadCommitError, findReferencedStorageObjectKeys } from "@xenode/database";
 
 export const dynamic = "force-dynamic";
 
@@ -28,7 +26,6 @@ export async function POST(request: NextRequest) {
   try {
     const ctx = await requireAccessContext(request, "write");
     const userId = ctx.userId;
-    await enforceStorageAccess(userId);
 
     const {
       fileSize, fileType, bucketId, prefix,
@@ -62,43 +59,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
 
-    const usage = await Usage.findOne({ userId });
-    if (usage) {
-      if (
-        usage.plan !== "free" &&
-        usage.planExpiresAt &&
-        usage.planExpiresAt < new Date()
-      ) {
-        await Usage.updateOne(
-          { userId },
-          {
-            $set: {
-              plan: "free",
-              storageLimitBytes: FREE_TIER_LIMIT_BYTES,
-              planPriceINR: 0,
-            },
-          },
-        );
-        usage.storageLimitBytes = FREE_TIER_LIMIT_BYTES;
-      }
-
-      if (usage.storageLimitBytes !== null) {
-        const fileSizeBytes = typeof fileSize === "number" ? fileSize : 0;
-        const projectedUsage = (usage.totalStorageBytes || 0) + fileSizeBytes;
-        if (projectedUsage > usage.storageLimitBytes) {
-          return NextResponse.json(
-            {
-              error: "storage_quota_exceeded",
-              message:
-                "You have reached your storage limit. Please upgrade your plan or delete files.",
-              currentBytes: usage.totalStorageBytes,
-              limitBytes: usage.storageLimitBytes,
-            },
-            { status: 402 },
-          );
-        }
-      }
-    }
+    await assertDriveUploadHeadroom({
+      spaceId: ctx.spaceId, accountId: ctx.accountId, additionalBytes: fileSize,
+    });
 
     const allowedPrefix =
       ctx.spaceType === "organization"
@@ -188,16 +151,14 @@ export async function POST(request: NextRequest) {
       objectKey: opaqueKey,
       bucketId: bucket._id.toString(),
       sessionId,
+      spaceId: ctx.spaceId, spaceType: ctx.spaceType,
     });
   } catch (error) {
     if (isAuthzError(error)) {
       return toJsonResponse(error);
     }
-    if (error instanceof Error && error.name === "SubscriptionRequired") {
-      return NextResponse.json(
-        { error: "Active subscription required" },
-        { status: 402 },
-      );
+    if (error instanceof DriveUploadCommitError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
     }
     const message =
       error instanceof Error ? error.message : "Failed to generate upload URL";
