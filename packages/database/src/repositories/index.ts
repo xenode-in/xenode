@@ -9,6 +9,7 @@ export * from "./types";
 export * from "./storage-objects";
 export * from "./photo-uploads";
 export * from "./drive-uploads";
+export * from "./drive-upload-cleanup";
 
 export async function listExternalAccountsForUser(userId: string) {
   await connectDatabase();

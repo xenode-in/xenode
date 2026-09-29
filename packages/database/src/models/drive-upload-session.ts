@@ -8,7 +8,14 @@ export interface DriveUploadSessionRecord {
   bucketId: Types.ObjectId;
   fileId: string;
   keys: string[];
-  status: "pending" | "completing" | "completed";
+  status: "pending" | "completing" | "completed" | "cleaning" | "blocked";
+  committedKeys: string[];
+  cleanupState: "pending" | "cleaning" | "blocked" | "done";
+  cleanupLeaseId?: string;
+  cleanupLeaseExpiresAt?: Date;
+  cleanupNextAttemptAt?: Date;
+  cleanupCompletedAt?: Date;
+  cleanupError?: string;
   expiresAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -20,7 +27,14 @@ const schema = new Schema<DriveUploadSessionRecord>({
   bucketId: { type: Schema.Types.ObjectId, required: true },
   fileId: { type: String, required: true },
   keys: { type: [String], default: [] },
-  status: { type: String, enum: ["pending", "completing", "completed"], default: "pending" },
+  status: { type: String, enum: ["pending", "completing", "completed", "cleaning", "blocked"], default: "pending" },
+  committedKeys: { type: [String], default: [] },
+  cleanupState: { type: String, enum: ["pending", "cleaning", "blocked", "done"], default: "pending" },
+  cleanupLeaseId: String,
+  cleanupLeaseExpiresAt: Date,
+  cleanupNextAttemptAt: Date,
+  cleanupCompletedAt: Date,
+  cleanupError: String,
   expiresAt: { type: Date, required: true },
 }, { timestamps: true, collection: "uploadsessions" });
 
@@ -28,5 +42,6 @@ schema.index({ bucketId: 1, fileId: 1 }, { unique: true });
 // Keep completed claims: a physical key cannot be reused by another upload.
 schema.index({ bucketId: 1, keys: 1 }, { unique: true });
 schema.index({ status: 1, expiresAt: 1 });
+schema.index({ cleanupState: 1, expiresAt: 1, cleanupNextAttemptAt: 1 });
 // No TTL: ciphertext must be removed before its cleanup ledger is discarded.
 export const DriveUploadSession = getModel<DriveUploadSessionRecord>("UploadSession", schema);

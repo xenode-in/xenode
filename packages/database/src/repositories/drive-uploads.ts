@@ -110,7 +110,10 @@ export async function commitDriveUpload(input: {
         throw new DriveUploadCommitError(409, "bucket_missing", "Regional bucket metadata is missing");
       }
       const completed = await DriveUploadSession.updateOne(
-        { _id: manifest._id, status: "completing" }, { $set: { status: "completed" } }, { session },
+        { _id: manifest._id, status: "completing" }, { $set: {
+          status: "completed", committedKeys: [...new Set([manifest.fileId, ...blobKeys])],
+          cleanupState: "pending",
+        } }, { session },
       );
       if (completed.modifiedCount !== 1) {
         throw new DriveUploadCommitError(409, "upload_reservation_conflict", "Upload claim disappeared");

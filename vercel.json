@@ -18,7 +18,7 @@
     },
     {
       "path": "/api/cron/cleanup-orphans",
-      "schedule": "0 */6 * * *"
+      "schedule": "0 * * * *"
     }
   ]
 }

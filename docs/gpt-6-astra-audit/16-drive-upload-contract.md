@@ -67,10 +67,27 @@ commit and its failure does not turn durable completion into an error.
 
 ## Remaining boundaries
 
-Drive orphan cleanup still needs a lease that serializes with completion and
-reservation renewal, durable retry state and reconciliation of unused variants
-on completed reservations. Bin purge also still needs durable transactional
-metadata/accounting after confirmed B2 deletion. Revision and dedicated
+Phase 0R adds conditional five-minute cleanup leases that serialize with
+completion and reservation renewal on the manifest. The authenticated HTTP cron
+processes at most 100 eligible manifests per request after their 24-hour grace
+window. Variant presign renews that window as well as main/chunk refresh.
+
+Expired pending manifests transition to `cleaning`. Exact-key deletion is
+reference-checked across all products, Bin and retained versions. Confirmed B2
+deletion precedes ledger removal; transport/per-key errors retain retry state,
+and interrupted leases become eligible after expiry. Failed work has a one-minute
+cooldown. Only the current lease owner can retire or update a manifest.
+Referenced or invalid manifests become `blocked` and retain their claims.
+
+Completion stores `committedKeys` in its transaction. After grace, cleanup may
+delete only reserved keys outside that set. It keeps the completed manifest and
+all its key claims, marks its cleanup state `done`, and leaves object metadata,
+usage and retries intact. Referenced unused keys block reconciliation; they are
+not automatically discarded. The repository-root Vercel configuration requests
+hourly cleanup; this is configuration, not proof of an active deployment.
+
+Bin purge still needs durable transactional metadata/accounting after confirmed
+B2 deletion. Revision and dedicated
 organization upload routes are not covered by this generic route's transaction.
 Browser journal Space/crypto completeness, opaque folder-free keys and B2 PUT
 replay protection remain pending audit work.

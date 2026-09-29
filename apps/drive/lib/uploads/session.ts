@@ -125,6 +125,7 @@ export async function attachToUploadSession(params: {
     _id: { $ne: params.parentSessionId },
   });
   if (conflicting) return null;
+  const now = new Date();
   try {
     const doc = await UploadSession.findOneAndUpdate(
       {
@@ -134,9 +135,12 @@ export async function attachToUploadSession(params: {
         userId: params.userId,
         spaceId: params.spaceId,
         status: "pending",
-        expiresAt: { $gt: new Date() },
+        expiresAt: { $gt: now },
       },
-      { $addToSet: { keys: params.key } },
+      {
+        $addToSet: { keys: params.key },
+        $set: { expiresAt: new Date(now.getTime() + UPLOAD_SESSION_TTL_MS) },
+      },
       { returnDocument: "after" },
     );
     return doc?._id.toString() ?? null;

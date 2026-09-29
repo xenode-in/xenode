@@ -71,8 +71,7 @@ describe("cleanup-orphans: thumbnail protection", () => {
       b2FileId: "b2-main",
     });
 
-    // A legacy orphan "thumb session" (created before thumbnails attached to
-    // their parent) that never flipped to completed and is now expired.
+    // A conflicting expired claim must be retained for reconciliation.
     await UploadSession.create({
       userId,
       spaceId: `space_personal_${userId}`,
@@ -89,9 +88,9 @@ describe("cleanup-orphans: thumbnail protection", () => {
     expect(res.status).toBe(200);
     // The live thumbnail must NOT be deleted...
     expect(deleteObjects).not.toHaveBeenCalled();
-    expect(body.skippedLive).toBe(1);
-    // ...and the stale ledger row is retired so it stops being re-scanned.
-    expect(await UploadSession.countDocuments({ fileId: thumbKey })).toBe(0);
+    expect(body.blocked).toBe(1);
+    // Keep the exact claim; do not discard evidence of its retained reference.
+    expect((await UploadSession.findOne({ fileId: thumbKey }))?.status).toBe("blocked");
   });
 
   it("never deletes a blob still referenced as a live file's optimized preview", async () => {
@@ -124,7 +123,7 @@ describe("cleanup-orphans: thumbnail protection", () => {
     const body = await res.json();
 
     expect(deleteObjects).not.toHaveBeenCalled();
-    expect(body.skippedLive).toBe(1);
+    expect(body.blocked).toBe(1);
   });
 
   it("still reclaims a genuinely orphaned upload", async () => {
@@ -150,7 +149,7 @@ describe("cleanup-orphans: thumbnail protection", () => {
     expect(deleteObjects).toHaveBeenCalledTimes(1);
     const deletedKeys = deleteObjects.mock.calls[0][1] as string[];
     expect(deletedKeys).toContain(orphanKey);
-    expect(body.skippedLive).toBe(0);
+    expect(body.blocked).toBe(0);
     expect(await UploadSession.countDocuments({ fileId: orphanKey })).toBe(0);
   });
 
@@ -196,7 +195,7 @@ describe("cleanup-orphans: thumbnail protection", () => {
       const response = await GET(cronRequest());
       expect(response.status).toBe(200);
       expect(deleteObjects).not.toHaveBeenCalled();
-      expect((await response.json()).skippedLive).toBe(1);
+      expect((await response.json()).blocked).toBe(1);
     },
   );
 
