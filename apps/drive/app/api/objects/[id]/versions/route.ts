@@ -30,6 +30,7 @@ export async function GET(
 
     return NextResponse.json({
       maxVersions: MAX_VERSIONS_PER_OBJECT,
+      revision: object.revision,
       versions: versions.filter((v) => !v.pendingDeletion).map((v) => ({
         versionId: v.versionId,
         isOriginal: !!v.isOriginal,

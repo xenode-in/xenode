@@ -433,6 +433,38 @@
       }
     },
 
+    "/api/objects/{id}/versions": {
+      "get": {
+        "tags": ["Objects"], "summary": "List retained versions",
+        "description": "Returns current revision and up to ten available snapshots; pending deletion entries stay charged but are omitted.",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Retained history and current revision" } }
+      }
+    },
+    "/api/objects/{id}/versions/{versionId}": {
+      "delete": {
+        "tags": ["Objects"], "summary": "Schedule a historical version for deletion",
+        "description": "Requires Space deletion permission. Keeps exact blob references and charged bytes until the authenticated cleanup cron confirms B2 removal.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "versionId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": { "202": { "description": "Deletion pending" }, "409": { "description": "Protected original" } }
+      }
+    },
+    "/api/objects/{id}/versions/{versionId}/restore": {
+      "post": {
+        "tags": ["Objects"], "summary": "Restore a retained version transactionally",
+        "description": "Requires Space write permission and the current base revision. Moves metadata only, preserving pending cleanup and physical accounting.",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "versionId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "x-xenode-base-revision", "in": "header", "required": true, "schema": { "type": "integer", "minimum": 0 } }
+        ],
+        "responses": { "200": { "description": "New current revision" }, "409": { "description": "Stale base revision or deletion pending" } }
+      }
+    },
+
     "/api/objects/folder": {
       "post": {
         "tags": ["Objects"],

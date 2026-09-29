@@ -11,8 +11,8 @@ export class DriveUploadCommitError extends Error {
 
 export interface VerifiedDriveBlob { key: string; size: number }
 
-export async function loadSpaceUsage(spaceId: string, accountId: string | undefined, session?: ClientSession) {
-  const space = await Space.findOne({ _id: spaceId, status: "active" }).session(session ?? null).lean();
+export async function loadSpaceUsage(spaceId: string, accountId: string | undefined, session?: ClientSession, includeInactive = false) {
+  const space = await Space.findOne({ _id: spaceId, ...(includeInactive ? {} : { status: "active" }) }).session(session ?? null).lean();
   const personal = space?.type === "personal";
   const ownerId = personal ? space?.ownerAccountId : space?.organizationId;
   if (!ownerId || (personal && accountId !== undefined && ownerId !== accountId)) {

@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Dialog,
   DialogContent,
@@ -27,6 +28,7 @@ import {
 import { fromB64 } from "@/lib/crypto/utils";
 import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
+import { REVISION_HEADER } from "@/lib/storage/revisions";
 
 interface VersionEntry {
   versionId: string;
@@ -75,36 +77,25 @@ export function FileVersionsDialog({
   const workspace = useOptionalWorkspace();
   const workspaceSpaceKey = useWorkspaceSpaceKey();
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [versions, setVersions] = useState<VersionEntry[]>([]);
-  const [maxVersions, setMaxVersions] = useState(10);
   const [busyId, setBusyId] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
-    try {
+  const { data, isFetching: loading, error: queryError, refetch: load } = useQuery({
+    queryKey: ["file-versions", fileId, workspace?.driveScope ?? "personal"],
+    enabled: isOpen,
+    queryFn: async ({ signal }) => {
       const res = workspace?.scopedFetch
-        ? await workspace.scopedFetch(`/api/objects/${fileId}/versions`)
-        : await fetch(`/api/objects/${fileId}/versions`);
+        ? await workspace.scopedFetch(`/api/objects/${fileId}/versions`, { signal })
+        : await fetch(`/api/objects/${fileId}/versions`, { signal });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to load versions");
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to load versions");
       }
-      const data = await res.json();
-      setVersions(data.versions ?? []);
-      setMaxVersions(data.maxVersions ?? 10);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load versions");
-    } finally {
-      setLoading(false);
-    }
-  }, [fileId, workspace]);
-
-  useEffect(() => {
-    if (isOpen) void load();
-  }, [isOpen, load]);
+      return await res.json() as { versions: VersionEntry[]; maxVersions: number; revision: number };
+    },
+  });
+  const versions = data?.versions ?? [];
+  const maxVersions = data?.maxVersions ?? 10;
+  const revision = data?.revision ?? 0;
+  const error = queryError instanceof Error ? queryError.message : "";
 
   const handleRestore = async (versionId: string) => {
     setBusyId(versionId);
@@ -112,11 +103,11 @@ export function FileVersionsDialog({
       const res = workspace?.scopedFetch
         ? await workspace.scopedFetch(
             `/api/objects/${fileId}/versions/${versionId}/restore`,
-            { method: "POST" },
+            { method: "POST", headers: { [REVISION_HEADER]: String(revision) } },
           )
         : await fetch(
             `/api/objects/${fileId}/versions/${versionId}/restore`,
-            { method: "POST" },
+            { method: "POST", headers: { [REVISION_HEADER]: String(revision) } },
           );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -150,7 +141,7 @@ export function FileVersionsDialog({
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Delete failed");
       }
-      toast.success("Version deleted");
+      toast.success("Version scheduled for deletion");
       await load();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Delete failed");

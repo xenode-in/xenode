@@ -34,9 +34,26 @@ The immutable original and nine rolling snapshots remain available. Overflow
 snapshots are marked `pendingDeletion`, retained in metadata and charged until
 their B2 deletion is confirmed. They cannot be restored or downloaded through
 the version routes. A bounded pending-history backlog blocks further saves.
-Durable deletion of these snapshots and transactional restore/manual deletion
-are the next lifecycle phase. No migration for disposable development records
-is included.
+Phase 0U handles durable snapshot deletion and transactional restore. Manual
+version deletion returns 202 and marks the snapshot pending; it does not discard
+references or free quota. Restore requires the base revision, cannot promote
+pending snapshots, preserves cleanup state and never copies or deletes bytes.
+The dialog sends that revision and describes deletion as scheduled.
+
+The authenticated `/api/cron/cleanup-versions` route processes at most 100
+embedded snapshots per request. A five-minute conditional lease serializes
+workers; expired leases can be recovered. The shared repository checks current,
+original, cross-product and Bin references before deleting exact keys. Referenced
+snapshots become blocked. Failed storage/accounting work retains the snapshot
+and a one-minute retry deadline. After confirmed B2 removal, one transaction
+removes the leased entry and decrements Space owner Usage/OrgUsage and bucket
+bytes. A stale lease owner cannot retire another worker's metadata.
+
+Bin purge waits while pending versions remain, preventing overlapping byte
+decrements. The root deployment configuration requests hourly version cleanup;
+no deployed scheduler was exercised. No migration for disposable development
+records is included. Broader transactional Bin purge and its restore race
+remain a separate audit item.
 
 This does not solve completed PUT replay, folder-prefix privacy, every legacy
 crypto format, or the remaining download byte proxies. No live B2 operation was

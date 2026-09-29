@@ -4,10 +4,8 @@ import { isAuthzError, requireAccessContext, toJsonResponse } from "@/lib/authz"
 import dbConnect from "@/lib/mongodb";
 import { orgObjectClause, requireOrgStorageMembership } from "@/lib/orgs/storage";
 import { systemWorkspaceBucketName } from "@/lib/storage/workspaceBucket";
-import {
-  collectVersionB2Keys,
-  versionsTotalBytes,
-} from "@/lib/storage/versions";
+import { storageObjectTotalBytes } from "@xenode/database";
+import { collectStorageObjectKeys } from "@/lib/storage/object-keys";
 import { deleteObjects as deleteB2Objects } from "@/lib/b2/objects";
 import StorageObject, { type IStorageObjectVersion } from "@/models/StorageObject";
 import OrgUsage from "@/models/OrgUsage";
@@ -22,7 +20,7 @@ interface RouteParams {
 }
 
 const MAX_IDS = 5000;
-const PURGE_PROJECTION = "_id key thumbnail optimizedKey size versions";
+const PURGE_PROJECTION = "_id key thumbnail optimizedKey thumbnailSize optimizedSize size versions chunks";
 
 type PurgeDoc = {
   _id: Types.ObjectId;
@@ -30,18 +28,14 @@ type PurgeDoc = {
   thumbnail?: string;
   optimizedKey?: string;
   size?: number;
+  thumbnailSize?: number;
+  optimizedSize?: number;
+  chunks?: Array<{ key: string }>;
   versions?: IStorageObjectVersion[];
 };
 
 function collectB2Keys(docs: PurgeDoc[]): string[] {
-  const keys: string[] = [];
-  for (const d of docs) {
-    if (d.key) keys.push(d.key);
-    if (d.thumbnail) keys.push(d.thumbnail);
-    if (d.optimizedKey) keys.push(d.optimizedKey);
-    for (const v of d.versions ?? []) keys.push(...collectVersionB2Keys(v));
-  }
-  return keys;
+  return docs.flatMap(collectStorageObjectKeys);
 }
 
 /**
@@ -128,6 +122,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: true, purgedCount: 0 });
     }
 
+    docs = [...new Map(docs.map((doc) => [String(doc._id), doc])).values()];
+    if (docs.some((doc) => doc.versions?.some((version) => version.pendingDeletion))) {
+      return NextResponse.json({ error: "Version deletion must finish before removing this file", code: "version_cleanup_pending" }, { status: 409 });
+    }
     const allDocIds = docs.map((d) => d._id);
 
     // 1. Remove encrypted blobs from the org's shared B2 bucket (best-effort).
@@ -144,7 +142,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     // 3. Free the org's storage.
     const totalSize = docs.reduce(
-      (sum, d) => sum + (d.size || 0) + versionsTotalBytes(d.versions ?? []),
+      (sum, d) => sum + storageObjectTotalBytes(d),
       0,
     );
     await OrgUsage.updateOne(

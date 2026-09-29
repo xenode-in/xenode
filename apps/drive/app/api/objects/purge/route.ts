@@ -198,6 +198,9 @@ export async function POST(request: NextRequest) {
     }
 
     docs = [...new Map(docs.map((doc) => [String(doc._id), doc])).values()];
+    if (docs.some((doc) => doc.versions?.some((version) => version.pendingDeletion))) {
+      return NextResponse.json({ error: "Version deletion must finish before removing this file", code: "version_cleanup_pending" }, { status: 409 });
+    }
     const allDocIds = docs.map((d) => d._id);
 
     // 1. Confirm encrypted blob deletion before discarding the metadata.

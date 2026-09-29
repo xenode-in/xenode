@@ -36,10 +36,7 @@ export async function POST(
     }
 
     if (versions.length > 0) {
-      versions[versions.length - 1].isOriginal = true;
-      versions[versions.length - 1].sharesCurrentContent =
-        versions[versions.length - 1].key === object.key;
-      object.versions = versions;
+      return NextResponse.json({ error: "Original version metadata is unavailable", code: "original_metadata_missing" }, { status: 409 });
     } else {
       object.versions = [
         snapshotCurrentAsVersion(object, ctx.userId, {

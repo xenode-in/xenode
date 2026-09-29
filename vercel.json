@@ -1,5 +1,6 @@
 {
   "crons": [
+    { "path": "/api/cron/cleanup-versions", "schedule": "30 * * * *" },
     {
       "path": "/api/cron/expire-plans",
       "schedule": "0 0 * * *"

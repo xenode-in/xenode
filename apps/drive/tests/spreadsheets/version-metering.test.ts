@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { IStorageObjectVersion } from "@/models/StorageObject";
-import { versionsTotalBytes } from "@/lib/storage/versions";
+import { storageObjectTotalBytes } from "@xenode/database";
 
 describe("protected original storage metering", () => {
   it("does not count the original twice while it is also current", () => {
@@ -15,8 +15,8 @@ describe("protected original storage metering", () => {
       createdBy: "u",
     };
 
-    expect(versionsTotalBytes([original])).toBe(0);
+    expect(storageObjectTotalBytes({ versions: [original] })).toBe(0);
     original.sharesCurrentContent = false;
-    expect(versionsTotalBytes([original])).toBe(4096);
+    expect(storageObjectTotalBytes({ versions: [original] })).toBe(4096);
   });
 });

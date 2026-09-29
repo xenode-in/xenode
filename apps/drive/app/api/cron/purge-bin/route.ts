@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
     let purgedCount = 0;
 
     for (let batch = 0; batch < MAX_BATCHES; batch++) {
-      const docs = await StorageObject.find({ deletedAt: { $lte: cutoff } })
+      const docs = await StorageObject.find({ deletedAt: { $lte: cutoff }, "versions.pendingDeletion": { $ne: true } })
         .select("_id bucketId spaceId key thumbnail optimizedKey thumbnailSize optimizedSize size versions chunks")
         .limit(BATCH)
         .lean<ExpiredDoc[]>();

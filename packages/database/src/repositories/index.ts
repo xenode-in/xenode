@@ -11,6 +11,7 @@ export * from "./photo-uploads";
 export * from "./drive-uploads";
 export * from "./drive-upload-cleanup";
 export * from "./drive-revisions";
+export * from "./drive-versions";
 
 export async function listExternalAccountsForUser(userId: string) {
   await connectDatabase();

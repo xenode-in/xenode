@@ -19,11 +19,12 @@ export function storageObjectTotalBytes(object: StorageByteSummary): number {
 }
 
 interface StorageReferences {
+  _id?: mongo.ObjectId;
   key?: string;
   thumbnail?: string;
   optimizedKey?: string;
   chunks?: Array<{ key?: string }>;
-  versions?: Array<{ key?: string; chunks?: Array<{ key?: string }> }>;
+  versions?: Array<{ versionId?: string; key?: string; chunks?: Array<{ key?: string }> }>;
 }
 
 /**
@@ -35,6 +36,7 @@ interface StorageReferences {
 export async function findReferencedStorageObjectKeys(args: {
   bucketId: string | mongo.ObjectId;
   keys: readonly string[];
+  ignoreVersion?: { objectId: string; versionId: string };
 }): Promise<Set<string>> {
   const candidates = [...new Set(args.keys.filter(Boolean))];
   const referenced = new Set<string>();
@@ -48,12 +50,14 @@ export async function findReferencedStorageObjectKeys(args: {
     const fields = ["key", "thumbnail", "optimizedKey", "chunks.key", "versions.key", "versions.chunks.key"];
     const cursor = getDatabase().collection<StorageReferences>("storageobjects")
       .find({ bucketId, $or: fields.map((field) => ({ [field]: { $in: keys } })) })
-      .project<StorageReferences>(Object.fromEntries(fields.map((field) => [field, 1])));
+      .project<StorageReferences>({ ...Object.fromEntries(fields.map((field) => [field, 1])), "versions.versionId": 1 });
     for await (const object of cursor) {
       const storedKeys = [
         object.key, object.thumbnail, object.optimizedKey,
         ...(object.chunks ?? []).map((chunk) => chunk.key),
-        ...(object.versions ?? []).flatMap((version) => [
+        ...(object.versions ?? []).filter((version) =>
+          !(object._id?.toString() === args.ignoreVersion?.objectId && version.versionId === args.ignoreVersion?.versionId),
+        ).flatMap((version) => [
           version.key, ...(version.chunks ?? []).map((chunk) => chunk.key),
         ]),
       ];

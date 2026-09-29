@@ -84,7 +84,7 @@ export async function getDriveRevision(input: DriveRevisionIdentity & { sessionI
   }).lean();
 }
 
-const contentFields = [
+export const contentFields = [
   "key", "b2FileId", "size", "contentType", "encryptedDEK", "wrappedBy", "spaceKeyId",
   "spaceKeyVersion", "spaceKeyWrapIv", "iv", "chunkSize", "chunkCount", "chunkIvs", "chunks", "encryptedMetadata",
 ] as const;

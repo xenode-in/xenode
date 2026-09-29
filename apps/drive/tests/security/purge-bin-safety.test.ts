@@ -112,4 +112,16 @@ describe("Bin purge deletion safety", () => {
     expect(await StorageObject.findById(object._id)).not.toBeNull();
     expect(mocks.decrementStorageBulk).not.toHaveBeenCalled();
   });
+  it("defers Bin purge while charged versions await deletion", async () => {
+    const { bucket, object } = await seed();
+    await StorageObject.updateOne({ _id: object._id }, { $set: { "versions.0.pendingDeletion": true } });
+    expect((await GET(cronRequest())).status).toBe(200);
+    const response = await POST(new NextRequest("http://localhost/api/objects/purge", {
+      method: "POST", body: JSON.stringify({ bucketId: String(bucket._id), ids: [String(object._id)] }), headers: { "content-type": "application/json" },
+    }));
+    expect(response.status).toBe(409);
+    expect(mocks.deleteObjects).not.toHaveBeenCalled();
+    expect(mocks.decrementStorageBulk).not.toHaveBeenCalled();
+    expect(await StorageObject.findById(object._id)).not.toBeNull();
+  });
 });

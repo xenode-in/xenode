@@ -1,4 +1,5 @@
 import { randomBytes } from "crypto";
+import { MAX_RETAINED_VERSIONS } from "@xenode/database";
 import type { IStorageObject, IStorageObjectVersion } from "@/models/StorageObject";
 
 /**
@@ -6,7 +7,7 @@ import type { IStorageObject, IStorageObjectVersion } from "@/models/StorageObje
  * pushed to the front of `versions[]`; anything past this cap is evicted (its B2
  * blob deleted and its bytes freed from quota). Versions count against storage.
  */
-export const MAX_VERSIONS_PER_OBJECT = 10;
+export const MAX_VERSIONS_PER_OBJECT = MAX_RETAINED_VERSIONS;
 
 /** Short, collision-resistant id for a version entry. */
 export function newVersionId(): string {
@@ -61,44 +62,4 @@ export function collectVersionB2Keys(version: IStorageObjectVersion): string[] {
     if (chunk.key) keys.push(chunk.key);
   }
   return keys;
-}
-
-/**
- * Split a versions list into the entries to KEEP (newest `MAX`) and the ones to
- * EVICT (the overflow). Input is assumed newest-first.
- */
-export function evictOverflow(versions: IStorageObjectVersion[]): {
-  kept: IStorageObjectVersion[];
-  evicted: IStorageObjectVersion[];
-} {
-  if (versions.length <= MAX_VERSIONS_PER_OBJECT) {
-    return { kept: versions, evicted: [] };
-  }
-
-  // The immutable original is part of the ten retained entries but is never
-  // evicted. The other nine slots remain newest-first rolling history.
-  const original = versions.find((version) => version.isOriginal);
-  if (!original) {
-    return {
-      kept: versions.slice(0, MAX_VERSIONS_PER_OBJECT),
-      evicted: versions.slice(MAX_VERSIONS_PER_OBJECT),
-    };
-  }
-  const rolling = versions.filter((version) => version !== original);
-  const rollingLimit = MAX_VERSIONS_PER_OBJECT - 1;
-  return {
-    kept: [...rolling.slice(0, rollingLimit), original],
-    evicted: rolling.slice(rollingLimit),
-  };
-}
-
-/** Sum of bytes a set of versions occupy (main + chunks). */
-export function versionsTotalBytes(versions: IStorageObjectVersion[]): number {
-  return versions.reduce((sum, v) => {
-    if (v.sharesCurrentContent) return sum;
-    const chunkBytes = (v.chunks ?? []).reduce((s, c) => s + (c.size || 0), 0);
-    // For chunked versions `size` is plaintext total; the bytes actually stored
-    // are the chunk blobs. For non-chunked, `size` is the stored blob size.
-    return sum + (chunkBytes > 0 ? chunkBytes : v.size || 0);
-  }, 0);
 }

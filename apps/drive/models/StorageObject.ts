@@ -90,6 +90,10 @@ export interface IStorageObject extends Document {
 
 export interface IStorageObjectVersion {
   pendingDeletion?: boolean;
+  deletionState?: "blocked";
+  cleanupLeaseId?: string;
+  cleanupLeaseExpiresAt?: Date;
+  cleanupNextAttemptAt?: Date;
   versionId: string;
   /** Immutable source ciphertext pinned when editing first begins. */
   isOriginal?: boolean;
@@ -348,6 +352,10 @@ const StorageObjectSchema = new Schema<IStorageObject>(
           {
             versionId: { type: String, required: true },
             pendingDeletion: { type: Boolean, default: false },
+            deletionState: { type: String, enum: ["blocked"] },
+            cleanupLeaseId: String,
+            cleanupLeaseExpiresAt: Date,
+            cleanupNextAttemptAt: Date,
             isOriginal: { type: Boolean, default: false },
             sharesCurrentContent: { type: Boolean, default: false },
             key: { type: String, required: true },
