@@ -28,9 +28,7 @@ import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject, { type IStorageObjectVersion } from "@/models/StorageObject";
-import {
-  versionsTotalBytes,
-} from "@/lib/storage/versions";
+import { storageObjectTotalBytes } from "@xenode/database";
 import { collectStorageObjectKeys } from "@/lib/storage/object-keys";
 import ShareLink from "@/models/ShareLink";
 import DirectShare from "@/models/DirectShare";
@@ -49,12 +47,14 @@ type PurgeDoc = {
   key?: string;
   thumbnail?: string;
   optimizedKey?: string;
+  thumbnailSize?: number;
+  optimizedSize?: number;
   size?: number;
   versions?: IStorageObjectVersion[];
   chunks?: Array<{ key: string }>;
 };
 
-const PURGE_PROJECTION = "_id key thumbnail optimizedKey size versions chunks";
+const PURGE_PROJECTION = "_id key thumbnail optimizedKey thumbnailSize optimizedSize size versions chunks";
 
 function collectB2Keys(docs: PurgeDoc[]): string[] {
   return docs.flatMap(collectStorageObjectKeys);
@@ -213,7 +213,7 @@ export async function POST(request: NextRequest) {
 
     // 4. Now — and only now — free the storage these bytes occupied.
     const totalSize = docs.reduce(
-      (sum, d) => sum + (d.size || 0) + versionsTotalBytes(d.versions ?? []),
+      (sum, d) => sum + storageObjectTotalBytes(d),
       0,
     );
     if (ctx.spaceType === "personal") {

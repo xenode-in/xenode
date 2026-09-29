@@ -26,6 +26,7 @@ import { PATCH as patchObject } from "@/app/api/objects/[id]/route";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import UploadSession from "@/models/UploadSession";
+import OrgUsage from "@/models/OrgUsage";
 import { attachToUploadSession, reserveUploadSession } from "@/lib/uploads/session";
 import { orgObjectKeyPrefix } from "@/lib/orgs/storage";
 
@@ -397,7 +398,8 @@ describe("generic storage mutation permissions", () => {
 
   it("finalizes a claimed encrypted object and closes its reservation", async () => {
     const { body, reservation } = await completionFixture();
-    send.mockResolvedValue({ VersionId: "ciphertext-version" });
+    await OrgUsage.create({ orgId: organizationId, accountId: `org:${organizationId}` });
+    send.mockResolvedValue({ VersionId: "ciphertext-version", ContentLength: 16 });
     const response = await complete(request("POST", body));
     expect(response.status).toBe(201);
     const object = await StorageObject.findOne({ key: body.objectKey }).lean();
@@ -406,7 +408,7 @@ describe("generic storage mutation permissions", () => {
     });
     expect((await UploadSession.findById(reservation._id))?.status).toBe("completed");
     expect(send).toHaveBeenCalledOnce();
-    expect((await complete(request("POST", body))).status).toBe(409);
+    expect((await complete(request("POST", body))).status).toBe(200);
     expect(await StorageObject.countDocuments({ key: body.objectKey })).toBe(1);
     expect(send).toHaveBeenCalledOnce();
   });

@@ -21,6 +21,8 @@ Start with [the executive summary](00-executive-summary.md), then [the migration
 | [12 — Findings register](12-findings-register.md) | Stable finding IDs and reproducible source traces |
 | [13 — Evidence and inventory](13-evidence-and-inventory.md) | Scope, source inventory, validation record and limitations |
 | [14 — Implementation progress](14-implementation-progress.md) | Remediation increments, decisions and validation |
+| [15 — Photos upload contract](15-photos-upload-contract.md) | Manifest, transactional completion and cleanup |
+| [16 — Drive upload contract](16-drive-upload-contract.md) | B2 byte verification, transactional quota and retries |
 
 ## Reading the judgments
 

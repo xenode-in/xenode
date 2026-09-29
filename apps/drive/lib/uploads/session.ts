@@ -145,26 +145,3 @@ export async function attachToUploadSession(params: {
     throw error;
   }
 }
-
-/** Mark only the actor's exact pending Space-bound upload completed. */
-export async function completeUploadSession(params: {
-  sessionId: string;
-  userId: string;
-  spaceId: string;
-  bucketId: Types.ObjectId | string;
-  fileId: string;
-}): Promise<boolean> {
-  const result = await UploadSession.updateOne(
-    {
-      _id: params.sessionId,
-      userId: params.userId,
-      spaceId: params.spaceId,
-      bucketId: params.bucketId,
-      fileId: params.fileId,
-      status: "pending",
-      expiresAt: { $gt: new Date() },
-    },
-    { $set: { status: "completed" } },
-  );
-  return result.modifiedCount === 1;
-}

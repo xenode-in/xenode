@@ -36,8 +36,12 @@ async function seed() {
     bucketId: bucket._id, spaceId, createdByAccountId: "uploader-is-not-the-billing-owner",
     key: `users/${accountId}/main`, size: 100, b2FileId: "test", deletedAt,
     chunks: [{ index: 0, key: `users/${accountId}/main-chunk-0`, size: 100 }],
-    thumbnail: `users/${accountId}/main-thumb`, optimizedKey: `users/${accountId}/optimized`,
-    versions: [{ versionId: "previous", key: `users/${accountId}/previous`, size: 50, createdAt: new Date(), createdBy: accountId }],
+    thumbnail: `users/${accountId}/main-thumb`, thumbnailSize: 20,
+    optimizedKey: `users/${accountId}/optimized`, optimizedSize: 30,
+    versions: [
+      { versionId: "previous", key: `users/${accountId}/previous`, size: 50, createdAt: new Date(), createdBy: accountId },
+      { versionId: "original", key: `users/${accountId}/main`, size: 100, sharesCurrentContent: true, createdAt: new Date(), createdBy: accountId },
+    ],
   });
   return { bucket, object };
 }
@@ -56,7 +60,7 @@ describe("Bin purge deletion safety", () => {
     expect(mocks.deleteObjects).toHaveBeenCalledWith(bucket.b2BucketId, expect.arrayContaining([
       object.key, `${object.key}-chunk-0`, `${object.key}-thumb`, `users/${accountId}/optimized`, `users/${accountId}/previous`,
     ]));
-    expect(mocks.decrementStorageBulk).toHaveBeenCalledWith(accountId, 150, 1);
+    expect(mocks.decrementStorageBulk).toHaveBeenCalledWith(accountId, 200, 1);
     expect(await StorageObject.findById(object._id)).toBeNull();
   });
 
@@ -65,7 +69,7 @@ describe("Bin purge deletion safety", () => {
     await Space.create({ _id: "space_team_org_team", type: "team", organizationId: "org", teamId: "team", createdByAccountId: accountId });
     await StorageObject.updateOne({ _id: object._id }, { $set: { spaceId: "space_team_org_team" } });
     expect((await GET(cronRequest())).status).toBe(200);
-    expect(mocks.decrementOrgStorage).toHaveBeenCalledWith("org", 150, 1);
+    expect(mocks.decrementOrgStorage).toHaveBeenCalledWith("org", 200, 1);
     expect(mocks.decrementStorageBulk).not.toHaveBeenCalled();
   });
 
@@ -95,7 +99,7 @@ describe("Bin purge deletion safety", () => {
     }));
     expect(response.status).toBe(200);
     expect((await response.json()).purgedCount).toBe(2);
-    expect(mocks.decrementStorageBulk).toHaveBeenCalledWith(accountId, 150, 2);
+    expect(mocks.decrementStorageBulk).toHaveBeenCalledWith(accountId, 200, 2);
   });
 
   it("retains manual-purge records when deletion fails", async () => {

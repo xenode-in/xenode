@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { HeadObjectCommand } from "@aws-sdk/client-s3";
 
 const { send } = vi.hoisted(() => ({ send: vi.fn() }));
 
@@ -87,7 +88,8 @@ async function encryptedUpload(userId: string, bucketId: string) {
 }
 
 describe("photo backup complete-upload finalization", () => {
-  it("rolls back metadata and uploaded blobs when quota rejects finalization", async () => {
+  beforeEach(() => send.mockReset());
+  it("leaves all database writes unchanged and blobs reserved when quota rejects finalization", async () => {
     const userId = makeUserId();
     mockSession(userId);
     const bucket = await createBucket(userId, "quota");
@@ -96,7 +98,7 @@ describe("photo backup complete-upload finalization", () => {
       totalStorageBytes: 500,
       storageLimitBytes: 500,
     });
-    send.mockResolvedValue({});
+    send.mockResolvedValue({ ContentLength: 1_000 });
 
     const body = await encryptedUpload(userId, String(bucket._id));
     const response = await POST(request(body));
@@ -104,19 +106,15 @@ describe("photo backup complete-upload finalization", () => {
     expect(response.status).toBe(402);
     await expect(response.json()).resolves.toEqual({
       error: "Storage quota exceeded",
+      code: "storage_quota_exceeded",
     });
     expect(await StorageObject.countDocuments({ bucketId: bucket._id })).toBe(0);
 
-    const deletedKeys = send.mock.calls
-      .map(([command]) => command?.input?.Key)
-      .filter(Boolean);
-    expect(deletedKeys).toEqual(
-      expect.arrayContaining([
-        body.objectKey,
-        body.optimizedKey,
-        body.thumbnail,
-      ]),
-    );
+    expect(send.mock.calls).toHaveLength(3);
+    expect(send.mock.calls.every(([command]) => command instanceof HeadObjectCommand)).toBe(true);
+    expect((await UploadSession.findById(body.sessionId))?.status).toBe("pending");
+    expect((await Usage.findOne({ userId }))?.totalStorageBytes).toBe(500);
+    expect((await Bucket.findById(bucket._id))?.objectCount).toBe(0);
   });
 
   it("does not allow generic completion to overwrite an existing object", async () => {

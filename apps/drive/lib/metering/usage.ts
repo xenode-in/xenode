@@ -65,10 +65,13 @@ export async function recalculateUsage(userId: string) {
         $group: {
           _id: null,
           // Current content bytes.
-          currentSize: { $sum: "$size" },
+          currentSize: { $sum: { $add: [
+            { $ifNull: ["$size", 0] },
+            { $ifNull: ["$thumbnailSize", 0] },
+            { $ifNull: ["$optimizedSize", 0] },
+          ] } },
           // Retained version bytes — chunk blobs when chunked, else the entry
-          // size. Mirrors versionsTotalBytes() so recalc matches the
-          // incremental accounting done on overwrite/restore/delete.
+          // size. Skip originals sharing current content so they count once.
           versionSize: {
             $sum: {
               $reduce: {
@@ -79,14 +82,15 @@ export async function recalculateUsage(userId: string) {
                     "$$value",
                     {
                       $cond: [
+                        { $eq: ["$$this.sharesCurrentContent", true] },
+                        0,
                         {
-                          $gt: [
-                            { $size: { $ifNull: ["$$this.chunks", []] } },
-                            0,
+                          $cond: [
+                            { $gt: [{ $size: { $ifNull: ["$$this.chunks", []] } }, 0] },
+                            { $sum: "$$this.chunks.size" },
+                            { $ifNull: ["$$this.size", 0] },
                           ],
                         },
-                        { $sum: "$$this.chunks.size" },
-                        { $ifNull: ["$$this.size", 0] },
                       ],
                     },
                   ],
@@ -97,7 +101,7 @@ export async function recalculateUsage(userId: string) {
         },
       },
     ]),
-    StorageObject.countDocuments({ spaceId: personalSpaceId(userId) }),
+    StorageObject.countDocuments({ spaceId: personalSpaceId(userId), productId: { $in: ["drive", "photos"] } }),
     Bucket.countDocuments({ systemKey: "drive" }),
   ]);
 

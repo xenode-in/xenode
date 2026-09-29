@@ -1,6 +1,23 @@
 import { mongo } from "mongoose";
 import { getDatabase } from "../connection";
 
+interface StorageByteSummary {
+  size?: number;
+  thumbnailSize?: number;
+  optimizedSize?: number;
+  versions?: Array<{ size?: number; sharesCurrentContent?: boolean; chunks?: Array<{ size?: number }> }>;
+}
+
+/** Sanitized byte accounting; excludes version entries sharing current content. */
+export function storageObjectTotalBytes(object: StorageByteSummary): number {
+  return (object.size ?? 0) + (object.thumbnailSize ?? 0) + (object.optimizedSize ?? 0) +
+    (object.versions ?? []).reduce((total, version) => {
+      if (version.sharesCurrentContent) return total;
+      const chunks = version.chunks ?? [];
+      return total + (chunks.length ? chunks.reduce((sum, chunk) => sum + (chunk.size ?? 0), 0) : version.size ?? 0);
+    }, 0);
+}
+
 interface StorageReferences {
   key?: string;
   thumbnail?: string;

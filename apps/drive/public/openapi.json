@@ -703,7 +703,7 @@
       "post": {
         "tags": ["Uploads"],
         "summary": "Complete upload (notify backend)",
-        "description": "Finalizes only the caller's pending Space-bound upload reservation. Every physical blob key must be claimed by that reservation; existing objects use a separate revision flow.",
+        "description": "Verifies B2 ciphertext lengths and atomically finalizes the exact Space-bound reservation, StorageObject, owner quota and bucket counters. Variant bytes count against quota. Retrying the same completed reservation returns its exact object without repeating writes. Fingerprint/key conflicts return 409 and leave the upload pending for retry or orphan cleanup. Existing objects use a separate revision flow.",
         "requestBody": {
           "required": true,
           "content": {
@@ -714,14 +714,27 @@
                 "properties": {
                   "objectKey": { "type": "string", "example": "users/account_id/0123456789abcdef0123456789abcdef" },
                   "bucketId": { "type": "string" },
-                  "sessionId": { "type": "string", "description": "Pending upload reservation returned by presign" },
-                  "size": { "type": "integer", "example": 1048576 },
+                  "sessionId": { "type": "string", "description": "Exact upload reservation returned by presign" },
+                  "size": { "type": "integer", "minimum": 1, "description": "Actual ciphertext bytes of the main blob, or sum of all chunk ciphertext lengths", "example": 1048576 },
+                  "optimizedKey": { "type": "string", "description": "Claimed optimized ciphertext blob; must exist in B2" },
+                  "optimizedSize": { "type": "integer", "minimum": 1, "description": "Optional assertion checked against B2; server always records the actual length" },
+                  "thumbnail": { "type": "string", "description": "Claimed thumbnail ciphertext B2 key" },
+                  "thumbnailSize": { "type": "integer", "minimum": 1, "description": "Optional assertion checked against B2; server always records the actual length" },
                   "contentType": { "type": "string", "example": "image/jpeg" },
                   "isEncrypted": { "type": "boolean", "enum": [true] },
                   "encryptedDEK": { "type": "string", "description": "Base64 encrypted Data Encryption Key" },
                   "iv": { "type": "string", "description": "Base64 Initialization Vector" },
                   "encryptedName": { "type": "string" },
-                  "isChunked": { "type": "boolean", "default": false }
+                  "isChunked": { "type": "boolean", "default": false },
+                  "chunkCount": { "type": "integer", "minimum": 1, "maximum": 4096 },
+                  "chunkIvs": { "type": "string", "description": "JSON-encoded IV array in chunk order; count must match chunkCount" },
+                  "chunks": { "type": "array", "maxItems": 4096, "items": {
+                    "type": "object", "required": ["index", "key", "size"], "properties": {
+                      "index": { "type": "integer", "minimum": 0 },
+                      "key": { "type": "string", "description": "Must equal objectKey + '-chunk-' + index" },
+                      "size": { "type": "integer", "minimum": 1 }
+                    }
+                  } }
                 }
               }
             }
@@ -729,7 +742,11 @@
         },
         "responses": {
           "201": { "description": "Upload completed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StorageObject" } } } },
-          "409": { "description": "Upload reservation is missing, completed, or conflicts with an existing object" }
+          "200": { "description": "Exact completed reservation retry" },
+          "400": { "description": "Invalid encrypted metadata or chunk layout" },
+          "402": { "description": "Actual ciphertext bytes exceed the Space owner's quota" },
+          "404": { "description": "Bucket or required ciphertext blob is missing" },
+          "409": { "description": "Size mismatch, unavailable quota state, or upload/key/fingerprint conflict" }
         }
       }
     },

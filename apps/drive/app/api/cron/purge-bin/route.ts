@@ -19,7 +19,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { Types } from "mongoose";
-import { Space } from "@xenode/database";
+import { Space, storageObjectTotalBytes } from "@xenode/database";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject, { type IStorageObjectVersion } from "@/models/StorageObject";
@@ -27,9 +27,6 @@ import ShareLink from "@/models/ShareLink";
 import DirectShare from "@/models/DirectShare";
 import { deleteObjects as deleteB2Objects } from "@/lib/b2/objects";
 import { decrementStorageBulk, updateBucketStats } from "@/lib/metering/usage";
-import {
-  versionsTotalBytes,
-} from "@/lib/storage/versions";
 import { collectStorageObjectKeys } from "@/lib/storage/object-keys";
 import { decrementOrgStorage } from "@/lib/orgs/billing/orgUsage";
 
@@ -46,6 +43,8 @@ type ExpiredDoc = {
   key?: string;
   thumbnail?: string;
   optimizedKey?: string;
+  thumbnailSize?: number;
+  optimizedSize?: number;
   size?: number;
   versions?: IStorageObjectVersion[];
   chunks?: Array<{ key: string }>;
@@ -67,7 +66,7 @@ export async function GET(req: NextRequest) {
 
     for (let batch = 0; batch < MAX_BATCHES; batch++) {
       const docs = await StorageObject.find({ deletedAt: { $lte: cutoff } })
-        .select("_id bucketId spaceId key thumbnail optimizedKey size versions chunks")
+        .select("_id bucketId spaceId key thumbnail optimizedKey thumbnailSize optimizedSize size versions chunks")
         .limit(BATCH)
         .lean<ExpiredDoc[]>();
 
@@ -105,7 +104,7 @@ export async function GET(req: NextRequest) {
         const arr = keysByB2.get(b2) ?? [];
         arr.push(...collectStorageObjectKeys(d));
         keysByB2.set(b2, arr);
-        const sz = (d.size || 0) + versionsTotalBytes(d.versions ?? []);
+        const sz = storageObjectTotalBytes(d);
         const sizes = space.type === "personal" ? userSize : orgSize;
         const counts = space.type === "personal" ? userCount : orgCount;
         sizes.set(ownerId, (sizes.get(ownerId) ?? 0) + sz);

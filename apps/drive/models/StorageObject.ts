@@ -2,8 +2,8 @@ import mongoose, { Schema, Document, Model } from "mongoose";
 
 export interface IStorageObject extends Document {
   _id: mongoose.Types.ObjectId;
-  /** Product that owns this object. Missing on legacy Drive rows. */
-  productId?: "drive" | "photos";
+  /** Product that owns this object. */
+  productId: "drive" | "photos";
   spaceId: string;
   createdByAccountId: string;
   bucketId: mongoose.Types.ObjectId;
@@ -118,7 +118,8 @@ const StorageObjectSchema = new Schema<IStorageObject>(
     productId: {
       type: String,
       enum: ["drive", "photos"],
-      required: false,
+      default: "drive",
+      required: true,
       index: true,
     },
     bucketId: {
