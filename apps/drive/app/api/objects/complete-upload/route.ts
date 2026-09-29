@@ -125,6 +125,7 @@ export async function POST(request: NextRequest) {
     const reservation = await UploadSession.findOne({
       _id: sessionId, userId: ctx.accountId, spaceId: ctx.spaceId,
       bucketId: bucket._id, fileId: objectKey,
+      purpose: "create",
     }).lean();
     if (!reservation) {
       return NextResponse.json({ error: "Upload reservation is missing", code: "upload_reservation_conflict" }, { status: 409 });

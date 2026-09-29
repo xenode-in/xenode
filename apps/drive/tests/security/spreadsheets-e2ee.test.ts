@@ -12,23 +12,19 @@ describe("spreadsheet E2EE boundary", () => {
       "app/api/objects/[id]/content/route.ts",
       "app/api/objects/[id]/update-content/route.ts",
       "app/api/direct-shares/[id]/update-content/route.ts",
-      "lib/storage/applyContentUpdate.ts",
+      "lib/storage/revision-upload.ts",
     ].map(read).join("\n");
     expect(routeSources).not.toMatch(/from ["']xlsx["']/);
     expect(routeSources).not.toMatch(/@univerjs/);
     expect(routeSources).not.toMatch(/Workbook JSON|cell values|sheet names/i);
   });
 
-  it("atomically rejects stale saves with 409", () => {
-    const helper = read("lib/storage/applyContentUpdate.ts");
-    expect(helper).toContain("revisionFilter(expectedRevision)");
-    expect(helper).toContain("update.matchedCount !== 1");
-    const ownerRoute = read("app/api/objects/[id]/update-content/route.ts");
-    const shareRoute = read("app/api/direct-shares/[id]/update-content/route.ts");
-    for (const route of [ownerRoute, shareRoute]) {
-      expect(route).toContain("applyContentUpdate");
-      expect(route).toContain("{ status: 409 }");
-    }
+  it("keeps file bytes out of revision control handlers", () => {
+    const helper = read("lib/storage/revision-upload.ts");
+    expect(helper).not.toContain("request.arrayBuffer");
+    expect(helper).toContain("HeadObjectCommand");
+    expect(helper).toContain("commitDriveRevision");
+    expect(read("app/api/objects/[id]/update-content/route.ts")).not.toContain("getUploadUrl");
   });
 
   it("share saves require the editor role", () => {

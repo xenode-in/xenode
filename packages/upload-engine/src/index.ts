@@ -6,6 +6,8 @@ export type UploadStatus =
   | "failed"
   | "cancelled";
 
+export * from "./revision";
+
 export interface UploadInput {
   id: string;
   name: string;

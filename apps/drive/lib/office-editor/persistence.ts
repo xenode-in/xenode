@@ -7,7 +7,7 @@
  * instead of a NormalizedWorkbook, and saves the caller-provided exported bytes.
  *
  * Ciphertext-only invariant: the server sees only `/api/objects/[id]` metadata,
- * opaque ciphertext downloads, and an encrypted update-content body. No
+ * direct B2 ciphertext transfer and JSON revision control requests. No
  * plaintext, file name, or cell data crosses the wire.
  */
 
@@ -17,7 +17,7 @@ import {
   encryptFileWithDEK,
 } from "@/lib/crypto/fileEncryption";
 import { fromB64, toB64 } from "@/lib/crypto/utils";
-import { REVISION_HEADER } from "@/lib/storage/revisions";
+import { RevisionUploadError, uploadRevisionCiphertext } from "@xenode/upload-engine";
 import {
   isSupportedSpreadsheet,
   spreadsheetExtension,
@@ -177,23 +177,21 @@ export class XenodeBinaryPersistenceAdapter implements BinaryPersistenceAdapter 
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const plaintext = input.bytes.slice().buffer;
     const ciphertext = await encryptFileWithDEK(plaintext, input.loaded.dek, iv);
-    const response = await this.options.fetch(
-      `/api/objects/${input.loaded.objectId}/update-content?iv=${encodeURIComponent(toB64(iv))}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/octet-stream",
-          [REVISION_HEADER]: String(input.loaded.revision),
-        },
-        body: ciphertext,
-        signal: input.signal,
-      },
-    );
-    const body = await response.json().catch(() => ({}));
-    if (response.status === 409) throw new BinaryConflictError(body.revision);
-    if (!response.ok) throw new Error(body.code || "spreadsheet_save_failed");
+    let result;
+    try {
+      result = await uploadRevisionCiphertext({
+        endpoint: `/api/objects/${input.loaded.objectId}/update-content`, baseRevision: input.loaded.revision,
+        iv: toB64(iv), ciphertext, apiFetch: this.options.fetch,
+        storageFetch: this.options.storageFetch ?? fetch, signal: input.signal,
+      });
+    } catch (error) {
+      if (error instanceof RevisionUploadError && error.code === "revision_conflict") {
+        throw new BinaryConflictError(error.revision ?? input.loaded.revision);
+      }
+      throw error;
+    }
     return {
-      revision: body.revision ?? input.loaded.revision + 1,
+      revision: result.revision,
       savedAt: new Date().toISOString(),
     };
   }

@@ -47,6 +47,9 @@ export async function POST(
     if (!target) {
       return NextResponse.json({ error: "Version not found" }, { status: 404 });
     }
+    if (target.pendingDeletion) {
+      return NextResponse.json({ error: "Version deletion is pending", code: "version_deletion_pending" }, { status: 409 });
+    }
 
     // Snapshot the current content so the restore can be undone, unless it is
     // already represented by the pinned original entry.

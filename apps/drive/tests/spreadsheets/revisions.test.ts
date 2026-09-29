@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { parseBaseRevision, revisionFilter } from "@/lib/storage/revisions";
+import { parseBaseRevision } from "@/lib/storage/revisions";
 import { assertScopeAction } from "@/lib/authz/policy";
 import type { AccessContext } from "@/lib/authz/space-context";
 
 describe("spreadsheet optimistic concurrency", () => {
-  it("validates revisions and supports unmigrated revision zero rows", () => {
+  it("validates safe integer base revisions", () => {
     expect(parseBaseRevision("3")).toBe(3);
     expect(Number.isNaN(parseBaseRevision("stale"))).toBe(true);
-    expect(revisionFilter(0)).toEqual({ $or: [{ revision: 0 }, { revision: { $exists: false } }] });
-    expect(revisionFilter(4)).toEqual({ revision: 4 });
+    expect(parseBaseRevision("0")).toBe(0);
+    expect(Number.isNaN(parseBaseRevision("-1"))).toBe(true);
   });
 
   it("keeps organization guests read-only while members may save", () => {

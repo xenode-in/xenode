@@ -59,6 +59,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       if (!version) {
         return NextResponse.json({ error: "Version not found" }, { status: 404 });
       }
+      if (version.pendingDeletion) {
+        return NextResponse.json({ error: "Version deletion is pending" }, { status: 409 });
+      }
       keyToServe = version.key;
     }
 

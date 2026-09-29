@@ -3,7 +3,7 @@ import { connectDatabase, getDatabase, withTransaction } from "../connection";
 import { DriveUploadSession, Space } from "../models";
 
 export class DriveUploadCommitError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string) {
+  constructor(readonly status: number, readonly code: string, message: string, readonly revision?: number) {
     super(message);
     this.name = "DriveUploadCommitError";
   }
@@ -11,11 +11,11 @@ export class DriveUploadCommitError extends Error {
 
 export interface VerifiedDriveBlob { key: string; size: number }
 
-async function loadSpaceUsage(spaceId: string, accountId: string, session?: ClientSession) {
+export async function loadSpaceUsage(spaceId: string, accountId: string | undefined, session?: ClientSession) {
   const space = await Space.findOne({ _id: spaceId, status: "active" }).session(session ?? null).lean();
   const personal = space?.type === "personal";
   const ownerId = personal ? space?.ownerAccountId : space?.organizationId;
-  if (!ownerId || (personal && ownerId !== accountId)) {
+  if (!ownerId || (personal && accountId !== undefined && ownerId !== accountId)) {
     throw new DriveUploadCommitError(409, "space_owner_missing", "Space storage owner is unavailable");
   }
   const usages = getDatabase().collection(personal ? "usages" : "orgusages");
@@ -58,7 +58,7 @@ export async function commitDriveUpload(input: {
     return await withTransaction(async (session) => {
       const manifest = await DriveUploadSession.findOne({
         _id: input.sessionId, userId: input.accountId, spaceId: input.spaceId,
-        bucketId: input.bucketId, fileId,
+        bucketId: input.bucketId, fileId, purpose: "create",
       }).session(session).lean();
       if (!manifest) {
         throw new DriveUploadCommitError(409, "upload_reservation_conflict", "Upload reservation is missing");
@@ -120,7 +120,7 @@ export async function commitDriveUpload(input: {
       if (reserved.modifiedCount !== 1) {
         throw new DriveUploadCommitError(402, "storage_quota_exceeded", "Storage quota exceeded");
       }
-      const object = { ...input.storageObject, ...identity, createdAt: now, updatedAt: now };
+      const object = { ...input.storageObject, ...identity, __v: 0, createdAt: now, updatedAt: now };
       await objects.insertOne(object, { session });
       const bucket = await database.collection("buckets").updateOne(
         { _id: manifest.bucketId },

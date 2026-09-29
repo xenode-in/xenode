@@ -422,7 +422,7 @@
       "post": {
         "tags": ["Objects"],
         "summary": "Update file content (re-upload)",
-        "description": "Replaces the binary content of an existing object with a new version.",
+        "description": "JSON control only. Require x-xenode-base-revision. Send operation=presign with ciphertext size and fresh base64 12-byte iv, PUT directly to the returned B2 URL, then send operation=complete with sessionId. Metadata, retained history and owner byte accounting commit transactionally. Binary bodies and in-place overwrites are rejected.",
         "parameters": [
           { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
         ],

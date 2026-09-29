@@ -14,7 +14,7 @@ import {
   encryptFileWithDEK,
 } from "@/lib/crypto/fileEncryption";
 import { canEdit, normalizeShareRole } from "@/lib/orgs/shareRoles";
-import { REVISION_HEADER } from "@/lib/storage/revisions";
+import { RevisionUploadError, uploadRevisionCiphertext } from "@xenode/upload-engine";
 import { toB64 } from "@/lib/crypto/utils";
 import {
   isSupportedSpreadsheet,
@@ -52,6 +52,7 @@ export interface DirectShareBinaryPersistenceOptions {
   shareId: string;
   privateKey: CryptoKey;
   fetch?: typeof fetch;
+  storageFetch?: typeof fetch;
 }
 
 export class DirectShareBinaryPersistenceAdapter
@@ -110,7 +111,7 @@ export class DirectShareBinaryPersistenceAdapter
     const stream = await streamResponse.json();
     if (stream.chunkUrls?.length) throw new Error("chunked_object_unsupported");
     if (!stream.streamUrl) throw new Error("spreadsheet_download_failed");
-    const ciphertextResponse = await this.fetchImpl(stream.streamUrl, { signal });
+    const ciphertextResponse = await (this.options.storageFetch ?? fetch)(stream.streamUrl, { signal });
     if (!ciphertextResponse.ok) throw new Error("spreadsheet_download_failed");
     const ciphertext = await ciphertextResponse.arrayBuffer();
     const plaintextBlob = await decryptFileWithDEK(ciphertext, dek, object.iv, contentType);
@@ -137,23 +138,21 @@ export class DirectShareBinaryPersistenceAdapter
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const plaintext = input.bytes.slice().buffer;
     const ciphertext = await encryptFileWithDEK(plaintext, input.loaded.dek, iv);
-    const response = await this.fetchImpl(
-      `/api/direct-shares/${this.options.shareId}/update-content?iv=${encodeURIComponent(toB64(iv))}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/octet-stream",
-          [REVISION_HEADER]: String(input.loaded.revision),
-        },
-        body: ciphertext,
-        signal: input.signal,
-      },
-    );
-    const body = await response.json().catch(() => ({}));
-    if (response.status === 409) throw new BinaryConflictError(body.revision);
-    if (!response.ok) throw new Error(body.code || "spreadsheet_save_failed");
+    let result;
+    try {
+      result = await uploadRevisionCiphertext({
+        endpoint: `/api/direct-shares/${this.options.shareId}/update-content`, baseRevision: input.loaded.revision,
+        iv: toB64(iv), ciphertext, apiFetch: this.fetchImpl,
+        storageFetch: this.options.storageFetch ?? fetch, signal: input.signal,
+      });
+    } catch (error) {
+      if (error instanceof RevisionUploadError && error.code === "revision_conflict") {
+        throw new BinaryConflictError(error.revision ?? input.loaded.revision);
+      }
+      throw error;
+    }
     return {
-      revision: body.revision ?? input.loaded.revision + 1,
+      revision: result.revision,
       savedAt: new Date().toISOString(),
     };
   }

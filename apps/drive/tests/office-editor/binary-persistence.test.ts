@@ -20,6 +20,9 @@ interface Recorded {
   url: string;
   method: string;
   body?: ArrayBuffer;
+  control?: { operation?: string; iv?: string };
+  credentials?: RequestCredentials;
+  headers?: HeadersInit;
 }
 
 async function buildFixture() {
@@ -95,11 +98,19 @@ describe("v2 binary persistence — ciphertext only", () => {
         url,
         method,
         body: init?.body instanceof ArrayBuffer ? init.body : undefined,
+        control: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+        credentials: init?.credentials, headers: init?.headers,
       });
       if (url.endsWith(`/api/objects/${OBJECT_ID}`)) return jsonResponse(meta);
       if (url.includes("/versions/baseline")) return jsonResponse({ ok: true });
       if (url === meta.url) return binResponse(ciphertext);
-      if (url.includes("/update-content")) return jsonResponse({ revision: 4 });
+      if (url.includes("/update-content")) {
+        const body = JSON.parse(init!.body as string);
+        return body.operation === "presign"
+          ? jsonResponse({ sessionId: "1123456789abcdef01234567", uploadUrl: "https://storage.test/revision" })
+          : jsonResponse({ revision: 4 });
+      }
+      if (url === "https://storage.test/revision") return binResponse(new ArrayBuffer(0));
       throw new Error(`unexpected url ${url}`);
     }) as unknown as typeof fetch;
 
@@ -123,16 +134,19 @@ describe("v2 binary persistence — ciphertext only", () => {
     const result = await adapter.saveBinary({ loaded, bytes: edited });
     expect(result.revision).toBe(4);
 
-    const save = recorded.find((r) => r.url.includes("/update-content"));
+    const save = recorded.find((r) => r.url === "https://storage.test/revision");
     expect(save).toBeDefined();
-    expect(save!.method).toBe("POST");
+    expect(save!.method).toBe("PUT");
+    expect(save!.credentials).toBe("omit");
+    expect(save!.headers).toEqual({ "Content-Type": "application/octet-stream" });
+    expect(recorded.filter((r) => r.url.startsWith("/api/")).every((r) => !r.body)).toBe(true);
     expect(save!.body).toBeInstanceOf(ArrayBuffer);
 
     // The posted body must NOT equal the plaintext, and must decrypt with the
     // DEK back to exactly the edited bytes.
     const postedBytes = new Uint8Array(save!.body!);
     expect(Array.from(postedBytes)).not.toEqual(Array.from(edited));
-    const ivParam = new URL(save!.url, "https://x").searchParams.get("iv")!;
+    const ivParam = recorded.find((r) => r.control?.operation === "presign")!.control!.iv!;
     const ivBytes = Uint8Array.from(atob(ivParam), (c) => c.charCodeAt(0));
     const roundTrip = new Uint8Array(
       await subtle.decrypt({ name: "AES-GCM", iv: ivBytes }, dek, save!.body!),
@@ -154,7 +168,7 @@ describe("v2 binary persistence — ciphertext only", () => {
       if (url.endsWith(`/api/objects/${OBJECT_ID}`)) return jsonResponse(meta);
       if (url.includes("/versions/baseline")) return jsonResponse({ ok: true });
       if (url === meta.url) return binResponse(ciphertext);
-      if (url.includes("/update-content")) return jsonResponse({ revision: 7 }, 409);
+      if (url.includes("/update-content")) return jsonResponse({ code: "revision_conflict", revision: 7 }, 409);
       throw new Error(`unexpected url ${url}`);
     }) as unknown as typeof fetch;
 

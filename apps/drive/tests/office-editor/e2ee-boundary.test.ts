@@ -21,7 +21,7 @@ describe("Office editor E2EE boundary", () => {
     ]) {
       const src = read(file);
       expect(src).toContain("encryptFileWithDEK");
-      expect(src).toMatch(/body: ciphertext/);
+      expect(src).toContain("uploadRevisionCiphertext");
       // The raw workbook bytes must never be posted directly.
       expect(src).not.toMatch(/body:\s*input\.bytes/);
     }

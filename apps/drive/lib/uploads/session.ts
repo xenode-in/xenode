@@ -42,6 +42,7 @@ export async function findPendingUploadSession(params: {
     spaceId: params.spaceId,
     bucketId: params.bucketId,
     status: "pending",
+    purpose: "create",
     expiresAt: { $gt: new Date() },
   }).select("_id fileId keys").lean();
 }
@@ -76,6 +77,7 @@ export async function reserveUploadSession(params: {
           userId: params.userId,
           spaceId: params.spaceId,
           status: "pending",
+          purpose: "create",
           expiresAt: { $gt: now },
         },
         { $set: { expiresAt }, $addToSet: { keys: { $each: keys } } },
@@ -135,6 +137,7 @@ export async function attachToUploadSession(params: {
         userId: params.userId,
         spaceId: params.spaceId,
         status: "pending",
+        purpose: "create",
         expiresAt: { $gt: now },
       },
       {
