@@ -8,7 +8,7 @@ import { findReferencedStorageObjectKeys, storedObjectBlobKeys, storageObjectTot
 export const BIN_BATCH_LIMIT = 100;
 export const BIN_PURGE_LEASE_MS = 5 * 60 * 1000;
 const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-interface BinSelection { spaceId: string; bucketId: Types.ObjectId; ids?: Types.ObjectId[]; all?: boolean; cutoff?: Date }
+interface BinSelection { spaceId: string; bucketId: Types.ObjectId; ids?: Types.ObjectId[]; all?: boolean; cutoff?: Date; includeRelated?: boolean }
 
 async function selectBinned(input: BinSelection, session?: ClientSession) {
   const objects = getDatabase().collection("storageobjects");
@@ -16,6 +16,7 @@ async function selectBinned(input: BinSelection, session?: ClientSession) {
   const primaries = await objects.find({ ...base, ...(input.all ? { purgeState: { $exists: false } } : { _id: { $in: input.ids ?? [] } }) }, { session })
     .sort({ deletedAt: 1, _id: 1 }).limit(BIN_BATCH_LIMIT + 1).toArray();
   if (input.all) return primaries.slice(0, BIN_BATCH_LIMIT);
+  if (input.includeRelated === false) return primaries;
   const prefixes = primaries.filter((object) => object.key?.endsWith("/")).map((object) => object.key as string);
   const children = prefixes.length ? await objects.find({ ...base, $or: prefixes.map((key) => ({ key: { $regex: `^${escapeRegex(key)}` } })) }, { session })
     .limit(BIN_BATCH_LIMIT + 1).toArray() : [];
@@ -64,7 +65,7 @@ export async function queueDriveBinPurge(input: BinSelection) {
       const upload = keys.length ? await getDatabase().collection("uploadsessions").find({
         bucketId: input.bucketId, keys: { $in: keys },
       }, { session }).sort({ expiresAt: -1 }).limit(1).next() : null;
-      const purgeAfter = upload?.expiresAt instanceof Date && upload.expiresAt > new Date() ? upload.expiresAt : new Date();
+      const purgeAfter = upload?.expiresAt instanceof Date && upload.expiresAt > new Date() ? upload.expiresAt : new Date(0);
       await objects.updateOne({ _id: object._id, ...{ productId: "drive", spaceId: input.spaceId }, purgeState: { $exists: false }, deletedAt: { $type: "date" } }, {
         $set: {
           purgeState: "pending", purgeKeys: keys, purgeBytes: bytes, purgeAfter,
@@ -115,6 +116,7 @@ export async function cleanupDriveBinObject(input: { objectId: Types.ObjectId; n
       if (usage.matchedCount !== 1 || bucketUpdate.matchedCount !== 1) throw new Error("accounting_unavailable");
       await getDatabase().collection("sharelinks").deleteMany({ objectId: current._id }, { session });
       await getDatabase().collection("directshares").deleteMany({ objectId: current._id }, { session });
+      await getDatabase().collection("filecomments").deleteMany({ objectId: current._id }, { session });
       await getDatabase().collection("photoalbums").updateMany({ spaceId: current.spaceId }, [
         { $set: { objectIds: { $filter: { input: { $ifNull: ["$objectIds", []] }, as: "id", cond: { $ne: ["$$id", current._id] } } } } },
         { $set: { coverObjectId: { $cond: [{ $eq: ["$coverObjectId", current._id] }, { $ifNull: [{ $arrayElemAt: ["$objectIds", 0] }, null] }, "$coverObjectId"] } } },

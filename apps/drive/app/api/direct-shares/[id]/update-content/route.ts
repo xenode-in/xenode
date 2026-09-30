@@ -7,6 +7,7 @@ import Bucket from "@/models/Bucket";
 import { canEdit, normalizeShareRole } from "@/lib/orgs/shareRoles";
 import { parseBaseRevision, REVISION_HEADER } from "@/lib/storage/revisions";
 import { handleRevisionUpload, revisionError } from "@/lib/storage/revision-upload";
+import { Space } from "@xenode/database/models";
 
 export const dynamic = "force-dynamic";
 
@@ -26,8 +27,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!recipient || !canEdit(normalizeShareRole(recipient.accessType))) {
       return NextResponse.json({ error: "The share does not permit editing", code: "edit_forbidden" }, { status: 403 });
     }
-    const object = await StorageObject.findOne({ _id: share.objectId, bucketId: share.bucketId, deletedAt: null });
-    if (!object) return NextResponse.json({ error: "File is unavailable" }, { status: 404 });
+    const object = await StorageObject.findOne({ _id: share.objectId, bucketId: share.bucketId, deletedAt: null, purgeState: { $exists: false } });
+    if (!object || !await Space.exists({ _id: object.spaceId, status: "active" })) return NextResponse.json({ error: "File is unavailable" }, { status: 404 });
     const bucket = await Bucket.findById(object.bucketId);
     if (!bucket) return NextResponse.json({ error: "Bucket is unavailable" }, { status: 404 });
     return await handleRevisionUpload(request, {

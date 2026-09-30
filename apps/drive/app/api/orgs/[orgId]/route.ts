@@ -16,6 +16,7 @@ import {
 import { orgStorageOwnerId } from "@/lib/orgs/storage";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import Subscription from "@/models/Subscription";
+import { setOrganizationSoftDeleted, DriveUploadCommitError } from "@xenode/database/repositories";
 
 export const dynamic = "force-dynamic";
 
@@ -129,12 +130,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const now = new Date();
     const scheduledPurgeAt = new Date(now.getTime() + ORG_PURGE_WINDOW_MS);
 
-    await mongoose.connection
-      .collection<OrganizationRecord>("organization")
-      .updateOne(
-        { id: orgId },
-        { $set: { deletedAt: now, scheduledPurgeAt, updatedAt: now } },
-      );
+    await setOrganizationSoftDeleted({ orgId, deletedAt: now, scheduledPurgeAt });
 
     // Best-effort: stop billing now. The 30-day purge cron finishes cleanup.
     const subscription = await Subscription.findOne({
@@ -167,6 +163,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     });
   } catch (error) {
     if (isAuthzError(error)) return toJsonResponse(error);
+    if (error instanceof DriveUploadCommitError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
     const message =
       error instanceof Error ? error.message : "Failed to delete organization";
     return NextResponse.json({ error: message }, { status: 500 });

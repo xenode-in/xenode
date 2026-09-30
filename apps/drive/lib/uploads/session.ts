@@ -1,5 +1,7 @@
-import { Types } from "mongoose";
+import { Types, type ClientSession } from "mongoose";
 import UploadSession from "@/models/UploadSession";
+import { Space } from "@xenode/database/models";
+import { withTransaction } from "@xenode/database/connection";
 
 /** How long an in-flight upload's B2 blobs are protected before the cleanup
  * cron may reclaim them. Must comfortably exceed the 1h presigned-URL window
@@ -26,6 +28,15 @@ function isDuplicateKeyError(error: unknown): boolean {
     "code" in error &&
     error.code === 11000
   );
+}
+
+/** Serialize a signed PUT reservation with Space suspension/retirement. */
+async function withActiveSpaceReservation<T>(spaceId: string, work: (session: ClientSession) => Promise<T>) {
+  return withTransaction(async (session) => {
+    const fenced = await Space.updateOne({ _id: spaceId, status: "active" }, { $inc: { storageFenceVersion: 1 } }, { session });
+    if (fenced.matchedCount !== 1) return null;
+    return work(session);
+  });
 }
 
 /** Resolve an upload identity from its reservation, never from caller key text. */
@@ -61,45 +72,42 @@ export async function reserveUploadSession(params: {
   const expiresAt = new Date(now.getTime() + UPLOAD_SESSION_TTL_MS);
   const keys = [...new Set(params.keys.filter(Boolean))];
   if (params.sessionId !== undefined && !Types.ObjectId.isValid(params.sessionId)) return null;
-  const conflicting = await UploadSession.exists({
-    bucketId: params.bucketId,
-    keys: { $in: keys },
-    ...(params.sessionId ? { _id: { $ne: params.sessionId } } : {}),
-  });
-  if (conflicting) return null;
-  if (params.sessionId !== undefined) {
-    try {
-      const doc = await UploadSession.findOneAndUpdate(
-        {
-          _id: params.sessionId,
-          bucketId: params.bucketId,
-          fileId: params.fileId,
-          userId: params.userId,
-          spaceId: params.spaceId,
-          status: "pending",
-          purpose: "create",
-          expiresAt: { $gt: now },
-        },
-        { $set: { expiresAt }, $addToSet: { keys: { $each: keys } } },
-        { returnDocument: "after" },
-      );
-      return doc?._id.toString() ?? null;
-    } catch (error) {
-      if (isDuplicateKeyError(error)) return null;
-      throw error;
-    }
-  }
   try {
-    const doc = await UploadSession.create({
-      userId: params.userId,
-      spaceId: params.spaceId,
-      bucketId: params.bucketId,
-      fileId: params.fileId,
-      keys,
-      status: "pending",
-      expiresAt,
+    return await withActiveSpaceReservation(params.spaceId, async (session) => {
+      const conflicting = await UploadSession.exists({
+        bucketId: params.bucketId,
+        keys: { $in: keys },
+        ...(params.sessionId ? { _id: { $ne: params.sessionId } } : {}),
+      }).session(session);
+      if (conflicting) return null;
+      if (params.sessionId !== undefined) {
+        const doc = await UploadSession.findOneAndUpdate(
+          {
+            _id: params.sessionId,
+            bucketId: params.bucketId,
+            fileId: params.fileId,
+            userId: params.userId,
+            spaceId: params.spaceId,
+            status: "pending",
+            purpose: "create",
+            expiresAt: { $gt: now },
+          },
+          { $set: { expiresAt }, $addToSet: { keys: { $each: keys } } },
+          { returnDocument: "after", session },
+        );
+        return doc?._id.toString() ?? null;
+      }
+      const [doc] = await UploadSession.create([{
+        userId: params.userId,
+        spaceId: params.spaceId,
+        bucketId: params.bucketId,
+        fileId: params.fileId,
+        keys,
+        status: "pending",
+        expiresAt,
+      }], { session });
+      return doc._id.toString();
     });
-    return doc._id.toString();
   } catch (error) {
     if (isDuplicateKeyError(error)) return null;
     throw error;
@@ -121,32 +129,34 @@ export async function attachToUploadSession(params: {
 }): Promise<string | null> {
   await ensureClaimIndex();
   if (!Types.ObjectId.isValid(params.parentSessionId)) return null;
-  const conflicting = await UploadSession.exists({
-    bucketId: params.bucketId,
-    keys: params.key,
-    _id: { $ne: params.parentSessionId },
-  });
-  if (conflicting) return null;
   const now = new Date();
   try {
-    const doc = await UploadSession.findOneAndUpdate(
-      {
-        _id: params.parentSessionId,
+    return await withActiveSpaceReservation(params.spaceId, async (session) => {
+      const conflicting = await UploadSession.exists({
         bucketId: params.bucketId,
-        fileId: params.parentFileId,
-        userId: params.userId,
-        spaceId: params.spaceId,
-        status: "pending",
-        purpose: "create",
-        expiresAt: { $gt: now },
-      },
-      {
-        $addToSet: { keys: params.key },
-        $set: { expiresAt: new Date(now.getTime() + UPLOAD_SESSION_TTL_MS) },
-      },
-      { returnDocument: "after" },
-    );
-    return doc?._id.toString() ?? null;
+        keys: params.key,
+        _id: { $ne: params.parentSessionId },
+      }).session(session);
+      if (conflicting) return null;
+      const doc = await UploadSession.findOneAndUpdate(
+        {
+          _id: params.parentSessionId,
+          bucketId: params.bucketId,
+          fileId: params.parentFileId,
+          userId: params.userId,
+          spaceId: params.spaceId,
+          status: "pending",
+          purpose: "create",
+          expiresAt: { $gt: now },
+        },
+        {
+          $addToSet: { keys: params.key },
+          $set: { expiresAt: new Date(now.getTime() + UPLOAD_SESSION_TTL_MS) },
+        },
+        { returnDocument: "after", session },
+      );
+      return doc?._id.toString() ?? null;
+    });
   } catch (error) {
     if (isDuplicateKeyError(error)) return null;
     throw error;

@@ -14,6 +14,7 @@ import {
   type OrganizationRecord,
 } from "@/lib/orgs/access";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
+import { restoreSoftDeletedOrganization, DriveUploadCommitError } from "@xenode/database/repositories";
 
 export const dynamic = "force-dynamic";
 
@@ -51,13 +52,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       throw new AuthzError(403, "organization_owner_required", "Forbidden");
     }
 
-    await organizations.updateOne(
-      { id: orgId },
-      {
-        $set: { updatedAt: new Date() },
-        $unset: { deletedAt: "", scheduledPurgeAt: "" },
-      },
-    );
+    await restoreSoftDeletedOrganization({ orgId });
 
     await emitActivity({
       orgId,
@@ -69,6 +64,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ orgId, restored: true });
   } catch (error) {
     if (isAuthzError(error)) return toJsonResponse(error);
+    if (error instanceof DriveUploadCommitError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
     const message =
       error instanceof Error ? error.message : "Failed to restore organization";
     return NextResponse.json({ error: message }, { status: 500 });

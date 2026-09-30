@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getDatabase } from "@xenode/database";
+import { getDatabase, Space } from "@xenode/database";
 
 // Mock the B2 object layer so no real network calls happen. `listObjects`
 // returns whatever blobs "exist" under a prefix; `deleteObjects` records what
@@ -237,6 +237,7 @@ describe("attachToUploadSession: session ownership", () => {
     const { attachToUploadSession } = await import("@/lib/uploads/session");
     const userId = makeUserId();
     const otherUserId = makeUserId();
+    await Space.create({ _id: `space_personal_${userId}`, type: "personal", ownerAccountId: userId, createdByAccountId: userId });
     const bucket = await seedBucket(userId, "attach");
     const mainKey = `users/${userId}/main`;
 
@@ -280,6 +281,7 @@ describe("attachToUploadSession: session ownership", () => {
   it("does not attach new keys to a completed parent session", async () => {
     const { attachToUploadSession } = await import("@/lib/uploads/session");
     const userId = makeUserId();
+    await Space.create({ _id: `space_personal_${userId}`, type: "personal", ownerAccountId: userId, createdByAccountId: userId });
     const bucket = await seedBucket(userId, "completed");
     const mainKey = `users/${userId}/done`;
 

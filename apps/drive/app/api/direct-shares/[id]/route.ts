@@ -9,6 +9,7 @@ import DirectShare from "@/models/DirectShare";
 import type { IDirectShareRecipient } from "@/models/DirectShare";
 import { normalizeShareRole } from "@/lib/orgs/shareRoles";
 import { User } from "@/models/User";
+import { hasActiveSharedObject } from "@/lib/orgs/activeSharedObject";
 
 export const dynamic = "force-dynamic";
 
@@ -40,6 +41,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     if (!recipient) {
       return NextResponse.json({ error: "You do not have access to this share" }, { status: 403 });
+    }
+    if (!await hasActiveSharedObject(share.objectId._id)) {
+      return NextResponse.json({ error: "Share not found" }, { status: 404 });
     }
 
     const owner = await User.findById(share.createdBy).select("_id name email").lean();

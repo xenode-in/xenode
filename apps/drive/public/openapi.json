@@ -23,6 +23,7 @@
     { "name": "Thumbnails", "description": "Thumbnail URL resolution and batch content delivery" },
     { "name": "Grid", "description": "Photo grid and gallery-optimized endpoints" },
     { "name": "Direct Shares", "description": "User-to-user encrypted file sharing" },
+    { "name": "Organizations", "description": "Organization and team Space lifecycle" },
     { "name": "Link Shares", "description": "Public share links with tokens" },
     { "name": "Keys", "description": "Cryptographic vault & API key management" },
     { "name": "Subscriptions", "description": "Plan lifecycle — create, verify, pause, resume, cancel, change" },
@@ -42,6 +43,62 @@
     { "cookieAuth": [] }
   ],
   "paths": {
+
+    "/api/orgs/{orgId}": {
+      "delete": {
+        "tags": ["Organizations"],
+        "summary": "Suspend an organization for its 30-day recovery window",
+        "description": "Owner only. Suspends the organization and team Spaces atomically with the soft-delete marker. Existing shares stop issuing URLs. Billing cancellation follows the database transition.",
+        "parameters": [{ "name": "orgId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Returns deletedAt and scheduledPurgeAt" },
+          "403": { "description": "Organization owner required" },
+          "409": { "description": "Organization cannot enter recovery" }
+        }
+      }
+    },
+    "/api/orgs/{orgId}/restore": {
+      "post": {
+        "tags": ["Organizations"],
+        "summary": "Restore an organization before retirement starts",
+        "description": "Owner only. The organization and suspended Spaces reactivate in one transaction. Recovery closes when the 30-day window expires or permanent retirement begins.",
+        "parameters": [{ "name": "orgId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "Organization restored" },
+          "403": { "description": "Organization owner required" },
+          "409": { "description": "Recovery window closed" }
+        }
+      }
+    },
+    "/api/orgs/{orgId}/teams/{teamId}": {
+      "delete": {
+        "tags": ["Organizations"],
+        "summary": "Retire a team Space and its encrypted objects",
+        "description": "Owner or admin only. A transaction disables the team Space and bins active objects. B2 deletion and quota retirement use the per-object purge ledger. Repeat while cleanupPending is true; the authenticated hourly cron also continues it. Parent records and product keys survive until all object and upload cleanup completes.",
+        "parameters": [
+          { "name": "orgId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "teamId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Team and Space retired" },
+          "202": { "description": "Cleanup pending; encrypted objects or upload manifests remain" },
+          "403": { "description": "Organization owner or admin required" },
+          "409": { "description": "Space or storage invariant prevents retirement" }
+        }
+      }
+    },
+    "/api/cron/purge-orgs": {
+      "get": {
+        "tags": ["Cron"],
+        "summary": "Continue team and expired-organization retirement",
+        "description": "Requires CRON_SECRET bearer authentication. Bounded per-Space work confirms exact B2 deletion before atomically retiring object metadata, quota and bucket accounting. Parent rows are removed only after every child object and replayable upload is gone.",
+        "responses": {
+          "200": { "description": "Sweep completed with no storage failures; parents may still be pending" },
+          "401": { "description": "Invalid cron credential" },
+          "500": { "description": "Storage deletion or sweep failure; durable state remains for retry" }
+        }
+      }
+    },
 
     "/api/auth/{...all}": {
       "get": {

@@ -3,10 +3,13 @@ import { Types } from "mongoose";
 
 import dbConnect from "@/lib/mongodb";
 import AlbumShareLink from "@/models/AlbumShareLink";
+import PhotoAlbum from "@/models/PhotoAlbum";
+import { Space } from "@xenode/database/models";
 import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
 import { getSignedFileUrl } from "@/lib/b2/cdn";
 import { verifyAlbumSharePassword } from "@/lib/share/album-password";
+import { areActiveSharedObjects } from "@/lib/orgs/activeSharedObject";
 
 export const dynamic = "force-dynamic";
 
@@ -44,10 +47,17 @@ export async function GET(_req: NextRequest, { params }: Params) {
       { status: 404 },
     );
   }
+  const album = await PhotoAlbum.findById(link.albumId).select("spaceId").lean();
+  if (!album || !await Space.exists({ _id: album.spaceId, status: "active" })) {
+    return NextResponse.json({ error: "Link not found or revoked" }, { status: 404 });
+  }
 
   const validity = checkLinkValidity(link);
   if (!validity.ok) {
     return NextResponse.json({ error: validity.error }, { status: validity.status });
+  }
+  if (link.items.length && !await areActiveSharedObjects(link.items.map((item) => item.objectId))) {
+    return NextResponse.json({ error: "Link not found or revoked" }, { status: 404 });
   }
 
   return NextResponse.json({
@@ -75,6 +85,10 @@ export async function POST(req: NextRequest, { params }: Params) {
       { status: 404 },
     );
   }
+  const album = await PhotoAlbum.findById(link.albumId).select("spaceId").lean();
+  if (!album || !await Space.exists({ _id: album.spaceId, status: "active" })) {
+    return NextResponse.json({ error: "Link not found or revoked" }, { status: 404 });
+  }
 
   const validity = checkLinkValidity(link);
   if (!validity.ok) {
@@ -87,6 +101,9 @@ export async function POST(req: NextRequest, { params }: Params) {
       { error: passwordCheck.error },
       { status: passwordCheck.status },
     );
+  }
+  if (link.items.length && !await areActiveSharedObjects(link.items.map((item) => item.objectId))) {
+    return NextResponse.json({ error: "Link not found or revoked" }, { status: 404 });
   }
 
   // Count one view per successful unlock (non-blocking).

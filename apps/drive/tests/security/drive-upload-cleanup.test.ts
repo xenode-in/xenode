@@ -32,6 +32,7 @@ function cronRequest(secret = "cleanup-lease-test") {
 async function fixture(completed = false) {
   const userId = makeUserId();
   const spaceId = `space_personal_${userId}`;
+  await Space.create({ _id: spaceId, type: "personal", ownerAccountId: userId, createdByAccountId: userId });
   const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
   const key = `users/${userId}/opaque`;
   const keys = [key, `${key}-thumb`, `${key}-optimized`];
@@ -203,7 +204,6 @@ describe("Drive cleanup leases and reconciliation", () => {
 
   it("denies completion and reservation renewal after cleanup owns the claim", async () => {
     const input = await fixture();
-    await Space.create({ _id: input.spaceId, type: "personal", ownerAccountId: input.userId, createdByAccountId: input.userId });
     await createUsage({ userId: input.userId });
     await UploadSession.updateOne({ _id: input.upload._id }, { $set: { expiresAt: new Date(Date.now() + 60_000) } });
     vi.mocked(getServerSession).mockResolvedValue({

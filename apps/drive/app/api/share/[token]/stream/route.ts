@@ -5,6 +5,7 @@ import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
 import { getSignedFileUrl } from "@/lib/b2/cdn";
 import { verifySharePassword } from "@/lib/share/password-protection";
+import { Space } from "@xenode/database/models";
 
 export const dynamic = "force-dynamic";
 
@@ -73,8 +74,8 @@ export async function POST(req: NextRequest, { params }: Params) {
   }
 
   const objectId = selectedItem?.objectId || link.objectId;
-  const object = await StorageObject.findById(objectId).lean();
-  if (!object)
+  const object = await StorageObject.findOne({ _id: objectId, deletedAt: null, purgeState: { $exists: false } }).lean();
+  if (!object || !await Space.exists({ _id: object.spaceId, status: "active" }))
     return NextResponse.json({ error: "File not found" }, { status: 404 });
 
   const bucket = await Bucket.findById(object.bucketId);

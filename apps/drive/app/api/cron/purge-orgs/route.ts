@@ -1,142 +1,85 @@
-/**
- * GET /api/cron/purge-orgs
- *
- * Permanently removes organizations whose 30-day soft-delete window has elapsed
- * (scheduledPurgeAt <= now). For each org it deletes the encrypted B2 blobs for
- * every org + team object, then hard-deletes all org-scoped documents.
- *
- * Secured with the shared CRON_SECRET (same pattern as purge-bin). Register in
- * vercel.json:  { "path": "/api/cron/purge-orgs", "schedule": "0 3 * * *" }
- *
- * Billing is already cancelled at soft-delete time; this only reclaims storage
- * and rows. Processes a bounded number of orgs per run.
- */
 import { NextRequest, NextResponse } from "next/server";
 import mongoose from "mongoose";
 import dbConnect from "@/lib/mongodb";
-import Bucket from "@/models/Bucket";
-import StorageObject from "@/models/StorageObject";
-import { Space, SpaceProductKey } from "@xenode/database/models";
-import OrgUsage from "@/models/OrgUsage";
-import OrganizationPolicy from "@/models/OrganizationPolicy";
-import OrgDomain from "@/models/OrgDomain";
-import { deleteObjects as deleteB2Objects } from "@/lib/b2/objects";
-import { collectVersionB2Keys } from "@/lib/storage/versions";
-import type { IStorageObjectVersion } from "@/models/StorageObject";
+import { deleteObjects } from "@/lib/b2/objects";
+import {
+  beginOrganizationRetirement,
+  finishOrganizationRetirement,
+  finishTeamRetirement,
+  processRetiringSpace,
+} from "@xenode/database/repositories";
+import { teamSpaceId } from "@xenode/spaces/ids";
 
 export const dynamic = "force-dynamic";
-
 const MAX_ORGS_PER_RUN = 50;
+const MAX_STANDALONE_TEAMS_PER_RUN = 50;
+const MAX_SPACE_STEPS_PER_RUN = 100;
 
-type OrgObjectDoc = {
-  key?: string;
-  thumbnail?: string;
-  optimizedKey?: string;
-  versions?: IStorageObjectVersion[];
-};
+async function sweepTeam(orgId: string, teamId: string, now: Date) {
+  const spaceId = teamSpaceId(orgId, teamId);
+  const step = await processRetiringSpace({ spaceId, now, deleteBlobs: deleteObjects });
+  const finished = step.complete && await finishTeamRetirement({ orgId, teamId, spaceId });
+  if (!finished) await mongoose.connection.db!.collection("team").updateOne({ id: teamId, organizationId: orgId, purgeState: "pending" }, { $set: { purgeSweepAt: now } });
+  return { ...step, finished };
+}
 
+/** Retire child ciphertext and quota before deleting a parent Space or organization. */
 export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+  if (!cronSecret || req.headers.get("authorization") !== `Bearer ${cronSecret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   try {
     await dbConnect();
     const now = new Date();
-    const organizations = mongoose.connection.collection("organization");
+    const db = mongoose.connection.db!;
+    const organizations = db.collection("organization");
+    let purgedOrgs = 0, purgedTeams = 0, purgedObjects = 0, failedObjects = 0;
+    let spaceSteps = 0;
 
-    const expired = await organizations
-      .find({ deletedAt: { $exists: true }, scheduledPurgeAt: { $lte: now } })
-      .limit(MAX_ORGS_PER_RUN)
-      .toArray();
+    // A team deletion initiated by its owner must progress even when its org is active.
+    const standaloneTeams = await db.collection("team").find({ purgeState: "pending" })
+      .sort({ purgeSweepAt: 1, _id: 1 }).limit(MAX_STANDALONE_TEAMS_PER_RUN).project({ id: 1, organizationId: 1 }).toArray();
+    for (const team of standaloneTeams) {
+      const step = await sweepTeam(team.organizationId as string, team.id as string, now);
+      spaceSteps++;
+      purgedObjects += step.deleted;
+      failedObjects += step.failed;
+      if (step.finished) purgedTeams++;
+    }
 
-    let purgedOrgs = 0;
-    let purgedObjects = 0;
-
+    const expired = await organizations.find({ deletedAt: { $type: "date" }, scheduledPurgeAt: { $lte: now } })
+      .sort({ purgeSweepAt: 1, scheduledPurgeAt: 1, _id: 1 }).limit(MAX_ORGS_PER_RUN).project({ id: 1 }).toArray();
     for (const org of expired) {
+      if (spaceSteps >= MAX_SPACE_STEPS_PER_RUN) break;
       const orgId = org.id as string;
-
-      // 1. Delete encrypted blobs for every org + team object, grouped by the
-      //    physical B2 bucket they live in.
-      const spaces = await Space.find({ organizationId: orgId })
-        .select("_id")
-        .lean<Array<{ _id: string }>>();
-      const spaceIds = spaces.map((space) => space._id);
-      const objects = await StorageObject.find({ spaceId: { $in: spaceIds } })
-        .select("key thumbnail optimizedKey versions bucketId")
-        .lean<(OrgObjectDoc & { bucketId: mongoose.Types.ObjectId })[]>();
-      if (await StorageObject.exists({ spaceId: { $in: spaceIds }, $or: [
-        { purgeState: { $exists: true } }, { "versions.pendingDeletion": true },
-      ] })) continue;
-
-      if (objects.length > 0) {
-        const bucketIds = Array.from(
-          new Set(objects.map((o) => o.bucketId.toString())),
-        );
-        const buckets = await Bucket.find({ _id: { $in: bucketIds } })
-          .select("_id b2BucketId")
-          .lean<{ _id: mongoose.Types.ObjectId; b2BucketId: string }[]>();
-        const b2ByBucket = new Map(
-          buckets.map((b) => [b._id.toString(), b.b2BucketId]),
-        );
-
-        const keysByB2 = new Map<string, string[]>();
-        for (const obj of objects) {
-          const b2 = b2ByBucket.get(obj.bucketId.toString());
-          if (!b2) continue;
-          const arr = keysByB2.get(b2) ?? [];
-          if (obj.key) arr.push(obj.key);
-          if (obj.thumbnail) arr.push(obj.thumbnail);
-          if (obj.optimizedKey) arr.push(obj.optimizedKey);
-          for (const v of obj.versions ?? []) arr.push(...collectVersionB2Keys(v));
-          keysByB2.set(b2, arr);
-        }
-        for (const [b2, keys] of keysByB2) {
-          await deleteB2Objects(b2, keys);
-        }
+      if (!await beginOrganizationRetirement({ orgId, now })) continue;
+      const teams = await db.collection("team").find({ organizationId: orgId, purgeState: "pending" })
+        .sort({ purgeSweepAt: 1, _id: 1 }).limit(MAX_SPACE_STEPS_PER_RUN - spaceSteps).project({ id: 1 }).toArray();
+      for (const team of teams) {
+        const step = await sweepTeam(orgId, team.id as string, now);
+        spaceSteps++;
+        purgedObjects += step.deleted;
+        failedObjects += step.failed;
+        if (step.finished) purgedTeams++;
       }
-
-      // 2. Hard-delete all org-scoped documents.
-      const teams = await mongoose.connection
-        .collection("team")
-        .find({ organizationId: orgId })
-        .toArray();
-      const teamIds = teams.map((t) => t.id as string);
-
-      await StorageObject.deleteMany({ spaceId: { $in: spaceIds } });
-      await SpaceProductKey.deleteMany({ spaceId: { $in: spaceIds } });
-      await Space.deleteMany({ _id: { $in: spaceIds } });
-      await OrgUsage.deleteMany({ orgId });
-      await OrganizationPolicy.deleteMany({ orgId });
-      await OrgDomain.deleteMany({ orgId });
-      await mongoose.connection
-        .collection("member")
-        .deleteMany({ organizationId: orgId });
-      await mongoose.connection
-        .collection("invitation")
-        .deleteMany({ organizationId: orgId });
-      await mongoose.connection
-        .collection("team")
-        .deleteMany({ organizationId: orgId });
-      if (teamIds.length > 0) {
-        await mongoose.connection
-          .collection("teamMember")
-          .deleteMany({ teamId: { $in: teamIds } });
+      const orgSpaces = await db.collection<{ _id: string }>("spaces").find({ organizationId: orgId, type: "organization" })
+        .limit(MAX_SPACE_STEPS_PER_RUN - spaceSteps).project({ _id: 1 }).toArray();
+      for (const space of orgSpaces) {
+        const step = await processRetiringSpace({ spaceId: space._id, now, deleteBlobs: deleteObjects });
+        spaceSteps++;
+        purgedObjects += step.deleted;
+        failedObjects += step.failed;
       }
-      await organizations.deleteOne({ id: orgId });
-
-      purgedOrgs += 1;
-      purgedObjects += objects.length;
+      if (await finishOrganizationRetirement({ orgId })) purgedOrgs++;
+      else await organizations.updateOne({ id: orgId, purgeState: "pending" }, { $set: { purgeSweepAt: now } });
     }
 
     return NextResponse.json({
-      success: true,
-      purgedOrgs,
-      purgedObjects,
+      success: failedObjects === 0, purgedOrgs, purgedTeams, purgedObjects, failedObjects,
       processedAt: now.toISOString(),
-    });
+    }, { status: failedObjects ? 500 : 200 });
   } catch (error) {
     console.error("[Cron] purge-orgs error:", error);
     return NextResponse.json({ error: "Cron job failed" }, { status: 500 });

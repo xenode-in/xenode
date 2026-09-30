@@ -1,4 +1,3 @@
-import mongoose from "mongoose";
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthzError, requireAccessContext, toJsonResponse } from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
@@ -6,11 +5,10 @@ import {
   assertOrgMemberRole,
   assertTeamInOrg,
 } from "@/lib/orgs/access";
-import { teamObjectClause } from "@/lib/orgs/storage";
-import { decrementOrgStorage } from "@/lib/orgs/billing/orgUsage";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
-import StorageObject from "@/models/StorageObject";
-import { Space, SpaceProductKey } from "@xenode/database/models";
+import { beginTeamRetirement, finishTeamRetirement, processRetiringSpace, DriveUploadCommitError } from "@xenode/database/repositories";
+import { deleteObjects } from "@/lib/b2/objects";
+import mongoose from "mongoose";
 import { teamSpaceId } from "@xenode/spaces/ids";
 
 export const dynamic = "force-dynamic";
@@ -54,7 +52,6 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 }
 
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
-  const mongoSession = await mongoose.startSession();
   try {
     const ctx = await requireAccessContext(request);
     const { orgId, teamId } = await params;
@@ -64,59 +61,26 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       orgId,
       allowed: ["owner", "admin"],
     });
-    await assertTeamInOrg({ orgId, teamId });
-
     await dbConnect();
-    if (await StorageObject.exists({ ...teamObjectClause(orgId, teamId), $or: [
-      { purgeState: { $exists: true } }, { "versions.pendingDeletion": true },
-    ] })) {
-      return NextResponse.json({ error: "Storage deletion must finish before removing the team", code: "storage_cleanup_pending" }, { status: 409 });
-    }
-
-    // Sum the team drive's bytes so we can roll them back off OrgUsage.
-    const agg = await StorageObject.aggregate([
-      { $match: teamObjectClause(orgId, teamId) },
-      { $group: { _id: null, bytes: { $sum: "$size" }, count: { $sum: 1 } } },
-    ]);
-    const bytes = agg[0]?.bytes ?? 0;
-    const count = agg[0]?.count ?? 0;
-
-    await mongoSession.withTransaction(async () => {
-      await StorageObject.deleteMany(teamObjectClause(orgId, teamId), {
-        session: mongoSession,
+    const spaceId = teamSpaceId(orgId, teamId);
+    await beginTeamRetirement({ orgId, teamId, spaceId });
+    const step = await processRetiringSpace({ spaceId, deleteBlobs: deleteObjects });
+    const finished = step.complete && await finishTeamRetirement({ orgId, teamId, spaceId });
+    if (finished) {
+      await emitActivity({
+        orgId,
+        action: ActivityAction.TEAM_DELETED,
+        actorUserId: ctx.userId,
+        target: { type: "team", id: teamId },
+        metadata: { objectsRemoved: step.deleted },
       });
-      const spaceId = teamSpaceId(orgId, teamId);
-      await SpaceProductKey.deleteMany({ spaceId }, { session: mongoSession });
-      await Space.deleteOne({ _id: spaceId }, { session: mongoSession });
-      await mongoose.connection
-        .collection("teamMember")
-        .deleteMany({ teamId }, { session: mongoSession });
-      // Product key envelopes were revoked with the team Space above.
-      await mongoose.connection
-        .collection("team")
-        .deleteOne({ id: teamId, organizationId: orgId }, { session: mongoSession });
-    });
-
-    // Roll usage back outside the transaction (OrgUsage is a separate concern).
-    if (bytes > 0 || count > 0) {
-      await decrementOrgStorage(orgId, bytes, count).catch(() => {});
     }
-
-    await emitActivity({
-      orgId,
-      action: ActivityAction.TEAM_DELETED,
-      actorUserId: ctx.userId,
-      target: { type: "team", id: teamId },
-      metadata: { objectsRemoved: count },
-    });
-
-    return NextResponse.json({ deletedTeamId: teamId, objectsRemoved: count });
+    return NextResponse.json({ deletedTeamId: teamId, objectsRemoved: step.deleted, cleanupPending: !finished }, { status: finished ? 200 : 202 });
   } catch (error) {
     if (isAuthzError(error)) return toJsonResponse(error);
+    if (error instanceof DriveUploadCommitError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
     const message =
       error instanceof Error ? error.message : "Failed to delete team";
     return NextResponse.json({ error: message }, { status: 500 });
-  } finally {
-    await mongoSession.endSession();
   }
 }

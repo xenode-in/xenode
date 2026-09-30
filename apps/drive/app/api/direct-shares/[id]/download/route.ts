@@ -10,6 +10,7 @@ import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
 import { getSignedFileUrl } from "@/lib/b2/cdn";
 import { canDownload, normalizeShareRole } from "@/lib/orgs/shareRoles";
+import { Space } from "@xenode/database/models";
 
 export const dynamic = "force-dynamic";
 
@@ -41,8 +42,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const object = await StorageObject.findById(share.objectId).lean();
-    if (!object) {
+    const object = await StorageObject.findOne({ _id: share.objectId, deletedAt: null, purgeState: { $exists: false } }).lean();
+    if (!object || !await Space.exists({ _id: object.spaceId, status: "active" })) {
       return NextResponse.json({ error: "File not found" }, { status: 404 });
     }
 

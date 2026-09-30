@@ -7,6 +7,8 @@ import {
 } from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import ShareLink from "@/models/ShareLink";
+import { Types } from "mongoose";
+import { areActiveSharedObjects } from "@/lib/orgs/activeSharedObject";
 
 export const dynamic = "force-dynamic";
 
@@ -51,6 +53,11 @@ export async function GET(_: NextRequest, { params }: Params) {
   const obj = link.objectId as SharedObjectMeta | null;
   const bundleItems = (link.bundleItems || []) as SharedBundleItem[];
   const isBundle = !!link.isBundle && bundleItems.length > 0;
+  const objectIds = isBundle ? bundleItems.map((item) => item.objectId?._id) : [obj?._id];
+  if (objectIds.some((id) => !id || !Types.ObjectId.isValid(String(id))) ||
+      !await areActiveSharedObjects(objectIds.map((id) => new Types.ObjectId(String(id))))) {
+    return NextResponse.json({ error: "Link not found or revoked" }, { status: 404 });
+  }
 
   const response = {
     id: obj?._id,

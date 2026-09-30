@@ -2,10 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 
 import dbConnect from "@/lib/mongodb";
 import AlbumShareLink from "@/models/AlbumShareLink";
+import PhotoAlbum from "@/models/PhotoAlbum";
 import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
 import { getSignedFileUrl } from "@/lib/b2/cdn";
 import { verifyAlbumSharePassword } from "@/lib/share/album-password";
+import { Space } from "@xenode/database/models";
 
 export const dynamic = "force-dynamic";
 
@@ -32,6 +34,10 @@ export async function POST(req: NextRequest, { params }: Params) {
       { status: 404 },
     );
   }
+  const album = await PhotoAlbum.findById(link.albumId).select("spaceId").lean();
+  if (!album || !await Space.exists({ _id: album.spaceId, status: "active" })) {
+    return NextResponse.json({ error: "Link not found or revoked" }, { status: 404 });
+  }
 
   if (link.expiresAt && new Date() > link.expiresAt) {
     return NextResponse.json({ error: "This link has expired" }, { status: 410 });
@@ -55,9 +61,10 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   const object = await StorageObject.findOne({
     _id: item.objectId,
-    deletedAt: { $exists: false },
+    deletedAt: null,
+    purgeState: { $exists: false },
   }).lean();
-  if (!object) {
+  if (!object || !await Space.exists({ _id: object.spaceId, status: "active" })) {
     return NextResponse.json({ error: "File not found" }, { status: 404 });
   }
 

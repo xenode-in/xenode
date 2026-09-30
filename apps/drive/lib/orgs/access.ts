@@ -41,6 +41,7 @@ export interface TeamRecord {
   organizationId: string;
   createdAt?: Date;
   updatedAt?: Date;
+  purgeState?: "pending";
 }
 
 export interface UserRecord {
@@ -187,6 +188,7 @@ export async function assertTeamInOrg(args: {
   const team = await mongoose.connection.collection<TeamRecord>("team").findOne({
     id: args.teamId,
     organizationId: args.orgId,
+    purgeState: { $exists: false },
   });
 
   if (!team) {

@@ -1,7 +1,7 @@
 import { randomBytes } from "crypto";
 import mongoose from "mongoose";
 import { NextRequest, NextResponse } from "next/server";
-import { isAuthzError, requireAccessContext, toJsonResponse } from "@/lib/authz";
+import { AuthzError, isAuthzError, requireAccessContext, toJsonResponse } from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import {
   assertOrgMember,
@@ -9,9 +9,10 @@ import {
   type TeamRecord,
 } from "@/lib/orgs/access";
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
-import { ensureTeamSpace } from "@xenode/spaces/repository";
-import { deleteSpaceProductKeys, putMemberProductKey } from "@xenode/spaces/product-keys";
+import { putMemberProductKey } from "@xenode/spaces/product-keys";
 import { teamSpaceId } from "@xenode/spaces/ids";
+import { Space } from "@xenode/database/models";
+import { withTransaction } from "@xenode/database/connection";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     await dbConnect();
     const teams = await mongoose.connection
       .collection<TeamRecord>("team")
-      .find({ organizationId: orgId })
+      .find({ organizationId: orgId, purgeState: { $exists: false } })
       .sort({ createdAt: -1 })
       .toArray();
 
@@ -110,19 +111,26 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       updatedAt: now,
     };
 
-    try {
-      await mongoose.connection.collection("team").insertOne(team);
+    await withTransaction(async (session) => {
+      // Share one organization write with soft-delete so a stale membership read
+      // cannot create a new active team Space after suspension.
+      const fenced = await mongoose.connection.db!.collection("organization").updateOne(
+        { id: orgId, deletedAt: null, purgeState: { $exists: false } },
+        { $inc: { teamMutationVersion: 1 }, $set: { updatedAt: now } },
+        { session },
+      );
+      if (fenced.matchedCount !== 1) throw new AuthzError(410, "organization_deleted", "Organization is unavailable");
+      await mongoose.connection.collection("team").insertOne(team, { session });
       await mongoose.connection.collection("teamMember").insertOne({
         id: newPluginId("tmem"),
         teamId: team.id,
         userId: ctx.userId,
         createdAt: now,
-      });
-      const teamSpace = await ensureTeamSpace({
-        accountId: ctx.accountId,
-        organizationId: orgId,
-        teamId: team.id,
-      });
+      }, { session });
+      const [teamSpace] = await Space.create([{
+        _id: teamSpaceId(orgId, team.id), type: "team", organizationId: orgId,
+        teamId: team.id, status: "active", createdByAccountId: ctx.accountId,
+      }], { session });
       if (ownerWrappedTeamKey) {
         await putMemberProductKey({
           spaceId: teamSpace._id,
@@ -132,16 +140,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           keyVersion,
           createdByAccountId: ctx.accountId,
           rotationReason: "initial",
+          session,
         });
       }
-    } catch (error) {
-      await mongoose.connection.collection("team").deleteOne({ id: team.id });
-      await mongoose.connection
-        .collection("teamMember")
-        .deleteMany({ teamId: team.id });
-      await deleteSpaceProductKeys({ spaceId: teamSpaceId(orgId, team.id) });
-      throw error;
-    }
+    });
 
     await emitActivity({
       orgId,

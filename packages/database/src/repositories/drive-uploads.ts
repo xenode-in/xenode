@@ -12,6 +12,14 @@ export class DriveUploadCommitError extends Error {
 export interface VerifiedDriveBlob { key: string; size: number }
 
 export async function loadSpaceUsage(spaceId: string, accountId: string | undefined, session?: ClientSession, includeInactive = false) {
+  // A shared Space write serializes a committed upload/revision with parent retirement.
+  // Snapshot reads alone would allow a child commit after the parent saw an empty Space.
+  if (session && !includeInactive) {
+    const fenced = await Space.updateOne({ _id: spaceId, status: "active" }, { $inc: { storageFenceVersion: 1 } }, { session });
+    if (fenced.matchedCount !== 1) {
+      throw new DriveUploadCommitError(409, "space_owner_missing", "Space storage owner is unavailable");
+    }
+  }
   const space = await Space.findOne({ _id: spaceId, ...(includeInactive ? {} : { status: "active" }) }).session(session ?? null).lean();
   const personal = space?.type === "personal";
   const ownerId = personal ? space?.ownerAccountId : space?.organizationId;

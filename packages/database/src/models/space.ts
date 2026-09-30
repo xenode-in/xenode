@@ -9,6 +9,7 @@ export interface SpaceRecord {
   organizationId?: string;
   teamId?: string;
   status: "active" | "suspended" | "deleted";
+  storageFenceVersion?: number;
   createdByAccountId: string;
   createdAt: Date;
   updatedAt: Date;
@@ -33,6 +34,7 @@ const spaceSchema = new Schema<SpaceRecord>(
       required: true,
       index: true,
     },
+    storageFenceVersion: { type: Number, default: 0 },
     createdByAccountId: { type: String, required: true },
   },
   { timestamps: true, collection: "spaces" },
