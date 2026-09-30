@@ -55,6 +55,19 @@ describe("confirmed version deletion and transactional restore", () => {
     expect(await cleanup(input, now)).toBe("skipped");
     expect(await cleanup(input, new Date(now.getTime()+61_000))).toBe("deleted");
   });
+  it("waits for the last signed PUT before retiring a version's physical key", async () => {
+    const input = await fixture(), now = new Date();
+    const expiresAt = new Date(now.getTime() + 60_000);
+    await getDatabase().collection("uploadsessions").insertOne({
+      spaceId: input.spaceId, bucketId: input.bucket._id,
+      keys: ["users/version-owner/expired"], status: "completed", expiresAt,
+    });
+    expect(await cleanup(input, now)).toBe("skipped");
+    expect(deleted).not.toHaveBeenCalled();
+    expect((await version(input))?.cleanupNextAttemptAt).toEqual(expiresAt);
+    expect((await Usage.findOne({ userId: "version-owner" }))?.totalStorageBytes).toBe(180);
+    expect(await cleanup(input, new Date(expiresAt.getTime() + 1))).toBe("deleted");
+  });
   it("keeps metadata and Usage unchanged when post-delete accounting fails", async () => {
     const input = await fixture(), now = new Date();
     deleted.mockImplementationOnce(async () => { await Bucket.deleteOne({ _id: input.bucket._id }); });

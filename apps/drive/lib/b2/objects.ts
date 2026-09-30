@@ -1,7 +1,7 @@
 import {
   PutObjectCommand,
-  DeleteObjectCommand,
   DeleteObjectsCommand,
+  ListObjectVersionsCommand,
   ListObjectsV2Command,
   GetObjectCommand,
   HeadObjectCommand,
@@ -55,45 +55,44 @@ export async function deleteObject(
   bucketName: string,
   key: string,
 ): Promise<void> {
-  const command = new DeleteObjectCommand({
-    Bucket: bucketName,
-    Key: key,
-  });
-
-  await getS3Client(regionForBucketName(bucketName)).send(command);
+  await deleteObjects(bucketName, [key]);
 }
 
-/**
- * Delete many objects from a B2 bucket in one round trip per 1000 keys.
- *
- * S3's DeleteObjects API accepts up to 1000 keys per request, so we chunk.
- * Throws on transport or per-key failures. Callers must retain their metadata
- * and cleanup ledger until every batch succeeds; S3 can return HTTP 200 with
- * individual deletion errors.
- * Duplicate/empty keys are de-duped out first.
- */
+/** Delete every physical B2 version of exact, unreferenced keys. */
 export async function deleteObjects(
   bucketName: string,
   keys: string[],
 ): Promise<void> {
   const unique = Array.from(new Set(keys.filter(Boolean)));
   if (unique.length === 0) return;
-
-  const CHUNK = 1000;
-  for (let i = 0; i < unique.length; i += CHUNK) {
-    const slice = unique.slice(i, i + CHUNK);
-    const response = await getS3Client(regionForBucketName(bucketName)).send(
-      new DeleteObjectsCommand({
+  const client = getS3Client(regionForBucketName(bucketName));
+  const MAX_SWEEPS_PER_KEY = 10;
+  for (const key of unique) {
+    let empty = false;
+    for (let sweep = 0; sweep < MAX_SWEEPS_PER_KEY; sweep++) {
+      // B2 buckets are versioned. A key-only DELETE adds a marker and leaves
+      // physical versions (and their billing) behind, so inspect exact IDs.
+      const page = await client.send(new ListObjectVersionsCommand({
+        Bucket: bucketName, Prefix: key, MaxKeys: 1000,
+      }));
+      const candidates = [...(page.Versions ?? []), ...(page.DeleteMarkers ?? [])]
+        .filter((entry) => entry.Key === key);
+      if (!candidates.length) { empty = true; break; }
+      if (candidates.some((entry) => !entry.VersionId)) {
+        throw new Error("Object storage omitted a version ID; physical deletion is unconfirmed");
+      }
+      const response = await client.send(new DeleteObjectsCommand({
         Bucket: bucketName,
         Delete: {
-          Objects: slice.map((Key) => ({ Key })),
+          Objects: candidates.map((entry) => ({ Key: key, VersionId: entry.VersionId! })),
           Quiet: true,
         },
-      }),
-    );
-    if (response.Errors?.length) {
-      throw new Error(`Object storage failed to delete ${response.Errors.length} requested objects`);
+      }));
+      if (response.Errors?.length) {
+        throw new Error(`Object storage failed to delete ${response.Errors.length} requested objects`);
+      }
     }
+    if (!empty) throw new Error("Object storage still has versions; retry exact-key cleanup");
   }
 }
 

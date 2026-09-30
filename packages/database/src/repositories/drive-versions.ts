@@ -80,6 +80,16 @@ export async function cleanupDriveVersion(input: VersionIdentity & {
   const leaseFilter = { ...objectFilter(input), versions: { $elemMatch: { versionId: input.versionId, cleanupLeaseId: leaseId, pendingDeletion: true, isOriginal: { $ne: true } } } };
   const keys = [...new Set<string>([version.key, ...(version.chunks ?? []).map((chunk: { key: string }) => chunk.key)].filter(Boolean))];
   try {
+    const latestUpload = await getDatabase().collection("uploadsessions").find({
+      bucketId: object.bucketId, keys: { $in: keys },
+    }).sort({ expiresAt: -1 }).limit(1).next();
+    if (latestUpload?.expiresAt instanceof Date && latestUpload.expiresAt > now) {
+      await objects.updateOne(leaseFilter, {
+        $set: { "versions.$.cleanupNextAttemptAt": latestUpload.expiresAt },
+        $unset: { "versions.$.cleanupLeaseId": "", "versions.$.cleanupLeaseExpiresAt": "" },
+      });
+      return "skipped" as const;
+    }
     const references = await findReferencedStorageObjectKeys({
       bucketId: object.bucketId, keys, ignoreVersion: { objectId: String(object._id), versionId: input.versionId },
     });
