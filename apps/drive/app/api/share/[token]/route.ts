@@ -7,6 +7,7 @@ import {
 } from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import ShareLink from "@/models/ShareLink";
+import StorageObject from "@/models/StorageObject";
 import { Types } from "mongoose";
 import { areActiveSharedObjects } from "@/lib/orgs/activeSharedObject";
 
@@ -226,6 +227,11 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       }
       update.bundleItems = nextItems;
       update.objectId = nextItems[0].objectId;
+      const primary = await StorageObject.findOne({
+        _id: nextItems[0].objectId, deletedAt: null, purgeState: { $exists: false },
+      }).select("bucketId").lean();
+      if (!primary) return NextResponse.json({ error: "Bundle source is unavailable", code: "share_source_changed" }, { status: 409 });
+      update.bucketId = primary.bucketId;
     }
 
     if (body.accessType === "view" || body.accessType === "download") {
@@ -243,18 +249,19 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     }
 
     const link = await ShareLink.findOneAndUpdate(
-      { _id: existingLink._id },
+      { _id: existingLink._id, __v: existingLink.__v, isRevoked: false },
       {
         ...(Object.keys(update).length > 0 ? { $set: update } : {}),
         ...(Object.keys(unset).length > 0 ? { $unset: unset } : {}),
+        $inc: { __v: 1 },
       },
-      { new: true },
+      { returnDocument: "after" },
     ).lean();
 
     if (!link) {
       return NextResponse.json(
-        { error: "Not found or not authorised" },
-        { status: 404 },
+        { error: "Share changed; reload before editing", code: "share_conflict" },
+        { status: 409 },
       );
     }
 

@@ -114,9 +114,40 @@ export async function cleanupDriveBinObject(input: { objectId: Types.ObjectId; n
         _id: current.bucketId, totalSizeBytes: { $gte: bytes }, objectCount: { $gte: 1 },
       }, { $inc: { totalSizeBytes: -bytes, objectCount: -1 }, $set: { updatedAt: new Date() } }, { session });
       if (usage.matchedCount !== 1 || bucketUpdate.matchedCount !== 1) throw new Error("accounting_unavailable");
-      await getDatabase().collection("sharelinks").deleteMany({ objectId: current._id }, { session });
+      const sharelinks = getDatabase().collection("sharelinks");
+      const affectedLinks = await sharelinks.find({ $or: [
+        { objectId: current._id }, { "bundleItems.objectId": current._id },
+      ] }, { session }).toArray();
+      for (const link of affectedLinks) {
+        if (!link.isBundle || !Array.isArray(link.bundleItems)) {
+          await sharelinks.deleteOne({ _id: link._id }, { session });
+          continue;
+        }
+        const remaining = link.bundleItems.filter((item: { objectId?: Types.ObjectId }) =>
+          String(item.objectId) !== String(current._id));
+        if (!remaining.length) {
+          await sharelinks.deleteOne({ _id: link._id }, { session });
+          continue;
+        }
+        const first = await objects.findOne({ _id: remaining[0].objectId }, { session, projection: { bucketId: 1 } });
+        if (!first) throw new Error("bundle_reference_missing");
+        await sharelinks.updateOne({ _id: link._id }, {
+          $set: { bundleItems: remaining, objectId: first._id, bucketId: first.bucketId, updatedAt: new Date() },
+          $inc: { __v: 1 },
+        }, { session });
+      }
       await getDatabase().collection("directshares").deleteMany({ objectId: current._id }, { session });
       await getDatabase().collection("filecomments").deleteMany({ objectId: current._id }, { session });
+      const albumShares = getDatabase().collection("albumsharelinks");
+      const affectedAlbums = await albumShares.find({ "items.objectId": current._id }, { session }).toArray();
+      for (const link of affectedAlbums) {
+        const remaining = Array.isArray(link.items) ? link.items.filter((item: { objectId?: Types.ObjectId }) =>
+          String(item.objectId) !== String(current._id)) : [];
+        if (!remaining.length) await albumShares.deleteOne({ _id: link._id }, { session });
+        else await albumShares.updateOne({ _id: link._id }, {
+          $set: { items: remaining, updatedAt: new Date() }, $inc: { __v: 1 },
+        }, { session });
+      }
       await getDatabase().collection("photoalbums").updateMany({ spaceId: current.spaceId }, [
         { $set: { objectIds: { $filter: { input: { $ifNull: ["$objectIds", []] }, as: "id", cond: { $ne: ["$$id", current._id] } } } } },
         { $set: { coverObjectId: { $cond: [{ $eq: ["$coverObjectId", current._id] }, { $ifNull: [{ $arrayElemAt: ["$objectIds", 0] }, null] }, "$coverObjectId"] } } },

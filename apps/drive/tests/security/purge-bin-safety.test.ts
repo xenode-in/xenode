@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Space, queueDriveBinPurge, restoreDriveBin, cleanupDriveBinObject, getDatabase, BIN_PURGE_LEASE_MS } from "@xenode/database";
 const { deleted, ctx } = vi.hoisted(() => ({ deleted: vi.fn(), ctx: vi.fn() }));
 vi.mock("@/lib/b2/objects", () => ({ deleteObjects: deleted }));
+vi.mock("@/lib/b2/cdn", () => ({ getSignedFileUrl: vi.fn(async (_bucket: string, key: string) => `https://cdn.example.test/${key}`) }));
 vi.mock("@/lib/authz", async (original) => ({ ...await original<typeof import("@/lib/authz")>(), requireAccessContext: ctx }));
 vi.mock("@/lib/realtime/publish", () => ({ publishSyncEvent: vi.fn(async () => {}) }));
 import { GET as cron } from "@/app/api/cron/purge-bin/route";
@@ -15,6 +16,11 @@ import OrgUsage from "@/models/OrgUsage";
 import UploadSession from "@/models/UploadSession";
 import DirectShare from "@/models/DirectShare";
 import PhotoAlbum from "@/models/PhotoAlbum";
+import ShareLink from "@/models/ShareLink";
+import AlbumShareLink from "@/models/AlbumShareLink";
+import { GET as publicShareGET } from "@/app/api/share/[token]/route";
+import { POST as publicStreamPOST } from "@/app/api/share/[token]/stream/route";
+import { POST as publicDownloadPOST } from "@/app/api/share/[token]/download/route";
 
 const owner = "bin-owner", spaceId = `space_personal_${owner}`;
 function request(body: object) { return new NextRequest("http://localhost/bin", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); }
@@ -165,6 +171,54 @@ describe("durable Bin purge and restore", () => {
     expect(await DirectShare.countDocuments({ objectId: input.objectId })).toBe(0);
     expect((await PhotoAlbum.findById(album._id))?.objectIds).toHaveLength(0);
     expect((await PhotoAlbum.findById(album._id))?.coverObjectId).toBeNull();
+  });
+  it("prunes public bundles and album manifests without invalidating surviving files", async () => {
+    const input = await fixture();
+    const makeSibling = (suffix: string) => StorageObject.create({
+      bucketId: input.bucketId, spaceId, createdByAccountId: owner,
+      key: `users/${owner}/${suffix}`, size: 100, b2FileId: suffix,
+    });
+    const second = await makeSibling("second"), third = await makeSibling("third");
+    await Usage.updateOne({ userId: owner }, { $inc: { totalStorageBytes: 200, totalObjects: 2 } });
+    await Bucket.updateOne({ _id: input.bucketId }, { $inc: { totalSizeBytes: 200, objectCount: 2 } });
+    const item = (objectId: typeof input.objectId) => ({ objectId, shareEncryptedDEK: "ciphertext", shareKeyIv: "iv" });
+    await ShareLink.create({ token: "bundle-retained", objectId: input.objectId, bucketId: input.bucketId,
+      createdBy: owner, accessType: "download", isBundle: true,
+      bundleItems: [item(input.objectId), item(second._id), item(third._id)] });
+    await ShareLink.create({ token: "single-removed", objectId: input.objectId, bucketId: input.bucketId,
+      createdBy: owner, accessType: "download" });
+    const album = await PhotoAlbum.create({ spaceId, createdByAccountId: owner, slug: "shared", objectIds: [input.objectId, second._id] });
+    await AlbumShareLink.create({ token: "album-retained", albumId: album._id, createdBy: owner,
+      items: [item(input.objectId), item(second._id)] });
+
+    await queue(input);
+    expect(await clean(input)).toBe("deleted");
+    const bundle = await ShareLink.findOne({ token: "bundle-retained" }).lean();
+    expect(bundle?.bundleItems?.map((entry) => String(entry.objectId))).toEqual([String(second._id), String(third._id)]);
+    expect(String(bundle?.objectId)).toBe(String(second._id));
+    expect(bundle?.__v).toBe(1);
+    expect(await ShareLink.findOneAndUpdate({ _id: bundle!._id, __v: 0 }, {
+      $set: { bundleItems: [item(input.objectId), item(second._id), item(third._id)] },
+    })).toBeNull();
+    expect(await ShareLink.countDocuments({ token: "single-removed" })).toBe(0);
+    expect((await AlbumShareLink.findOne({ token: "album-retained" }))?.items.map((entry) => String(entry.objectId))).toEqual([String(second._id)]);
+    expect((await publicShareGET(new NextRequest("http://localhost/share"), { params: Promise.resolve({ token: "bundle-retained" }) })).status).toBe(200);
+
+    await StorageObject.updateOne({ _id: second._id }, { $set: { deletedAt: new Date() } });
+    await queueDriveBinPurge({ spaceId, bucketId: input.bucketId, ids: [second._id], includeRelated: false });
+    expect(await cleanupDriveBinObject({ objectId: second._id, deleteBlobs: deleted })).toBe("deleted");
+    const survivingBundle = await ShareLink.findOne({ token: "bundle-retained" }).lean();
+    expect(survivingBundle?.bundleItems).toHaveLength(1);
+    expect(String(survivingBundle?.objectId)).toBe(String(third._id));
+    expect(await AlbumShareLink.countDocuments({ token: "album-retained" })).toBe(0);
+    expect((await publicShareGET(new NextRequest("http://localhost/share"), { params: Promise.resolve({ token: "bundle-retained" }) })).status).toBe(200);
+    const bundleParams = { params: Promise.resolve({ token: "bundle-retained" }) };
+    const stream = await publicStreamPOST(request({}), bundleParams);
+    const download = await publicDownloadPOST(request({}), bundleParams);
+    expect(stream.status).toBe(200);
+    expect(download.status).toBe(200);
+    expect((await stream.json()).streamUrl).toContain("users/bin-owner/third");
+    expect((await download.json()).downloadUrl).toContain("users/bin-owner/third");
   });
   it("defers purging objects with charged pending versions", async () => {
     const input = await fixture(); await StorageObject.updateOne({ _id: input.objectId }, { $set: { "versions.0.pendingDeletion": true } });

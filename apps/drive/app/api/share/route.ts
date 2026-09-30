@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  AuthzError,
   assertObjectAccess,
   isAuthzError,
   ownerClause,
@@ -12,6 +13,8 @@ import ShareLink from "@/models/ShareLink";
 import OrganizationPolicy from "@/models/OrganizationPolicy";
 import bcrypt from "bcryptjs";
 import { captureEvent } from "@/lib/posthog";
+import { Space } from "@xenode/database/models";
+import { getDatabase, withTransaction } from "@xenode/database/connection";
 
 export const dynamic = "force-dynamic";
 
@@ -189,7 +192,21 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const link = await ShareLink.create(shareData);
+    const link = await withTransaction(async (session) => {
+      const space = await Space.updateOne({ _id: ctx.spaceId, status: "active" }, {
+        $inc: { storageFenceVersion: 1 },
+      }, { session });
+      const ids = [...new Set(objects.map((candidate) => String(candidate._id)))];
+      const claimed = await getDatabase().collection("storageobjects").updateMany({
+        _id: { $in: objects.map((candidate) => candidate._id) },
+        spaceId: ctx.spaceId, deletedAt: null, purgeState: { $exists: false },
+      }, { $inc: { __v: 1 } }, { session });
+      if (space.matchedCount !== 1 || claimed.matchedCount !== ids.length) {
+        throw new AuthzError(409, "share_source_changed", "File is unavailable");
+      }
+      const [created] = await ShareLink.create([shareData], { session });
+      return created;
+    });
 
     captureEvent(userId, "share_link_created", {
       accessType,

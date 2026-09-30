@@ -963,15 +963,17 @@
       "post": {
         "tags": ["Link Shares"],
         "summary": "Create a share link",
+        "description": "Validates and writes the active Space and every selected object in one transaction with link creation. A concurrent permanent purge or Space suspension returns a conflict instead of leaving an orphan link.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["objectId", "accessType"],
+                "anyOf": [{ "required": ["objectId"] }, { "required": ["items"] }],
                 "properties": {
                   "objectId": { "type": "string" },
+                  "items": { "type": "array", "description": "Bundle items, each carrying an objectId and encrypted per-file share material", "items": { "type": "object" } },
                   "accessType": { "type": "string", "enum": ["download", "view"] },
                   "expiresIn": { "type": "integer", "description": "Hours until expiry", "example": 24 },
                   "maxDownloads": { "type": "integer", "example": 5 },
@@ -997,7 +999,8 @@
                 }
               }
             }
-          }
+          },
+          "409": { "description": "A selected object or its Space changed during creation" }
         }
       }
     },
@@ -1016,6 +1019,7 @@
       "get": {
         "tags": ["Link Shares"],
         "summary": "Get share link details",
+        "description": "A permanent object purge removes the object from surviving bundles, moves the bundle primary pointer, and deletes empty links. Suspended Spaces do not disclose link details.",
         "parameters": [
           { "name": "token", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
@@ -1031,7 +1035,8 @@
           { "name": "token", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "Share updated" }
+          "200": { "description": "Share updated" },
+          "409": { "description": "Share changed concurrently; reload before editing" }
         }
       },
       "delete": {
@@ -1050,7 +1055,7 @@
       "post": {
         "tags": ["Link Shares"],
         "summary": "Download shared file",
-        "description": "Validates access (password if required) and returns a signed download URL.",
+        "description": "Validates access (password if required) and returns a signed download URL. For a bundle, omitted itemId selects the first surviving item.",
         "parameters": [
           { "name": "token", "in": "path", "required": true, "schema": { "type": "string" } }
         ],

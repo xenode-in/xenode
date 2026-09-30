@@ -94,6 +94,7 @@ const AlbumShareLinkSchema = new Schema<IAlbumShareLink>(
 AlbumShareLinkSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0, sparse: true });
 AlbumShareLinkSchema.index({ createdBy: 1, createdAt: -1 });
 AlbumShareLinkSchema.index({ albumId: 1, isRevoked: 1 });
+AlbumShareLinkSchema.index({ "items.objectId": 1 });
 
 const AlbumShareLink: Model<IAlbumShareLink> =
   mongoose.models.AlbumShareLink ||

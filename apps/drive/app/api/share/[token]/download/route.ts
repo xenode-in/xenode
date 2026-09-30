@@ -51,11 +51,12 @@ export async function POST(req: NextRequest, { params }: Params) {
     );
   }
 
-  const selectedItem =
-    link.isBundle && itemId
+  const selectedItem = link.isBundle
+    ? itemId
       ? link.bundleItems?.find((item) => item.objectId.toString() === itemId)
-      : null;
-  if (link.isBundle && itemId && !selectedItem) {
+      : link.bundleItems?.[0]
+    : null;
+  if (link.isBundle && !selectedItem) {
     return NextResponse.json({ error: "File not found in share" }, { status: 404 });
   }
 
