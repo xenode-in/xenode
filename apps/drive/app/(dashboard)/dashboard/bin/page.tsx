@@ -1,4 +1,5 @@
 "use client";
+import { binMutationFetch } from "@/lib/storage/bin-client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
@@ -228,7 +229,7 @@ export default function BinPage() {
     setBusy(true);
     setError("");
     try {
-      const res = await fetch("/api/objects/purge", {
+      const res = await binMutationFetch("/api/objects/purge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bucketId, ids }),
@@ -248,7 +249,7 @@ export default function BinPage() {
     setBusy(true);
     setError("");
     try {
-      const res = await fetch("/api/objects/purge", {
+      const res = await binMutationFetch("/api/objects/purge", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ bucketId, all: true }),

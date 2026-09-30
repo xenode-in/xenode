@@ -67,6 +67,11 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     await assertTeamInOrg({ orgId, teamId });
 
     await dbConnect();
+    if (await StorageObject.exists({ ...teamObjectClause(orgId, teamId), $or: [
+      { purgeState: { $exists: true } }, { "versions.pendingDeletion": true },
+    ] })) {
+      return NextResponse.json({ error: "Storage deletion must finish before removing the team", code: "storage_cleanup_pending" }, { status: 409 });
+    }
 
     // Sum the team drive's bytes so we can roll them back off OrgUsage.
     const agg = await StorageObject.aggregate([

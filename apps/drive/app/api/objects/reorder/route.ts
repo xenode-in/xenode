@@ -37,6 +37,7 @@ export async function PATCH(request: NextRequest) {
           _id: item.id,
           bucketId: bucket._id,
           ...objectOwnershipClause(ctx),
+          purgeState: { $exists: false },
         },
         update: { $set: { position: item.position } },
       },

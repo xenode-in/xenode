@@ -1,4 +1,5 @@
 "use client";
+import { binMutationFetch } from "@/lib/storage/bin-client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -209,7 +210,7 @@ export function OrgBinClient({ orgId }: { orgId: string }) {
     setError("");
     try {
       await readJson(
-        await fetch(`/api/orgs/${orgId}/objects/purge`, {
+        await binMutationFetch(`/api/orgs/${orgId}/objects/purge`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ids }),
@@ -229,7 +230,7 @@ export function OrgBinClient({ orgId }: { orgId: string }) {
     setError("");
     try {
       await readJson(
-        await fetch(`/api/orgs/${orgId}/objects/purge`, {
+        await binMutationFetch(`/api/orgs/${orgId}/objects/purge`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ all: true }),

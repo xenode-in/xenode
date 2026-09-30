@@ -1,127 +1,193 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Space } from "@xenode/database";
-
-const mocks = vi.hoisted(() => ({
-  deleteObjects: vi.fn(), decrementStorageBulk: vi.fn(), decrementOrgStorage: vi.fn(),
-  updateBucketStats: vi.fn(), requireAccessContext: vi.fn(),
-}));
-vi.mock("@/lib/b2/objects", () => ({ deleteObjects: mocks.deleteObjects }));
-vi.mock("@/lib/metering/usage", () => ({ decrementStorageBulk: mocks.decrementStorageBulk, updateBucketStats: mocks.updateBucketStats }));
-vi.mock("@/lib/orgs/billing/orgUsage", () => ({ decrementOrgStorage: mocks.decrementOrgStorage }));
-vi.mock("@/lib/authz", async (importOriginal) => ({
-  ...await importOriginal<typeof import("@/lib/authz")>(), requireAccessContext: mocks.requireAccessContext,
-}));
-vi.mock("@/lib/subscriptions/service", () => ({ enforceStorageAccess: vi.fn() }));
-vi.mock("@/lib/logRequest", () => ({ logRequest: vi.fn() }));
-vi.mock("@/lib/albums/cleanup", () => ({ removeObjectsFromAlbums: vi.fn() }));
-
-import { GET } from "@/app/api/cron/purge-bin/route";
-import { POST } from "@/app/api/objects/purge/route";
+import { Space, queueDriveBinPurge, restoreDriveBin, cleanupDriveBinObject, getDatabase, BIN_PURGE_LEASE_MS } from "@xenode/database";
+const { deleted, ctx } = vi.hoisted(() => ({ deleted: vi.fn(), ctx: vi.fn() }));
+vi.mock("@/lib/b2/objects", () => ({ deleteObjects: deleted }));
+vi.mock("@/lib/authz", async (original) => ({ ...await original<typeof import("@/lib/authz")>(), requireAccessContext: ctx }));
+vi.mock("@/lib/realtime/publish", () => ({ publishSyncEvent: vi.fn(async () => {}) }));
+import { GET as cron } from "@/app/api/cron/purge-bin/route";
+import { POST as purge } from "@/app/api/objects/purge/route";
+import { POST as restore } from "@/app/api/objects/restore/route";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import Usage from "@/models/Usage";
+import OrgUsage from "@/models/OrgUsage";
+import UploadSession from "@/models/UploadSession";
+import DirectShare from "@/models/DirectShare";
+import PhotoAlbum from "@/models/PhotoAlbum";
 
-const accountId = "purge-owner";
-const spaceId = `space_personal_${accountId}`;
-const deletedAt = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
-
-function cronRequest() {
-  return new NextRequest("http://localhost/api/cron/purge-bin", { headers: { authorization: "Bearer purge-test" } });
-}
-
-async function seed() {
-  const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
-  await Space.create({ _id: spaceId, type: "personal", ownerAccountId: accountId, createdByAccountId: accountId });
+const owner = "bin-owner", spaceId = `space_personal_${owner}`;
+function request(body: object) { return new NextRequest("http://localhost/bin", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); }
+async function fixture(team = false) {
+  const sid = team ? "space_team_bin-org_team" : spaceId;
+  await Space.create({ _id: sid, type: team ? "team" : "personal", ownerAccountId: team ? undefined : owner, organizationId: team ? "bin-org" : undefined, teamId: team ? "team" : undefined, createdByAccountId: owner });
+  const bucket = await Bucket.create({ name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage", storageRegion: "asia", objectCount: 1, totalSizeBytes: 200 });
   const object = await StorageObject.create({
-    bucketId: bucket._id, spaceId, createdByAccountId: "uploader-is-not-the-billing-owner",
-    key: `users/${accountId}/main`, size: 100, b2FileId: "test", deletedAt,
-    chunks: [{ index: 0, key: `users/${accountId}/main-chunk-0`, size: 100 }],
-    thumbnail: `users/${accountId}/main-thumb`, thumbnailSize: 20,
-    optimizedKey: `users/${accountId}/optimized`, optimizedSize: 30,
+    bucketId: bucket._id, spaceId: sid, createdByAccountId: "different-uploader", key: `users/${owner}/main`, size: 100, b2FileId: "main",
+    deletedAt: new Date(Date.now()-31*24*60*60*1000),
+    chunks: [{ index: 0, key: `users/${owner}/chunk`, size: 100 }],
+    thumbnail: `users/${owner}/thumb`, thumbnailSize: 20, optimizedKey: `users/${owner}/optimized`, optimizedSize: 30,
     versions: [
-      { versionId: "previous", key: `users/${accountId}/previous`, size: 50, createdAt: new Date(), createdBy: accountId },
-      { versionId: "original", key: `users/${accountId}/main`, size: 100, sharesCurrentContent: true, createdAt: new Date(), createdBy: accountId },
+      { versionId: "prior", key: `users/${owner}/prior`, size: 50, createdAt: new Date(), createdBy: owner },
+      { versionId: "shared", key: `users/${owner}/main`, size: 100, sharesCurrentContent: true, createdAt: new Date(), createdBy: owner },
     ],
   });
-  return { bucket, object };
+  if (team) await OrgUsage.create({ orgId: "bin-org", accountId: "org:bin-org", totalStorageBytes: 200, totalObjects: 1 });
+  else await Usage.create({ userId: owner, totalStorageBytes: 200, totalObjects: 1 });
+  return { object, bucket, spaceId: sid, objectId: object._id, bucketId: bucket._id, ids: [object._id] };
 }
-
-describe("Bin purge deletion safety", () => {
+async function queue(input: Awaited<ReturnType<typeof fixture>>) { return queueDriveBinPurge(input); }
+async function clean(input: Awaited<ReturnType<typeof fixture>>, now?: Date) { return cleanupDriveBinObject({ objectId: input.objectId, now, deleteBlobs: deleted }); }
+const lookup = (input: Awaited<ReturnType<typeof fixture>>) => getDatabase().collection("storageobjects").findOne({ _id: input.objectId });
+describe("durable Bin purge and restore", () => {
   beforeEach(() => {
-    process.env.CRON_SECRET = "purge-test";
-    for (const mock of Object.values(mocks)) mock.mockReset();
-    mocks.requireAccessContext.mockResolvedValue({ userId: accountId, accountId, spaceId, spaceType: "personal", role: "owner", productId: "drive", region: "asia" });
+    deleted.mockReset(); ctx.mockReset(); process.env.CRON_SECRET = "bin-test";
+    ctx.mockResolvedValue({ accountId: owner, userId: owner, spaceId, spaceType: "personal", role: "owner", productId: "drive", region: "asia" });
   });
-
-  it("deletes every current/retained blob and meters the personal Space owner", async () => {
-    const { bucket, object } = await seed();
-    const response = await GET(cronRequest());
+  it.each([false,true])("confirms all ciphertext then atomically retires owner accounting (team=%s)", async (team) => {
+    const input = await fixture(team);
+    await queue(input);
+    deleted.mockImplementation(async()=>{ expect(await lookup(input)).not.toBeNull(); expect((await Bucket.findById(input.bucketId))?.totalSizeBytes).toBe(200); });
+    expect(await clean(input)).toBe("deleted");
+    expect(deleted).toHaveBeenCalledWith(input.bucket.b2BucketId, expect.arrayContaining(["users/bin-owner/main","users/bin-owner/chunk","users/bin-owner/thumb","users/bin-owner/optimized","users/bin-owner/prior"]));
+    expect(await lookup(input)).toBeNull();
+    expect((await Bucket.findById(input.bucketId))?.toObject()).toMatchObject({ totalSizeBytes: 0, objectCount: 0 });
+    expect(team ? (await OrgUsage.findOne({ orgId: "bin-org" }))?.totalStorageBytes : (await Usage.findOne({ userId: owner }))?.totalStorageBytes).toBe(0);
+    expect(await clean(input)).toBe("skipped");
+  });
+  it("keeps a failed purge charged and permanently non-restorable", async () => {
+    const input = await fixture(); await queue(input); const now = new Date();
+    deleted.mockRejectedValueOnce(new Error("per-key deletion"));
+    expect(await clean(input, now)).toBe("retry");
+    expect((await lookup(input))?.purgeState).toBe("pending");
+    expect((await Usage.findOne({ userId: owner }))?.totalStorageBytes).toBe(200);
+    await expect(restoreDriveBin(input)).rejects.toMatchObject({ code: "purge_pending" });
+    expect(await clean(input, now)).toBe("skipped");
+    expect(await clean(input, new Date(now.getTime()+61_000))).toBe("deleted");
+  });
+  it("rolls back metadata and Usage retirement if bucket accounting disappears after B2 deletion", async () => {
+    const input = await fixture(); await queue(input);
+    deleted.mockImplementationOnce(async()=>{ await Bucket.deleteOne({ _id: input.bucketId }); });
+    expect(await clean(input)).toBe("retry");
+    expect(await lookup(input)).not.toBeNull();
+    expect((await Usage.findOne({ userId: owner }))?.totalStorageBytes).toBe(200);
+    expect((await Usage.findOne({ userId: owner }))?.totalObjects).toBe(1);
+  });
+  it.each(["bucket","space","usage"])("fails before deleting blobs when %s data is missing", async (kind) => {
+    const input = await fixture();
+    if (kind==="bucket") await Bucket.deleteOne({ _id: input.bucketId });
+    if (kind==="space") await Space.deleteOne({ _id: input.spaceId });
+    if (kind==="usage") await Usage.deleteOne({ userId: owner });
+    await expect(queue(input)).rejects.toBeDefined();
+    expect(deleted).not.toHaveBeenCalled();
+    expect((await lookup(input))?.purgeState).toBeUndefined();
+  });
+  it("lets restore win before purge intent without deleting restored bytes", async () => {
+    const input = await fixture();
+    expect(await restoreDriveBin(input)).toEqual({ restoredCount: 1 });
+    expect(await queue(input)).toHaveLength(0);
+    expect(await clean(input)).toBe("skipped");
+    expect(deleted).not.toHaveBeenCalled();
+    expect((await lookup(input))?.deletedAt).toBeUndefined();
+  });
+  it("serializes concurrent restore versus purge intent", async () => {
+    const input = await fixture();
+    const results = await Promise.allSettled([queue(input),restoreDriveBin(input)]);
+    const current = await lookup(input);
+    if (current?.purgeState) {
+      expect(current.deletedAt).toBeDefined();
+      expect(results[1].status).toBe("rejected");
+    } else {
+      expect(current?.deletedAt).toBeUndefined();
+      expect(results[1].status).toBe("fulfilled");
+    }
+  });
+  it("denies restore while B2 deletion is in progress", async () => {
+    const input = await fixture(); await queue(input);
+    deleted.mockImplementationOnce(async()=>{ await expect(restoreDriveBin(input)).rejects.toMatchObject({ code: "purge_pending" }); });
+    expect(await clean(input)).toBe("deleted");
+  });
+  it("admits one concurrent cleanup worker", async () => {
+    const input = await fixture(); await queue(input);
+    let start!:()=>void, finish!:()=>void;
+    const started = new Promise<void>((resolve)=>{ start=resolve; }), ended = new Promise<void>((resolve)=>{ finish=resolve; });
+    deleted.mockImplementation(async()=>{ start(); await ended; });
+    const work = clean(input); await started;
+    expect(await clean(input)).toBe("skipped");
+    finish(); expect(await work).toBe("deleted"); expect(deleted).toHaveBeenCalledOnce();
+  });
+  it("recovers an interrupted lease and fences a stale worker", async () => {
+    const input = await fixture(), now = new Date(); await queue(input);
+    await getDatabase().collection("storageobjects").updateOne({ _id: input.objectId }, { $set: { purgeLeaseId: "dead", purgeLeaseExpiresAt: new Date(now.getTime()+BIN_PURGE_LEASE_MS) } });
+    expect(await clean(input, now)).toBe("skipped");
+    deleted.mockImplementationOnce(async()=>{ await getDatabase().collection("storageobjects").updateOne({ _id: input.objectId }, { $set: { purgeLeaseId: "replacement" } }); });
+    expect(await clean(input, new Date(now.getTime()+BIN_PURGE_LEASE_MS+1))).toBe("skipped");
+    expect((await lookup(input))?.purgeLeaseId).toBe("replacement");
+    expect((await Usage.findOne({ userId: owner }))?.totalStorageBytes).toBe(200);
+  });
+  it("preserves a cross-product retained reference", async () => {
+    const input = await fixture(); await queue(input);
+    await getDatabase().collection("storageobjects").insertOne({ productId: "photos", bucketId: input.bucketId, thumbnail: input.object.thumbnail, key: "photo" });
+    expect(await clean(input)).toBe("blocked");
+    expect(deleted).not.toHaveBeenCalled();
+    expect((await lookup(input))?.purgeState).toBe("blocked");
+  });
+  it("waits for every recorded PUT grace window", async () => {
+    const input = await fixture(), deadline = new Date(Date.now()+60_000);
+    await UploadSession.create({ userId: owner, spaceId, bucketId: input.bucketId, fileId: input.object.key, keys: [input.object.key], status: "completed", expiresAt: deadline });
+    await queue(input);
+    expect(await clean(input)).toBe("skipped"); expect(deleted).not.toHaveBeenCalled();
+    expect(await clean(input, new Date(deadline.getTime()+1))).toBe("deleted");
+  });
+  it("fences stale saves and generic mutations after queueing", async () => {
+    const input = await fixture(); const stale = await StorageObject.findById(input.objectId);
+    await queue(input);
+    stale!.position=4; await expect(stale!.save()).rejects.toMatchObject({ name: "VersionError" });
+    const modified = await StorageObject.updateOne({ _id: input.objectId }, { $unset: { deletedAt: "" }, $set: { key: "tampered" } });
+    expect(modified.modifiedCount).toBe(0);
+    expect((await lookup(input))?.key).toBe(input.object.key);
+  });
+  it("deduplicates overlapping folder/child selection and uses one owner", async () => {
+    const input = await fixture();
+    const folder = await StorageObject.create({ bucketId: input.bucketId, spaceId, createdByAccountId: owner, key: `users/${owner}/`, size: 0, b2FileId: "folder", deletedAt: input.object.deletedAt });
+    await Usage.updateOne({ userId: owner }, { $inc: { totalObjects: 1 } }); await Bucket.updateOne({ _id: input.bucketId }, { $inc: { objectCount: 1 } });
+    const selected = await queueDriveBinPurge({ ...input, ids: [folder._id, input.objectId] });
+    expect(selected).toHaveLength(2);
+    for (const objectId of selected) expect(await cleanupDriveBinObject({ objectId, deleteBlobs: deleted })).toBe("deleted");
+    expect((await Usage.findOne({ userId: owner }))?.totalObjects).toBe(0);
+    expect(deleted).toHaveBeenCalledOnce();
+  });
+  it("retires share and album relationships in the same commit", async () => {
+    const input = await fixture();
+    await DirectShare.create({ bucketId: input.bucketId, objectId: input.objectId, createdBy: owner, recipients: [{ recipientUserId: "other", recipientEmail: "other@test.test", wrappedShareKey: "wrap" }] });
+    const album = await PhotoAlbum.create({ spaceId, createdByAccountId: owner, slug: "album", objectIds: [input.objectId], coverObjectId: input.objectId });
+    await queue(input); expect(await clean(input)).toBe("deleted");
+    expect(await DirectShare.countDocuments({ objectId: input.objectId })).toBe(0);
+    expect((await PhotoAlbum.findById(album._id))?.objectIds).toHaveLength(0);
+    expect((await PhotoAlbum.findById(album._id))?.coverObjectId).toBeNull();
+  });
+  it("defers purging objects with charged pending versions", async () => {
+    const input = await fixture(); await StorageObject.updateOne({ _id: input.objectId }, { $set: { "versions.0.pendingDeletion": true } });
+    await expect(queue(input)).rejects.toMatchObject({ code: "version_cleanup_pending" });
+    expect((await lookup(input))?.purgeState).toBeUndefined();
+  });
+  it("handles manual and authenticated cron requests with real accounting", async () => {
+    const input = await fixture();
+    expect((await cron(new NextRequest("http://localhost/cron"))).status).toBe(401);
+    expect((await purge(request({ bucketId: String(input.bucketId), ids: [String(input.objectId)] }))).status).toBe(200);
+    expect((await lookup(input))).toBeNull();
+    expect((await restore(request({ bucketId: String(input.bucketId), ids: [String(input.objectId)] }))).status).toBe(200);
+  });
+  it("does not purge a recently binned child just because its folder expired", async () => {
+    const input = await fixture();
+    const oldDate = input.object.deletedAt;
+    await StorageObject.updateOne({ _id: input.objectId }, { $set: { deletedAt: new Date() } });
+    const folder = await StorageObject.create({ bucketId: input.bucketId, spaceId, createdByAccountId: owner, key: "users/bin-owner/", size:0, b2FileId:"folder", deletedAt:oldDate });
+    await Usage.updateOne({ userId:owner },{ $inc:{ totalObjects:1 } }); await Bucket.updateOne({ _id:input.bucketId },{ $inc:{ objectCount:1 } });
+    const response = await cron(new NextRequest("http://localhost/cron",{ headers:{ authorization:"Bearer bin-test" } }));
     expect(response.status).toBe(200);
-    expect(mocks.deleteObjects).toHaveBeenCalledWith(bucket.b2BucketId, expect.arrayContaining([
-      object.key, `${object.key}-chunk-0`, `${object.key}-thumb`, `users/${accountId}/optimized`, `users/${accountId}/previous`,
-    ]));
-    expect(mocks.decrementStorageBulk).toHaveBeenCalledWith(accountId, 200, 1);
-    expect(await StorageObject.findById(object._id)).toBeNull();
-  });
-
-  it("meters a team Space against its organization", async () => {
-    const { object } = await seed();
-    await Space.create({ _id: "space_team_org_team", type: "team", organizationId: "org", teamId: "team", createdByAccountId: accountId });
-    await StorageObject.updateOne({ _id: object._id }, { $set: { spaceId: "space_team_org_team" } });
-    expect((await GET(cronRequest())).status).toBe(200);
-    expect(mocks.decrementOrgStorage).toHaveBeenCalledWith("org", 200, 1);
-    expect(mocks.decrementStorageBulk).not.toHaveBeenCalled();
-  });
-
-  it("retains the record and accounting when deletion fails", async () => {
-    const { object } = await seed();
-    mocks.deleteObjects.mockRejectedValueOnce(new Error("storage unavailable"));
-    expect((await GET(cronRequest())).status).toBe(500);
-    expect(await StorageObject.findById(object._id)).not.toBeNull();
-    expect(mocks.decrementStorageBulk).not.toHaveBeenCalled();
-    expect(mocks.updateBucketStats).not.toHaveBeenCalled();
-  });
-
-  it.each(["bucket", "space"])("fails before deleting blobs when %s metadata is missing", async (kind) => {
-    const { bucket, object } = await seed();
-    if (kind === "bucket") await Bucket.deleteOne({ _id: bucket._id });
-    else await Space.deleteOne({ _id: spaceId });
-    expect((await GET(cronRequest())).status).toBe(500);
-    expect(await StorageObject.findById(object._id)).not.toBeNull();
-    expect(mocks.deleteObjects).not.toHaveBeenCalled();
-  });
-
-  it("does not meter overlapping folder and child selections twice", async () => {
-    const { bucket, object } = await seed();
-    const folder = await StorageObject.create({ bucketId: bucket._id, spaceId, createdByAccountId: accountId, key: `users/${accountId}/`, size: 0, b2FileId: "folder", deletedAt });
-    const response = await POST(new NextRequest("http://localhost/api/objects/purge", {
-      method: "POST", body: JSON.stringify({ bucketId: String(bucket._id), ids: [String(folder._id), String(object._id)] }), headers: { "content-type": "application/json" },
-    }));
-    expect(response.status).toBe(200);
-    expect((await response.json()).purgedCount).toBe(2);
-    expect(mocks.decrementStorageBulk).toHaveBeenCalledWith(accountId, 200, 2);
-  });
-
-  it("retains manual-purge records when deletion fails", async () => {
-    const { bucket, object } = await seed();
-    mocks.deleteObjects.mockRejectedValueOnce(new Error("partial storage deletion"));
-    const response = await POST(new NextRequest("http://localhost/api/objects/purge", {
-      method: "POST", body: JSON.stringify({ bucketId: String(bucket._id), ids: [String(object._id)] }), headers: { "content-type": "application/json" },
-    }));
-    expect(response.status).toBe(500);
-    expect(await StorageObject.findById(object._id)).not.toBeNull();
-    expect(mocks.decrementStorageBulk).not.toHaveBeenCalled();
-  });
-  it("defers Bin purge while charged versions await deletion", async () => {
-    const { bucket, object } = await seed();
-    await StorageObject.updateOne({ _id: object._id }, { $set: { "versions.0.pendingDeletion": true } });
-    expect((await GET(cronRequest())).status).toBe(200);
-    const response = await POST(new NextRequest("http://localhost/api/objects/purge", {
-      method: "POST", body: JSON.stringify({ bucketId: String(bucket._id), ids: [String(object._id)] }), headers: { "content-type": "application/json" },
-    }));
-    expect(response.status).toBe(409);
-    expect(mocks.deleteObjects).not.toHaveBeenCalled();
-    expect(mocks.decrementStorageBulk).not.toHaveBeenCalled();
-    expect(await StorageObject.findById(object._id)).not.toBeNull();
+    expect(await StorageObject.findById(folder._id)).toBeNull();
+    expect(await lookup(input)).not.toBeNull();
+    expect(deleted).not.toHaveBeenCalled();
   });
 });

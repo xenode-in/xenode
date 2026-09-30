@@ -1,6 +1,7 @@
 import mongoose, { Schema, Document, Model } from "mongoose";
 
 export interface IStorageObject extends Document {
+  purgeState?: "pending" | "blocked";
   _id: mongoose.Types.ObjectId;
   /** Product that owns this object. */
   productId: "drive" | "photos";
@@ -120,6 +121,7 @@ export interface IStorageObjectVersion {
 
 const StorageObjectSchema = new Schema<IStorageObject>(
   {
+    purgeState: { type: String, enum: ["pending", "blocked"] },
     productId: {
       type: String,
       enum: ["drive", "photos"],
@@ -428,6 +430,16 @@ StorageObjectSchema.pre(
   },
 );
 
+// Purge intent is irreversible. Application mutations cannot alter its manifest.
+StorageObjectSchema.pre(/^(?:update|delete|findOneAndUpdate|findOneAndDelete)/, function (this: mongoose.Query<unknown, IStorageObject>) {
+  if (!Object.prototype.hasOwnProperty.call(this.getFilter(), "purgeState")) {
+    this.where({ purgeState: { $exists: false } });
+  }
+});
+StorageObjectSchema.pre("save", function () {
+  if (this.purgeState) throw new Error("Permanent deletion has already started");
+});
+
 /**
  * Indexes
  *
@@ -445,6 +457,7 @@ StorageObjectSchema.index({ bucketId: 1, createdAt: -1 });
 StorageObjectSchema.index({ spaceId: 1, _id: 1 });
 StorageObjectSchema.index({ spaceId: 1, createdAt: -1 });
 StorageObjectSchema.index({ spaceId: 1, productId: 1, createdAt: -1 });
+StorageObjectSchema.index({ productId: 1, purgeState: 1, purgeAfter: 1, purgeNextAttemptAt: 1 });
 StorageObjectSchema.index({ bucketId: 1, position: 1 });
 StorageObjectSchema.index({ tags: 1 });
 StorageObjectSchema.index({

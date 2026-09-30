@@ -379,7 +379,7 @@
       "delete": {
         "tags": ["Objects"],
         "summary": "Delete a file or folder",
-        "description": "Deletes from B2 storage and frees storage quota.",
+        "description": "Moves the object into the Bin. Physical deletion and quota release occur through the permanent-deletion lifecycle.",
         "parameters": [
           { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
@@ -465,6 +465,30 @@
       }
     },
 
+    "/api/objects/purge": {
+      "post": {
+        "tags": ["Objects"], "summary": "Schedule permanent Bin deletion",
+        "description": "Requires Space delete permission. Each request queues at most 100 binned objects with immutable deletion metadata. Exact B2 deletion precedes atomic object/share/album retirement and owner quota release. Known PUT grace windows delay cleanup; purge intent cannot be restored.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": {
+          "type": "object", "required": ["bucketId"], "properties": {
+            "bucketId": { "type": "string" }, "ids": { "type": "array", "maxItems": 100, "items": { "type": "string" } }, "all": { "type": "boolean" }
+          }
+        } } } },
+        "responses": { "200": { "description": "Batch complete" }, "202": { "description": "Deletion queued; bytes remain charged until confirmation" }, "409": { "description": "Version cleanup pending" }, "500": { "description": "Durable deletion retained for retry" } }
+      }
+    },
+    "/api/objects/restore": {
+      "post": {
+        "tags": ["Objects"], "summary": "Restore Bin objects transactionally",
+        "description": "Requires Space write permission. Rechecks selected objects, descendants and sidecars. Purge intent blocks restore; no B2 transfer or quota change occurs.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": {
+          "type": "object", "required": ["bucketId", "ids"], "properties": {
+            "bucketId": { "type": "string" }, "ids": { "type": "array", "maxItems": 100, "items": { "type": "string" } }
+          }
+        } } } },
+        "responses": { "200": { "description": "Restored selection" }, "409": { "description": "Permanent deletion already started" } }
+      }
+    },
     "/api/objects/folder": {
       "post": {
         "tags": ["Objects"],

@@ -67,6 +67,9 @@ export async function GET(req: NextRequest) {
       const objects = await StorageObject.find({ spaceId: { $in: spaceIds } })
         .select("key thumbnail optimizedKey versions bucketId")
         .lean<(OrgObjectDoc & { bucketId: mongoose.Types.ObjectId })[]>();
+      if (await StorageObject.exists({ spaceId: { $in: spaceIds }, $or: [
+        { purgeState: { $exists: true } }, { "versions.pendingDeletion": true },
+      ] })) continue;
 
       if (objects.length > 0) {
         const bucketIds = Array.from(

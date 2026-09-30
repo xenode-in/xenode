@@ -1,4 +1,5 @@
 "use client";
+import { binMutationFetch } from "@/lib/storage/bin-client";
 
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -217,14 +218,14 @@ export function OrgObjectList({ orgId, scope }: { orgId: string; scope: Scope })
     setBusy(row.id);
     try {
       await readJson(
-        await fetch(`/api/orgs/${orgId}/objects/purge`, {
+        await binMutationFetch(`/api/orgs/${orgId}/objects/purge`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ids: [row.id] }),
         }),
       );
       setRows((prev) => prev.filter((r) => r.id !== row.id));
-      toast.success("File permanently deleted");
+      toast.success("Permanent deletion scheduled");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to delete");
     } finally {
@@ -239,14 +240,14 @@ export function OrgObjectList({ orgId, scope }: { orgId: string; scope: Scope })
     setBusy("empty");
     try {
       await readJson(
-        await fetch(`/api/orgs/${orgId}/objects/purge`, {
+        await binMutationFetch(`/api/orgs/${orgId}/objects/purge`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ all: true }),
         }),
       );
       setRows([]);
-      toast.success("Bin emptied");
+      toast.success("Permanent deletion scheduled");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to empty bin");
     } finally {

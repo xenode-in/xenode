@@ -175,6 +175,7 @@ export async function GET(request: NextRequest) {
       bucketId,
       ...objectOwnershipClause(ctx),
       deletedAt: { $exists: deleted },
+      purgeState: { $exists: false },
       isSidecar: { $ne: true }, // exclude subtitle/audio sidecar files from listings
     };
 

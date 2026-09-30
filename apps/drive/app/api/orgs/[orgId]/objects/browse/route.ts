@@ -34,6 +34,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const query: Record<string, unknown> = {
       ...orgObjectClause(orgId),
       deletedAt: { $exists: bin },
+      purgeState: { $exists: false },
       isSidecar: { $ne: true },
     };
     if (scope === "favorites") query.starred = true;

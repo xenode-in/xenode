@@ -37,6 +37,7 @@ export async function findReferencedStorageObjectKeys(args: {
   bucketId: string | mongo.ObjectId;
   keys: readonly string[];
   ignoreVersion?: { objectId: string; versionId: string };
+  ignoreObjectIds?: readonly string[];
 }): Promise<Set<string>> {
   const candidates = [...new Set(args.keys.filter(Boolean))];
   const referenced = new Set<string>();
@@ -52,6 +53,7 @@ export async function findReferencedStorageObjectKeys(args: {
       .find({ bucketId, $or: fields.map((field) => ({ [field]: { $in: keys } })) })
       .project<StorageReferences>({ ...Object.fromEntries(fields.map((field) => [field, 1])), "versions.versionId": 1 });
     for await (const object of cursor) {
+      if (args.ignoreObjectIds?.includes(String(object._id))) continue;
       const storedKeys = [
         object.key, object.thumbnail, object.optimizedKey,
         ...(object.chunks ?? []).map((chunk) => chunk.key),
@@ -67,4 +69,13 @@ export async function findReferencedStorageObjectKeys(args: {
     }
   }
   return referenced;
+}
+
+/** All physical pointers retained by an object, with virtual directory keys omitted. */
+export function storedObjectBlobKeys(object: StorageReferences & { contentType?: string }): string[] {
+  return [...new Set([
+    object.contentType === "application/x-directory" || object.key?.endsWith("/") ? undefined : object.key,
+    object.thumbnail, object.optimizedKey, ...(object.chunks ?? []).map((chunk) => chunk.key),
+    ...(object.versions ?? []).flatMap((version) => [version.key, ...(version.chunks ?? []).map((chunk) => chunk.key)]),
+  ].filter((key): key is string => typeof key === "string" && !!key && !key.endsWith("/")))];
 }

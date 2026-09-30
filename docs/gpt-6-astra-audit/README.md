@@ -24,6 +24,7 @@ Start with [the executive summary](00-executive-summary.md), then [the migration
 | [15 — Photos upload contract](15-photos-upload-contract.md) | Manifest, transactional completion and cleanup |
 | [16 — Drive upload contract](16-drive-upload-contract.md) | B2 byte verification, transactional quota and retries |
 | [17 — Drive revision contract](17-drive-revision-contract.md) | Direct ciphertext saves, concurrency and retained bytes |
+| [18 — Drive Bin contract](18-drive-bin-contract.md) | Purge intent, restore fencing, leases and atomic quota retirement |
 
 ## Reading the judgments
 

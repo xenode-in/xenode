@@ -60,6 +60,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       bucketId,
       ...orgObjectClause(orgId),
       deletedAt: { $exists: deleted },
+      purgeState: { $exists: false },
       isSidecar: { $ne: true },
     };
 
