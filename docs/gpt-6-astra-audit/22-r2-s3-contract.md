@@ -1,0 +1,9 @@
+# R2 storage contract for subsequent phases
+
+Cloudflare R2 is Xenode's only object-store target. Use the S3-compatible API and the existing shared storage helpers. The historical `b2` names in code and database fields are naming debt; they do not authorize B2-only behavior or a repository-wide rename. Inspect `AGENTS.md`, the latest progress entries, and each caller before changing a storage contract.
+
+R2 S3 clients use the configured `S3_ENDPOINT` (an R2 account or jurisdiction endpoint) and signing region `auto`. `S3_US_*` and `S3_EU_*` select separate buckets/endpoints for product storage regions. A missing endpoint or a non-R2 endpoint fails closed when storage is used. Public asset URLs require an HTTPS `PUBLIC_S3_ENDPOINT` mapped to the public R2 bucket; the private S3 API endpoint is never constructed into a public asset URL. Local ignored environment files must be configured with the intended R2 values; no old development data needs migration.
+
+The durable deletion path uses S3 `DeleteObjects` on exact, unreferenced keys, rejects per-key errors, and confirms absence with `HeadObject` before retiring metadata and quota. [R2 documents strong read-after-delete consistency](https://developers.cloudflare.com/r2/reference/consistency/), and [its S3 compatibility list](https://developers.cloudflare.com/r2/api/s3/api/) includes these operations. It does not assume B2 bucket versioning or call `ListObjectVersions`.
+
+[R2 supports S3 conditional `PutObject` with `If-None-Match`](https://developers.cloudflare.com/r2/api/s3/api/). Signed PUT replay protection and direct signed GETs remain separate open phases; existing `b2`-named functions are not evidence those phases are complete. The current direct-download proxy and other audited gaps still need focused work. No live R2 credentials, bucket, signed upload, or deletion were exercised in this phase.

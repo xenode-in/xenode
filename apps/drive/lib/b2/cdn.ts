@@ -61,15 +61,17 @@ export function verifyFileToken(
   return diff === 0;
 }
 /**
- * Returns a direct public Zata.ai URL for an asset.
- * Assumes the object/bucket is public.
+ * Return a URL on the configured public R2 bucket domain.
  */
-export function getPublicB2Url(bucketName: string, key: string): string {
-  // Use the specific Zata.ai public pattern provided by the user
-  // Pattern: https://[bucket].idr01.zata.ai/[key]
-  const endpoint = process.env.PUBLIC_S3_ENDPOINT || "https://idr01.zata.ai";
-  const base = endpoint.replace(/^https?:\/\//, "");
-  return `https://${bucketName}.${base}/${key}`;
+export function getPublicB2Url(_bucketName: string, key: string): string {
+  void _bucketName;
+  const base = process.env.PUBLIC_S3_ENDPOINT;
+  if (!base) throw new Error("PUBLIC_S3_ENDPOINT is required for public R2 assets");
+  const url = new URL(base);
+  if (url.protocol !== "https:" || url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("PUBLIC_S3_ENDPOINT must be an HTTPS public origin");
+  }
+  return `${url.origin}/${key.split("/").map(encodeURIComponent).join("/")}`;
 }
 /**
  * Build the full signed proxy URL for a file.

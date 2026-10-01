@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "@/lib/auth/session";
 import { uploadObject } from "@/lib/b2/objects";
 import { getPublicS3Client } from "@/lib/b2/client";
+import { getPublicB2Url } from "@/lib/b2/cdn";
 
 const PUBLIC_BUCKET_NAME = process.env.PUBLIC_S3_BUCKET || "xenopublic";
 const MAX_LOGO_BYTES = 2 * 1024 * 1024; // 2 MB
@@ -53,9 +54,7 @@ export async function POST(req: NextRequest) {
       getPublicS3Client(),
     );
 
-    const s3Endpoint = process.env.S3_ENDPOINT || "https://idr01.zata.ai";
-    const endpointDomain = s3Endpoint.replace(/^https?:\/\//, "");
-    const url = `https://${PUBLIC_BUCKET_NAME}.${endpointDomain}/${key}`;
+    const url = getPublicB2Url(PUBLIC_BUCKET_NAME, key);
 
     return NextResponse.json({ url });
   } catch (error: unknown) {

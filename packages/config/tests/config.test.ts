@@ -64,12 +64,12 @@ describe("shared config", () => {
   it("resolves one cached system bucket shape", () => {
     const config = resolveSystemBucketConfig({
       S3_BUCKET_NAME: "xenode-test-storage",
-      S3_REGION: "test-region",
-      S3_ENDPOINT: "https://storage.example.test",
+      S3_REGION: "auto",
+      S3_ENDPOINT: "https://example.r2.cloudflarestorage.com",
     });
     expect(config).toMatchObject({
       bucketName: "xenode-test-storage",
-      region: "test-region",
+      region: "auto",
     });
   });
 });

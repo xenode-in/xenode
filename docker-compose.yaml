@@ -84,7 +84,7 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
       ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET}
 
-      # ── Backblaze B2 S3-compatible system bucket ──────────────────────────
+      # ── Cloudflare R2 S3-compatible system bucket ─────────────────────────
       S3_KEY_ID: ${S3_KEY_ID}
       S3_APPLICATION_KEY: ${S3_APPLICATION_KEY}
       S3_BUCKET_NAME: ${S3_BUCKET_NAME}

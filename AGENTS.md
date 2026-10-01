@@ -83,8 +83,9 @@ PBKDF2, private-key hashing, server plaintext, or persisted raw product keys.
 - `StorageObject.key` is opaque (`users/{accountId}/{randomHex32}`); never derive
   it from a filename. `encryptedName`, `encryptedDEK`, IVs, and chunks are
   ciphertext-only server fields.
-- Browser clients upload/download directly to Backblaze B2. Next.js signs URLs
-  and records metadata but never proxies file bytes.
+- Browser clients upload/download directly to Cloudflare R2 using its
+  S3-compatible API. Next.js signs URLs and records metadata but never proxies
+  file bytes. Do not add provider-specific B2 version APIs or endpoints.
 - Billing may use only `Usage`, `Payment`, `Subscription`, `BillingEvent`, and
   related billing models. It must not import crypto modules or inspect encrypted
   object metadata.
@@ -102,7 +103,7 @@ origins. Application/API routes return 404 there. Office plaintext crosses the
 iframe boundary only as bounded transferable buffers over the exact-origin
 bridge. Keep `public/internal-editors/onlyoffice` and `vendor/` isolated.
 
-The Bin is cron-purged only after encrypted B2 blobs are removed. Never add a
+The Bin is cron-purged only after encrypted R2 objects are removed. Never add a
 TTL index on `StorageObject.deletedAt`; the historical `deletedAt_1` index is a
 data-loss/orphaning hazard.
 
@@ -136,3 +137,18 @@ data-loss/orphaning hazard.
 Known legacy React client pages may trigger `react-hooks/set-state-in-effect` or
 `react-hooks/refs`. Do not use that as justification for introducing new lint
 errors.
+
+## Context for subsequent phases
+
+Before changing a subsystem, read this file, the latest entries in
+`docs/gpt-6-astra-audit/14-implementation-progress.md`, its current contract
+document, and the relevant code and tests. Audit findings describe the state
+when written; check later commits before treating them as still open.
+
+R2 is the deployment target, but the integration contract is the S3-compatible
+API. Existing `b2`-named files and fields are naming debt, not a reason for a
+repository-wide rewrite. Change them only when the actual contract or security
+boundary needs it. Verify new S3 operations against R2's supported API and
+avoid assumptions about B2 bucket versioning. Keep fixes incremental, update
+callers/tests/docs together, validate each phase, commit it, and push to the
+configured upstream as previously authorized.

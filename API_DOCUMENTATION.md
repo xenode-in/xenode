@@ -1,5 +1,9 @@
 # Xenode API Documentation (Mobile Application Guide)
 
+> **Historical draft.** Its B2, API-key, and upload-route examples are not the
+> current Xenode contract. Use [the R2 S3 contract](docs/gpt-6-astra-audit/22-r2-s3-contract.md),
+> the current OpenAPI description, and repository routes/tests for new work.
+
 This document is the authoritative guide for integrating the Xenode mobile application with the Next.js backend. It focuses on the core workflows required for a seamless, secure, and performant mobile experience, specifically handling End-to-End Encryption (E2EE), large file chunking, and direct-to-storage uploads.
 
 ---

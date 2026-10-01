@@ -42,8 +42,8 @@ const REGION_ENV_PREFIX: Record<StorageRegion, string> = {
 
 const storageEnvSchema = z.object({
   S3_BUCKET_NAME: z.string().trim().min(3).default("xenode-drive-storage"),
-  S3_ENDPOINT: z.url().default("https://s3.us-west-004.backblazeb2.com"),
-  S3_REGION: z.string().trim().min(1).default("us-west-004"),
+  S3_ENDPOINT: z.url().optional(),
+  S3_REGION: z.string().trim().min(1).default("auto"),
   S3_KEY_ID: z.string().trim().min(1).optional(),
   S3_APPLICATION_KEY: z.string().trim().min(1).optional(),
 });
@@ -91,6 +91,17 @@ export function resolveRegionBucketConfig(
   }
 
   const parsed = storageEnvSchema.parse(envForRegion(region, env));
+  if (parsed.S3_ENDPOINT) {
+    const endpoint = new URL(parsed.S3_ENDPOINT);
+    if (endpoint.protocol !== "https:" ||
+      !/^[a-z0-9-]+\.(?:(?:eu|us)\.)?r2\.cloudflarestorage\.com$/u.test(endpoint.hostname) ||
+      endpoint.pathname !== "/" || endpoint.search || endpoint.hash) {
+      throw new Error(`Region "${region}" requires a Cloudflare R2 S3 endpoint`);
+    }
+  }
+  if (parsed.S3_REGION !== "auto") {
+    throw new Error(`Region "${region}" must use the R2 S3 signing region "auto"`);
+  }
   if (
     (parsed.S3_KEY_ID && !parsed.S3_APPLICATION_KEY) ||
     (!parsed.S3_KEY_ID && parsed.S3_APPLICATION_KEY)
@@ -103,7 +114,7 @@ export function resolveRegionBucketConfig(
   const config: SystemBucketConfig = {
     region: parsed.S3_REGION,
     bucketName: parsed.S3_BUCKET_NAME,
-    endpoint: parsed.S3_ENDPOINT,
+    endpoint: parsed.S3_ENDPOINT ?? "",
     // NOT frozen: the AWS SDK mutates the credentials object it receives.
     credentials:
       parsed.S3_KEY_ID && parsed.S3_APPLICATION_KEY
@@ -155,6 +166,7 @@ export function requireRegionBucketCredentials(
       `S3 credentials are not configured for region "${region}" (set ${REGION_ENV_PREFIX[region]}KEY_ID and ${REGION_ENV_PREFIX[region]}APPLICATION_KEY)`,
     );
   }
+  if (!config.endpoint) throw new Error(`R2 S3 endpoint is not configured for region "${region}"`);
   return config.credentials;
 }
 
@@ -166,6 +178,7 @@ export function requireSystemBucketCredentials(
       "S3_KEY_ID and S3_APPLICATION_KEY are required for storage access",
     );
   }
+  if (!config.endpoint) throw new Error("S3_ENDPOINT is required for R2 storage access");
   return config.credentials;
 }
 
