@@ -52,11 +52,9 @@ import {
   DELETE as deleteProductSession,
 } from "../app/api/product-sessions/route";
 import { GET as getProfile, PUT as putProfile } from "../app/api/profile/route";
-import {
-  GET as getSpaceKey,
-  PUT as putSpaceKey,
-} from "../app/api/space-product-keys/route";
-import { GET as getVault, PUT as putVault } from "../app/api/vault/route";
+import { GET as getSpaceKey } from "../app/api/space-product-keys/route";
+import { GET as getVault } from "../app/api/vault/route";
+import { POST as bootstrapVault } from "../app/api/vault/bootstrap/route";
 import {
   POST as postVaultDevice,
   DELETE as deleteVaultDevice,
@@ -112,9 +110,8 @@ describe("Accounts API session step-up", () => {
     ["GET profile", getProfile, "/api/profile", "GET"],
     ["PUT profile", putProfile, "/api/profile", "PUT"],
     ["GET space key", getSpaceKey, "/api/space-product-keys", "GET"],
-    ["PUT space key", putSpaceKey, "/api/space-product-keys", "PUT"],
     ["GET Vault", getVault, "/api/vault", "GET"],
-    ["PUT Vault", putVault, "/api/vault", "PUT"],
+    ["bootstrap Vault", bootstrapVault, "/api/vault/bootstrap", "POST"],
     ["POST Vault device", postVaultDevice, "/api/vault/devices", "POST"],
     ["DELETE Vault device", deleteVaultDevice, "/api/vault/devices", "DELETE"],
     ["GET Vault passkeys", getVaultPasskeys, "/api/vault/passkeys", "GET"],

@@ -1,9 +1,9 @@
-import { VAULT_CLIENT_HEADERS } from "@/lib/vault-protocol";
 import {
   derivePasswordWrappingKey,
   encodeBase64Url,
   generateAccountRootKey,
   generateProductSpaceKey,
+  openEnvelope,
   sealEnvelope,
   type Argon2idParams,
 } from "@xenode/crypto-core";
@@ -11,6 +11,14 @@ import { personalSpaceId } from "@xenode/spaces/ids";
 import { deriveArgon2id } from "@/lib/argon2";
 import { cacheAccountRootKey } from "@/lib/ark-cache";
 import { createBrowserDeviceEnvelope } from "@/lib/device-vault";
+import type { VaultBootstrapPayload } from "@/lib/vault-bootstrap-payload";
+
+/** Only ciphertext and a public operation identity; safe to retain in tab memory. */
+export interface VaultBootstrapAttempt {
+  accountId: string;
+  operationId: string;
+  payload: VaultBootstrapPayload;
+}
 
 function randomParams(): Argon2idParams {
   return {
@@ -24,36 +32,18 @@ function randomParams(): Argon2idParams {
 }
 
 /**
- * Create the account's Vault v2 in this browser and cache the ARK for seamless
- * unlock. Generates the Account Root Key + RSA sharing keypair, seals the
- * password / recovery / sharing-private-key envelopes, PUTs a ProductSpaceKey
- * for Drive + Photos, then PUTs the vault. All raw key material is zeroed before
- * returning. `recoverySecret` is the 256-bit key derived from the user's 12-word
- * BIP39 phrase (see crypto-core `generateRecoveryMnemonic`).
- *
- * Shared by the security/vault page and the onboarding wizard so there is one
- * canonical vault-creation path.
+ * Prepare one sealed Vault and both product keys locally. Callers retain the
+ * result across uncertain commits; no raw generated key survives this function.
  */
-export async function createAccountVault(params: {
+export async function prepareAccountVault(params: {
   accountId: string;
   password: string;
   recoverySecret: Uint8Array;
   trustDevice?: boolean;
-}): Promise<{ vaultRevision: number }> {
+}): Promise<VaultBootstrapAttempt> {
   const { accountId, password, recoverySecret } = params;
   if (password.length < 12 || password.length > 128) {
     throw new Error("Use a password of at least 12 characters.");
-  }
-  const existing = await fetch("/api/vault", {
-    headers: VAULT_CLIENT_HEADERS,
-    credentials: "include",
-    cache: "no-store",
-  });
-  if (!existing.ok) throw new Error("Could not check the existing Vault.");
-  if (((await existing.json()) as { vault?: unknown }).vault) {
-    throw new Error(
-      "A Vault already exists. Unlock or migrate it instead of replacing its keys.",
-    );
   }
   const ark = generateAccountRootKey();
   const kdfParams = randomParams();
@@ -110,65 +100,79 @@ export async function createAccountVault(params: {
       ? await createBrowserDeviceEnvelope(accountId, ark)
       : null;
     const personalSpace = personalSpaceId(accountId);
+    const productEnvelopes = {} as VaultBootstrapPayload["productEnvelopes"];
     for (const productId of ["drive", "photos"] as const) {
       const productKey = generateProductSpaceKey();
-      const productEnvelope = await sealEnvelope(productKey, ark, {
-        accountId,
-        spaceId: personalSpace,
-        productId,
-        keyId: `${personalSpace}:${productId}`,
-        keyVersion: 1,
-        type: "product-space-key",
-      });
-      productKey.fill(0);
-      const keyResponse = await fetch(
-        `/api/space-product-keys?spaceId=${encodeURIComponent(personalSpace)}&productId=${productId}`,
-        {
-          method: "PUT",
-          credentials: "include",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(productEnvelope),
-        },
-      );
-      if (!keyResponse.ok) {
-        const keyError = (await keyResponse.json().catch(() => ({}))) as {
-          error?: string;
-        };
-        throw new Error(keyError.error ?? `Could not create ${productId} key.`);
+      try {
+        productEnvelopes[productId] = await sealEnvelope(productKey, ark, {
+          accountId,
+          spaceId: personalSpace,
+          productId,
+          keyId: `${personalSpace}:${productId}`,
+          keyVersion: 1,
+          type: "product-space-key",
+        });
+      } finally {
+        productKey.fill(0);
       }
     }
-
-    const response = await fetch("/api/vault", {
-      method: "PUT",
-      credentials: "include",
-      headers: {
-        "content-type": "application/json",
-        "idempotency-key": crypto.randomUUID().replaceAll("-", ""),
-      },
-      body: JSON.stringify({
-        expectedVaultRevision: 0,
+    return {
+      accountId,
+      operationId: crypto.randomUUID().replaceAll("-", ""),
+      payload: {
         passwordEnvelope,
         passwordMode: "separate",
         recoveryEnvelope,
         deviceEnvelopes: browserDeviceEnvelope ? [browserDeviceEnvelope] : [],
         sharingPublicKey: encodeBase64Url(new Uint8Array(sharingPublicKey)),
         wrappedSharingPrivateKey,
-      }),
-    });
-    const payload = (await response.json()) as {
-      error?: string;
-      vault?: { vaultRevision: number };
+        productEnvelopes,
+      },
     };
-    if (!response.ok || !payload.vault) {
-      throw new Error(payload.error ?? "Vault creation failed.");
-    }
+  } finally {
+    ark.fill(0);
+    passwordKey?.fill(0);
+    sharingPrivateBytes?.fill(0);
+  }
+}
 
-    // Cache the ARK so the key-handoff broker unlocks Drive/Photos with no prompt.
+/** Submit the same prepared ciphertext on every retry, then cache its root locally. */
+export async function createAccountVault(params: {
+  accountId: string;
+  attempt: VaultBootstrapAttempt;
+  password: string;
+  recoverySecret: Uint8Array;
+}): Promise<{ vaultRevision: number }> {
+  const { accountId, attempt, recoverySecret } = params;
+  if (attempt.accountId !== accountId) throw new Error("Vault attempt belongs to another account.");
+  // Also ensure a changed recovery kit cannot be displayed for the old attempt.
+  const ark = await openEnvelope(attempt.payload.recoveryEnvelope, recoverySecret, {
+    accountId, keyId: "ark", keyVersion: 1, type: "recovery",
+  });
+  let passwordKey: Uint8Array | undefined;
+  let passwordArk: Uint8Array | undefined;
+  try {
+    passwordKey = await derivePasswordWrappingKey(params.password, attempt.payload.passwordEnvelope.kdfParams, deriveArgon2id);
+    passwordArk = await openEnvelope(attempt.payload.passwordEnvelope, passwordKey, {
+      accountId, keyId: "ark", keyVersion: 1, type: "password",
+    });
+    if (passwordArk.length !== ark.length || passwordArk.some((byte, index) => byte !== ark[index])) {
+      throw new Error("Use the Vault password and recovery kit from this setup attempt.");
+    }
+    const response = await fetch("/api/vault/bootstrap", {
+      method: "POST", credentials: "include",
+      headers: { "content-type": "application/json", "idempotency-key": attempt.operationId },
+      body: JSON.stringify(attempt.payload),
+    });
+    const payload = (await response.json()) as { error?: string; vault?: { vaultRevision: number } };
+    if (!response.ok || !payload.vault || payload.vault.vaultRevision !== 1) {
+      throw new Error(payload.error ?? "Vault creation could not be confirmed. Retry with the same recovery kit.");
+    }
     await cacheAccountRootKey(accountId, ark).catch(() => undefined);
     return payload.vault;
   } finally {
     ark.fill(0);
     passwordKey?.fill(0);
-    sharingPrivateBytes?.fill(0);
+    passwordArk?.fill(0);
   }
 }

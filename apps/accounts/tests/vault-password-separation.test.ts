@@ -40,8 +40,9 @@ import {
   type VaultResponse,
 } from "../lib/password-vault";
 import { deriveArgon2id } from "../lib/argon2";
-import { createAccountVault } from "../lib/vault-setup";
+import { createAccountVault, prepareAccountVault } from "../lib/vault-setup";
 import { createBrowserDeviceEnvelope } from "../lib/device-vault";
+import { cacheAccountRootKey } from "../lib/ark-cache";
 
 const accountId = "separation-test-account";
 const loginPassword = "synthetic-login-password-123";
@@ -59,6 +60,28 @@ afterEach(() => {
 });
 
 describe("Vault password separation", () => {
+  it("reuses the exact sealed attempt after a lost response and rejects a different recovery kit", async () => {
+    const kit = await generateRecoveryMnemonic();
+    const attempt = await prepareAccountVault({ accountId, password: vaultPassword, recoverySecret: kit.secret });
+    const requests: RequestInit[] = [];
+    const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+      requests.push(init);
+      if (requests.length === 1) throw new TypeError("response lost after commit");
+      return Response.json({ vault: { vaultRevision: 1 }, idempotent: true });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const params = { accountId, password: vaultPassword, recoverySecret: kit.secret, attempt };
+    try {
+      await expect(createAccountVault(params)).rejects.toThrow("response lost");
+      expect(cacheAccountRootKey).not.toHaveBeenCalled();
+      await expect(createAccountVault({ ...params, recoverySecret: generateAccountRootKey() })).rejects.toThrow();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await expect(createAccountVault(params)).resolves.toEqual({ vaultRevision: 1 });
+      expect(requests[1].body).toBe(requests[0].body);
+      expect(requests[1].headers).toEqual(requests[0].headers);
+      expect(cacheAccountRootKey).toHaveBeenCalledOnce();
+    } finally { kit.secret.fill(0); }
+  }, 60_000);
   it("creates a new Vault with a local-only password and never calls a credential endpoint", async () => {
     const kit = await generateRecoveryMnemonic();
     const writes: Array<{ url: string; body: string }> = [];
@@ -68,24 +91,26 @@ describe("Vault password separation", () => {
         if (!init?.method) return Response.json({ accountId, vault: null });
         writes.push({ url, body: String(init.body) });
         return Response.json(
-          url === "/api/vault" ? { vault: { vaultRevision: 1 } } : { ok: true },
+          { vault: { vaultRevision: 1 } },
         );
       }),
     );
-    await createAccountVault({
+    const attempt = await prepareAccountVault({
       accountId,
       password: vaultPassword,
       recoverySecret: kit.secret,
     });
-    expect(writes).toHaveLength(3);
+    await createAccountVault({ accountId, password: vaultPassword, attempt, recoverySecret: kit.secret });
+    expect(writes).toHaveLength(1);
     expect(
       writes.every(
         ({ url }) =>
-          url === "/api/vault" || url.startsWith("/api/space-product-keys?"),
+          url === "/api/vault/bootstrap",
       ),
     ).toBe(true);
     const body = JSON.parse(writes.at(-1)!.body);
     expect(body.passwordMode).toBe("separate");
+    expect(Object.keys(body.productEnvelopes).sort()).toEqual(["drive", "photos"]);
     expect(body.deviceEnvelopes).toEqual([]);
     expect(createBrowserDeviceEnvelope).not.toHaveBeenCalled();
     expect(JSON.stringify(writes)).not.toContain(vaultPassword);
@@ -100,18 +125,19 @@ describe("Vault password separation", () => {
       "fetch",
       vi.fn(async (url: string, init?: RequestInit) => {
         if (!init?.method) return Response.json({ accountId, vault: null });
-        if (url === "/api/vault") storedVault = JSON.parse(String(init.body));
+        if (url === "/api/vault/bootstrap") storedVault = JSON.parse(String(init.body));
         return Response.json(
-          url === "/api/vault" ? { vault: { vaultRevision: 1 } } : { ok: true },
+          { vault: { vaultRevision: 1 } },
         );
       }),
     );
-    await createAccountVault({
+    const attempt = await prepareAccountVault({
       accountId,
       password: vaultPassword,
       recoverySecret: kit.secret,
       trustDevice: true,
     });
+    await createAccountVault({ accountId, password: vaultPassword, attempt, recoverySecret: kit.secret });
     expect(createBrowserDeviceEnvelope).toHaveBeenCalledOnce();
     expect(storedVault?.deviceEnvelopes).toHaveLength(1);
     kit.secret.fill(0);

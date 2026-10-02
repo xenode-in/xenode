@@ -3,10 +3,10 @@
 import { VAULT_CLIENT_HEADERS } from "@/lib/vault-protocol";
 
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { generateRecoveryMnemonic } from "@xenode/crypto-core";
 import { VaultPasswordForm } from "@/components/VaultPasswordForm";
-import { createAccountVault } from "@/lib/vault-setup";
+import { createAccountVault, prepareAccountVault, type VaultBootstrapAttempt } from "@/lib/vault-setup";
 
 type VaultState = {
   accountId: string;
@@ -19,6 +19,7 @@ export default function VaultPage() {
   const [recoverySecret, setRecoverySecret] = useState("");
   const [status, setStatus] = useState("Loading Vault status…");
   const [busy, setBusy] = useState(false);
+  const creation = useRef<{ kit: Awaited<ReturnType<typeof generateRecoveryMnemonic>>; attempt?: VaultBootstrapAttempt } | null>(null);
   // Where to send the user after first-run vault setup (the OIDC handshake they
   // came from, or the hub). Only same-origin paths are honored.
   const [nextPath, setNextPath] = useState("/");
@@ -53,13 +54,18 @@ export default function VaultPage() {
     setBusy(true);
     setStatus("Generating account keys locally…");
     try {
-      const { words: recoveryPhrase, secret } = await generateRecoveryMnemonic();
+      creation.current ??= { kit: await generateRecoveryMnemonic() };
+      const pending = creation.current;
+      const { words: recoveryPhrase, secret } = pending.kit;
+      pending.attempt ??= await prepareAccountVault({ accountId: state.accountId, password: pw, recoverySecret: secret });
       const vault = await createAccountVault({
         accountId: state.accountId,
+        attempt: pending.attempt,
         password: pw,
         recoverySecret: secret,
       });
       secret.fill(0);
+      creation.current = null;
       setState({ accountId: state.accountId, vault });
       setRecoverySecret(recoveryPhrase);
       setStatus("Vault v2 created. Save your 12-word recovery phrase now.");

@@ -21,7 +21,7 @@ import {
   STORAGE_REGION_LABELS,
   type StorageRegion,
 } from "@xenode/config/storage";
-import { createAccountVault } from "@/lib/vault-setup";
+import { createAccountVault, prepareAccountVault, type VaultBootstrapAttempt } from "@/lib/vault-setup";
 import { confirmVaultUnlock } from "@/lib/password-vault";
 import {
   generateAvatarBatch,
@@ -109,6 +109,8 @@ export function OnboardingWizard({
   const [avatarUrl, setAvatarUrl] = useState<string>("");
   const [avatarLoading, setAvatarLoading] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const vaultAttempt = useRef<VaultBootstrapAttempt | null>(null);
+  const vaultCreated = useRef(false);
 
   useEffect(() => {
     if (!hasExistingVault) void generateRecoveryMnemonic().then(setKit);
@@ -240,13 +242,18 @@ export function OnboardingWizard({
     setError("");
     try {
       setTheme(themeChoice);
-      if (!hasExistingVault && kit) {
+      if (!hasExistingVault && !vaultCreated.current && kit) {
+        vaultAttempt.current ??= await prepareAccountVault({
+          accountId, password, recoverySecret: kit.secret, trustDevice: trustBrowser,
+        });
         await createAccountVault({
           accountId,
+          attempt: vaultAttempt.current,
           password,
           recoverySecret: kit.secret,
-          trustDevice: trustBrowser,
         });
+        vaultCreated.current = true;
+        vaultAttempt.current = null;
       }
       const completionResponse = await fetch("/api/onboarding/complete", {
         method: "POST",

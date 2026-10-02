@@ -44,6 +44,8 @@ export interface UserVaultRecord {
   wrappedSharingPrivateKey: unknown;
   formatVersion: 2;
   lastMutationId?: string;
+  bootstrapOperationId?: string;
+  bootstrapPayloadHash?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -67,6 +69,8 @@ const userVaultSchema = new Schema<UserVaultRecord>(
     wrappedSharingPrivateKey: { type: envelopeSchema, required: true },
     formatVersion: { type: Number, enum: [2], required: true },
     lastMutationId: { type: String },
+    bootstrapOperationId: { type: String, immutable: true },
+    bootstrapPayloadHash: { type: String, immutable: true },
   },
   { timestamps: true, collection: "userVaults" },
 );

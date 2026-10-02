@@ -1,4 +1,5 @@
 import { Space, type SpaceRecord } from "@xenode/database/models";
+import type { ClientSession } from "mongoose";
 import {
   organizationSpaceId,
   personalSpaceId,
@@ -7,25 +8,28 @@ import {
 
 async function upsertSpace(
   record: Omit<SpaceRecord, "createdAt" | "updatedAt">,
+  session?: ClientSession,
 ): Promise<SpaceRecord> {
   await Space.updateOne(
     { _id: record._id },
     { $setOnInsert: record },
-    { upsert: true },
+    { upsert: true, session },
   );
-  const space = await Space.findById(record._id).lean<SpaceRecord>();
+  const query = Space.findById(record._id);
+  if (session) query.session(session);
+  const space = await query.lean<SpaceRecord>();
   if (!space) throw new Error("Failed to create space");
   return space;
 }
 
-export function ensurePersonalSpace(accountId: string): Promise<SpaceRecord> {
+export function ensurePersonalSpace(accountId: string, session?: ClientSession): Promise<SpaceRecord> {
   return upsertSpace({
     _id: personalSpaceId(accountId),
     type: "personal",
     ownerAccountId: accountId,
     status: "active",
     createdByAccountId: accountId,
-  });
+  }, session);
 }
 
 export function ensureOrganizationSpace(args: {

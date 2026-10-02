@@ -5,8 +5,9 @@
 - Accounts, Drive, and Photos are separate Next.js deployments.
 - Drive's custom server hosts Socket.IO; Redis is used only for pub/sub fan-out.
 - Cron jobs are authenticated HTTP endpoints. There is no background worker.
-- MongoDB is shared through `@xenode/database`; do not open parallel clients.
-- Backblaze B2 is the system object store and browser transfers are direct.
+- MongoDB is shared through `@xenode/database`; use a replica set for transactions.
+- Cloudflare R2 is the object store, accessed through its S3-compatible API;
+  browser transfers are direct.
 
 ## Required secrets
 
@@ -37,3 +38,16 @@ npm run build
 
 For schema changes, start from a clean database in this migration series. In
 particular, do not retain the historical `deletedAt_1` TTL index.
+
+## Disposable development database
+
+`npm run dev:mongo` starts an ephemeral single-node replica set on loopback.
+Stopping and restarting that process resets its disposable database, including
+Vaults and product envelopes. Run Accounts onboarding again to create them
+through the atomic bootstrap endpoint; do not seed a Vault independently of its
+personal product keys. A standalone MongoDB server cannot run the transactional
+Vault/upload/deletion contracts.
+
+Do not attempt to repair a partial old development Vault by replacing individual
+product envelopes. Reset disposable development state instead. No database reset
+is performed automatically by onboarding or application startup.
