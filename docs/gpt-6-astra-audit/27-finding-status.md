@@ -1,0 +1,74 @@
+# Finding status checklist
+
+Verified against `c6044ec` on 2026-10-02 by reading current code, plus the
+increments recorded in [14-implementation-progress.md](14-implementation-progress.md).
+Later increments update the affected rows. A finding is **Addressed** only when
+the audited defect is gone from every reachable path; **Partial** names the
+remaining work; **Open** means the defect is unchanged. Release gates that need a
+live browser, provider, R2 bucket, scheduler or deployment are listed separately
+and are never inferred from unit or integration tests.
+
+Baseline at verification: root typecheck 16/16, package boundaries pass, all 15
+test workspaces pass (686 tests). Drive lint reports 164 errors and 210 warnings;
+`test:security` fails on two pre-existing hook errors; `npm audit` reports 24
+entries (2 critical, 13 high, 9 moderate).
+
+## Audit findings
+
+| ID | Sev | Status | Evidence | Remaining work |
+| --- | --- | --- | --- | --- |
+| F01 | CRIT | Addressed | 0C `dae2945`, 0ZC `71c940b`: sign-in password never reaches Vault code; bootstrap sends sealed envelopes only | Unused `/api/vault/password-envelope` route should be deleted |
+| F02 | HIGH | Addressed | 0E `626a7c9`: product/ARK/Drive keys memory-only; persistence store refuses all but consented device wraps | Device wrap has no expiry; legacy IndexedDB deletion is best-effort; browser tests are a release gate |
+| F03 | HIGH | Partial | 0D `18709ac` shared Better Auth ID repository for passkeys/sessions | Drive admin user delete and org member removal still query `session` by string `userId`; several Accounts/Drive org helpers bypass the repository |
+| F04 | HIGH | Partial | 0F `94c2bba`, 0G `247569e`: API second-factor guard, native POST allowlist, issuer-session revocation | See F32–F34; no shared recent-auth policy; no custom-endpoint rate limits; native password set/reset revocation inconsistent |
+| F05 | HIGH | Addressed | 0C: sign-in password change is credential-only; staged envelope endpoints return 410 | Revocation semantics of change/set/reset tracked under F04 |
+| F06 | HIGH | Addressed | 0ZC `71c940b`: one transactional bootstrap with idempotency | Org/team keys can still overwrite a member grant at the same version (tracked under F18) |
+| F07 | HIGH | Partial | 0B `6440e31`: shared action checks on generic upload/metadata/purge routes | Object DELETE, bulk-delete, folder, move and comment routes use copied role checks; share PATCH/DELETE and access-request approval skip Space/policy rechecks; sidecar parent not Space-bound; legacy bucket DELETE |
+| F08 | HIGH | Partial | 0H–0L, 0S, 0ZA: server-random key suffix, reservations, Space-bound completion, create-only PUTs | Physical keys still embed caller folder prefixes; folder POST writes plaintext-capable key objects; move rewrites physical keys (F35); legacy `objects/upload` accepts unencrypted bytes |
+| F09 | HIGH | Addressed | 0A, 0U, 0V, 0W, 0X, 0Z: confirmed exact deletion, durable purge intents, transactional retirement | Live R2 and deployed scheduler remain release gates |
+| F10 | HIGH | Addressed | 0A, 0R `1764f03`: leased exact-ledger cleanup with cross-product references | Quarantined manifest review is operational work |
+| F11 | HIGH | Partial | 0Q, 0S, 0T, 0V: verified bytes and transactional finalize/revision/purge accounting | `GET /api/usage` overwrites counters on cache miss; legacy upload/bucket/admin-delete paths mutate usage outside transactions; no OrgUsage recalculation |
+| F12 | HIGH | Addressed | 0M, 0N, 0P `4e04408`: exact manifests, transactional completion | — |
+| F13 | HIGH | Addressed | 0M–0O, 0ZB `cffd54b`: manifest-owned cleanup honoring PUT expiry | — |
+| F14 | HIGH | Partial | R2 endpoint validation (0Z) makes uploads/previews match the CSP wildcard | Photos `connect-src` uses `*.r2.cloudflarestorage.com` instead of configured origins and omits the realtime origin; Drive's main app only sends a report-only CSP |
+| F15 | HIGH | Open | `AlbumEditor` sends typed text as `encryptedName`; server accepts length ≥ 16 | Client encryption with a Space/purpose key, envelope validation, decryption in list/detail |
+| F16 | MED | Open | Timeline mounts every tile; share/settings/help unwired; no trash API | Product completion (Phase 5) |
+| F17 | MED | Open | `UploadRecord` stores plaintext names and no Space/wrap context; resume uses bare `fetch`; checkpoints are read-modify-write | Encrypted versioned journal bound to job scope |
+| F18 | HIGH | Open | Rotation retires remaining members' old grants; client loads `keys[0]`; raw workspace key encrypts names | Version-aware keyring, historical grants on member add, HKDF metadata key, no same-version overwrite |
+| F19 | MED | Partial | 0T removed the editor byte proxy | Downloads, version content and shares still stream through Next with `max-age=3600` regardless of token lifetime |
+| F20 | MED | Open | `updatedAt > lastSync`, time-only sort, global `localStorage` cursor, no tombstones | Tuple cursor per account/Space with tombstones |
+| F21 | MED | Open | Presign no longer writes plans (0S) | Expired-plan downgrades in metering, onboarding plan reset, expire-plans cron, refund/campaign handlers, admin plan routes and OrgUsage writers bypass the canonical service |
+| F22 | HIGH | Open | Dockerfile copies 3 of 18 manifests and omits `server-events.mjs`; Compose lacks Accounts/Photos and calls removed PayU route; editor nginx invalid | Reproducible all-product deployment; see F36 |
+| F23 | HIGH | Open | `npm audit`: Next 16.2.11, pdfjs-dist 6.1.200, socket.io-parser 4.2.6, engine.io 6.6.9, sharp 0.34.5, axios 1.18.1 and tooling affected | Non-force upgrades are available for all entries |
+| F24 | HIGH | Partial | No Vault v1/PBKDF2 code remains | `decryptMetadataString` still decrypts a legacy format whose key is embedded in the value |
+| F25 | MED | Open | `update-metadata` writes plaintext description/link; share `bundleName` and access-request notes are plaintext; tag/folder plaintext fallbacks | Encrypt user text or remove the fields; define observable metadata |
+| F26 | MED | Open | Drive content/chunk/metadata AES-GCM has no AAD; chunk order is unauthenticated | Versioned authenticated file manifest |
+| F27 | HIGH | Addressed | 0ZD `c6044ec`: current Admin authority and versioned revocation | Live browser/deployment check is a release gate |
+| F28 | MED | Open | `server.mjs` relies on CORS only, duplicates the ticket verifier, has no session-lifetime disconnect; both clients reuse one-time tickets on reconnect | Shared verifier, exact Origin gate, lifetime timer, fresh ticket per attempt |
+| F29 | MED | Partial | 0Z requires R2 endpoints and region `auto` | Shared bucket-name default, unknown bucket → `asia`, no startup validation of complete distinct regions |
+| F30 | HIGH | Open | Photos `assets` POST projects any encrypted Space object; `migrate-storage-ownership` relabels `productId` | Remove projection and script or implement client-assisted transfer |
+| F31 | MED | Open | `test:security` is scoped ESLint and fails; CI Node 22, Docker Node 20, no `engines` | Repair gates, align runtime, add lint/audit/container checks |
+
+## Findings discovered during verification
+
+| ID | Sev | Status | Evidence | Required work |
+| --- | --- | --- | --- | --- |
+| F32 | HIGH | Open | `api/account/two-factor/verify` calls Better Auth verification with a session, which skips its attempt counter and account lockout; native `/two-factor/verify-*` is allowlisted for pending OAuth sessions | Shared account lockout for step-up, deny native session-mode verification while pending |
+| F33 | HIGH | Open | oauth-provider's `oauth_query` after-hook runs authorization in-process after social callback, skipping the GET wrapper's second-factor/readiness/unlock gate; no `postLogin` gate configured | Gate code issuance with `postLogin.shouldRedirect` and resume through the checked authorize GET |
+| F34 | MED | Open | Pending OAuth sessions can call native GET endpoints such as `list-sessions` | Allowlist native GETs for pending sessions |
+| F35 | HIGH | Open | `objects/move` copies to a new key, then deletes the old physical key that version snapshots may still reference | Immutable physical keys; metadata-only move |
+| F36 | MED | Open | Compose cron runs `cat /etc/crontabs/root`, printing the expanded `CRON_SECRET` to logs | Remove secret echo; one scheduler contract |
+| F37 | MED | Open | Legacy `buckets/[id]` DELETE runs unscoped `StorageObject.deleteMany({ bucketId })` on the shared system bucket if its owner filter matches; `objects/upload` bypasses reservations, encryption and quota | Delete both routes |
+
+## Release gates not verified by tests
+
+- Real browser journeys: password/OAuth/passkey sign-in, second factor, Vault
+  unlock, handoff into Drive and Photos, lock/reload/account switch.
+- Live R2: signed create-only PUT, presigned GET, CORS, exact deletion and HEAD
+  confirmation in every configured region.
+- Deployed schedulers calling every cron route with the production secret.
+- Realtime server behind the production proxy with hostile Origin, replay and
+  session expiry.
+- Container/static-runtime startup, `nginx -t`, iframe isolation and the
+  malicious-file corpus.
+- Production indexes, bucket policy and backups inspected rather than inferred.

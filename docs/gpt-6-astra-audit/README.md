@@ -25,8 +25,15 @@ Start with [the executive summary](00-executive-summary.md), then [the migration
 | [16 — Drive upload contract](16-drive-upload-contract.md) | B2 byte verification, transactional quota and retries |
 | [17 — Drive revision contract](17-drive-revision-contract.md) | Direct ciphertext saves, concurrency and retained bytes |
 | [18 — Drive Bin contract](18-drive-bin-contract.md) | Purge intent, restore fencing, leases and atomic quota retirement |
+| [19 — Parent retirement contract](19-parent-retirement-contract.md) | Team/organization retirement through per-object purge |
+| [20 — Share reference retirement](20-share-reference-retirement.md) | Public bundle and album-share pruning during purge |
+| [21 — B2 physical version deletion](21-b2-physical-version-deletion.md) | Historical; superseded by the R2 contract |
+| [22 — R2 S3 contract](22-r2-s3-contract.md) | R2 endpoints, exact deletion and confirmation |
+| [23 — R2 write-once upload](23-r2-write-once-upload.md) | Create-only signed ciphertext PUTs |
+| [24 — Photos abort lifecycle](24-photos-abort-lifecycle.md) | Cancellation that honors signed PUT expiry |
 | [25 — Vault bootstrap contract](25-vault-bootstrap-contract.md) | Atomic Accounts hierarchy creation and exact retries |
 | [26 — Admin session contract](26-admin-session-contract.md) | Current operator authority and versioned JWT revocation |
+| [27 — Finding status](27-finding-status.md) | Evidence-backed status of every finding and open release gate |
 
 ## Reading the judgments
 

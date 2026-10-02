@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+@AGENTS.md
+
 Use [AGENTS.md](AGENTS.md) as the authoritative repository guide.
 
 Key facts:
