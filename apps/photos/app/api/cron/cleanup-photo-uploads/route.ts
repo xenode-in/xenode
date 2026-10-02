@@ -1,4 +1,4 @@
-import { PhotoUpload, connectDatabase } from "@xenode/database";
+import { PhotoUpload, connectDatabase, photoUploadCleanupFilter } from "@xenode/database";
 import { personalSpaceId } from "@xenode/spaces";
 import { cleanupPhotoUpload } from "@/lib/upload-cleanup";
 
@@ -12,10 +12,8 @@ export async function GET(request: Request) {
   }
   await connectDatabase();
   const now = new Date();
-  const uploads = await PhotoUpload.find({
-    status: { $in: ["pending", "aborting", "aborted"] },
-    expiresAt: { $lte: now },
-  }).sort({ expiresAt: 1 }).limit(100).select("uploadId accountId spaceId").lean();
+  const uploads = await PhotoUpload.find(photoUploadCleanupFilter(now))
+    .sort({ expiresAt: 1 }).limit(100).select("uploadId accountId spaceId").lean();
   let deleted = 0;
   let blocked = 0;
   let unavailable = 0;
@@ -34,6 +32,7 @@ export async function GET(request: Request) {
       });
       if (result.status === "deleted") deleted++;
       else if (result.status === "blocked") blocked++;
+      else if (result.status === "retry") failed++;
       else unavailable++;
     } catch {
       failed++;

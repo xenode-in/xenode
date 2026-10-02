@@ -460,9 +460,11 @@ export interface PhotoUploadRecord {
   original: PhotoUploadVariantRecord;
   optimized?: PhotoUploadVariantRecord;
   thumbnail?: PhotoUploadVariantRecord;
-  status: "pending" | "completing" | "completed" | "aborting" | "aborted" | "blocked";
+  status: "pending" | "completing" | "completed" | "aborting" | "blocked";
   cleanupLeaseId?: string;
   cleanupLeaseExpiresAt?: Date;
+  cleanupNextAttemptAt?: Date;
+  cleanupError?: string;
   expiresAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -484,18 +486,21 @@ const photoUploadSchema = new Schema<PhotoUploadRecord>(
     thumbnail: photoUploadVariantSchema,
     status: {
       type: String,
-      enum: ["pending", "completing", "completed", "aborting", "aborted", "blocked"],
+      enum: ["pending", "completing", "completed", "aborting", "blocked"],
       required: true,
       default: "pending",
     },
     expiresAt: { type: Date, required: true },
     cleanupLeaseId: String,
     cleanupLeaseExpiresAt: Date,
+    cleanupNextAttemptAt: Date,
+    cleanupError: String,
   },
   { timestamps: true, collection: "photoUploads" },
 );
 photoUploadSchema.index({ spaceId: 1, assetId: 1 }, { unique: true });
-photoUploadSchema.index({ status: 1, expiresAt: 1 });
+// Expiry authorizes leased cleanup; never let a TTL discard unconfirmed blob ownership.
+photoUploadSchema.index({ status: 1, expiresAt: 1, cleanupNextAttemptAt: 1 });
 export const PhotoUpload = getModel<PhotoUploadRecord>("PhotoUpload", photoUploadSchema);
 
 export interface PhotoAssetRecord {

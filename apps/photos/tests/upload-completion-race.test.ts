@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MongoMemoryReplSet } from "mongodb-memory-server";
-import { PutObjectCommand } from "@aws-sdk/client-s3";
+import { DeleteObjectsCommand, HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import {
   PhotoAsset,
   PhotoUpload,
@@ -27,6 +27,7 @@ vi.mock("@xenode/spaces", async (importOriginal) => ({
 
 import { POST as complete } from "../app/api/photos/uploads/complete/route";
 import { POST as abort } from "../app/api/photos/uploads/abort/route";
+import { cleanupPhotoUpload } from "../lib/upload-cleanup";
 import { POST as presign } from "../app/api/photos/uploads/presign/route";
 import { GET as cleanup } from "../app/api/cron/cleanup-photo-uploads/route";
 
@@ -114,7 +115,18 @@ beforeEach(async () => {
     bucket: { _id: bucketId, b2BucketId: "photos-test-bucket" },
     client: { send: mocks.send },
   });
-  mocks.send.mockResolvedValue({ ContentLength: 100, VersionId: "test-version" });
+  const deletedKeys = new Set<string>();
+  mocks.send.mockReset();
+  mocks.send.mockImplementation(async (command) => {
+    if (command instanceof DeleteObjectsCommand) {
+      for (const entry of command.input.Delete?.Objects ?? []) deletedKeys.add(entry.Key!);
+      return {};
+    }
+    if (command instanceof HeadObjectCommand && deletedKeys.has(command.input.Key!)) {
+      throw { name: "NotFound", $metadata: { httpStatusCode: 404 } };
+    }
+    return { ContentLength: 100, VersionId: "test-version" };
+  });
   mocks.sign.mockResolvedValue("https://upload.example.test/signed");
   process.env.CRON_SECRET = cronSecret;
   await getDatabase().collection("buckets").insertOne({
@@ -219,7 +231,7 @@ describe("Photos completion race safety", () => {
     expect(mocks.send).not.toHaveBeenCalled();
   });
 
-  it("aborts only server-manifested keys, never arbitrary Drive keys", async () => {
+  it("queues only server-manifested keys and deletes them after URL expiry", async () => {
     await reserve(body());
     await getDatabase().collection("storageobjects").insertOne({
       productId: "drive", bucketId, spaceId,
@@ -228,14 +240,18 @@ describe("Photos completion race safety", () => {
     const response = await abort(request("abort", {
       uploadId: body().uploadId, objectKeys: [variantKey("d")],
     }));
-    expect(response.status).toBe(200);
-    expect(mocks.send).toHaveBeenCalledOnce();
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ cancelled: true, cleanupPending: true });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect((await PhotoUpload.findOne({ uploadId: body().uploadId }))?.status).toBe("aborting");
+    await PhotoUpload.updateOne({ uploadId: body().uploadId }, { $set: { expiresAt: new Date(Date.now() - 1000) } });
+    expect((await cleanup(cronRequest())).status).toBe(200);
     const deleted = mocks.send.mock.calls[0][0].input.Delete.Objects;
     expect(deleted.map((entry: { Key: string }) => entry.Key).sort()).toEqual([
       body().objectKey, body().optimizedKey, body().thumbnailKey,
     ].sort());
     expect(deleted).not.toContainEqual({ Key: variantKey("d") });
-    expect((await PhotoUpload.findOne({ uploadId: body().uploadId }))?.status).toBe("aborted");
+    expect(await PhotoUpload.countDocuments({ uploadId: body().uploadId })).toBe(0);
   });
 
   it("reserves stable variant keys for an asset before signing URLs", async () => {
@@ -341,7 +357,7 @@ describe("Photos completion race safety", () => {
     });
     const pending = complete(request("complete", upload));
     await started;
-    expect((await abort(request("abort", { uploadId: upload.uploadId }))).status).toBe(200);
+    expect((await abort(request("abort", { uploadId: upload.uploadId }))).status).toBe(202);
     releaseHeads();
     expect((await pending).status).toBe(409);
     expect(await PhotoAsset.countDocuments({ assetId: upload.assetId })).toBe(0);
@@ -360,15 +376,22 @@ describe("Photos completion race safety", () => {
     expect(mocks.send).not.toHaveBeenCalled();
   });
 
-  it("allows only one cleanup lease for concurrent client abort", async () => {
+  it("queues concurrent client abort idempotently without deleting live PUT keys", async () => {
     const upload = body("abort-race");
     await reserve(upload);
     const responses = await Promise.all([
       abort(request("abort", { uploadId: upload.uploadId })),
       abort(request("abort", { uploadId: upload.uploadId })),
     ]);
-    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
-    expect(mocks.send).toHaveBeenCalledOnce();
+    expect(responses.map((response) => response.status)).toEqual([202, 202]);
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect((await PhotoUpload.findOne({ uploadId: upload.uploadId }))?.status).toBe("aborting");
+    const renewed = await presign(request("presign", {
+      assetId: upload.assetId, fileSize: upload.size, mediaType: "image/png",
+      optimizedSize: upload.optimizedSize, thumbnailSize: upload.thumbnailSize,
+    }));
+    expect(renewed.status).toBe(409);
+    expect(mocks.sign).not.toHaveBeenCalled();
   });
 
   it("deletes exact expired manifest keys before removing the ledger", async () => {
@@ -414,22 +437,122 @@ describe("Photos completion race safety", () => {
     const retained = await PhotoUpload.findOne({ uploadId: upload.uploadId }).lean();
     expect(retained?.status).toBe("aborting");
     expect(retained?.cleanupLeaseId).toBeUndefined();
+    expect(retained?.cleanupError).toBe("cleanup_failed");
+    expect((await cleanup(cronRequest())).status).toBe(200);
+    expect(await PhotoUpload.countDocuments({ uploadId: upload.uploadId })).toBe(1);
+    await PhotoUpload.updateOne({ uploadId: upload.uploadId }, { $set: { cleanupNextAttemptAt: new Date(0) } });
     expect((await cleanup(cronRequest())).status).toBe(200);
     expect(await PhotoUpload.countDocuments({ uploadId: upload.uploadId })).toBe(0);
   });
 
-  it("rechecks aborted keys after the signed-URL grace window before retiring them", async () => {
+  it("waits until the signed-URL grace expires before the first physical delete", async () => {
     const upload = body("aborted-recheck");
     await reserve(upload);
-    expect((await abort(request("abort", { uploadId: upload.uploadId }))).status).toBe(200);
+    expect((await abort(request("abort", { uploadId: upload.uploadId }))).status).toBe(202);
     expect(await PhotoUpload.countDocuments({ uploadId: upload.uploadId })).toBe(1);
+    const early = await cleanup(cronRequest());
+    expect((await early.json()).scanned).toBe(0);
+    expect(mocks.send).not.toHaveBeenCalled();
     await PhotoUpload.updateOne({ uploadId: upload.uploadId }, {
       $set: { expiresAt: new Date(Date.now() - 1000) },
     });
     mocks.send.mockClear();
     expect((await cleanup(cronRequest())).status).toBe(200);
-    expect(mocks.send).toHaveBeenCalledOnce();
+    expect(mocks.send).toHaveBeenCalledTimes(4);
     expect(await PhotoUpload.countDocuments({ uploadId: upload.uploadId })).toBe(0);
+  });
+
+  it("does not let a future cleanup cutoff bypass the current PUT expiry", async () => {
+    const upload = body("future-cutoff");
+    await reserve(upload);
+    const result = await cleanupPhotoUpload({ uploadId: upload.uploadId, accountId, spaceId,
+      expiredAt: new Date(Date.now() + 24 * 60 * 60 * 1000) });
+    expect(result.status).toBe("skipped");
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect((await PhotoUpload.findOne({ uploadId: upload.uploadId }))?.status).toBe("pending");
+  });
+
+  it.each(["present", "forbidden"])("retains the manifest when post-delete HEAD is %s", async (kind) => {
+    const upload = body("head-unconfirmed");
+    await reserve(upload);
+    await PhotoUpload.updateOne({ uploadId: upload.uploadId }, { $set: { expiresAt: new Date(0) } });
+    mocks.send.mockImplementation(async (command) => {
+      if (command instanceof DeleteObjectsCommand) return {};
+      if (kind === "forbidden") throw { name: "AccessDenied", $metadata: { httpStatusCode: 403 } };
+      return {};
+    });
+    expect((await cleanup(cronRequest())).status).toBe(500);
+    const retained = await PhotoUpload.findOne({ uploadId: upload.uploadId }).lean();
+    expect(retained).toMatchObject({ status: "aborting", cleanupError: "cleanup_failed" });
+    expect(retained?.cleanupLeaseId).toBeUndefined();
+  });
+
+  it("allows one cron worker to own deletion while another sees the live lease", async () => {
+    const upload = body("cleanup-lease-race");
+    await reserve(upload);
+    await PhotoUpload.updateOne({ uploadId: upload.uploadId }, { $set: { expiresAt: new Date(0) } });
+    let release!: () => void, started!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const deleting = new Promise<void>((resolve) => { started = resolve; });
+    mocks.send.mockImplementation(async (command) => {
+      if (command instanceof DeleteObjectsCommand) { started(); await held; return {}; }
+      throw { name: "NotFound", $metadata: { httpStatusCode: 404 } };
+    });
+    const first = cleanup(cronRequest());
+    await deleting;
+    try {
+      const second = await cleanup(cronRequest());
+      expect((await second.json()).scanned).toBe(0);
+    } finally { release(); }
+    expect((await first).status).toBe(200);
+    expect(mocks.send.mock.calls.filter(([command]) => command instanceof DeleteObjectsCommand)).toHaveLength(1);
+    expect(await PhotoUpload.countDocuments({ uploadId: upload.uploadId })).toBe(0);
+  });
+
+  it("recovers an expired cleanup lease without retiring a live one", async () => {
+    const upload = body("interrupted-cleanup");
+    await reserve(upload);
+    await PhotoUpload.updateOne({ uploadId: upload.uploadId }, { $set: {
+      status: "aborting", expiresAt: new Date(0), cleanupLeaseId: "interrupted",
+      cleanupLeaseExpiresAt: new Date(Date.now() + 60_000),
+    } });
+    expect((await (await cleanup(cronRequest())).json()).scanned).toBe(0);
+    expect(mocks.send).not.toHaveBeenCalled();
+    await PhotoUpload.updateOne({ uploadId: upload.uploadId }, { $set: { cleanupLeaseExpiresAt: new Date(0) } });
+    expect((await cleanup(cronRequest())).status).toBe(200);
+    expect(await PhotoUpload.countDocuments({ uploadId: upload.uploadId })).toBe(0);
+  });
+
+  it("does not let a stale cleanup worker retire a replacement lease", async () => {
+    const upload = body("replaced-cleanup-lease");
+    await reserve(upload);
+    await PhotoUpload.updateOne({ uploadId: upload.uploadId }, { $set: { expiresAt: new Date(0) } });
+    mocks.send.mockImplementation(async (command) => {
+      if (command instanceof DeleteObjectsCommand) {
+        await PhotoUpload.updateOne({ uploadId: upload.uploadId }, { $set: {
+          cleanupLeaseId: "replacement", cleanupLeaseExpiresAt: new Date(Date.now() + 60_000),
+        } });
+        return {};
+      }
+      throw { name: "NotFound", $metadata: { httpStatusCode: 404 } };
+    });
+    const response = await cleanup(cronRequest());
+    expect((await response.json()).unavailable).toBe(1);
+    expect((await PhotoUpload.findOne({ uploadId: upload.uploadId }))?.cleanupLeaseId).toBe("replacement");
+  });
+
+  it.each(["foreign-owner", "missing-derivative"])("blocks a %s manifest before storage deletion", async (kind) => {
+    const upload = body("invalid-cleanup-manifest");
+    await reserve(upload);
+    await getDatabase().collection("photoUploads").updateOne({ uploadId: upload.uploadId }, { $set: {
+      expiresAt: new Date(0), ...(kind === "foreign-owner"
+        ? { "original.key": `users/other-account/${"a".repeat(32)}` }
+        : { "optimized.key": null }),
+    } });
+    const response = await cleanup(cronRequest());
+    expect((await response.json()).blocked).toBe(1);
+    expect((await PhotoUpload.findOne({ uploadId: upload.uploadId }))?.cleanupError).toBe("invalid_manifest");
+    expect(mocks.send).not.toHaveBeenCalled();
   });
 
   it("does not delete an interrupted completion claim", async () => {

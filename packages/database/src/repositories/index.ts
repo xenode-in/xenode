@@ -8,6 +8,7 @@ export * from "./browser-logout";
 export * from "./types";
 export * from "./storage-objects";
 export * from "./photo-uploads";
+export * from "./photo-upload-cleanup";
 export * from "./drive-uploads";
 export * from "./drive-upload-cleanup";
 export * from "./drive-revisions";

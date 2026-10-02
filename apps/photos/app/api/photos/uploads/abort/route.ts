@@ -1,6 +1,6 @@
 import { assertSpaceAction, personalSpaceId, resolveSpaceAccess } from "@xenode/spaces";
 import { getPhotosProductSession } from "@/lib/session";
-import { cleanupPhotoUpload } from "@/lib/upload-cleanup";
+import { queuePhotoUploadAbort } from "@xenode/database";
 
 export async function POST(request: Request) {
   const session = await getPhotosProductSession();
@@ -15,10 +15,10 @@ export async function POST(request: Request) {
       accountId: session.accountId, spaceId, productId: "photos",
     });
     assertSpaceAction(access, "write");
-    const result = await cleanupPhotoUpload({
+    const result = await queuePhotoUploadAbort({
       uploadId: body.uploadId, accountId: session.accountId, spaceId,
     });
-    if (result.status !== "deleted") {
+    if (result.status !== "queued") {
       return Response.json(
         { error: result.status === "blocked"
           ? "Upload is referenced by a stored object"
@@ -26,7 +26,7 @@ export async function POST(request: Request) {
         { status: 409 },
       );
     }
-    return Response.json({ deleted: result.keyCount });
+    return Response.json({ cancelled: true, cleanupPending: true, cleanupAfter: result.cleanupAfter.toISOString() }, { status: 202 });
   } catch {
     return Response.json({ error: "Photo upload could not be aborted" }, { status: 500 });
   }
