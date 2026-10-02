@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import dbConnect from "@/lib/mongodb";
-import Admin from "@/models/Admin";
+import { Admin } from "@xenode/database";
+import bcrypt from "bcryptjs";
 import { createAdminSession } from "@/lib/admin/session";
 import { ensureSuperAdmin } from "@/lib/admin/ensureSuperAdmin";
 import { z } from "zod";
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
     const admin = await Admin.findOne({
       username: username.toLowerCase(),
       isActive: true,
-    });
+    }).select("+passwordHash");
 
     if (!admin) {
       return NextResponse.json(
@@ -39,7 +40,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const valid = await admin.comparePassword(password);
+    const valid = await bcrypt.compare(password, admin.passwordHash);
     if (!valid) {
       return NextResponse.json(
         { error: "Invalid credentials" },
@@ -53,8 +54,7 @@ export async function POST(req: NextRequest) {
 
     await createAdminSession({
       id: admin._id.toString(),
-      username: admin.username,
-      role: admin.role,
+      sessionVersion: admin.sessionVersion,
     });
 
     return NextResponse.json({

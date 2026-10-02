@@ -11,6 +11,8 @@ These are release-blocking rules.
 - Product logout revokes the ProductSession; account-wide security changes can
   invalidate all products through session-version/revocation state.
 - Admin JWT auth is separate from user identity.
+- Every Admin request verifies the current active Admin, role and session
+  version in the shared database. Security/role changes invalidate prior tokens.
 
 ## Cryptography
 
@@ -30,7 +32,7 @@ These are release-blocking rules.
 - Object keys are opaque and never contain real filenames.
 - Servers and logs may contain only ciphertext metadata, encrypted keys, byte
   counts, and non-sensitive operational identifiers.
-- Direct browser-to-B2 transfers use credential-free signed URLs.
+- Direct browser-to-R2 transfers use credential-free S3-compatible signed URLs.
 - The Bin purge cron deletes encrypted blobs before database documents. A TTL
   index on `StorageObject.deletedAt` is forbidden.
 

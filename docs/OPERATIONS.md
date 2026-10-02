@@ -15,6 +15,9 @@ Generate distinct values for `BETTER_AUTH_SECRET`, `ADMIN_JWT_SECRET`,
 `REALTIME_TICKET_SECRET`, `CDN_SIGNING_SECRET`, and `CRON_SECRET`. Reusing an
 identity secret for realtime/CDN signing is rejected by configuration validation.
 Set exact `REALTIME_ALLOWED_ORIGIN` values and exact product origins.
+`ADMIN_JWT_SECRET` must contain at least 32 characters in development as well as
+production. Admin JWTs are bound to current database role/status/session version;
+see [the Admin session contract](gpt-6-astra-audit/26-admin-session-contract.md).
 
 ## Scheduled jobs
 

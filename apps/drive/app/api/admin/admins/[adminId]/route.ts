@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/admin/session";
 import dbConnect from "@/lib/mongodb";
-import Admin from "@/models/Admin";
+import { Admin } from "@xenode/database";
 import { z } from "zod";
 
 const UpdateAdminSchema = z.object({
   isActive: z.boolean().optional(),
   role: z.enum(["admin", "super_admin"]).optional(),
-});
+}).strict();
 
 // PATCH: update admin (super_admin only)
 export async function PATCH(
@@ -22,16 +22,18 @@ export async function PATCH(
   const { adminId } = await params;
   await dbConnect();
 
-  const body = await req.json();
+  if (!/^[a-f0-9]{24}$/u.test(adminId)) return NextResponse.json({ error: "Admin not found" }, { status: 404 });
+  const body = await req.json().catch(() => null);
   const parsed = UpdateAdminSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
+  if (Object.keys(parsed.data).length === 0) return NextResponse.json({ error: "No security changes supplied" }, { status: 400 });
 
   const admin = await Admin.findByIdAndUpdate(
     adminId,
-    { $set: parsed.data },
-    { new: true, select: "-passwordHash" }
+    { $set: parsed.data, $inc: { sessionVersion: 1 } },
+    { returnDocument: "after", runValidators: true, select: "-passwordHash" }
   );
 
   if (!admin) {
@@ -52,6 +54,7 @@ export async function DELETE(
   }
 
   const { adminId } = await params;
+  if (!/^[a-f0-9]{24}$/u.test(adminId)) return NextResponse.json({ error: "Admin not found" }, { status: 404 });
   await dbConnect();
 
   const admin = await Admin.findById(adminId);

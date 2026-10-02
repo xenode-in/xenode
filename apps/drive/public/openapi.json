@@ -1689,6 +1689,7 @@
       "post": {
         "tags": ["Admin"],
         "summary": "Admin login",
+        "description": "Issues a host-only, eight-hour HS256 Admin JWT with issuer xenode-drive-admin, audience xenode-admin and current Admin sessionVersion. Requires an explicit ADMIN_JWT_SECRET of at least 32 characters. Every authenticated Admin request checks current database status, role and version.",
         "security": [],
         "responses": {
           "200": { "description": "Admin session created" },
@@ -1713,7 +1714,7 @@
         "summary": "Get current admin profile",
         "responses": {
           "200": { "description": "Admin profile" },
-          "401": { "description": "Not authenticated" }
+          "401": { "description": "Not authenticated, revoked, disabled, deleted, role-stale or version-stale Admin token" }
         }
       }
     },
@@ -1826,9 +1827,27 @@
     },
 
     "/api/admin/admins/{adminId}": {
+      "patch": {
+        "tags": ["Admin"],
+        "summary": "Change Admin role or active status and revoke existing tokens",
+        "description": "Requires a current super-admin. The update atomically increments sessionVersion, including disable/re-enable and repeated changes. Prior tokens remain invalid after re-enable; fresh credential login is required.",
+        "parameters": [
+          { "name": "adminId", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[a-f0-9]{24}$" } }
+        ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": {
+          "type": "object", "additionalProperties": false, "minProperties": 1,
+          "properties": { "isActive": { "type": "boolean" }, "role": { "type": "string", "enum": ["admin", "super_admin"] } }
+        } } } },
+        "responses": {
+          "200": { "description": "Admin updated without passwordHash; prior tokens revoked" },
+          "400": { "description": "Invalid or empty security update" },
+          "403": { "description": "Current super-admin authority required" },
+          "404": { "description": "Admin not found" }
+        }
+      },
       "delete": {
         "tags": ["Admin"],
-        "summary": "Delete admin account",
+        "summary": "Delete admin account and invalidate its tokens",
         "parameters": [
           { "name": "adminId", "in": "path", "required": true, "schema": { "type": "string" } }
         ],

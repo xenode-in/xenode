@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/admin/session";
 import dbConnect from "@/lib/mongodb";
-import Admin from "@/models/Admin";
+import { Admin } from "@xenode/database";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 

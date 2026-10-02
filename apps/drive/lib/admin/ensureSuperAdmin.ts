@@ -4,14 +4,13 @@
  * Credentials are read from ADMIN_USERNAME and ADMIN_PASSWORD env vars.
  */
 import dbConnect from "@/lib/mongodb";
-import Admin from "@/models/Admin";
+import { Admin } from "@xenode/database";
 import bcrypt from "bcryptjs";
 
 let ensured = false;
 
 export async function ensureSuperAdmin() {
   if (ensured) return;
-  ensured = true;
 
   await dbConnect();
 
@@ -22,11 +21,15 @@ export async function ensureSuperAdmin() {
     console.warn(
       "[Admin] ADMIN_USERNAME or ADMIN_PASSWORD not set — skipping super admin seed."
     );
+    ensured = true;
     return;
   }
 
-  const existing = await Admin.findOne({ username, role: "super_admin" });
-  if (existing) return; // already seeded
+  const existing = await Admin.findOne({ username: username.toLowerCase() });
+  if (existing) {
+    ensured = true;
+    return; // Do not resurrect a disabled/demoted operator from seed settings.
+  }
 
   const passwordHash = await bcrypt.hash(password, 12);
   await Admin.create({
@@ -35,6 +38,7 @@ export async function ensureSuperAdmin() {
     role: "super_admin",
     isActive: true,
   });
+  ensured = true;
 
   console.log(`[Admin] Super admin '${username}' created.`);
 }
