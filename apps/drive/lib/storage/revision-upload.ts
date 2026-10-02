@@ -25,6 +25,7 @@ export async function handleRevisionUpload(request: NextRequest, input: DriveRev
     const manifest = await reserveDriveRevision({ ...input, size: body.size, iv: body.iv });
     const uploadUrl = await getSignedUrl(getS3Client(input.region), new PutObjectCommand({
       Bucket: input.bucketName, Key: manifest.fileId, ContentType: "application/octet-stream",
+      IfNoneMatch: "*",
     }), { expiresIn: 3600 });
     return NextResponse.json({ uploadUrl, sessionId: String(manifest._id) });
   }

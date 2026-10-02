@@ -721,7 +721,7 @@
       "post": {
         "tags": ["Uploads"],
         "summary": "Request pre-signed upload URL",
-        "description": "Select a personal, organization or team Space with x-xenode-space-id or spaceId query. The server checks that Space owner's initialized quota, issues an opaque object key and reserves it before signing a direct-to-B2 PUT. Presign does not change plan state. Refresh the same upload with its returned sessionId. A thumbnail or optimized variant requires parentSessionId and variant.",
+        "description": "Select a personal, organization or team Space with x-xenode-space-id or spaceId query. The server checks that Space owner's initialized quota, issues an opaque object key and reserves it before signing a direct-to-R2 S3 PUT with If-None-Match: *. The browser must send that signed header. A repeated PUT returns R2 precondition failure instead of overwriting ciphertext; restart with a fresh reservation if the original bytes cannot be recovered. Presign does not change plan state. Refresh the same upload with its returned sessionId. A thumbnail or optimized variant requires parentSessionId and variant.",
         "requestBody": {
           "required": true,
           "content": {
@@ -771,7 +771,7 @@
       "post": {
         "tags": ["Uploads"],
         "summary": "Request multipart pre-signed upload URLs",
-        "description": "Select a personal, organization or team Space with x-xenode-space-id or spaceId query. The server checks that Space owner's initialized quota, issues an opaque logical key and reserves its chunks before signing URLs. Presign does not change plan state. Refresh the same key with its returned sessionId.",
+        "description": "Select a personal, organization or team Space with x-xenode-space-id or spaceId query. The server checks that Space owner's initialized quota, issues an opaque logical key and reserves its chunks before signing create-only R2 S3 PUT URLs. Every chunk PUT must include the signed If-None-Match: * header. Presign does not change plan state. Refresh the same key with its returned sessionId.",
         "requestBody": {
           "required": true,
           "content": {
@@ -804,7 +804,7 @@
       "post": {
         "tags": ["Uploads"],
         "summary": "Complete a personal, organization or team upload",
-        "description": "Select the personal, organization or team Space with x-xenode-space-id or spaceId query. Verifies B2 ciphertext lengths and atomically finalizes the exact reservation, StorageObject, Space owner quota and bucket counters. Variant bytes count against quota. Retrying the same completed reservation returns its exact object without repeating writes. Fingerprint/key conflicts return 409 and leave the upload pending for retry or orphan cleanup. Existing objects use a separate revision flow.",
+        "description": "Select the personal, organization or team Space with x-xenode-space-id or spaceId query. Verifies R2 ciphertext lengths and atomically finalizes the exact reservation, StorageObject, Space owner quota and bucket counters. Variant bytes count against quota. Retrying the same completed reservation returns its exact object without repeating writes. Fingerprint/key conflicts return 409 and leave the upload pending for retry or orphan cleanup. Existing objects use a separate revision flow.",
         "requestBody": {
           "required": true,
           "content": {

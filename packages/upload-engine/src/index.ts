@@ -7,6 +7,14 @@ export type UploadStatus =
   | "cancelled";
 
 export * from "./revision";
+export * from "./s3";
+
+export class NonRetryableUploadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NonRetryableUploadError";
+  }
+}
 
 export interface UploadInput {
   id: string;
@@ -162,6 +170,8 @@ export class UploadEngine {
       const error = cause instanceof Error ? cause : new Error(String(cause));
       if (job.controller.signal.aborted) {
         job.resolve({ id: job.input.id, status: "cancelled", error });
+      } else if (error instanceof NonRetryableUploadError) {
+        job.resolve({ id: job.input.id, status: "failed", error });
       } else if (++job.attempts < this.maxAttempts) {
         await new Promise((resolve) =>
           setTimeout(resolve, this.retryDelayMs(job.attempts)),

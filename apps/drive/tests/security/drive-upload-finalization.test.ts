@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { HeadObjectCommand } from "@aws-sdk/client-s3";
+import { HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Space, getDatabase } from "@xenode/database";
 
@@ -282,6 +282,16 @@ describe("Drive verified transactional upload finalization", () => {
   function presignRequest(input: Awaited<ReturnType<typeof fixture>>) {
     return request({ bucketId: String(input.bucket._id), fileSize: 100, chunkCount: 1 }, input.spaceId);
   }
+
+  it.each(presignRoutes)("signs %s PUTs as create-only writes", async (_name, handler) => {
+    const input = await fixture();
+    expect((await handler(presignRequest(input))).status).toBe(200);
+    expect(sign).toHaveBeenCalled();
+    for (const [, command] of sign.mock.calls) {
+      expect(command).toBeInstanceOf(PutObjectCommand);
+      expect((command as PutObjectCommand).input.IfNoneMatch).toBe("*");
+    }
+  });
 
   it.each(presignRoutes)("uses the organization's quota for %s presign even when the uploader's personal quota is full", async (_name, handler) => {
     const input = await fixture({ organization: true });

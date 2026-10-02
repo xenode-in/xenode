@@ -140,6 +140,7 @@ export async function POST(request: NextRequest) {
       Bucket: activeStorageBucketName(ctx.region),
       Key: opaqueKey,
       ContentType: fileType || "application/octet-stream",
+      IfNoneMatch: "*",
     });
 
     const presignedUrl = await getSignedUrl(getS3Client(ctx.region), command, {

@@ -14,6 +14,7 @@ import {
   FolderOpen,
 } from "lucide-react";
 import { toast } from "sonner";
+import { WRITE_ONCE_PUT_HEADERS } from "@xenode/upload-engine";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
@@ -403,11 +404,13 @@ export function ShareDialog({
                     });
                 const { uploadUrl, objectKey } = await presignRes.json();
 
-                await fetch(uploadUrl, {
+                const uploaded = await fetch(uploadUrl, {
                   method: "PUT",
                   body: encryptedThumb,
-                  headers: { "Content-Type": "application/octet-stream" },
+                  credentials: "omit",
+                  headers: { "Content-Type": "application/octet-stream", ...WRITE_ONCE_PUT_HEADERS },
                 });
+                if (!uploaded.ok) throw new Error(`Share thumbnail upload failed (${uploaded.status})`);
 
                 itemShareEncryptedThumbnail = objectKey;
               }

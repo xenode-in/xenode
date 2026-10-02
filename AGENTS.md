@@ -86,6 +86,10 @@ PBKDF2, private-key hashing, server plaintext, or persisted raw product keys.
 - Browser clients upload/download directly to Cloudflare R2 using its
   S3-compatible API. Next.js signs URLs and records metadata but never proxies
   file bytes. Do not add provider-specific B2 version APIs or endpoints.
+- Presigned ciphertext PUTs are create-only: sign `If-None-Match: *` and send
+  that header from browser clients. Treat a 412 precondition failure as an
+  occupied key, not permission to overwrite. Cleanup must honor outstanding
+  signed-URL expiry before deleting keys.
 - Billing may use only `Usage`, `Payment`, `Subscription`, `BillingEvent`, and
   related billing models. It must not import crypto modules or inspect encrypted
   object metadata.

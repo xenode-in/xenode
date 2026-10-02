@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { Space, cleanupDriveUpload, getDatabase } from "@xenode/database";
 import { REVISION_HEADER } from "@/lib/storage/revisions";
 const { send, sign } = vi.hoisted(() => ({ send: vi.fn(), sign: vi.fn() }));
@@ -51,6 +52,8 @@ async function reserve(input: Awaited<ReturnType<typeof fixture>>, shared = fals
   const handler = shared ? shareSave : ownerSave;
   const response = await handler(request({ operation: "presign", size: 80, iv: nonce }, "0", shared ? undefined : input.spaceId), params(String(shared ? input.share._id : input.object._id)));
   expect(response.status).toBe(200);
+  const command = sign.mock.lastCall?.[1] as PutObjectCommand | undefined;
+  expect(command?.input.IfNoneMatch).toBe("*");
   return await response.json() as { sessionId: string; uploadUrl: string };
 }
 async function complete(input: Awaited<ReturnType<typeof fixture>>, sessionId: string, shared = false) {

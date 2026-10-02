@@ -1,0 +1,9 @@
+# Create-only signed ciphertext uploads
+
+R2's [S3 compatibility contract](https://developers.cloudflare.com/r2/api/s3/api/) supports `PutObject` with `If-None-Match`. Xenode now signs `If-None-Match: *` into every Drive create, chunk, variant, and revision PUT URL and every Photos variant PUT URL. Browser upload paths send that header. A presigned URL may remain valid after completion, but a second PUT to the same key fails its precondition instead of replacing committed ciphertext. The AWS SDK signing test verifies `if-none-match` appears in `X-Amz-SignedHeaders`.
+
+The header is a condition on the R2 operation, not a Xenode API request header. Browser PUTs also send the declared `Content-Type` and omit application credentials. Configure each R2 bucket's [CORS policy](https://developers.cloudflare.com/r2/buckets/cors/) with the exact Drive/Photos origins, `PUT` among allowed methods, and `Content-Type` plus `If-None-Match` among allowed headers. The R2 S3 API hostname is the presigned-URL target; a public custom domain cannot be used for presigned uploads.
+
+HTTP 412 means the key already contains bytes. The client must not overwrite it or treat an unrelated re-encryption as success. Drive's retry loop treats 412 as terminal; Photos stops automatic retries and asks for a fresh upload. Existing exact-reservation completion retries remain idempotent. A lost successful PUT response may therefore require a new reservation when its original ciphertext and encryption metadata are unavailable. Persisted upload-journal recovery is a separate audit finding.
+
+This phase has no live R2 test or bucket CORS deployment. It does not make deletion before a signed URL expires safe: an old URL can create a key again after deletion, so cleanup must continue honoring the signed-URL grace window. The Photos abort lifecycle and direct signed downloads remain separate work.

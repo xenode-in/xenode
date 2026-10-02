@@ -1,3 +1,5 @@
+import { WRITE_ONCE_PUT_HEADERS } from "./s3";
+
 export class RevisionUploadError extends Error {
   constructor(readonly code: string, readonly status: number, readonly revision?: number) {
     super(code);
@@ -30,7 +32,7 @@ export async function uploadRevisionCiphertext(input: {
     throw new RevisionUploadError("invalid_revision_reservation", 502);
   }
   const uploaded = await input.storageFetch(url.toString(), {
-    method: "PUT", headers: { "Content-Type": "application/octet-stream" },
+    method: "PUT", headers: { "Content-Type": "application/octet-stream", ...WRITE_ONCE_PUT_HEADERS },
     credentials: "omit", body: input.ciphertext, signal: input.signal,
   });
   if (!uploaded.ok) throw new RevisionUploadError("revision_storage_upload_failed", uploaded.status);

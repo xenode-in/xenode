@@ -12,6 +12,7 @@ import {
   UploadEngine,
   acceptAllUploadPolicy,
   createMemoryCheckpointStore,
+  WRITE_ONCE_PUT_HEADERS,
 } from "@xenode/upload-engine";
 import { useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
@@ -146,6 +147,7 @@ function putBlobXHR(
     });
     xhr.open("PUT", url);
     xhr.setRequestHeader("Content-Type", contentType);
+    xhr.setRequestHeader("If-None-Match", WRITE_ONCE_PUT_HEADERS["If-None-Match"]);
     xhr.send(body);
   });
 }
@@ -430,10 +432,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         if (!presign.ok) throw new Error("Thumbnail upload reservation expired");
         const { uploadUrl, objectKey } = await presign.json();
 
-        await fetch(uploadUrl, {
+        const uploaded = await fetch(uploadUrl, {
           method: "PUT",
+          headers: { "Content-Type": "application/octet-stream", ...WRITE_ONCE_PUT_HEADERS },
+          credentials: "omit",
           body: blob,
         });
+        if (!uploaded.ok) throw new Error(`Thumbnail upload failed (${uploaded.status})`);
 
         return objectKey;
       } catch (err) {
@@ -652,7 +657,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                         const start = i * sidecarEnc.chunkSize;
                         const end = Math.min(start + sidecarEnc.chunkSize, sidecarEnc.ciphertext.size);
                         const cBlob = sidecarEnc.ciphertext.slice(start, end);
-                        await fetch(urls[i].url, { method: "PUT", body: cBlob });
+                        const uploaded = await fetch(urls[i].url, { method: "PUT", headers: { "Content-Type": "application/octet-stream", ...WRITE_ONCE_PUT_HEADERS }, credentials: "omit", body: cBlob });
+                        if (!uploaded.ok) throw new Error(`Sidecar upload failed (${uploaded.status})`);
                         sidecarChunkUploads.push({ index: i, key: urls[i].key, size: cBlob.size });
                       }
                       
@@ -745,7 +751,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                         const start = ci * sidecarEnc.chunkSize;
                         const end = Math.min(start + sidecarEnc.chunkSize, sidecarEnc.ciphertext.size);
                         const cBlob = sidecarEnc.ciphertext.slice(start, end);
-                        await fetch(urls[ci].url, { method: "PUT", body: cBlob });
+                        const uploaded = await fetch(urls[ci].url, { method: "PUT", headers: { "Content-Type": "application/octet-stream", ...WRITE_ONCE_PUT_HEADERS }, credentials: "omit", body: cBlob });
+                        if (!uploaded.ok) throw new Error(`Audio sidecar upload failed (${uploaded.status})`);
                         audioChunkUploads.push({ index: ci, key: urls[ci].key, size: cBlob.size });
                       }
 

@@ -155,6 +155,7 @@ async function signVariant(
       Bucket: storage.bucket.b2BucketId,
       Key: objectKey,
       ContentType: "application/octet-stream",
+      IfNoneMatch: "*",
     }),
     { expiresIn: 3600 },
   );

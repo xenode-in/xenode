@@ -160,6 +160,7 @@ export async function POST(request: NextRequest) {
         Bucket: regionBucket,
         Key: chunkKey,
         ContentType: fileType || "application/octet-stream",
+        IfNoneMatch: "*",
       });
 
       const presignedUrl = await getSignedUrl(s3Client, command, {

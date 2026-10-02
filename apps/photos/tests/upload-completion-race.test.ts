@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MongoMemoryReplSet } from "mongodb-memory-server";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import {
   PhotoAsset,
   PhotoUpload,
@@ -255,6 +256,10 @@ describe("Photos completion race safety", () => {
     expect(secondBody.original.objectKey).toBe(firstBody.original.objectKey);
     expect(await PhotoUpload.countDocuments({ assetId: requestBody.assetId })).toBe(1);
     expect(mocks.sign).toHaveBeenCalledTimes(6);
+    for (const [, command] of mocks.sign.mock.calls) {
+      expect(command).toBeInstanceOf(PutObjectCommand);
+      expect((command as PutObjectCommand).input.IfNoneMatch).toBe("*");
+    }
     await PhotoUpload.updateOne({ uploadId: firstBody.uploadId }, {
       $set: { expiresAt: new Date(Date.now() + 10_000) },
     });

@@ -138,7 +138,7 @@ describe("v2 binary persistence — ciphertext only", () => {
     expect(save).toBeDefined();
     expect(save!.method).toBe("PUT");
     expect(save!.credentials).toBe("omit");
-    expect(save!.headers).toEqual({ "Content-Type": "application/octet-stream" });
+    expect(save!.headers).toEqual({ "Content-Type": "application/octet-stream", "If-None-Match": "*" });
     expect(recorded.filter((r) => r.url.startsWith("/api/")).every((r) => !r.body)).toBe(true);
     expect(save!.body).toBeInstanceOf(ArrayBuffer);
 

@@ -9,6 +9,8 @@ import {
   UploadEngine,
   createMemoryCheckpointStore,
   type UploadInput,
+  WRITE_ONCE_PUT_HEADERS,
+  NonRetryableUploadError,
 } from "@xenode/upload-engine";
 import { getClientPhotosSession } from "@/lib/client-session";
 import { createImageDerivatives } from "@/lib/image-derivatives";
@@ -164,11 +166,15 @@ export function UploadController({
               uploadVariants.map(async ({ signed, encrypted: variant }) => {
                 const response = await fetch(signed.uploadUrl, {
                   method: "PUT",
-                  headers: { "content-type": "application/octet-stream" },
+                  headers: { "content-type": "application/octet-stream", ...WRITE_ONCE_PUT_HEADERS },
+                  credentials: "omit",
                   body: variant.body,
                   signal,
                 });
                 if (!response.ok) {
+                  if (response.status === 412) {
+                    throw new NonRetryableUploadError("This upload could not be resumed safely. Select the file again to restart.");
+                  }
                   throw new Error(`R2 upload failed (${response.status})`);
                 }
               }),

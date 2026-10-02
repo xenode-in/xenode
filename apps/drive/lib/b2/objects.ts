@@ -172,6 +172,7 @@ export async function getUploadUrl(
     Bucket: bucketName,
     Key: key,
     ContentType: contentType,
+    IfNoneMatch: "*",
   });
 
   return getSignedUrl(

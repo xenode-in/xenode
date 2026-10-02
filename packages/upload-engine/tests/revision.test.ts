@@ -15,7 +15,7 @@ describe("revision transport boundaries", () => {
     const storage = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 200 }));
     expect(await uploadRevisionCiphertext(input(api, storage))).toEqual({ revision: 3 });
     expect(storage).toHaveBeenCalledOnce();
-    expect(storage.mock.calls[0][1]).toMatchObject({ method: "PUT", credentials: "omit", headers: { "Content-Type": "application/octet-stream" } });
+    expect(storage.mock.calls[0][1]).toMatchObject({ method: "PUT", credentials: "omit", headers: { "Content-Type": "application/octet-stream", "If-None-Match": "*" } });
     expect(api.mock.calls[1][1]?.body).toBe(api.mock.calls[2][1]?.body);
     expect(JSON.parse(api.mock.calls[1][1]!.body as string)).toEqual({ operation: "complete", sessionId });
   });

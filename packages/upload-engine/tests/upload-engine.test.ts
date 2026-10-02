@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { UploadEngine, type CheckpointStore } from "../src";
+import { NonRetryableUploadError, UploadEngine, type CheckpointStore } from "../src";
 
 function memoryCheckpoints(): CheckpointStore {
   const values = new Map();
@@ -82,5 +82,17 @@ describe("UploadEngine", () => {
       }),
     ).resolves.toMatchObject({ status: "completed" });
     expect(attempts).toBe(3);
+  });
+
+  it("does not retry a write-once storage conflict", async () => {
+    let attempts = 0;
+    const engine = new UploadEngine(
+      { async upload() { attempts++; throw new NonRetryableUploadError("already exists"); } },
+      { validate() {} }, memoryCheckpoints(),
+      { maxAttempts: 3, retryDelayMs: () => 0 },
+    );
+    const result = await engine.enqueue({ id: "occupied", name: "x", size: 1, contentType: "x/test", source: null });
+    expect(result).toMatchObject({ status: "failed", error: { name: "NonRetryableUploadError" } });
+    expect(attempts).toBe(1);
   });
 });
