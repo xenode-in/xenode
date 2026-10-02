@@ -8,6 +8,6 @@
     ".": "./index.mjs"
   },
   "dependencies": {
-    "eslint-config-next": "^16.2.10"
+    "eslint-config-next": "^16.3.8"
   }
 }

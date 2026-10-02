@@ -54,3 +54,7 @@ Vault/upload/deletion contracts.
 Do not attempt to repair a partial old development Vault by replacing individual
 product envelopes. Reset disposable development state instead. No database reset
 is performed automatically by onboarding or application startup.
+
+Better Auth 1.7 changed its account identity and OAuth provider schemas. Accounts
+created by earlier development builds are not backfilled; reset the disposable
+database and sign up again after upgrading.

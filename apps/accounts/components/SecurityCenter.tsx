@@ -189,7 +189,7 @@ export function SecurityCenter({
       issuer: "Xenode Accounts",
     });
     setTwoFactorBusy(false);
-    if (result.error || !result.data) {
+    if (result.error || !result.data || result.data.method !== "totp") {
       setError(true);
       setStatus(result.error?.message ?? "Could not start authenticator setup.");
       return;

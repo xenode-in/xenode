@@ -39,7 +39,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F20 | MED | Open | `updatedAt > lastSync`, time-only sort, global `localStorage` cursor, no tombstones | Tuple cursor per account/Space with tombstones |
 | F21 | MED | Open | Presign no longer writes plans (0S) | Expired-plan downgrades in metering, onboarding plan reset, expire-plans cron, refund/campaign handlers, admin plan routes and OrgUsage writers bypass the canonical service |
 | F22 | HIGH | Open | Dockerfile copies 3 of 18 manifests and omits `server-events.mjs`; Compose lacks Accounts/Photos and calls removed PayU route; editor nginx invalid | Reproducible all-product deployment; see F36 |
-| F23 | HIGH | Open | `npm audit`: Next 16.2.11, pdfjs-dist 6.1.200, socket.io-parser 4.2.6, engine.io 6.6.9, sharp 0.34.5, axios 1.18.1 and tooling affected | Non-force upgrades are available for all entries |
+| F23 | HIGH | Addressed | 0ZF: non-force upgrades (Next 16.3.8, pdfjs-dist 6.3.289, Better Auth family 1.7.7, socket.io-parser 4.2.7, engine.io 6.6.11, sharp 0.35.5, axios 1.20.0, vitest 4.1.11); `npm audit` 24 → 0; CI now gates on `npm audit` | Re-triage whenever the CI audit gate fails; renderer corpus re-run is a release gate |
 | F24 | HIGH | Partial | No Vault v1/PBKDF2 code remains | `decryptMetadataString` still decrypts a legacy format whose key is embedded in the value |
 | F25 | MED | Open | `update-metadata` writes plaintext description/link; share `bundleName` and access-request notes are plaintext; tag/folder plaintext fallbacks | Encrypt user text or remove the fields; define observable metadata |
 | F26 | MED | Open | Drive content/chunk/metadata AES-GCM has no AAD; chunk order is unauthenticated | Versioned authenticated file manifest |

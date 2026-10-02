@@ -19,6 +19,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Release gate: any published advisory (runtime or tooling) needs triage.
+      - run: npm audit --audit-level=moderate
       - run: npm run typecheck
       - run: npm run check:boundaries
       - run: npm run test:security
