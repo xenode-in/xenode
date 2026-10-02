@@ -23,6 +23,30 @@ interface StoredSession {
   updatedAt?: Date;
 }
 
+interface StoredUser {
+  _id: string | mongo.ObjectId;
+  twoFactorEnabled?: boolean | null;
+}
+
+/** Better Auth two-factor row; its lockout fields are shared with native sign-in. */
+interface StoredTwoFactor {
+  _id: string | mongo.ObjectId;
+  userId: string | mongo.ObjectId;
+  verified?: boolean | null;
+  failedVerificationCount?: number | null;
+  lockedUntil?: Date | null;
+}
+
+export type SecondFactorAttemptReservation =
+  | { status: "reserved" }
+  | { status: "locked"; lockedUntil: Date | null }
+  | { status: "not_enrolled" };
+
+export interface SecondFactorLockoutPolicy {
+  maxFailedAttempts: number;
+  lockDurationMs: number;
+}
+
 export interface AccountPasskeySummary {
   id: string;
   credentialID: string;
@@ -56,7 +80,94 @@ export function createAuthSecurityRepository(
 ) {
   const passkeys = database.collection<StoredPasskey>("passkey");
   const sessions = database.collection<StoredSession>("session");
+  const users = database.collection<StoredUser>("user");
+  const twoFactors = database.collection<StoredTwoFactor>("twoFactor");
+  const enrolledTwoFactor = (accountId: string) => ({
+    userId: { $in: storedIds(accountId) },
+    verified: { $ne: false },
+  });
   return {
+    async isTwoFactorEnabled(accountId: string): Promise<boolean> {
+      const user = await users.findOne(
+        { _id: { $in: storedIds(accountId) } },
+        { projection: { twoFactorEnabled: 1 } },
+      );
+      return user?.twoFactorEnabled === true;
+    },
+
+    /**
+     * Atomically spend one attempt from the account's consecutive-failure
+     * budget before a code is checked, so parallel guesses cannot exceed it.
+     * An expired lock restarts the budget, matching Better Auth's lockout.
+     */
+    async reserveSecondFactorAttempt(
+      args: { accountId: string; now?: Date } & Pick<
+        SecondFactorLockoutPolicy,
+        "maxFailedAttempts"
+      >,
+    ): Promise<SecondFactorAttemptReservation> {
+      const now = args.now ?? new Date();
+      const enrolled = enrolledTwoFactor(args.accountId);
+      await twoFactors.updateMany(
+        { ...enrolled, lockedUntil: { $lte: now } },
+        { $set: { failedVerificationCount: 0, lockedUntil: null } },
+      );
+      const reserved = await twoFactors.findOneAndUpdate(
+        {
+          ...enrolled,
+          lockedUntil: null,
+          $or: [
+            { failedVerificationCount: null },
+            { failedVerificationCount: { $lt: args.maxFailedAttempts } },
+          ],
+        },
+        [
+          {
+            $set: {
+              failedVerificationCount: {
+                $add: [{ $ifNull: ["$failedVerificationCount", 0] }, 1],
+              },
+            },
+          },
+        ],
+        { returnDocument: "after" },
+      );
+      if (reserved) return { status: "reserved" };
+      const current = await twoFactors.findOne(enrolled, {
+        projection: { lockedUntil: 1 },
+      });
+      if (!current) return { status: "not_enrolled" };
+      return { status: "locked", lockedUntil: current.lockedUntil ?? null };
+    },
+
+    /** Lock the account once a reserved attempt fails at the budget limit. */
+    async recordSecondFactorFailure(
+      args: { accountId: string; now?: Date } & SecondFactorLockoutPolicy,
+    ): Promise<Date | null> {
+      const now = args.now ?? new Date();
+      const enrolled = enrolledTwoFactor(args.accountId);
+      await twoFactors.updateMany(
+        {
+          ...enrolled,
+          failedVerificationCount: { $gte: args.maxFailedAttempts },
+          $or: [{ lockedUntil: null }, { lockedUntil: { $lte: now } }],
+        },
+        { $set: { lockedUntil: new Date(now.getTime() + args.lockDurationMs) } },
+      );
+      const current = await twoFactors.findOne(enrolled, {
+        projection: { lockedUntil: 1 },
+      });
+      return current?.lockedUntil && current.lockedUntil > now
+        ? current.lockedUntil
+        : null;
+    },
+
+    async resetSecondFactorFailures(accountId: string): Promise<void> {
+      await twoFactors.updateMany(enrolledTwoFactor(accountId), {
+        $set: { failedVerificationCount: 0, lockedUntil: null },
+      });
+    },
+
     async listPasskeysForUser(
       accountId: string,
     ): Promise<AccountPasskeySummary[]> {
@@ -92,6 +203,7 @@ export function createAuthSecurityRepository(
       accountId: string;
       sessionId: string;
       verifiedAt?: Date;
+      method?: "totp" | "trusted-device";
     }): Promise<boolean> {
       const verifiedAt = args.verifiedAt ?? new Date();
       const result = await sessions.updateOne(
@@ -102,7 +214,7 @@ export function createAuthSecurityRepository(
         },
         {
           $set: {
-            authMethod: "totp",
+            authMethod: args.method ?? "totp",
             twoFactorVerifiedAt: verifiedAt,
             updatedAt: verifiedAt,
           },

@@ -20,7 +20,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F01 | CRIT | Addressed | 0C `dae2945`, 0ZC `71c940b`: sign-in password never reaches Vault code; bootstrap sends sealed envelopes only | Unused `/api/vault/password-envelope` route should be deleted |
 | F02 | HIGH | Addressed | 0E `626a7c9`: product/ARK/Drive keys memory-only; persistence store refuses all but consented device wraps | Device wrap has no expiry; legacy IndexedDB deletion is best-effort; browser tests are a release gate |
 | F03 | HIGH | Partial | 0D `18709ac` shared Better Auth ID repository for passkeys/sessions | Drive admin user delete and org member removal still query `session` by string `userId`; several Accounts/Drive org helpers bypass the repository |
-| F04 | HIGH | Partial | 0F `94c2bba`, 0G `247569e`: API second-factor guard, native POST allowlist, issuer-session revocation | See F32–F34; no shared recent-auth policy; no custom-endpoint rate limits; native password set/reset revocation inconsistent |
+| F04 | HIGH | Partial | 0F `94c2bba`, 0G `247569e`, 0ZE: API second-factor guard, native POST/GET gates, issuer-session revocation, OIDC code gate (F32–F34) | No shared recent-auth policy; no custom-endpoint rate limits; native password set/reset revocation inconsistent |
 | F05 | HIGH | Addressed | 0C: sign-in password change is credential-only; staged envelope endpoints return 410 | Revocation semantics of change/set/reset tracked under F04 |
 | F06 | HIGH | Addressed | 0ZC `71c940b`: one transactional bootstrap with idempotency | Org/team keys can still overwrite a member grant at the same version (tracked under F18) |
 | F07 | HIGH | Partial | 0B `6440e31`: shared action checks on generic upload/metadata/purge routes | Object DELETE, bulk-delete, folder, move and comment routes use copied role checks; share PATCH/DELETE and access-request approval skip Space/policy rechecks; sidecar parent not Space-bound; legacy bucket DELETE |
@@ -53,9 +53,9 @@ entries (2 critical, 13 high, 9 moderate).
 
 | ID | Sev | Status | Evidence | Required work |
 | --- | --- | --- | --- | --- |
-| F32 | HIGH | Open | `api/account/two-factor/verify` calls Better Auth verification with a session, which skips its attempt counter and account lockout; native `/two-factor/verify-*` is allowlisted for pending OAuth sessions | Shared account lockout for step-up, deny native session-mode verification while pending |
-| F33 | HIGH | Open | oauth-provider's `oauth_query` after-hook runs authorization in-process after social callback, skipping the GET wrapper's second-factor/readiness/unlock gate; no `postLogin` gate configured | Gate code issuance with `postLogin.shouldRedirect` and resume through the checked authorize GET |
-| F34 | MED | Open | Pending OAuth sessions can call native GET endpoints such as `list-sessions` | Allowlist native GETs for pending sessions |
+| F32 | HIGH | Addressed | 0ZE: step-up reserves attempts from the account budget shared with Better Auth's lockout; native session-mode verification denied while pending; see [28](28-second-factor-contract.md) | Real authenticator journeys are a release gate |
+| F33 | HIGH | Addressed | 0ZE: deny-by-default pending sessions plus the provider's `postLogin` gate; reproduced code leak via `Location` on password sign-in with `oauth_query`, now prevented (negative control confirmed) | Real social-provider journey is a release gate |
+| F34 | MED | Addressed | 0ZE: native GETs from pending sessions are allowlisted (session listings return 403) | — |
 | F35 | HIGH | Open | `objects/move` copies to a new key, then deletes the old physical key that version snapshots may still reference | Immutable physical keys; metadata-only move |
 | F36 | MED | Open | Compose cron runs `cat /etc/crontabs/root`, printing the expanded `CRON_SECRET` to logs | Remove secret echo; one scheduler contract |
 | F37 | MED | Open | Legacy `buckets/[id]` DELETE runs unscoped `StorageObject.deleteMany({ bucketId })` on the shared system bucket if its owner filter matches; `objects/upload` bypasses reservations, encryption and quota | Delete both routes |

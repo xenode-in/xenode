@@ -18,6 +18,12 @@ import {
 } from "@xenode/identity-core";
 import { getAccountsWebAuthnConfig } from "./passkey-rp";
 import { revokeIssuerProductsBeforeSessionDelete } from "./issuer-session-revocation";
+import {
+  oidcPostLoginGate,
+  secondFactorSessionFields,
+  secondFactorStatePlugin,
+} from "./second-factor-policy";
+import { SECOND_FACTOR_LOCKOUT } from "./second-factor-state";
 
 const EMAIL_FROM = process.env.EMAIL_FROM ?? "Xenode <noreply@alerts.xenode.in>";
 const PRIMARY_RS256_KEY_ID = "xenode-accounts-rs256-v1";
@@ -208,20 +214,13 @@ async function createAccountsAuth() {
         session: {
           create: {
             async before(session, context) {
-              const path = context?.path ?? "";
-              const authMethod = path.includes("passkey")
-                ? "passkey"
-                : path.includes("two-factor")
-                  ? "totp"
-                  : path.includes("/callback/")
-                    ? "oauth"
-                    : "password";
               return {
                 data: {
                   ...session,
-                  authMethod,
-                  twoFactorVerifiedAt:
-                    authMethod === "oauth" ? null : new Date(),
+                  ...(await secondFactorSessionFields({
+                    accountId: session.userId,
+                    path: context?.path ?? "",
+                  })),
                 },
               };
             },
@@ -344,6 +343,7 @@ async function createAccountsAuth() {
             oauthAuthServerConfig: true,
             openidConfig: true,
           },
+          postLogin: oidcPostLoginGate,
           cachedTrustedClients: new Set(
             firstPartyClients
               .filter((client) => client.clientId !== "xenode-mobile")
@@ -355,8 +355,8 @@ async function createAccountsAuth() {
           trustDeviceMaxAge: 30 * 24 * 60 * 60,
           accountLockout: {
             enabled: true,
-            maxFailedAttempts: 10,
-            durationSeconds: 15 * 60,
+            maxFailedAttempts: SECOND_FACTOR_LOCKOUT.maxFailedAttempts,
+            durationSeconds: SECOND_FACTOR_LOCKOUT.lockDurationMs / 1000,
           },
         }),
         passkey({
@@ -368,6 +368,8 @@ async function createAccountsAuth() {
             userVerification: "required",
           },
         }),
+        // Must follow twoFactor: it observes which credential sessions survived.
+        secondFactorStatePlugin(),
       ],
     });
 }

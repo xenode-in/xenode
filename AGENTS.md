@@ -57,6 +57,14 @@ and Photos are OIDC clients and store host-only ProductSession cookies. They
 must validate issuer, audience, state, nonce, and PKCE and must reject revoked,
 expired, cross-product, or version-stale ProductSessions.
 
+A session for a two-factor account is pending until a passkey, two-factor
+challenge, step-up or consented trusted browser completes the factor
+(`session.twoFactorVerifiedAt`). Pending sessions receive no OIDC code, key
+handoff or account read/mutation. Keep the OAuth provider's `postLogin` gate
+and the shared `authorizationInteraction` check on every code-issuing path.
+Session-mode code checks go only through `/api/account/two-factor/verify`,
+which enforces the account lockout shared with Better Auth.
+
 Drive admin auth is separate: the `Admin` collection, custom JWT, and
 `Xenode_admin_session` cookie. Admins are not user accounts.
 

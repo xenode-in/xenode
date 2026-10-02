@@ -1,10 +1,10 @@
 import { toNextJsHandler } from "better-auth/next-js";
-import { getAccountOnboardingReadiness } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
-import { hasVaultUnlockConfirmation } from "@/lib/vault-unlock-session";
-import { needsSecondFactor } from "@/lib/session";
-import { applyTrustedSecondFactor } from "@/lib/trusted-second-factor";
-import { authorizeNativeAuthPost } from "@/lib/api-session";
+import { authorizationInteraction } from "@/lib/second-factor-policy";
+import {
+  authorizeNativeAuthGet,
+  authorizeNativeAuthPost,
+} from "@/lib/api-session";
 import { revokeIssuerProductsBeforeSessionDelete } from "@/lib/issuer-session-revocation";
 import { requireSameOrigin } from "@/lib/logout-coordinator";
 import { POST as changeSignInPassword } from "@/app/api/account/password/change/route";
@@ -29,38 +29,21 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   if (url.pathname.endsWith("/oauth2/authorize")) {
     const session = await auth.api.getSession({ headers: request.headers });
-    if (session) {
-      if (
-        needsSecondFactor(session) &&
-        !(await applyTrustedSecondFactor(session, request.headers))
-      ) {
-        const next = `${url.pathname}${url.search}`;
-        const redirectUrl = new URL("/two-factor", url.origin);
-        redirectUrl.searchParams.set("next", next);
-        return Response.redirect(redirectUrl);
-      }
-      const readiness = await getAccountOnboardingReadiness(session.user.id);
-      if (!readiness.complete) {
-        const next = `${url.pathname}${url.search}`;
-        const destination =
-          readiness.profileOnboarded && readiness.hasVault
-            ? "/auth/continue"
-            : "/onboarding";
-        const redirectUrl = new URL(destination, url.origin);
-        redirectUrl.searchParams.set("next", next);
-        return Response.redirect(redirectUrl);
-      }
-      const unlocked = await hasVaultUnlockConfirmation(request.headers, {
-        accountId: session.user.id,
-        sessionId: session.session.id,
-      });
-      if (!unlocked) {
-        const next = `${url.pathname}${url.search}`;
-        const redirectUrl = new URL("/auth/continue", url.origin);
-        redirectUrl.searchParams.set("next", next);
-        return Response.redirect(redirectUrl);
-      }
+    const interaction = session
+      ? await authorizationInteraction({
+          user: session.user,
+          session: session.session,
+          headers: request.headers,
+        })
+      : null;
+    if (interaction) {
+      const redirectUrl = new URL(interaction.path, url.origin);
+      redirectUrl.searchParams.set("next", `${url.pathname}${url.search}`);
+      return Response.redirect(redirectUrl);
     }
+  } else {
+    const denied = await authorizeNativeAuthGet(request);
+    if (denied) return denied;
   }
   return toNextJsHandler(auth).GET(request);
 }

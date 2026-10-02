@@ -5,6 +5,7 @@ import {
   getDatabase,
   createAuthSecurityRepository,
 } from "@xenode/database";
+import { needsSecondFactor } from "@/lib/second-factor-state";
 
 export const TRUSTED_SECOND_FACTOR_COOKIE =
   "xenode_accounts_2fa_trusted";
@@ -51,13 +52,7 @@ export async function applyTrustedSecondFactor(
   },
   headers: Headers,
 ) {
-  if (
-    session.user.twoFactorEnabled !== true ||
-    session.session.authMethod !== "oauth" ||
-    session.session.twoFactorVerifiedAt
-  ) {
-    return true;
-  }
+  if (!needsSecondFactor(session)) return true;
   const token = cookieValue(headers, TRUSTED_SECOND_FACTOR_COOKIE);
   if (!token) return false;
   await connectDatabase();
@@ -74,10 +69,13 @@ export async function applyTrustedSecondFactor(
   if (!trusted) return false;
   const verifiedAt = new Date();
   const updated = await createAuthSecurityRepository(getDatabase()).markSecondFactorVerified({
-    accountId: session.user.id, sessionId: session.session.id, verifiedAt,
+    accountId: session.user.id,
+    sessionId: session.session.id,
+    verifiedAt,
+    method: "trusted-device",
   });
   if (!updated) return false;
-  session.session.authMethod = "totp";
+  session.session.authMethod = "trusted-device";
   session.session.twoFactorVerifiedAt = verifiedAt;
   return true;
 }

@@ -1,7 +1,7 @@
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { AuditEvent, TrustedSecondFactor, UserVault } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
-import { needsSecondFactor } from "@/lib/session";
+import { needsSecondFactor } from "@/lib/second-factor-state";
 import {
   requireSameOrigin,
   revokeProductSessions,

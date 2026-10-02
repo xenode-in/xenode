@@ -1,6 +1,7 @@
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { AuditEvent, UserVault, connectDatabase } from "@xenode/database";
-import { getAccountsSession, needsSecondFactor } from "@/lib/session";
+import { getAccountsSession } from "@/lib/session";
+import { needsSecondFactor } from "@/lib/second-factor-state";
 import { requireSameOrigin } from "@/lib/logout-coordinator";
 import { isPasswordEnvelope } from "@/lib/vault-validation";
 

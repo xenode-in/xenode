@@ -1,7 +1,7 @@
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { NextResponse } from "next/server";
 import { AuditEvent, UserVault } from "@xenode/database";
-import { needsSecondFactor } from "@/lib/session";
+import { needsSecondFactor } from "@/lib/second-factor-state";
 import { getAccountsAuth } from "@/lib/auth";
 import { requireSameOrigin } from "@/lib/logout-coordinator";
 import {

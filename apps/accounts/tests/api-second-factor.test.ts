@@ -12,13 +12,6 @@ vi.mock("better-auth/next-js", () => ({
 }));
 vi.mock("@/lib/session", () => ({
   getAccountsSession: mocks.getAccountsSession,
-  needsSecondFactor: (value: {
-    user: { twoFactorEnabled?: boolean };
-    session: { authMethod?: string; twoFactorVerifiedAt?: Date };
-  }) =>
-    value.user.twoFactorEnabled === true &&
-    value.session.authMethod === "oauth" &&
-    !value.session.twoFactorVerifiedAt,
 }));
 vi.mock("@/lib/trusted-second-factor", () => ({
   applyTrustedSecondFactor: mocks.applyTrustedSecondFactor,
@@ -31,6 +24,7 @@ vi.mock("@/lib/issuer-session-revocation", () => ({
 
 import {
   authorizeAccountsApiRequest,
+  authorizeNativeAuthGet,
   authorizeNativeAuthPost,
 } from "../lib/api-session";
 import { DELETE as deleteDevice } from "../app/api/account/devices/route";
@@ -147,19 +141,57 @@ describe("Accounts API session step-up", () => {
     expect(await authorizeAccountsApiRequest(request("/api/vault", "GET"))).toBeNull();
   });
 
-  it("blocks native account mutations but permits verification and sign-out", async () => {
+  it("blocks native account mutations but permits sign-in and sign-out", async () => {
     expect((await authorizeNativeAuthPost(request("/api/auth/oauth2/consent", "POST")))?.status).toBe(403);
     expect((await authorizeNativeAuthPost(request("/api/auth/link-social", "POST")))?.status).toBe(403);
     expect((await authorizeNativeAuthPost(request("/api/auth/passkey/add-passkey", "POST")))?.status).toBe(403);
     for (const path of [
-      "/api/auth/two-factor/verify-totp",
-      "/api/auth/two-factor/verify-backup-code",
       "/api/auth/sign-out",
       "/api/auth/sign-in/email",
       "/api/auth/oauth2/token",
     ]) {
       expect(await authorizeNativeAuthPost(request(path, "POST"))).toBeNull();
     }
+  });
+
+  it("keeps native code verification for sign-in challenges only", async () => {
+    // A pending session would get Better Auth's session mode, which has no
+    // attempt budget; it must use the lockout-enforcing step-up route.
+    for (const path of [
+      "/api/auth/two-factor/verify-totp",
+      "/api/auth/two-factor/verify-backup-code",
+      "/api/auth/two-factor/send-otp",
+    ]) {
+      expect((await authorizeNativeAuthPost(request(path, "POST")))?.status).toBe(403);
+      mocks.getAccountsSession.mockResolvedValueOnce(null);
+      expect(await authorizeNativeAuthPost(request(path, "POST"))).toBeNull();
+    }
+  });
+
+  it("denies native account reads to pending sessions", async () => {
+    for (const path of [
+      "/api/auth/list-sessions",
+      "/api/auth/list-accounts",
+      "/api/auth/passkey/list-user-passkeys",
+    ]) {
+      expect((await authorizeNativeAuthGet(request(path, "GET")))?.status).toBe(403);
+    }
+    for (const path of [
+      "/api/auth/get-session",
+      "/api/auth/callback/google",
+      "/api/auth/oauth2/end-session",
+      "/api/auth/.well-known/openid-configuration",
+    ]) {
+      expect(await authorizeNativeAuthGet(request(path, "GET"))).toBeNull();
+    }
+    expect(mocks.getAccountsSession).toHaveBeenCalledTimes(3);
+    mocks.getAccountsSession.mockResolvedValueOnce({
+      ...pendingSession,
+      session: { ...pendingSession.session, twoFactorVerifiedAt: new Date() },
+    });
+    expect(
+      await authorizeNativeAuthGet(request("/api/auth/list-sessions", "GET")),
+    ).toBeNull();
   });
 
   it("does not apply trusted second factor from a foreign origin", async () => {

@@ -10,6 +10,11 @@ These are release-blocking rules.
   audience validation.
 - Product logout revokes the ProductSession; account-wide security changes can
   invalidate all products through session-version/revocation state.
+- A session for a two-factor account is pending until a second factor
+  completes. Pending sessions obtain no authorization code, key handoff or
+  account access, on every authorize path including in-process continuation.
+- Sign-in challenges and session step-up share one account-level second-factor
+  failure budget and lockout.
 - Admin JWT auth is separate from user identity.
 - Every Admin request verifies the current active Admin, role and session
   version in the shared database. Security/role changes invalidate prior tokens.

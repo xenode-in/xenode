@@ -9,6 +9,7 @@ import {
   vi,
 } from "vitest";
 import { MongoMemoryReplSet } from "mongodb-memory-server";
+import { mongo } from "mongoose";
 import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import { passkey } from "@better-auth/passkey";
@@ -108,6 +109,15 @@ async function seedAdapterRecords() {
     .findOne({ token: signup.token });
   if (!session) throw new Error("Adapter did not create a session");
   const accountId = signup.user.id;
+  // Better Auth's two-factor row as its Mongo adapter stores it (ObjectId
+  // userId); the step-up lockout shares its failure and lock fields.
+  await getDatabase().collection("twoFactor").insertOne({
+    userId: new mongo.ObjectId(accountId),
+    secret: "synthetic-encrypted-secret",
+    backupCodes: "synthetic-encrypted-backup-codes",
+    verified: true,
+    failedVerificationCount: 0,
+  });
   const caller = {
     user: { id: accountId, twoFactorEnabled: true },
     session: {
@@ -350,7 +360,7 @@ describe("Better Auth Mongo security records", () => {
       const seeded = await seedAdapterRecords();
       const response = await verifySecondFactor(
         request("/api/account/two-factor/verify", {
-          code: "synthetic-code",
+          code: method === "totp" ? "123456" : "abcde-12345",
           trustDevice: false,
           method,
         }),
@@ -369,7 +379,7 @@ describe("Better Auth Mongo security records", () => {
     await getDatabase().collection("session").deleteMany({});
     const response = await verifySecondFactor(
       request("/api/account/two-factor/verify", {
-        code: "synthetic-code",
+        code: "123456",
         trustDevice: true,
         method: "totp",
       }),
@@ -391,7 +401,7 @@ describe("Better Auth Mongo security records", () => {
           .collection("session")
           .findOne({ _id: seeded.session._id })
       )?.authMethod,
-    ).toBe("totp");
+    ).toBe("trusted-device");
     seeded.caller.session.authMethod = "oauth";
     seeded.caller.session.twoFactorVerifiedAt = null;
     await getDatabase()
@@ -402,5 +412,152 @@ describe("Better Auth Mongo security records", () => {
       );
     expect(await applyTrustedSecondFactor(seeded.caller, headers)).toBe(false);
     expect(seeded.caller.session.authMethod).toBe("oauth");
+  });
+});
+
+describe("Session second-factor step-up lockout", () => {
+  const wrongCode = () =>
+    verifySecondFactor(
+      request("/api/account/two-factor/verify", {
+        code: "000000",
+        trustDevice: false,
+        method: "totp",
+      }),
+    );
+  const twoFactorRow = (accountId: string) =>
+    getDatabase()
+      .collection("twoFactor")
+      .findOne({ userId: new mongo.ObjectId(accountId) });
+
+  beforeEach(() => {
+    mocks.verifyTOTP.mockRejectedValue(
+      Object.assign(new Error("Invalid code"), { statusCode: 401 }),
+    );
+  });
+
+  it("locks the account after the shared failure budget and stops checking codes", async () => {
+    const seeded = await seedAdapterRecords();
+    const statuses: number[] = [];
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      statuses.push((await wrongCode()).status);
+    }
+    expect(statuses).toEqual([...Array(9).fill(401), 429]);
+    const locked = await wrongCode();
+    expect(locked.status).toBe(429);
+    expect(Number(locked.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(mocks.verifyTOTP).toHaveBeenCalledTimes(10);
+    const row = await twoFactorRow(seeded.accountId);
+    expect(row?.failedVerificationCount).toBe(10);
+    expect(row?.lockedUntil.getTime()).toBeGreaterThan(Date.now());
+
+    // A valid code cannot be accepted while the account is locked.
+    mocks.verifyTOTP.mockResolvedValue({ headers: new Headers() });
+    expect((await wrongCode()).status).toBe(429);
+    expect(mocks.verifyTOTP).toHaveBeenCalledTimes(10);
+    expect(
+      (
+        await getDatabase()
+          .collection("session")
+          .findOne({ _id: seeded.session._id })
+      )?.twoFactorVerifiedAt,
+    ).toBeUndefined();
+  });
+
+  it("does not let parallel guesses exceed the budget", async () => {
+    const seeded = await seedAdapterRecords();
+    const responses = await Promise.all(
+      Array.from({ length: 25 }, () => wrongCode()),
+    );
+    expect(mocks.verifyTOTP.mock.calls.length).toBeLessThanOrEqual(10);
+    expect(responses.filter((response) => response.status === 429).length)
+      .toBeGreaterThanOrEqual(15);
+    const row = await twoFactorRow(seeded.accountId);
+    expect(row?.failedVerificationCount).toBe(10);
+    expect(row?.lockedUntil.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("resets on success and restarts the budget after a lock expires", async () => {
+    const seeded = await seedAdapterRecords();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      expect((await wrongCode()).status).toBe(401);
+    }
+    mocks.verifyTOTP.mockResolvedValueOnce({ headers: new Headers() });
+    expect((await wrongCode()).status).toBe(200);
+    expect((await twoFactorRow(seeded.accountId))?.failedVerificationCount).toBe(0);
+
+    seeded.caller.session.twoFactorVerifiedAt = null;
+    await getDatabase()
+      .collection("twoFactor")
+      .updateOne(
+        { userId: new mongo.ObjectId(seeded.accountId) },
+        {
+          $set: {
+            failedVerificationCount: 10,
+            lockedUntil: new Date(Date.now() - 1000),
+          },
+        },
+      );
+    expect((await wrongCode()).status).toBe(401);
+    const row = await twoFactorRow(seeded.accountId);
+    expect(row?.failedVerificationCount).toBe(1);
+    expect(row?.lockedUntil).toBeNull();
+  });
+
+  it("refuses step-up when the account has no verified two-factor row", async () => {
+    await seedAdapterRecords();
+    await getDatabase().collection("twoFactor").deleteMany({});
+    expect((await wrongCode()).status).toBe(409);
+    expect(mocks.verifyTOTP).not.toHaveBeenCalled();
+  });
+
+  it("returns success for an already verified session without checking a code", async () => {
+    const seeded = await seedAdapterRecords();
+    seeded.caller.session.twoFactorVerifiedAt = new Date();
+    expect((await wrongCode()).status).toBe(200);
+    expect(mocks.verifyTOTP).not.toHaveBeenCalled();
+  });
+
+  it("leaves sign-in challenges to Better Auth's budget and can trust the browser", async () => {
+    const seeded = await seedAdapterRecords();
+    mocks.getSession.mockResolvedValue(null);
+    mocks.verifyTOTP.mockResolvedValueOnce({
+      headers: new Headers({ "set-cookie": "xenode_accounts.session_token=x" }),
+      response: { token: "x", user: { id: seeded.accountId } },
+    });
+    const response = await verifySecondFactor(
+      request("/api/account/two-factor/verify", {
+        code: "123456",
+        trustDevice: true,
+        method: "totp",
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.getSetCookie().join(";")).toContain(
+      TRUSTED_SECOND_FACTOR_COOKIE,
+    );
+    expect(
+      await TrustedSecondFactor.countDocuments({ accountId: seeded.accountId }),
+    ).toBe(1);
+    expect((await twoFactorRow(seeded.accountId))?.failedVerificationCount).toBe(0);
+
+    mocks.verifyTOTP.mockRejectedValueOnce(
+      Object.assign(new Error("locked"), { statusCode: 429 }),
+    );
+    expect((await wrongCode()).status).toBe(429);
+  });
+
+  it.each([
+    ["short TOTP", { code: "12345", method: "totp" }],
+    ["non-numeric TOTP", { code: "12a456", method: "totp" }],
+    ["malformed backup code", { code: "abcde12345", method: "backup" }],
+    ["oversized code", { code: "1".repeat(4096), method: "totp" }],
+  ])("rejects a %s before any verification", async (_name, body) => {
+    await seedAdapterRecords();
+    const response = await verifySecondFactor(
+      request("/api/account/two-factor/verify", { ...body, trustDevice: false }),
+    );
+    expect(response.status).toBe(400);
+    expect(mocks.verifyTOTP).not.toHaveBeenCalled();
+    expect(mocks.verifyBackupCode).not.toHaveBeenCalled();
   });
 });

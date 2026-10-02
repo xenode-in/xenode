@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { getAccountsAuth } from "@/lib/auth";
 import { hasVaultUnlockConfirmation } from "@/lib/vault-unlock-session";
 import { applyTrustedSecondFactor } from "@/lib/trusted-second-factor";
+import { needsSecondFactor } from "@/lib/second-factor-state";
 
 export async function getAccountsSession(request?: Request) {
   const auth = await getAccountsAuth();
@@ -21,20 +22,6 @@ export async function requireAccountsPageSession(next = "/") {
     redirect(`/two-factor?next=${encodeURIComponent(next)}`);
   }
   return session;
-}
-
-export function needsSecondFactor(session: {
-  user: { twoFactorEnabled?: boolean | null };
-  session: {
-    authMethod?: string | null;
-    twoFactorVerifiedAt?: Date | string | null;
-  };
-}) {
-  return (
-    session.user.twoFactorEnabled === true &&
-    session.session.authMethod === "oauth" &&
-    !session.session.twoFactorVerifiedAt
-  );
 }
 
 export async function requireUnlockedAccountsPageSession(next = "/") {
