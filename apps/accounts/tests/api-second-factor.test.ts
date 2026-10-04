@@ -61,7 +61,6 @@ import { POST as registerVaultPasskeyOptions } from "../app/api/vault/passkeys/r
 import { POST as registerVaultPasskeyVerify } from "../app/api/vault/passkeys/register/verify/route";
 import { POST as unlockVaultPasskeyOptions } from "../app/api/vault/passkeys/unlock/options/route";
 import { POST as unlockVaultPasskeyVerify } from "../app/api/vault/passkeys/unlock/verify/route";
-import { POST as postVaultPasswordEnvelope } from "../app/api/vault/password-envelope/route";
 import { PUT as separateVaultPassword } from "../app/api/vault/separate-password/route";
 import { POST as confirmVaultUnlock } from "../app/api/vault/unlock/route";
 
@@ -114,7 +113,6 @@ describe("Accounts API session step-up", () => {
     ["register Vault passkey verification", registerVaultPasskeyVerify, "/api/vault/passkeys/register/verify", "POST"],
     ["unlock Vault passkey options", unlockVaultPasskeyOptions, "/api/vault/passkeys/unlock/options", "POST"],
     ["unlock Vault passkey verification", unlockVaultPasskeyVerify, "/api/vault/passkeys/unlock/verify", "POST"],
-    ["POST Vault password envelope", postVaultPasswordEnvelope, "/api/vault/password-envelope", "POST"],
     ["separate Vault password", separateVaultPassword, "/api/vault/separate-password", "PUT"],
     ["confirm Vault unlock", confirmVaultUnlock, "/api/vault/unlock", "POST"],
   ] as const)("rejects pending OAuth session at %s", async (_name, handler, path, method) => {

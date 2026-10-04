@@ -1,4 +1,5 @@
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
+import { ACCOUNTS_RATE_LIMITS } from "@/lib/sensitive-actions";
 import { verifyAuthenticationResponse } from "@simplewebauthn/server";
 import {
   AuditEvent,
@@ -16,7 +17,7 @@ import { getAccountsWebAuthnConfig } from "@/lib/passkey-rp";
 import { isAccountEnvelope } from "@/lib/vault-validation";
 
 export async function POST(request: Request) {
-  const denied = await authorizeAccountsApiRequest(request);
+  const denied = await authorizeAccountsApiRequest(request, { rateLimit: ACCOUNTS_RATE_LIMITS.vaultUnlock });
   if (denied) return denied;
   const auth = await getAccountsAuth();
   const session = await auth.api.getSession({ headers: request.headers });

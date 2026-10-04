@@ -17,10 +17,10 @@ entries (2 critical, 13 high, 9 moderate).
 
 | ID | Sev | Status | Evidence | Remaining work |
 | --- | --- | --- | --- | --- |
-| F01 | CRIT | Addressed | 0C `dae2945`, 0ZC `71c940b`: sign-in password never reaches Vault code; bootstrap sends sealed envelopes only | Unused `/api/vault/password-envelope` route should be deleted |
+| F01 | CRIT | Addressed | 0C `dae2945`, 0ZC `71c940b`: sign-in password never reaches Vault code; bootstrap sends sealed envelopes only; 0ZG removed the unused password-envelope route | — |
 | F02 | HIGH | Addressed | 0E `626a7c9`: product/ARK/Drive keys memory-only; persistence store refuses all but consented device wraps | Device wrap has no expiry; legacy IndexedDB deletion is best-effort; browser tests are a release gate |
 | F03 | HIGH | Partial | 0D `18709ac` shared Better Auth ID repository for passkeys/sessions | Drive admin user delete and org member removal still query `session` by string `userId`; several Accounts/Drive org helpers bypass the repository |
-| F04 | HIGH | Partial | 0F `94c2bba`, 0G `247569e`, 0ZE: API second-factor guard, native POST/GET gates, issuer-session revocation, OIDC code gate (F32–F34) | No shared recent-auth policy; no custom-endpoint rate limits; native password set/reset revocation inconsistent |
+| F04 | HIGH | Addressed | 0F `94c2bba`, 0G `247569e`, 0ZE `8ab963a`, 0ZG: second-factor guard, native POST/GET gates, OIDC code gate, shared recent-auth policy, per-account and database-backed rate limits, password-change rotation semantics; see [29](29-accounts-sensitive-actions.md) | Browser/provider journeys and production proxy IP configuration are release gates |
 | F05 | HIGH | Addressed | 0C: sign-in password change is credential-only; staged envelope endpoints return 410 | Revocation semantics of change/set/reset tracked under F04 |
 | F06 | HIGH | Addressed | 0ZC `71c940b`: one transactional bootstrap with idempotency | Org/team keys can still overwrite a member grant at the same version (tracked under F18) |
 | F07 | HIGH | Partial | 0B `6440e31`: shared action checks on generic upload/metadata/purge routes | Object DELETE, bulk-delete, folder, move and comment routes use copied role checks; share PATCH/DELETE and access-request approval skip Space/policy rechecks; sidecar parent not Space-bound; legacy bucket DELETE |

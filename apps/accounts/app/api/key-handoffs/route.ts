@@ -1,4 +1,5 @@
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
+import { ACCOUNTS_RATE_LIMITS } from "@/lib/sensitive-actions";
 import { productSlugSchema, spaceIdSchema } from "@xenode/contracts";
 import { AuditEvent, KeyHandoff, connectDatabase } from "@xenode/database";
 import { resolveFirstPartyClients } from "@xenode/identity-core";
@@ -20,7 +21,7 @@ async function hash(value: string): Promise<string> {
 }
 
 export async function POST(request: Request) {
-  const denied = await authorizeAccountsApiRequest(request);
+  const denied = await authorizeAccountsApiRequest(request, { rateLimit: ACCOUNTS_RATE_LIMITS.keyHandoff });
   if (denied) return denied;
   const auth = await getAccountsAuth();
   const session = await auth.api.getSession({ headers: request.headers });

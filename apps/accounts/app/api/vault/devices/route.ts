@@ -1,4 +1,5 @@
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
+import { ACCOUNTS_RATE_LIMITS } from "@/lib/sensitive-actions";
 import { AuditEvent, UserVault, connectDatabase } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
 import { isAccountEnvelope } from "@/lib/vault-validation";
@@ -9,7 +10,7 @@ async function sessionFor(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const denied = await authorizeAccountsApiRequest(request);
+  const denied = await authorizeAccountsApiRequest(request, { recentAuth: true, rateLimit: ACCOUNTS_RATE_LIMITS.vaultWrite });
   if (denied) return denied;
   const session = await sessionFor(request);
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });

@@ -15,6 +15,7 @@ export * from "./drive-revisions";
 export * from "./drive-versions";
 export * from "./drive-bin";
 export * from "./drive-retirement";
+export * from "./rate-limit";
 
 export async function listExternalAccountsForUser(userId: string) {
   await connectDatabase();

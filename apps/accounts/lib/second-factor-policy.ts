@@ -19,15 +19,34 @@ import { hasVaultUnlockConfirmation } from "@/lib/vault-unlock-session";
 
 const BETTER_AUTH_TRUST_DEVICE_COOKIE = "trust_device";
 
+const SESSION_AUTH_METHODS = new Set<string>([
+  "passkey",
+  "totp",
+  "trusted-device",
+  "oauth",
+  "email-otp",
+  "password",
+]);
+
 /**
  * Session fields written when Better Auth creates any session. Deny by
  * default: unless a passkey or two-factor verification created the session,
  * an account with two-factor enabled starts pending its second factor.
+ *
+ * `currentSession` is the session that authenticated the creating request.
+ * Better Auth rotates sessions inside authenticated endpoints (for example a
+ * password change that revokes other sessions); the replacement for the same
+ * account carries the verification its predecessor already had.
  */
 export async function secondFactorSessionFields(args: {
   accountId: string;
   path: string;
   now?: Date;
+  currentSession?: {
+    userId?: unknown;
+    authMethod?: unknown;
+    twoFactorVerifiedAt?: unknown;
+  } | null;
 }): Promise<{
   authMethod: SessionAuthMethod;
   twoFactorVerifiedAt: Date | null;
@@ -36,6 +55,19 @@ export async function secondFactorSessionFields(args: {
   const authMethod = sessionAuthMethod(args.path);
   if (completesSecondFactor(authMethod)) {
     return { authMethod, twoFactorVerifiedAt: now };
+  }
+  const current = args.currentSession;
+  if (
+    current &&
+    String(current.userId) === args.accountId &&
+    current.twoFactorVerifiedAt
+  ) {
+    return {
+      authMethod: SESSION_AUTH_METHODS.has(String(current.authMethod))
+        ? (current.authMethod as SessionAuthMethod)
+        : authMethod,
+      twoFactorVerifiedAt: now,
+    };
   }
   await connectDatabase();
   const enabled = await createAuthSecurityRepository(

@@ -1,4 +1,5 @@
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
+import { ACCOUNTS_RATE_LIMITS } from "@/lib/sensitive-actions";
 import {
   AccountProfile,
   AuditEvent,
@@ -17,7 +18,7 @@ import { isValidProfileImage } from "@/lib/profile-image";
  * client-side (E2EE) before this call; here we only record account preferences.
  */
 export async function POST(request: Request) {
-  const denied = await authorizeAccountsApiRequest(request);
+  const denied = await authorizeAccountsApiRequest(request, { rateLimit: ACCOUNTS_RATE_LIMITS.profile });
   if (denied) return denied;
   const session = await getAccountsSession(request);
   if (!session) {

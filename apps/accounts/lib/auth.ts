@@ -24,6 +24,7 @@ import {
   secondFactorStatePlugin,
 } from "./second-factor-policy";
 import { SECOND_FACTOR_LOCKOUT } from "./second-factor-state";
+import { NATIVE_AUTH_RATE_LIMIT_RULES } from "./sensitive-actions";
 
 const EMAIL_FROM = process.env.EMAIL_FROM ?? "Xenode <noreply@alerts.xenode.in>";
 const PRIMARY_RS256_KEY_ID = "xenode-accounts-rs256-v1";
@@ -159,9 +160,20 @@ function otpEmailHtml(otp: string): string {
   </body></html>`;
 }
 
+export function trustedProxyCidrs(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
 async function createAccountsAuth() {
   await connectDatabase();
   await ensureRs256SigningKey();
+  // Better Auth's database limiter relies on a unique key to detect races.
+  await getDatabase()
+    .collection("rateLimit")
+    .createIndex({ key: 1 }, { unique: true, name: "rate_limit_key_unique" });
   const accountsOrigin =
     process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
   const firstPartyClients = await ensureFirstPartyOAuthClients();
@@ -179,6 +191,12 @@ async function createAccountsAuth() {
         enabled: true,
         minPasswordLength: 12,
         requireEmailVerification: true,
+        revokeSessionsOnPasswordReset: true,
+      },
+      // Shared across instances; serverless memory counters are per instance.
+      rateLimit: {
+        storage: "database",
+        customRules: NATIVE_AUTH_RATE_LIMIT_RULES,
       },
       emailVerification: {
         sendOnSignUp: false,
@@ -220,6 +238,7 @@ async function createAccountsAuth() {
                   ...(await secondFactorSessionFields({
                     accountId: session.userId,
                     path: context?.path ?? "",
+                    currentSession: context?.context.session?.session,
                   })),
                 },
               };
@@ -272,6 +291,12 @@ async function createAccountsAuth() {
       advanced: {
         cookiePrefix: "xenode_accounts",
         crossSubDomainCookies: { enabled: false },
+        // Per-IP limits need the client address; behind a proxy chain list
+        // the proxies so Better Auth does not fall back to one shared bucket.
+        ipAddress: {
+          ipAddressHeaders: ["x-forwarded-for"],
+          trustedProxies: trustedProxyCidrs(process.env.AUTH_TRUSTED_PROXIES),
+        },
       },
       plugins: [
         username({

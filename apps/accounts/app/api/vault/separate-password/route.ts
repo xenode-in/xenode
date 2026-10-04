@@ -1,4 +1,5 @@
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
+import { ACCOUNTS_RATE_LIMITS } from "@/lib/sensitive-actions";
 import { AuditEvent, UserVault, connectDatabase } from "@xenode/database";
 import { getAccountsSession } from "@/lib/session";
 import { needsSecondFactor } from "@/lib/second-factor-state";
@@ -7,7 +8,7 @@ import { isPasswordEnvelope } from "@/lib/vault-validation";
 
 /** Replace only the password envelope. The ARK and all other key wraps stay put. */
 export async function PUT(request: Request) {
-  const denied = await authorizeAccountsApiRequest(request);
+  const denied = await authorizeAccountsApiRequest(request, { recentAuth: true, rateLimit: ACCOUNTS_RATE_LIMITS.vaultWrite });
   if (denied) return denied;
   try {
     requireSameOrigin(
@@ -23,19 +24,6 @@ export async function PUT(request: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   if (needsSecondFactor(session))
     return Response.json({ error: "Second factor required" }, { status: 403 });
-  const authenticatedAt = new Date(session.session.createdAt).getTime();
-  if (
-    !Number.isFinite(authenticatedAt) ||
-    Date.now() - authenticatedAt > 10 * 60 * 1000
-  ) {
-    return Response.json(
-      {
-        error: "Sign in again before changing your Vault password.",
-        code: "recent_auth_required",
-      },
-      { status: 403 },
-    );
-  }
   const body = (await request.json().catch(() => null)) as Record<
     string,
     unknown

@@ -65,6 +65,12 @@ and the shared `authorizationInteraction` check on every code-issuing path.
 Session-mode code checks go only through `/api/account/two-factor/verify`,
 which enforces the account lockout shared with Better Auth.
 
+Custom Accounts routes declare their policy through
+`authorizeAccountsApiRequest(request, policy)`: credential and key-material
+changes require recent authentication, and custom endpoints spend a
+per-account `consumeRateLimit` budget. Protective revocation endpoints stay
+available to stale sessions and are never rate limited.
+
 Drive admin auth is separate: the `Admin` collection, custom JWT, and
 `Xenode_admin_session` cookie. Admins are not user accounts.
 

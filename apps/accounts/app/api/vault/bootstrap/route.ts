@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { AuditEvent, Space, SpaceProductKey, UserVault, withTransaction } from "@xenode/database";
 import { ensurePersonalSpace, personalSpaceId } from "@xenode/spaces";
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
+import { ACCOUNTS_RATE_LIMITS } from "@/lib/sensitive-actions";
 import { getAccountsAuth } from "@/lib/auth";
 import { isVaultBootstrapPayload } from "@/lib/vault-bootstrap-payload";
 
@@ -16,15 +17,11 @@ function canonical(value: unknown): unknown {
 class BootstrapConflict extends Error {}
 
 export async function POST(request: Request) {
-  const denied = await authorizeAccountsApiRequest(request);
+  const denied = await authorizeAccountsApiRequest(request, { recentAuth: true, rateLimit: ACCOUNTS_RATE_LIMITS.vaultWrite });
   if (denied) return denied;
   const auth = await getAccountsAuth();
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const authenticatedAt = new Date(session.session.createdAt).getTime();
-  if (!Number.isFinite(authenticatedAt) || authenticatedAt > Date.now() || Date.now() - authenticatedAt > 10 * 60 * 1000) {
-    return Response.json({ error: "Recent authentication required", code: "recent_auth_required" }, { status: 403 });
-  }
   const operationId = request.headers.get("idempotency-key");
   if (!operationId || !/^[A-Za-z0-9_-]{16,128}$/u.test(operationId)) {
     return Response.json({ error: "A valid Idempotency-Key is required" }, { status: 400 });

@@ -1,4 +1,5 @@
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
+import { ACCOUNTS_RATE_LIMITS } from "@/lib/sensitive-actions";
 import { NextResponse } from "next/server";
 import { AuditEvent, UserVault } from "@xenode/database";
 import { needsSecondFactor } from "@/lib/second-factor-state";
@@ -16,7 +17,7 @@ function accountsOrigin() {
 }
 
 export async function POST(request: Request) {
-  const denied = await authorizeAccountsApiRequest(request);
+  const denied = await authorizeAccountsApiRequest(request, { rateLimit: ACCOUNTS_RATE_LIMITS.vaultUnlock });
   if (denied) return denied;
   try {
     requireSameOrigin(request, accountsOrigin());

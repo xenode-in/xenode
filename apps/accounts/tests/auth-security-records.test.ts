@@ -330,7 +330,7 @@ describe("Better Auth Mongo security records", () => {
     const seeded = await seedAdapterRecords();
     mocks.getSession.mockResolvedValue({
       user: { id: "wrong-user" },
-      session: { id: "wrong-session" },
+      session: { id: "wrong-session", createdAt: new Date() },
     });
     const envelope = {
       ...(await makeEnvelope(

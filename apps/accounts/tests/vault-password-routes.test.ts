@@ -283,9 +283,12 @@ describe("separate Vault password routes", () => {
     expect(mocks.changePassword).toHaveBeenCalledWith(
       expect.objectContaining({ body }),
     );
-    expect(mocks.revoke).toHaveBeenCalledWith(
-      expect.objectContaining({ exceptIssuerSessionId: "issuer-session" }),
-    );
+    // Better Auth rotates this browser's issuer session too, so every product
+    // session is revoked; none may outlive the issuer session it was bound to.
+    expect(mocks.revoke).toHaveBeenCalledWith({
+      accountId,
+      action: "password_changed",
+    });
     expect(retiredCommit().status).toBe(410);
   });
 });

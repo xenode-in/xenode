@@ -1,6 +1,13 @@
+import { connectDatabase, consumeRateLimit } from "@xenode/database";
 import { requireSameOrigin } from "@/lib/logout-coordinator";
 import { getAccountsSession } from "@/lib/session";
 import { needsSecondFactor } from "@/lib/second-factor-state";
+import {
+  isRecentlyAuthenticated,
+  rateLimited,
+  recentAuthRequired,
+  type AccountsApiPolicy,
+} from "@/lib/sensitive-actions";
 import { applyTrustedSecondFactor } from "@/lib/trusted-second-factor";
 
 function accountsOrigin() {
@@ -23,9 +30,15 @@ async function pendingSecondFactor(
   );
 }
 
-/** Enforce the same session step-up for direct Accounts API calls as for pages. */
+/**
+ * Enforce the same session step-up for direct Accounts API calls as for pages,
+ * plus the route's sensitive-action policy: credential and key-material
+ * changes require recent authentication, and custom endpoints spend a
+ * per-account request budget.
+ */
 export async function authorizeAccountsApiRequest(
   request: Request,
+  policy: AccountsApiPolicy = {},
 ): Promise<Response | null> {
   if (!["GET", "HEAD", "OPTIONS"].includes(request.method)) {
     try {
@@ -40,12 +53,29 @@ export async function authorizeAccountsApiRequest(
   if (await pendingSecondFactor(session, request.headers)) {
     return secondFactorRequired();
   }
+  if (policy.recentAuth && !isRecentlyAuthenticated(session.session)) {
+    return recentAuthRequired();
+  }
+  if (policy.rateLimit) {
+    await connectDatabase();
+    const decision = await consumeRateLimit(policy.rateLimit, session.user.id);
+    if (!decision.allowed) return rateLimited(decision.retryAfterSeconds);
+  }
   return null;
 }
 
 function nativePath(request: Request) {
   return new URL(request.url).pathname.replace(/^\/api\/auth/u, "");
 }
+
+/** Native endpoints that add or remove a sign-in credential. */
+const RECENT_AUTH_NATIVE_PATHS = new Set([
+  "/passkey/generate-register-options",
+  "/passkey/verify-registration",
+  "/passkey/delete-passkey",
+  "/link-social",
+  "/unlink-account",
+]);
 
 /**
  * Native reads a pending session may still need while it completes its second
@@ -62,19 +92,42 @@ function pendingSessionMayRead(path: string) {
     path === "/verify-email" ||
     path === "/oauth2/end-session" ||
     path === "/oauth2/userinfo" ||
+    path === "/passkey/generate-authenticate-options" ||
     path.startsWith("/callback/") ||
     path.startsWith("/reset-password/") ||
     path.startsWith("/.well-known/")
   );
 }
 
+/** Native writes that start or finish authentication, or leave. */
+function pendingSessionMayWrite(path: string) {
+  return (
+    path.startsWith("/sign-in/") ||
+    path.startsWith("/sign-up/") ||
+    path === "/sign-out" ||
+    path === "/oauth2/token" ||
+    path === "/passkey/verify-authentication" ||
+    path === "/email-otp/send-verification-otp" ||
+    path === "/email-otp/verify-email" ||
+    path === "/request-password-reset" ||
+    path === "/forget-password" ||
+    path === "/reset-password"
+  );
+}
+
 export async function authorizeNativeAuthGet(
   request: Request,
 ): Promise<Response | null> {
-  if (pendingSessionMayRead(nativePath(request))) return null;
+  const path = nativePath(request);
+  if (pendingSessionMayRead(path)) return null;
   const session = await getAccountsSession(request);
-  return (await pendingSecondFactor(session, request.headers))
-    ? secondFactorRequired()
+  if (!session) return null;
+  if (await pendingSecondFactor(session, request.headers)) {
+    return secondFactorRequired();
+  }
+  return RECENT_AUTH_NATIVE_PATHS.has(path) &&
+    !isRecentlyAuthenticated(session.session)
+    ? recentAuthRequired()
     : null;
 }
 
@@ -83,31 +136,25 @@ export async function authorizeNativeAuthPost(
   request: Request,
 ): Promise<Response | null> {
   const path = nativePath(request);
-  if (
-    path.startsWith("/sign-in/") ||
-    path.startsWith("/sign-up/") ||
-    path === "/sign-out" ||
-    path === "/oauth2/token" ||
-    path === "/email-otp/send-verification-otp" ||
-    path === "/email-otp/verify-email" ||
-    path === "/request-password-reset" ||
-    path === "/forget-password" ||
-    path === "/reset-password"
-  ) {
-    return null;
-  }
+  if (pendingSessionMayWrite(path)) return null;
 
   // Native /two-factor/verify-* stays available to sign-in challenges (no
   // session), where Better Auth counts attempts. With a session it skips that
   // budget, so a pending session must use /api/account/two-factor/verify.
   const session = await getAccountsSession(request);
-  if (!session || !needsSecondFactor(session)) return null;
-  try {
-    requireSameOrigin(request, accountsOrigin());
-  } catch (response) {
-    return response as Response;
+  if (!session) return null;
+  if (needsSecondFactor(session)) {
+    try {
+      requireSameOrigin(request, accountsOrigin());
+    } catch (response) {
+      return response as Response;
+    }
+    if (await pendingSecondFactor(session, request.headers)) {
+      return secondFactorRequired();
+    }
   }
-  return (await pendingSecondFactor(session, request.headers))
-    ? secondFactorRequired()
+  return RECENT_AUTH_NATIVE_PATHS.has(path) &&
+    !isRecentlyAuthenticated(session.session)
+    ? recentAuthRequired()
     : null;
 }

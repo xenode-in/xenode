@@ -184,8 +184,18 @@ describe("atomic Vault bootstrap", () => {
   });
 
   it("requires recent authentication and a valid operation identity", async () => {
-    mocks.getSession.mockResolvedValueOnce({ user: { id: accountId }, session: { createdAt: new Date(Date.now() - 11 * 60 * 1000) } });
+    // The shared guard enforces the policy (covered in sensitive-actions tests).
+    mocks.guard.mockResolvedValueOnce(
+      Response.json({ code: "recent_auth_required" }, { status: 403 }),
+    );
     expect((await POST(request())).status).toBe(403);
+    expect(mocks.guard).toHaveBeenLastCalledWith(
+      expect.any(Request),
+      expect.objectContaining({
+        recentAuth: true,
+        rateLimit: expect.objectContaining({ bucket: "accounts:vault-write" }),
+      }),
+    );
     expect((await POST(request(material.payload, "short"))).status).toBe(400);
     expect(await UserVault.countDocuments()).toBe(0);
   });

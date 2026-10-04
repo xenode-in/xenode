@@ -12,6 +12,7 @@ import { MongoMemoryReplSet } from "mongodb-memory-server";
 import { mongo } from "mongoose";
 import {
   AccountProfile,
+  ProductSession,
   UserVault,
   connectDatabase,
   disconnectDatabaseForTests,
@@ -23,6 +24,9 @@ import {
   type EnvelopeType,
 } from "@xenode/crypto-core";
 
+vi.mock("@/lib/realtime", () => ({
+  publishProductSessionRevoked: vi.fn(async () => true),
+}));
 vi.mock("resend", () => ({
   Resend: class {
     emails = { send: vi.fn() };
@@ -275,6 +279,7 @@ afterEach(async () => {
     await getDatabase().collection(name).deleteMany({});
   }
   await AccountProfile.deleteMany({});
+  await ProductSession.deleteMany({});
   await UserVault.deleteMany({});
 });
 
@@ -468,5 +473,48 @@ describe("OIDC authorization second-factor gate", () => {
     expect(target.origin).toBe(origin);
     expect(target.pathname).toBe("/api/auth/oauth2/authorize");
     expect([...target.searchParams.keys()]).toEqual(["client_id", "state"]);
+  });
+});
+
+describe("sign-in password rotation", () => {
+  it("rotates every issuer session, keeps the changer verified and revokes product sessions", async () => {
+    const { accountId, jar } = await enrolledAccount();
+    const [before] = await sessionsFor(accountId);
+    expect(before?.twoFactorVerifiedAt).toBeInstanceOf(Date);
+    const expiresAt = new Date(Date.now() + 60 * 60_000);
+    await ProductSession.create(
+      [String(before?._id), "issuer-on-another-device"].map((issuerSessionId, index) => ({
+        sessionId: `product-session-${index}`,
+        accountId,
+        productId: index === 0 ? "drive" : "photos",
+        issuerSessionId,
+        clientId: index === 0 ? "xenode-drive-web" : "xenode-photos-web",
+        authenticatedAt: new Date(),
+        sessionVersion: 1,
+        expiresAt,
+      })),
+    );
+
+    const changed = await call(nativePost, "/api/auth/change-password", jar, {
+      body: {
+        currentPassword: password,
+        newPassword: "a-rotated-synthetic-password-456",
+        revokeOtherSessions: true,
+      },
+    });
+    expect(changed.status).toBe(200);
+
+    const sessions = await sessionsFor(accountId);
+    expect(sessions).toHaveLength(1);
+    expect(String(sessions[0]._id)).not.toBe(String(before?._id));
+    // The rotated session inherits the verified second factor; it is not
+    // pushed back into step-up just because Better Auth recreated it.
+    expect(sessions[0].twoFactorVerifiedAt).toBeInstanceOf(Date);
+    expect(sessions[0].authMethod).toBe("totp");
+    expect((await call(nativeGet, "/api/auth/list-sessions", jar)).status).toBe(200);
+
+    const products = await ProductSession.find({ accountId }).lean();
+    expect(products).toHaveLength(2);
+    expect(products.every((product) => product.revokedAt instanceof Date)).toBe(true);
   });
 });

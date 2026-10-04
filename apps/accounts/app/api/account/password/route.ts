@@ -1,4 +1,5 @@
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
+import { ACCOUNTS_RATE_LIMITS } from "@/lib/sensitive-actions";
 import {
   AuditEvent,
   connectDatabase,
@@ -14,7 +15,7 @@ function accountsOrigin() {
 }
 
 export async function POST(request: Request) {
-  const denied = await authorizeAccountsApiRequest(request);
+  const denied = await authorizeAccountsApiRequest(request, { recentAuth: true, rateLimit: ACCOUNTS_RATE_LIMITS.password });
   if (denied) return denied;
   try {
     requireSameOrigin(request, accountsOrigin());

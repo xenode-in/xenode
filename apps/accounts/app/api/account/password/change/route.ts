@@ -1,4 +1,5 @@
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
+import { ACCOUNTS_RATE_LIMITS } from "@/lib/sensitive-actions";
 import { AuditEvent, TrustedSecondFactor, UserVault } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
 import { needsSecondFactor } from "@/lib/second-factor-state";
@@ -9,7 +10,7 @@ import {
 
 /** Change sign-in credentials only; this endpoint never accepts a Vault wrap. */
 export async function POST(request: Request) {
-  const denied = await authorizeAccountsApiRequest(request);
+  const denied = await authorizeAccountsApiRequest(request, { rateLimit: ACCOUNTS_RATE_LIMITS.password });
   if (denied) return denied;
   try {
     requireSameOrigin(
@@ -83,9 +84,11 @@ export async function POST(request: Request) {
     );
   }
   if (body.revokeOtherSessions) {
+    // Better Auth deletes every issuer session, including this one, and gives
+    // this browser a new session. Revoke product sessions account-wide: the
+    // session delete hook sees at most the first 100 deleted sessions.
     await revokeProductSessions({
       accountId: session.user.id,
-      exceptIssuerSessionId: session.session.id,
       action: "password_changed",
     });
     await TrustedSecondFactor.updateMany(

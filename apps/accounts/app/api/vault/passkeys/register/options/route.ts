@@ -1,4 +1,5 @@
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
+import { ACCOUNTS_RATE_LIMITS } from "@/lib/sensitive-actions";
 import { randomBytes } from "node:crypto";
 import { generateRegistrationOptions } from "@simplewebauthn/server";
 import {
@@ -11,7 +12,7 @@ import { getAccountsAuth } from "@/lib/auth";
 import { getAccountsWebAuthnConfig } from "@/lib/passkey-rp";
 
 export async function POST(request: Request) {
-  const denied = await authorizeAccountsApiRequest(request);
+  const denied = await authorizeAccountsApiRequest(request, { recentAuth: true, rateLimit: ACCOUNTS_RATE_LIMITS.vaultWrite });
   if (denied) return denied;
   const auth = await getAccountsAuth();
   const session = await auth.api.getSession({ headers: request.headers });

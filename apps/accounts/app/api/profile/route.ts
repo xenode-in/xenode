@@ -1,4 +1,5 @@
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
+import { ACCOUNTS_RATE_LIMITS } from "@/lib/sensitive-actions";
 import {
   AccountProfile,
   AuditEvent,
@@ -39,7 +40,7 @@ export async function GET(request: Request) {
 }
 
 export async function PUT(request: Request) {
-  const denied = await authorizeAccountsApiRequest(request);
+  const denied = await authorizeAccountsApiRequest(request, { rateLimit: ACCOUNTS_RATE_LIMITS.profile });
   if (denied) return denied;
   const session = await getAccountsSession(request);
   if (!session) return Response.json({ error: "Unauthorized" }, { status: 401 });
