@@ -82,23 +82,20 @@ function OfficeEditorDriveEditorInner() {
         : null;
     }
     if (!privateKey || !metadataKey) return null;
-    if (workspace.type !== "personal" && (!space.rawSpaceKey || !space.cryptoKey)) {
-      return null;
-    }
+    if (workspace.type !== "personal" && !space.current) return null;
     return new XenodeBinaryPersistenceAdapter({
       fetch: workspaceContext.scopedFetch as typeof fetch,
       privateKey,
       metadataKey,
       workspace,
-      workspaceSpaceKey: space.rawSpaceKey,
-      workspaceMetadataKey: space.cryptoKey,
+      workspaceKeyFor: space.keyFor,
     });
   }, [
     metadataKey,
     privateKey,
     shareId,
-    space.cryptoKey,
-    space.rawSpaceKey,
+    space.current,
+    space.keyFor,
     workspace,
     workspaceContext.scopedFetch,
   ]);

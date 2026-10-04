@@ -1,6 +1,6 @@
 import { type ClientSession, Types } from "mongoose";
 import { connectDatabase, getDatabase, withTransaction } from "../connection";
-import { DriveUploadCommitError, loadSpaceUsage } from "./drive-uploads";
+import { assertCurrentSpaceKeyVersion, DriveUploadCommitError, loadSpaceUsage } from "./drive-uploads";
 
 /**
  * Drive's folder tree is metadata: `folderId` (parent, null at the Space root)
@@ -127,6 +127,8 @@ export async function createDriveFolder(input: {
   storageRoot: string;
   parentFolderId: unknown;
   encryptedDisplayName: unknown;
+  /** Workspace key version the name is encrypted with (newest only). */
+  spaceKeyVersion?: unknown;
 }) {
   if (
     typeof input.encryptedDisplayName !== "string" ||
@@ -139,7 +141,8 @@ export async function createDriveFolder(input: {
   await connectDatabase();
   return withTransaction(async (session) => {
     // Fences the active Space against retirement, like an upload commit.
-    const { usages, ownerFilter } = await loadSpaceUsage(input.spaceId, undefined, session);
+    const { personal, usages, ownerFilter } = await loadSpaceUsage(input.spaceId, undefined, session);
+    if (!personal) await assertCurrentSpaceKeyVersion(input.spaceId, input.spaceKeyVersion, session);
     const placement = await resolveDriveFolderPlacement(input.spaceId, input.parentFolderId, session);
     const _id = new Types.ObjectId();
     const now = new Date();
@@ -159,6 +162,7 @@ export async function createDriveFolder(input: {
       position: 0,
       isEncrypted: true,
       encryptedDisplayName: input.encryptedDisplayName,
+      ...(personal ? {} : { spaceKeyVersion: input.spaceKeyVersion as number }),
       isSidecar: false,
       revision: 0,
       folderId: placement.folderId,

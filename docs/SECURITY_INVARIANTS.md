@@ -31,6 +31,9 @@ These are release-blocking rules.
 - Workspace key grants are create-only per member and version, every new
   keyholder receives every issued version, and rotation never retires the
   remaining members' older versions.
+- New workspace records use the newest Space key version (checked inside the
+  commit transaction); workspace metadata is encrypted with the per-version
+  HKDF metadata key, never the raw Space key.
 - No PBKDF2 Vault v1, private-key hashing, wildcard postMessage origin, or
   server-side plaintext fallback may be introduced.
 

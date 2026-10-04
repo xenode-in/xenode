@@ -190,13 +190,14 @@ export function useAudioTrackSyncer({
 
         if (info.isEncrypted) {
           if (info.wrappedBy === "space") {
-            if (!info.encryptedDEK || !info.spaceKeyWrapIv || !workspaceSpaceKey.rawSpaceKey) {
+            const rawKey = await workspaceSpaceKey.rawKeyFor(info.spaceKeyVersion);
+            if (!info.encryptedDEK || !info.spaceKeyWrapIv || !rawKey) {
               throw new Error("Missing organization audio track key");
             }
             sidecarDek = await unwrapDEKWithSpaceKey(
               info.encryptedDEK,
               info.spaceKeyWrapIv,
-              workspaceSpaceKey.rawSpaceKey,
+              rawKey,
             );
           } else if (info.encryptedDEK && privateKey) {
             try {
@@ -283,7 +284,7 @@ export function useAudioTrackSyncer({
         setIsLoading(false);
       }
     },
-    [dek, privateKey, metadataKey, playSynced, workspace, workspaceSpaceKey.rawSpaceKey],
+    [dek, privateKey, metadataKey, playSynced, workspace, workspaceSpaceKey.rawKeyFor],
   );
 
   // Public API: select a track by ID (null = use video's native audio)

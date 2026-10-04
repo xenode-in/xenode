@@ -54,6 +54,8 @@ export interface ShareableFile {
   encryptedDisplayName?: string;
   encryptedContentType?: string;
   thumbnail?: string;
+  /** Workspace key version the record was created with. */
+  spaceKeyVersion?: number;
 }
 
 interface ShareDialogProps {
@@ -314,11 +316,13 @@ export function ShareDialog({
         let itemShareEncryptedContentType: string | undefined;
         let itemShareEncryptedThumbnail: string | undefined;
 
-        // Org/team file metadata is wrapped with the workspace space key, not
-        // the personal vault metadata key. Using the wrong key here would wrap
-        // decryptMetadataString's failure sentinel into the share, breaking
-        // recipient-side names and spreadsheet detection.
-        const itemMetadataKey = orgId ? space.cryptoKey : metadataKey;
+        // Org/team file metadata uses the workspace key version the record was
+        // created with, not the personal vault metadata key. Using the wrong
+        // key here would wrap decryptMetadataString's failure sentinel into the
+        // share, breaking recipient-side names and spreadsheet detection.
+        const itemMetadataKey = orgId
+          ? space.metadataKeyFor(targetFile.spaceKeyVersion)
+          : metadataKey;
         if (orgId && !itemMetadataKey) {
           throw new Error(
             "Workspace encryption key is still loading — try again in a moment",

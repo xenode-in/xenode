@@ -54,6 +54,8 @@ interface ObjectData {
   encryptedDisplayName?: string;
   encryptedMetadata?: string;
   starred?: boolean;
+  /** Workspace key version the record was created with. */
+  spaceKeyVersion?: number;
 }
 
 /**
@@ -150,9 +152,9 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     const isFolder =
       item.contentType === "application/x-directory" || item.key.endsWith("/");
 
-    const { isUnlocked, metadataKey } = useCrypto();
-    const workspaceSpaceKey = useWorkspaceSpaceKey();
-    const activeMetadataKey = workspaceSpaceKey.cryptoKey ?? metadataKey;
+    const { isUnlocked } = useCrypto();
+    // The record's metadata uses the key version it was created with.
+    const activeMetadataKey = useWorkspaceSpaceKey().metadataKeyFor(item.spaceKeyVersion);
     const [decryptedName, setDecryptedName] = useState<string | null>(null);
     const [decryptedTags, setDecryptedTags] = useState<string[] | null>(null);
     const [visibilityRef, isVisible] = useIsVisible();
@@ -553,9 +555,9 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
     const isFolder =
       item.contentType === "application/x-directory" || item.key.endsWith("/");
 
-    const { isUnlocked, metadataKey } = useCrypto();
-    const workspaceSpaceKey = useWorkspaceSpaceKey();
-    const activeMetadataKey = workspaceSpaceKey.cryptoKey ?? metadataKey;
+    const { isUnlocked } = useCrypto();
+    // The record's metadata uses the key version it was created with.
+    const activeMetadataKey = useWorkspaceSpaceKey().metadataKeyFor(item.spaceKeyVersion);
     const [decryptedName, setDecryptedName] = useState<string | null>(null);
     const [decryptedTags, setDecryptedTags] = useState<string[] | null>(null);
     const [visibilityRef, isVisible] = useIsVisible();

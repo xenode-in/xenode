@@ -21,6 +21,7 @@ import Usage from "@/models/Usage";
 import OrgUsage from "@/models/OrgUsage";
 import { createUsage, makeUserId } from "../helpers/factories";
 import { computePersonalUsageTotals } from "@/lib/metering/usage";
+import { createTestProductKey } from "@/tests/helpers/spaceProductKeys";
 
 function request(body: object, spaceId?: string) {
   return new NextRequest(`http://localhost/api/objects/complete-upload${spaceId ? `?spaceId=${spaceId}` : ""}`, {
@@ -42,6 +43,7 @@ async function fixture(options: { quota?: number; usage?: boolean; organization?
   });
   if (options.organization) {
     await getDatabase().collection("member").insertOne({ userId: accountId, organizationId, role: "member" });
+    await createTestProductKey({ spaceId, memberAccountId: accountId, wrappedKey: "member-v1" });
   }
   const bucket = await Bucket.create({
     systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage",

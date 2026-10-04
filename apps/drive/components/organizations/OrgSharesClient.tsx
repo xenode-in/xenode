@@ -42,7 +42,7 @@ import {
   decryptWithShareKey,
 } from "@/lib/crypto/fileEncryption";
 import { buildShareKey, fetchShareBlob } from "@/lib/crypto/directShare";
-import { unwrapSpaceKeyGrant } from "@/lib/orgs/spaceKeyClient";
+import { keyringWithVersion, keyVersionOf } from "@/lib/orgs/workspaceKeyring";
 import { type ShareRole } from "@/lib/orgs/shareRoles";
 import { formatBytes, formatDate } from "@/lib/utils";
 
@@ -64,6 +64,8 @@ interface ShareRow {
     encryptedName: string | null;
     encryptedContentType: string | null;
     isEncrypted: boolean;
+    /** Organization key version the record was created with. */
+    spaceKeyVersion: number | null;
     mediaCategory: string | null;
     size: number;
     contentType: string;
@@ -420,7 +422,6 @@ function SharedOut({ orgId }: { orgId: string }) {
   const [shares, setShares] = useState<ShareRow[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
   const [types, setTypes] = useState<Record<string, string>>({});
-  const [spaceKey, setSpaceKey] = useState<CryptoKey | null>(null);
   const [loading, setLoading] = useState(true);
   const [restricted, setRestricted] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -447,70 +448,40 @@ function SharedOut({ orgId }: { orgId: string }) {
     void load();
   }, [load]);
 
-  // Load the org space key to decrypt file names.
+  // Decrypt each shared file's metadata with the organization key version it
+  // was created with.
   useEffect(() => {
-    if (!privateKey) return;
+    if (!privateKey || shares.length === 0) return;
     let active = true;
     (async () => {
-      try {
-        const data = await readJson<{
-          keys: { wrappedKey: string; keyVersion: number }[];
-        }>(await fetch(`/api/orgs/${orgId}/keys`));
-        const grant = data.keys?.[0];
-        if (!grant?.wrappedKey) return;
-        const raw = await unwrapSpaceKeyGrant({
-          wrappedSpaceKey: grant.wrappedKey,
-          privateKey,
-        });
-        const key = await crypto.subtle.importKey(
-          "raw",
-          raw.buffer.slice(raw.byteOffset, raw.byteOffset + raw.byteLength) as ArrayBuffer,
-          { name: "AES-GCM" },
-          false,
-          ["decrypt"],
-        );
-        if (active) setSpaceKey(key);
-      } catch {
-        /* names stay generic */
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [orgId, privateKey]);
-
-  useEffect(() => {
-    if (!spaceKey || shares.length === 0) return;
-    let active = true;
-    (async () => {
+      const keyring = await keyringWithVersion(
+        { orgId, privateKey },
+        Math.max(0, ...shares.map((share) => share.object?.spaceKeyVersion ?? 0)),
+      );
       const resolved: Record<string, string> = {};
       const resolvedTypes: Record<string, string> = {};
       for (const s of shares) {
         if (s.isBundle || !s.object?.isEncrypted) continue;
+        const key = keyVersionOf(keyring, s.object.spaceKeyVersion)?.metadataKey;
+        if (!key) continue;
         if (s.object.encryptedName) {
-          try {
-            resolved[s.id] = await decryptMetadataString(s.object.encryptedName, spaceKey);
-          } catch {
-            /* keep generic */
-          }
+          resolved[s.id] = await decryptMetadataString(s.object.encryptedName, key);
         }
         if (s.object.encryptedContentType) {
-          try {
-            resolvedTypes[s.id] = await decryptMetadataString(s.object.encryptedContentType, spaceKey);
-          } catch {
-            /* keep generic */
-          }
+          resolvedTypes[s.id] = await decryptMetadataString(s.object.encryptedContentType, key);
         }
       }
       if (active) {
         setNames((prev) => ({ ...prev, ...resolved }));
         setTypes((prev) => ({ ...prev, ...resolvedTypes }));
       }
-    })();
+    })().catch(() => {
+      /* names stay generic */
+    });
     return () => {
       active = false;
     };
-  }, [shares, spaceKey]);
+  }, [orgId, privateKey, shares]);
 
   const openPreview = (s: ShareRow) => {
     if (s.object?.isEncrypted && !isUnlocked) {

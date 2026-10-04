@@ -203,13 +203,14 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
 
         let workspaceDEK: CryptoKey | null = null;
         if (data.wrappedBy === "space") {
-          if (!workspaceSpaceKey.rawSpaceKey || !data.spaceKeyWrapIv) {
+          const rawKey = await workspaceSpaceKey.rawKeyFor(data.spaceKeyVersion);
+          if (!rawKey || !data.spaceKeyWrapIv) {
             throw new Error("Workspace key unavailable. Please unlock first.");
           }
           workspaceDEK = await unwrapDEKWithSpaceKey(
             data.encryptedDEK,
             data.spaceKeyWrapIv,
-            workspaceSpaceKey.rawSpaceKey,
+            rawKey,
           );
         }
 
@@ -452,7 +453,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         abortControllers.delete(obj.id);
       }
     },
-    [updateTask, workspace, workspaceSpaceKey.rawSpaceKey],
+    [updateTask, workspace, workspaceSpaceKey.rawKeyFor],
   );
 
   return (

@@ -99,6 +99,8 @@ interface ObjectData {
   spaceId?: string;
   folderId?: string | null;
   ancestorIds?: string[];
+  /** Workspace key version the record was created with. */
+  spaceKeyVersion?: number;
   size: number;
   contentType: string;
   createdAt: string;
@@ -651,11 +653,11 @@ export function FilesBrowser() {
   >({});
 
   const { addTasks, tasks } = useUpload();
-  const { privateKey, metadataKey, setModalOpen } = useCrypto();
+  const { privateKey, setModalOpen } = useCrypto();
   const workspace = useWorkspace();
   const workspaceSpaceKey = useWorkspaceSpaceKey();
-  const activeMetadataKey =
-    workspaceSpaceKey.cryptoKey ?? metadataKey;
+  // Each record's metadata uses the key version it was created with.
+  const { metadataKeyFor } = workspaceSpaceKey;
   const canManageWorkspace =
     workspace.driveScope.type === "personal" ||
     workspace.driveScope.role === "owner" ||
@@ -790,11 +792,13 @@ export function FilesBrowser() {
   }, [redirectToLogin, syncError]);
 
   useEffect(() => {
-    if (!activeMetadataKey || !objects.length) return;
+    if (!objects.length) return;
     const run = async () => {
       const newMap: Record<string, string> = {};
       for (const obj of objects) {
+        const key = metadataKeyFor(obj.spaceKeyVersion);
         if (
+          key &&
           obj.contentType === "application/x-directory" &&
           obj.isEncrypted &&
           obj.encryptedDisplayName &&
@@ -803,7 +807,7 @@ export function FilesBrowser() {
           try {
             newMap[obj.id] = await decryptMetadataString(
               obj.encryptedDisplayName,
-              activeMetadataKey,
+              key,
             );
           } catch {}
         }
@@ -812,15 +816,17 @@ export function FilesBrowser() {
         setDecryptedFolderNameMap((prev) => ({ ...prev, ...newMap }));
     };
     run();
-  }, [objects, activeMetadataKey]);
+  }, [objects, metadataKeyFor]);
 
   // Decrypt file names for accurate client-side name sorting/searching
   useEffect(() => {
-    if (!activeMetadataKey || !objects.length) return;
+    if (!objects.length) return;
     const run = async () => {
       const newMap: Record<string, string> = {};
       for (const obj of objects) {
+        const key = metadataKeyFor(obj.spaceKeyVersion);
         if (
+          key &&
           obj.contentType !== "application/x-directory" &&
           obj.isEncrypted &&
           obj.encryptedName &&
@@ -829,7 +835,7 @@ export function FilesBrowser() {
           try {
             newMap[obj.id] = await decryptMetadataString(
               obj.encryptedName,
-              activeMetadataKey,
+              key,
             );
           } catch {}
         }
@@ -838,7 +844,7 @@ export function FilesBrowser() {
         setDecryptedFileNameMap((prev) => ({ ...prev, ...newMap }));
     };
     run();
-  }, [objects, activeMetadataKey]);
+  }, [objects, metadataKeyFor]);
 
   useEffect(() => {
     const saved = localStorage.getItem("filesViewMode");
@@ -1336,14 +1342,16 @@ export function FilesBrowser() {
     setError("");
     try {
       // Folder names exist only as ciphertext; without the metadata key
-      // there is no folder to create.
-      if (!activeMetadataKey) {
+      // there is no folder to create. A workspace folder records the key
+      // version its name was encrypted with.
+      const { writeMetadataKey, current, isWorkspaceEncrypted } = workspaceSpaceKey;
+      if (!writeMetadataKey) {
         setModalOpen(true);
         throw new Error("Vault locked");
       }
       const encryptedDisplayName = await encryptMetadataString(
         newFolderName.trim(),
-        activeMetadataKey,
+        writeMetadataKey,
       );
       const res = await workspace.scopedFetch("/api/objects/folder", {
         method: "POST",
@@ -1352,6 +1360,7 @@ export function FilesBrowser() {
           bucketId,
           encryptedDisplayName,
           parentFolderId: currentFolderId,
+          ...(isWorkspaceEncrypted ? { spaceKeyVersion: current?.keyVersion } : {}),
         }),
       });
       if (res.ok) {
@@ -1363,6 +1372,10 @@ export function FilesBrowser() {
         refetch();
       } else {
         const d = await res.json();
+        // A rotation happened since the keyring loaded; a retry uses the new key.
+        if (d.code === "stale_space_key_version") {
+          await workspaceSpaceKey.reload().catch(() => undefined);
+        }
         setError(d.error || "Failed to create folder");
       }
     } catch {
@@ -1413,14 +1426,14 @@ export function FilesBrowser() {
   const handleDownload = useCallback(
     async (obj: ObjectData) => {
       try {
-        await startDownload(obj, !!obj.isEncrypted, privateKey, activeMetadataKey);
+        await startDownload(obj, !!obj.isEncrypted, privateKey, metadataKeyFor(obj.spaceKeyVersion));
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : "Download failed";
         if (message.includes("Vault locked")) setModalOpen(true);
         setError(message);
       }
     },
-    [startDownload, privateKey, activeMetadataKey],
+    [startDownload, privateKey, metadataKeyFor],
   );
 
   const handleCut = useCallback(() => {
@@ -1472,8 +1485,10 @@ export function FilesBrowser() {
       return;
     }
     let tagToSave = newTag.trim();
-    if (privateKey && activeMetadataKey)
-      tagToSave = await encryptMetadataString(tagToSave, activeMetadataKey);
+    // Tags use the record's key version, like the rest of its metadata.
+    const tagKey = metadataKeyFor(taggingObj.spaceKeyVersion);
+    if (privateKey && tagKey)
+      tagToSave = await encryptMetadataString(tagToSave, tagKey);
     try {
       const res = await workspace.scopedFetch(`/api/objects/${taggingObj.id}`, {
         method: "PATCH",
@@ -1664,13 +1679,14 @@ export function FilesBrowser() {
     if (!data.encryptedDEK)
       throw new Error("No encrypted key found for this file");
     if (data.wrappedBy === "space") {
-      if (!workspaceSpaceKey.rawSpaceKey || !data.spaceKeyWrapIv) {
+      const rawKey = await workspaceSpaceKey.rawKeyFor(data.spaceKeyVersion);
+      if (!rawKey || !data.spaceKeyWrapIv) {
         throw new Error("Workspace key unavailable");
       }
       const dek = await unwrapDEKWithSpaceKey(
         data.encryptedDEK,
         data.spaceKeyWrapIv,
-        workspaceSpaceKey.rawSpaceKey,
+        rawKey,
       );
       return new Uint8Array(await crypto.subtle.exportKey("raw", dek));
     }
@@ -2186,7 +2202,7 @@ export function FilesBrowser() {
                 <TagItem
                   key={tag}
                   encryptedTag={tag}
-                  metadataKey={metadataKey}
+                  metadataKey={metadataKeyFor(taggingObj.spaceKeyVersion)}
                   onRemove={handleRemoveTag}
                 />
               ))

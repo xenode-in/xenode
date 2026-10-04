@@ -154,7 +154,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       ]),
     );
     const objectMeta = await StorageObject.find({ _id: { $in: referencedIds } })
-      .select("encryptedName encryptedContentType isEncrypted mediaCategory size contentType key bucketId")
+      .select("encryptedName encryptedContentType isEncrypted spaceKeyVersion mediaCategory size contentType key bucketId")
       .lean();
     const metaById = new Map(objectMeta.map((o) => [String(o._id), o]));
     const objectInfo = (objId: string) => {
@@ -165,6 +165,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
             encryptedName: o.encryptedName ?? null,
             encryptedContentType: o.encryptedContentType ?? null,
             isEncrypted: !!o.isEncrypted,
+            spaceKeyVersion: o.spaceKeyVersion ?? null,
             mediaCategory: o.mediaCategory ?? null,
             size: o.size ?? 0,
             contentType: o.contentType ?? "application/octet-stream",

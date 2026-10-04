@@ -11,7 +11,7 @@ interface RouteParams {
 }
 
 const PROJECTION =
-  "size contentType mediaCategory starred createdAt lastAccessedAt bucketId isEncrypted encryptedName";
+  "size contentType mediaCategory starred createdAt lastAccessedAt bucketId isEncrypted encryptedName spaceKeyVersion";
 const MAX = 100;
 
 /**
@@ -56,6 +56,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         createdAt: o.createdAt ?? null,
         isEncrypted: !!o.isEncrypted,
         encryptedName: o.encryptedName ?? null,
+        spaceKeyVersion: o.spaceKeyVersion ?? null,
         deletedAt: bin ? (o as { deletedAt?: Date }).deletedAt ?? null : null,
       })),
     });

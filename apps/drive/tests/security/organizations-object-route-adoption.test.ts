@@ -9,6 +9,7 @@ import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import OrgUsage from "@/models/OrgUsage";
+import { createTestProductKey } from "@/tests/helpers/spaceProductKeys";
 import {
   ensurePersonalSpace,
   ensureOrganizationSpace,
@@ -161,13 +162,21 @@ describe("organization object route adoption", () => {
     await addOrgMember("user_1");
     await ensureOrganizationSpace({ accountId: "user_1", organizationId: "org_1" });
     await OrgUsage.create({ orgId: "org_1", accountId: "org:org_1", storageLimitBytes: 1_000_000 });
-
-    const response = await folderPOST(
+    for (const keyVersion of [1, 2]) {
+      await createTestProductKey({
+        spaceId: "space_org_org_1",
+        memberAccountId: "user_1",
+        wrappedKey: `user-v${keyVersion}`,
+        keyVersion,
+      });
+    }
+    const create = (spaceKeyVersion: number) => folderPOST(
       new NextRequest("http://localhost/api/objects/folder", {
         method: "POST",
         body: JSON.stringify({
           bucketId: String(bucket._id),
           encryptedDisplayName: "encrypted-folder-name-envelope",
+          spaceKeyVersion,
           name: "Design",
           prefix: "users/user_1/",
         }),
@@ -178,10 +187,17 @@ describe("organization object route adoption", () => {
       }),
     );
 
+    // Names of new workspace records use the newest key version only.
+    const stale = await create(1);
+    expect(stale.status).toBe(409);
+    expect((await stale.json()).code).toBe("stale_space_key_version");
+
+    const response = await create(2);
     expect(response.status).toBe(201);
     const { folder } = await response.json();
     expect(folder.spaceId).toBe("space_org_org_1");
     expect(folder.key).toBe(`workspaces/org_1/objects/${folder._id}/`);
+    expect(folder.spaceKeyVersion).toBe(2);
     expect(folder.name).toBeUndefined();
   });
 

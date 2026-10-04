@@ -173,13 +173,14 @@ export function FileVersionsDialog({
         if (!v.encryptedDEK) throw new Error("Missing decryption key for version");
         let dek: CryptoKey;
         if (v.wrappedBy === "space") {
-          if (!workspaceSpaceKey.rawSpaceKey || !v.spaceKeyWrapIv) {
+          const rawKey = await workspaceSpaceKey.rawKeyFor(v.spaceKeyVersion);
+          if (!rawKey || !v.spaceKeyWrapIv) {
             throw new Error("Unlock the organization workspace key first");
           }
           dek = await unwrapDEKWithSpaceKey(
             v.encryptedDEK,
             v.spaceKeyWrapIv,
-            workspaceSpaceKey.rawSpaceKey,
+            rawKey,
           );
         } else {
           const rawDEK = await window.crypto.subtle.decrypt(

@@ -25,7 +25,7 @@ import {
 } from "@/components/organizations/org-ui";
 import { Button } from "@/components/ui/button";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { unwrapSpaceKeyGrant } from "@/lib/orgs/spaceKeyClient";
+import { keyringWithVersion, keyVersionOf } from "@/lib/orgs/workspaceKeyring";
 import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
 import { cn, formatBytes, formatDate } from "@/lib/utils";
 
@@ -40,6 +40,8 @@ interface ObjectRow {
   createdAt: string | null;
   isEncrypted: boolean;
   encryptedName: string | null;
+  /** Organization key version the record was created with. */
+  spaceKeyVersion: number | null;
 }
 
 const CATEGORY_ICON: Record<string, LucideIcon> = {
@@ -83,7 +85,6 @@ export function OrgObjectList({ orgId, scope }: { orgId: string; scope: Scope })
   const { privateKey, isUnlocked, setModalOpen } = useCrypto();
   const [rows, setRows] = useState<ObjectRow[]>([]);
   const [names, setNames] = useState<Record<string, string>>({});
-  const [spaceKey, setSpaceKey] = useState<CryptoKey | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const isBin = scope === "bin";
@@ -106,67 +107,29 @@ export function OrgObjectList({ orgId, scope }: { orgId: string; scope: Scope })
     void load();
   }, [load]);
 
-  // Load the org space key so we can decrypt file names.
+  // Decrypt each name with the organization key version it was created with.
   useEffect(() => {
-    if (!privateKey) {
-      setSpaceKey(null);
-      return;
-    }
+    if (!privateKey || rows.length === 0) return;
     let active = true;
     (async () => {
-      try {
-        const data = await readJson<{
-          keys: { wrappedKey: string; keyVersion: number }[];
-        }>(await fetch(`/api/orgs/${orgId}/keys`));
-        const grant = data.keys?.[0];
-        if (!grant?.wrappedKey) return;
-        const raw = await unwrapSpaceKeyGrant({
-          wrappedSpaceKey: grant.wrappedKey,
-          privateKey,
-        });
-        const key = await crypto.subtle.importKey(
-          "raw",
-          raw.buffer.slice(
-            raw.byteOffset,
-            raw.byteOffset + raw.byteLength,
-          ) as ArrayBuffer,
-          { name: "AES-GCM" },
-          false,
-          ["decrypt"],
-        );
-        if (active) setSpaceKey(key);
-      } catch {
-        // Vault locked or key unavailable — names stay generic.
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [orgId, privateKey]);
-
-  // Decrypt names once the space key is available.
-  useEffect(() => {
-    if (!spaceKey || rows.length === 0) return;
-    let active = true;
-    (async () => {
+      const keyring = await keyringWithVersion(
+        { orgId, privateKey },
+        Math.max(0, ...rows.map((row) => row.spaceKeyVersion ?? 0)),
+      );
       const resolved: Record<string, string> = {};
       for (const row of rows) {
-        if (!row.isEncrypted || !row.encryptedName) continue;
-        try {
-          resolved[row.id] = await decryptMetadataString(
-            row.encryptedName,
-            spaceKey,
-          );
-        } catch {
-          /* leave generic */
-        }
+        const key = keyVersionOf(keyring, row.spaceKeyVersion)?.metadataKey;
+        if (!key || !row.isEncrypted || !row.encryptedName) continue;
+        resolved[row.id] = await decryptMetadataString(row.encryptedName, key);
       }
       if (active) setNames((prev) => ({ ...prev, ...resolved }));
-    })();
+    })().catch(() => {
+      // Vault locked or key unavailable — names stay generic.
+    });
     return () => {
       active = false;
     };
-  }, [rows, spaceKey]);
+  }, [orgId, privateKey, rows]);
 
   async function toggleStar(row: ObjectRow) {
     setBusy(row.id);

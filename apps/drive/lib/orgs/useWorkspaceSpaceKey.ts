@@ -1,137 +1,165 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 import { useOptionalCrypto } from "@/contexts/CryptoContext";
-import { unwrapSpaceKeyGrant } from "@/lib/orgs/spaceKeyClient";
+import {
+  forgetWorkspaceKeyring,
+  keyringWithVersion,
+  keyVersionOf,
+  loadWorkspaceKeyring,
+  workspaceSpaceId,
+  type WorkspaceKeyVersion,
+  type WorkspaceKeyring,
+} from "@/lib/orgs/workspaceKeyring";
 
 export interface WorkspaceSpaceKeyState {
-  rawSpaceKey: Uint8Array | null;
-  cryptoKey: CryptoKey | null;
-  keyVersion: number | null;
   isWorkspaceEncrypted: boolean;
   isLoading: boolean;
   error: string | null;
-}
-
-interface WorkspaceKeyResponse {
-  error?: string;
-  keys?: Array<{
-    wrappedKey?: string;
-    keyVersion?: number;
-  }>;
+  /** Newest workspace key version: new records are created with it. */
+  current: WorkspaceKeyVersion | null;
+  /**
+   * The workspace key version a record was created with (its
+   * `spaceKeyVersion`); reloads once for a record newer than the keyring.
+   */
+  keyFor: (version: number | null | undefined) => Promise<WorkspaceKeyVersion | null>;
+  /** `keyFor(version)?.rawKey`: the key the record's DEKs are wrapped with. */
+  rawKeyFor: (version: number | null | undefined) => Promise<Uint8Array | null>;
+  /** Metadata key for an existing record: personal, or its workspace version. */
+  metadataKeyFor: (version: number | null | undefined) => CryptoKey | null;
+  /** Metadata key for a new record: personal, or the newest workspace version. */
+  writeMetadataKey: CryptoKey | null;
+  /** Forget the cached keyring and load it again (after a rotation). */
+  reload: () => Promise<void>;
 }
 
 export function useWorkspaceSpaceKey(): WorkspaceSpaceKeyState {
   const workspace = useOptionalWorkspace();
   const cryptoContext = useOptionalCrypto();
   const privateKey = cryptoContext?.privateKey ?? null;
-  const [rawSpaceKey, setRawSpaceKey] = useState<Uint8Array | null>(null);
-  const [keyVersion, setKeyVersion] = useState<number | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const personalMetadataKey = cryptoContext?.metadataKey ?? null;
+  // Results are keyed by vault key and Space, so a scope or vault change never
+  // shows the previous keyring and the effect never resets state itself.
+  const [loaded, setLoaded] = useState<{
+    privateKey: CryptoKey;
+    spaceId: string;
+    keyring: WorkspaceKeyring | null;
+    error: string | null;
+  } | null>(null);
+  const wantedVersion = useRef(0);
 
   const driveScope = workspace?.driveScope ?? { type: "personal" as const };
   const isWorkspaceEncrypted = driveScope.type !== "personal";
-  const workspaceOrgId =
-    driveScope.type === "personal" ? "" : driveScope.orgId;
-  const workspaceTeamId =
-    driveScope.type === "team" ? driveScope.teamId : "";
+  const orgId = driveScope.type === "personal" ? "" : driveScope.orgId;
+  const teamId = driveScope.type === "team" ? driveScope.teamId : null;
+  const spaceId = isWorkspaceEncrypted ? workspaceSpaceId(orgId, teamId) : null;
+  const result =
+    loaded && loaded.privateKey === privateKey && loaded.spaceId === spaceId ? loaded : null;
+  const keyring = result?.keyring ?? null;
+  const isLoading = Boolean(spaceId && privateKey && !result);
+  const error = !isWorkspaceEncrypted
+    ? null
+    : !privateKey
+      ? "Vault locked. Please unlock first."
+      : (result?.error ?? null);
 
   useEffect(() => {
+    if (!spaceId || !privateKey) return;
     let cancelled = false;
-
-    async function load() {
-      setRawSpaceKey(null);
-      setKeyVersion(null);
-      setError(null);
-
-      if (!isWorkspaceEncrypted) return;
-      if (!privateKey) {
-        setError("Vault locked. Please unlock first.");
-        return;
-      }
-
-      setIsLoading(true);
-      try {
-        const params =
-          driveScope.type === "team"
-            ? `?teamId=${encodeURIComponent(workspaceTeamId)}`
-            : "";
-        const res = await fetch(`/api/orgs/${workspaceOrgId}/keys${params}`, {
-          headers: workspace?.scopedHeaders(),
-        });
-        const data = (await res.json().catch(() => ({}))) as WorkspaceKeyResponse;
-        if (!res.ok) {
-          throw new Error(data.error || "Failed to load workspace key");
-        }
-        const grant = Array.isArray(data.keys) ? data.keys[0] : null;
-        if (!grant?.wrappedKey || !grant?.keyVersion) {
-          throw new Error("Workspace encryption key is not available");
-        }
-        const raw = await unwrapSpaceKeyGrant({
-          wrappedSpaceKey: grant.wrappedKey,
-          privateKey,
-        });
+    loadWorkspaceKeyring({ orgId, teamId, privateKey })
+      .then((next) => {
+        if (!cancelled) setLoaded({ privateKey, spaceId, keyring: next, error: null });
+      })
+      .catch((err: unknown) => {
         if (!cancelled) {
-          setRawSpaceKey(raw);
-          setKeyVersion(Number(grant.keyVersion));
+          setLoaded({
+            privateKey,
+            spaceId,
+            keyring: null,
+            error: err instanceof Error ? err.message : "Workspace key failed",
+          });
         }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Workspace key failed");
-        }
-      } finally {
-        if (!cancelled) setIsLoading(false);
-      }
-    }
-
-    load();
+      });
     return () => {
       cancelled = true;
     };
-  }, [
-    isWorkspaceEncrypted,
-    privateKey,
-    workspace,
-    driveScope.type,
-    workspaceOrgId,
-    workspaceTeamId,
-  ]);
+  }, [spaceId, privateKey, orgId, teamId]);
 
-  const [importedKey, setImportedKey] = useState<CryptoKey | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function run() {
-      if (!rawSpaceKey) {
-        setImportedKey(null);
-        return;
-      }
-      const key = await crypto.subtle.importKey(
-        "raw",
-        rawSpaceKey.buffer.slice(
-          rawSpaceKey.byteOffset,
-          rawSpaceKey.byteOffset + rawSpaceKey.byteLength,
-        ) as ArrayBuffer,
-        { name: "AES-GCM", length: 256 },
-        false,
-        ["encrypt", "decrypt", "wrapKey", "unwrapKey"],
+  const store = useCallback(
+    (next: WorkspaceKeyring) => {
+      if (!privateKey) return;
+      setLoaded((previous) =>
+        previous?.keyring === next
+          ? previous
+          : { privateKey, spaceId: next.spaceId, keyring: next, error: null },
       );
-      if (!cancelled) setImportedKey(key);
+    },
+    [privateKey],
+  );
+
+  const withVersion = useCallback(
+    async (version: number) => {
+      if (!privateKey) return null;
+      const next = await keyringWithVersion({ orgId, teamId, privateKey }, version);
+      store(next);
+      return next;
+    },
+    [privateKey, orgId, teamId, store],
+  );
+
+  // A record newer than this keyring was rendered: reload outside render.
+  useEffect(() => {
+    if (keyring && wantedVersion.current > keyring.current.keyVersion) {
+      void withVersion(wantedVersion.current).catch(() => undefined);
     }
-    run();
-    return () => {
-      cancelled = true;
-    };
-  }, [rawSpaceKey]);
+  });
+
+  const keyFor = useCallback(
+    async (version: number | null | undefined) => {
+      if (!keyring || !version) return null;
+      const known = keyVersionOf(keyring, version);
+      if (known || version <= keyring.current.keyVersion) return known;
+      const fresh = await withVersion(version);
+      return fresh ? keyVersionOf(fresh, version) : null;
+    },
+    [keyring, withVersion],
+  );
+
+  const rawKeyFor = useCallback(
+    async (version: number | null | undefined) => (await keyFor(version))?.rawKey ?? null,
+    [keyFor],
+  );
+
+  const metadataKeyFor = useCallback(
+    (version: number | null | undefined) => {
+      if (!isWorkspaceEncrypted) return personalMetadataKey;
+      if (!keyring || !version) return null;
+      if (version > keyring.current.keyVersion) {
+        wantedVersion.current = Math.max(wantedVersion.current, version);
+      }
+      return keyVersionOf(keyring, version)?.metadataKey ?? null;
+    },
+    [isWorkspaceEncrypted, keyring, personalMetadataKey],
+  );
+
+  const reload = useCallback(async () => {
+    if (!privateKey || !keyring) return;
+    forgetWorkspaceKeyring(privateKey, keyring.spaceId);
+    store(await loadWorkspaceKeyring({ orgId, teamId, privateKey }));
+  }, [privateKey, keyring, orgId, teamId, store]);
 
   return {
-    rawSpaceKey,
-    cryptoKey: importedKey,
-    keyVersion,
     isWorkspaceEncrypted,
     isLoading,
     error,
+    current: keyring?.current ?? null,
+    keyFor,
+    rawKeyFor,
+    metadataKeyFor,
+    writeMetadataKey: isWorkspaceEncrypted
+      ? (keyring?.current.metadataKey ?? null)
+      : personalMetadataKey,
+    reload,
   };
 }

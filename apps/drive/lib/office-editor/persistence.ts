@@ -41,6 +41,7 @@ interface ObjectMetadata {
   revision: number;
   isEncrypted: boolean;
   wrappedBy: "user" | "space" | null;
+  spaceKeyVersion?: number | null;
   spaceKeyWrapIv: string | null;
   canWrite: boolean;
   url?: string;
@@ -55,8 +56,10 @@ export interface XenodeBinaryPersistenceOptions {
   privateKey: CryptoKey;
   metadataKey: CryptoKey;
   workspace: SpreadsheetWorkspace;
-  workspaceSpaceKey?: Uint8Array | null;
-  workspaceMetadataKey?: CryptoKey | null;
+  /** Workspace key version a record was created with (workspace scope only). */
+  workspaceKeyFor?: (
+    version: number | null | undefined,
+  ) => Promise<{ rawKey: Uint8Array; metadataKey: CryptoKey } | null>;
   /** Separate so scoped API headers are never attached to signed B2 URLs. */
   storageFetch?: typeof fetch;
 }
@@ -64,16 +67,18 @@ export interface XenodeBinaryPersistenceOptions {
 export class XenodeBinaryPersistenceAdapter implements BinaryPersistenceAdapter {
   constructor(private options: XenodeBinaryPersistenceOptions) {}
 
-  private async unwrap(meta: ObjectMetadata): Promise<CryptoKey> {
+  private async unwrap(
+    meta: ObjectMetadata,
+    workspaceKey: { rawKey: Uint8Array } | null,
+  ): Promise<CryptoKey> {
     if (!meta.encryptedDEK) throw new Error("spreadsheet_key_missing");
     if (meta.wrappedBy === "space") {
-      if (!this.options.workspaceSpaceKey || !meta.spaceKeyWrapIv) {
+      if (!workspaceKey || !meta.spaceKeyWrapIv) {
         throw new Error("workspace_key_locked");
       }
-      const rawSpaceKey = this.options.workspaceSpaceKey.buffer.slice(
-        this.options.workspaceSpaceKey.byteOffset,
-        this.options.workspaceSpaceKey.byteOffset +
-          this.options.workspaceSpaceKey.byteLength,
+      const rawSpaceKey = workspaceKey.rawKey.buffer.slice(
+        workspaceKey.rawKey.byteOffset,
+        workspaceKey.rawKey.byteOffset + workspaceKey.rawKey.byteLength,
       ) as ArrayBuffer;
       const spaceKey = await crypto.subtle.importKey(
         "raw",
@@ -120,7 +125,12 @@ export class XenodeBinaryPersistenceAdapter implements BinaryPersistenceAdapter 
     const meta = (await response.json()) as ObjectMetadata;
     if (!meta.isEncrypted || !meta.iv) throw new Error("encrypted_spreadsheet_required");
 
-    const metadataKey = this.options.workspaceMetadataKey ?? this.options.metadataKey;
+    // A workspace record uses the key version it was created with.
+    const workspaceKey = meta.wrappedBy === "space"
+      ? ((await this.options.workspaceKeyFor?.(meta.spaceKeyVersion)) ?? null)
+      : null;
+    if (meta.wrappedBy === "space" && !workspaceKey) throw new Error("workspace_key_locked");
+    const metadataKey = workspaceKey?.metadataKey ?? this.options.metadataKey;
     const name = meta.encryptedName
       ? await decryptMetadataString(meta.encryptedName, metadataKey)
       : "Encrypted spreadsheet.xlsx";
@@ -153,7 +163,7 @@ export class XenodeBinaryPersistenceAdapter implements BinaryPersistenceAdapter 
     const ciphertextResponse = await storageFetch(meta.url, { signal });
     if (!ciphertextResponse.ok) throw new Error("spreadsheet_download_failed");
 
-    const dek = await this.unwrap(meta);
+    const dek = await this.unwrap(meta, workspaceKey);
     const ciphertext = await ciphertextResponse.arrayBuffer();
     const plaintextBlob = await decryptFileWithDEK(ciphertext, dek, meta.iv, contentType);
     const bytes = new Uint8Array(await plaintextBlob.arrayBuffer());

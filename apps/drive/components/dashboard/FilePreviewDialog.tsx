@@ -322,6 +322,8 @@ interface ObjectData {
   chunkCount?: number;
   chunkIvs?: string;
   encryptedMetadata?: string;
+  /** Workspace key version the record was created with. */
+  spaceKeyVersion?: number;
   shareEncryptedDEK?: string;
   shareKeyIv?: string;
   shareEncryptedContentType?: string;
@@ -845,10 +847,8 @@ export function FilePreviewDialog({
   const downloadControl = useOptionalDownload();
 
   const privateKey = cryptoControl?.privateKey;
-  const metadataKey = cryptoControl?.metadataKey;
   const workspace = useOptionalWorkspace();
   const workspaceSpaceKey = useWorkspaceSpaceKey();
-  const activeMetadataKey = workspaceSpaceKey.cryptoKey ?? metadataKey;
   const setModalOpen = cryptoControl?.setModalOpen ?? NOOP;
   const isUnlocked = cryptoControl?.isUnlocked ?? false;
 
@@ -874,6 +874,11 @@ export function FilePreviewDialog({
   >(null);
   const [fetchedData, setFetchedData] = useState<ObjectData | null>(null);
   const [showVersions, setShowVersions] = useState(false);
+  // The record's metadata uses the key version it was created with; callers
+  // that open a preview from search results may only have the fetched record.
+  const activeMetadataKey = workspaceSpaceKey.metadataKeyFor(
+    file?.spaceKeyVersion ?? fetchedData?.spaceKeyVersion,
+  );
 
   // HD / original-quality preview. The main preview loads the optimized
   // version; `wantHd` lazily loads + decrypts the ORIGINAL into `hdUrl` and
@@ -1080,13 +1085,13 @@ export function FilePreviewDialog({
         })),
       ];
 
-      if (fetchedData.encryptedMetadata && metadataKey) {
+      if (fetchedData.encryptedMetadata && activeMetadataKey) {
         try {
           const { decryptMetadataObject } =
             await import("@/lib/crypto/fileEncryption");
           const decoded = await decryptMetadataObject(
             fetchedData.encryptedMetadata,
-            metadataKey,
+            activeMetadataKey,
           );
 
           if (decoded?.audioTracks && decoded.audioTracks.length > 0) {
@@ -1118,7 +1123,7 @@ export function FilePreviewDialog({
     return () => {
       cancelled = true;
     };
-  }, [isOpen, fetchedData, metadataKey]);
+  }, [isOpen, fetchedData, activeMetadataKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1357,10 +1362,10 @@ export function FilePreviewDialog({
           if (!data.spaceKeyWrapIv) {
             throw new Error("Workspace key unavailable. Please unlock first.");
           }
-          if (!workspaceSpaceKey.rawSpaceKey) {
-            // The workspace space key loads asynchronously once the org/team
+          if (!workspaceSpaceKey.current) {
+            // The workspace keyring loads asynchronously once the org/team
             // scope resolves. Wait for it instead of failing the preview — this
-            // effect re-runs when rawSpaceKey / error / loading state changes.
+            // effect re-runs when the keyring / error / loading state changes.
             if (
               workspaceSpaceKey.isWorkspaceEncrypted &&
               workspaceSpaceKey.isLoading
@@ -1376,10 +1381,12 @@ export function FilePreviewDialog({
             if (!privateKey) setModalOpen(true);
             throw new Error("Workspace key unavailable. Please unlock first.");
           }
+          const rawKey = await workspaceSpaceKey.rawKeyFor(data.spaceKeyVersion);
+          if (!rawKey) throw new Error("Workspace key version unavailable.");
           const dek = await unwrapDEKWithSpaceKey(
             data.encryptedDEK,
             data.spaceKeyWrapIv,
-            workspaceSpaceKey.rawSpaceKey,
+            rawKey,
           );
           rawDEK = await crypto.subtle.exportKey("raw", dek);
         } else if (privateKey) {
@@ -1627,10 +1634,9 @@ export function FilePreviewDialog({
     privateKey,
     isLockedOut,
     setModalOpen,
-    metadataKey,
     activeMetadataKey,
     workspace,
-    workspaceSpaceKey.rawSpaceKey,
+    workspaceSpaceKey.rawKeyFor,
     workspaceSpaceKey.isWorkspaceEncrypted,
     workspaceSpaceKey.isLoading,
     workspaceSpaceKey.error,
@@ -1711,16 +1717,18 @@ export function FilePreviewDialog({
           if (!data.spaceKeyWrapIv) {
             throw new Error("Workspace key unavailable");
           }
-          if (!workspaceSpaceKey.rawSpaceKey) {
-            // Space key still resolving — allow a retry once it lands rather
+          if (!workspaceSpaceKey.current) {
+            // Keyring still resolving — allow a retry once it lands rather
             // than tearing down the HD load permanently.
             hdRequestedRef.current = false;
             return;
           }
+          const rawKey = await workspaceSpaceKey.rawKeyFor(data.spaceKeyVersion);
+          if (!rawKey) throw new Error("Workspace key version unavailable");
           const unwrapped = await unwrapDEKWithSpaceKey(
             data.encryptedDEK,
             data.spaceKeyWrapIv,
-            workspaceSpaceKey.rawSpaceKey,
+            rawKey,
           );
           rawDEK = await crypto.subtle.exportKey("raw", unwrapped);
         } else {
@@ -1819,7 +1827,7 @@ export function FilePreviewDialog({
     privateKey,
     decryptedContentType,
     workspace,
-    workspaceSpaceKey.rawSpaceKey,
+    workspaceSpaceKey.rawKeyFor,
     albumShareToken,
     inspectForPreview,
     decryptedName,

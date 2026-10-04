@@ -27,6 +27,7 @@ import UploadSession from "@/models/UploadSession";
 import OrgUsage from "@/models/OrgUsage";
 import { attachToUploadSession, reserveUploadSession } from "@/lib/uploads/session";
 import { orgObjectKeyPrefix } from "@/lib/orgs/storage";
+import { createTestProductKey } from "@/tests/helpers/spaceProductKeys";
 
 const accountId = "permission-account";
 const organizationId = "permission-org";
@@ -337,6 +338,7 @@ describe("generic storage mutation permissions", () => {
 
   async function completionFixture(reservationOverrides: Record<string, unknown> = {}) {
     await setRole("member");
+    await createTestProductKey({ spaceId, memberAccountId: accountId, wrappedKey: "member-v1" });
     const bucket = await Bucket.create({ systemKey: "drive", storageRegion: "asia", name: "xenode-drive-storage", b2BucketId: "xenode-drive-storage" });
     const objectKey = `${orgObjectKeyPrefix(organizationId)}reserved`;
     const reservation = await UploadSession.create({
@@ -392,6 +394,20 @@ describe("generic storage mutation permissions", () => {
     expect((await response.json()).code).toBe("object_key_conflict");
     expect((await StorageObject.findOne({ key: body.objectKey }))?.size).toBe(8);
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("refuses a workspace upload wrapped with a version older than the newest", async () => {
+    const { body, reservation } = await completionFixture();
+    await createTestProductKey({ spaceId, memberAccountId: accountId, wrappedKey: "member-v2", keyVersion: 2 });
+    send.mockResolvedValue({ VersionId: "ciphertext-version", ContentLength: 16 });
+    const response = await complete(request("POST", body));
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("stale_space_key_version");
+    expect(await StorageObject.countDocuments({ key: body.objectKey })).toBe(0);
+    expect((await UploadSession.findById(reservation._id))?.status).toBe("pending");
+
+    expect((await complete(request("POST", { ...body, spaceKeyVersion: 2 }))).status).toBe(201);
+    expect((await StorageObject.findOne({ key: body.objectKey }).lean())?.spaceKeyVersion).toBe(2);
   });
 
   it("finalizes a claimed encrypted object and closes its reservation", async () => {

@@ -94,8 +94,11 @@ Organization and team Space keys are versioned keyrings (`SpaceProductKey`
 grants, one per member and version). Grants are create-only; every new keyholder
 receives every issued version; rotation adds a version and keeps older grants
 for remaining members; grant changes go through `@xenode/spaces/product-keys`
-inside a `fenceSpaceKeyring` transaction
-(docs/gpt-6-astra-audit/32-workspace-keyring.md).
+inside a `fenceSpaceKeyring` transaction. A workspace record keeps the key
+version it was created with (`spaceKeyVersion`) for its DEKs and metadata; new
+records use the newest version; metadata uses the per-version HKDF metadata
+key, never the raw Space key. Browser code reads keys through
+`lib/orgs/workspaceKeyring` (docs/gpt-6-astra-audit/32-workspace-keyring.md).
 
 ### Space, storage, and billing
 

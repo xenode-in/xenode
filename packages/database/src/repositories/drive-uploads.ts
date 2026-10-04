@@ -37,6 +37,26 @@ export async function loadSpaceUsage(spaceId: string, accountId: string | undefi
   return { personal, usages, ownerFilter, usage };
 }
 
+/**
+ * New workspace records must use the newest Space key version, so a member
+ * removed by the last rotation cannot read anything created after it. Callers
+ * have already written the Space (storage fence) in this transaction, and a
+ * rotation writes it too, so this read cannot race one.
+ */
+export async function assertCurrentSpaceKeyVersion(
+  spaceId: string,
+  keyVersion: unknown,
+  session: ClientSession,
+) {
+  const latest = await getDatabase().collection<{ keyVersion: number }>("spaceProductKeys").findOne(
+    { spaceId, productId: "drive" },
+    { sort: { keyVersion: -1 }, projection: { keyVersion: 1 }, session },
+  );
+  if (!latest || keyVersion !== latest.keyVersion) {
+    throw new DriveUploadCommitError(409, "stale_space_key_version", "The workspace key changed; reload and try again");
+  }
+}
+
 /** Read-only preflight; authoritative quota is reserved by finalization's transaction. */
 export async function assertDriveUploadHeadroom(input: { spaceId: string; accountId: string; additionalBytes: number }) {
   await connectDatabase();
@@ -111,6 +131,7 @@ export async function commitDriveUpload(input: {
         throw new DriveUploadCommitError(409, "upload_manifest_mismatch", "Verified blobs do not match the upload metadata");
       }
       const { personal, usages, ownerFilter, usage } = await loadSpaceUsage(input.spaceId, input.accountId, session);
+      if (!personal) await assertCurrentSpaceKeyVersion(input.spaceId, input.storageObject.spaceKeyVersion, session);
       const claim = await DriveUploadSession.updateOne(
         { _id: manifest._id, status: "pending" }, { $set: { status: "completing" } }, { session },
       );

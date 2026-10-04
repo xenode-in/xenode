@@ -9,6 +9,7 @@ import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import OrgUsage from "@/models/OrgUsage";
 import { ensureOrganizationSpace } from "@xenode/spaces/repository";
+import { createTestProductKey } from "@/tests/helpers/spaceProductKeys";
 
 vi.mock("@/lib/b2/buckets", () => ({
   createB2Bucket: vi.fn(async (name: string) => `b2-${name}`),
@@ -230,6 +231,10 @@ describe("organization storage API", () => {
     await createOrg("org_1");
     await createOrg("org_2");
     await addMember("member_1", "member", "org_1");
+    // The upload below wraps with v2, the organization's newest key version.
+    for (const keyVersion of [1, 2]) {
+      await createTestProductKey({ spaceId: "space_org_org_1", memberAccountId: "member_1", wrappedKey: `member-v${keyVersion}`, keyVersion });
+    }
     const bucket = await createOrgBucket("org_1");
     const otherBucket = await createOrgBucket("org_2");
 

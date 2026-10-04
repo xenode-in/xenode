@@ -32,9 +32,29 @@ Each keyholder holds one RSA-OAEP-wrapped grant per version in
 - Removing a member, or demoting one to guest, also drops their team
   memberships and revokes their grants in every Space of the organization.
 
+## Records
+
+- A workspace record keeps the key version it was created with
+  (`spaceKeyVersion`). Its DEKs (revisions reuse the record's DEK), variants,
+  name, tags, thumbnail and metadata all use that version, so every lookup is
+  exact. Folders record the version their encrypted name uses.
+- Metadata is encrypted with an HKDF purpose key per version
+  (`deriveDriveMetadataKey(versionKey, spaceId)`: SHA-256 of the Space-bound
+  salt, info `xenode/drive/metadata/v1`), never with the raw Space key.
+- New records and folders must use the newest version. Upload completion and
+  folder creation check it inside their transaction (`409
+  stale_space_key_version`); those transactions write the Space document, as
+  rotation does, so the check cannot race a rotation. Clients reload the
+  keyring on that refusal; a retry then uses the new version.
+- Browsers load the keyring once per vault key and Space and share it across
+  rows, previews, loaders and organization lists. A record newer than the
+  cached keyring triggers one reload.
+
 ## Known limits
 
 - Leaving the organization (removal or demotion) does not rotate the keys of
   the teams the member belonged to; they lose access to the ciphertext, but
   content written later under those team keys would be readable with keys
   they already held. Team rotation needs grants for each affected team.
+- Records created before a rotation stay under their original version, edits
+  included; there is no job that re-wraps old records to the newest version.

@@ -76,13 +76,14 @@ export function useImageLoader({
 
           let workspaceDEK: CryptoKey | null = null;
           if (data.wrappedBy === "space") {
-            if (!workspaceSpaceKey.rawSpaceKey || !data.spaceKeyWrapIv) {
+            const rawKey = await workspaceSpaceKey.rawKeyFor(data.spaceKeyVersion);
+            if (!rawKey || !data.spaceKeyWrapIv) {
               throw new Error("Workspace key required for decryption");
             }
             workspaceDEK = await unwrapDEKWithSpaceKey(
               data.encryptedDEK,
               data.spaceKeyWrapIv,
-              workspaceSpaceKey.rawSpaceKey,
+              rawKey,
             );
           }
 
@@ -150,7 +151,7 @@ export function useImageLoader({
     isEncrypted,
     privateKey,
     workspace,
-    workspaceSpaceKey.rawSpaceKey,
+    workspaceSpaceKey.rawKeyFor,
     fullUrl,
     isLoadingFull,
   ]);

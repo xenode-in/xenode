@@ -379,12 +379,18 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const { publicKey: cryptoPublicKey, metadataKey: cryptoMetadataKey } =
     useCrypto();
   const workspace = useWorkspace();
+  // New records are created with the newest workspace key version; its raw
+  // key, HKDF metadata key and version always travel together.
   const {
-    rawSpaceKey,
-    cryptoKey: workspaceMetadataKey,
-    keyVersion: workspaceSpaceKeyVersion,
+    current: workspaceKey,
     isWorkspaceEncrypted,
+    reload: reloadWorkspaceKeyring,
   } = useWorkspaceSpaceKey();
+  const reloadWorkspaceKeyringRef = useRef(reloadWorkspaceKeyring);
+  reloadWorkspaceKeyringRef.current = reloadWorkspaceKeyring;
+  const rawSpaceKey = workspaceKey?.rawKey ?? null;
+  const workspaceMetadataKey = workspaceKey?.metadataKey ?? null;
+  const workspaceSpaceKeyVersion = workspaceKey?.keyVersion ?? null;
   // Keep a ref so the useCallback below always reads the latest key
   // without needing to be re-created (avoids stale closure)
   const cryptoPublicKeyRef = useRef<CryptoKey | null>(null);
@@ -1029,6 +1035,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
         if (!completeResponse.ok) {
           const error = await completeResponse.json();
+          // A rotation happened since the keyring loaded; a retry uses the new key.
+          if (error.code === "stale_space_key_version") {
+            await reloadWorkspaceKeyringRef.current().catch(() => undefined);
+          }
           throw new Error(error.error || "Failed to save file metadata");
         }
 
@@ -1355,6 +1365,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
       if (!completeResponse.ok) {
         const error = await completeResponse.json();
+        // A rotation happened since the keyring loaded; a retry uses the new key.
+        if (error.code === "stale_space_key_version") {
+          await reloadWorkspaceKeyringRef.current().catch(() => undefined);
+        }
         throw new Error(error.error || "Failed to save file metadata");
       }
 
