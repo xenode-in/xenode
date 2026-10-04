@@ -22,8 +22,11 @@ export class AuthzError extends Error {
   }
 }
 
+/** `@xenode/spaces` grant refusals carry the same status/code/message shape. */
+const AUTHZ_ERROR_NAMES = new Set(["AuthzError", "ProductKeyGrantError"]);
+
 export function isAuthzError(err: unknown): err is AuthzError {
-  return err instanceof AuthzError || (err as { name?: string })?.name === "AuthzError";
+  return err instanceof AuthzError || AUTHZ_ERROR_NAMES.has((err as { name?: string })?.name ?? "");
 }
 
 /** Convert a thrown AuthzError into a JSON NextResponse. */

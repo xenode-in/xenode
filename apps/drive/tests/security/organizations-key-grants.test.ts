@@ -8,6 +8,7 @@ import {
   SpaceProductKey,
 } from "@/tests/helpers/spaceProductKeys";
 import { organizationSpaceId, teamSpaceId } from "@xenode/spaces/ids";
+import { ensureOrganizationSpace, ensureTeamSpace } from "@xenode/spaces/repository";
 
 const mockedGetServerSession = vi.mocked(getServerSession);
 
@@ -40,6 +41,7 @@ async function createOrg() {
     slug: "acme",
     createdAt: new Date(),
   });
+  await ensureOrganizationSpace({ accountId: "owner_1", organizationId: "org_1" });
 }
 
 async function addMember(userId: string, role = "member") {
@@ -58,6 +60,7 @@ async function addTeam(teamId = "team_1") {
     organizationId: "org_1",
     createdAt: new Date(),
   });
+  await ensureTeamSpace({ accountId: "admin_1", organizationId: "org_1", teamId });
 }
 
 async function addTeamMember(userId: string, teamId = "team_1") {
@@ -149,6 +152,11 @@ describe("organization product keys", () => {
     await createOrg();
     await addMember("owner_1", "owner");
     await addMember("user_1", "member");
+    await createTestProductKey({
+      spaceId: organizationSpaceId("org_1"),
+      memberAccountId: "owner_1",
+      wrappedKey: "owner-v1",
+    });
 
     const response = await POST(
       postRequest({
@@ -164,7 +172,41 @@ describe("organization product keys", () => {
     expect(response.status).toBe(201);
     expect(body.key.memberAccountId).toBe("user_1");
     expect(body.key.wrappedKey).toBe("ciphertext-only");
-    expect(await SpaceProductKey.countDocuments()).toBe(1);
+    expect(await SpaceProductKey.countDocuments()).toBe(2);
+  });
+
+  it("never replaces an existing grant or issues a new version", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("owner_1");
+    await createOrg();
+    await addMember("owner_1", "owner");
+    await addMember("user_1", "member");
+    await createTestProductKey({
+      spaceId: organizationSpaceId("org_1"),
+      memberAccountId: "owner_1",
+      wrappedKey: "owner-v1",
+    });
+    await createTestProductKey({
+      spaceId: organizationSpaceId("org_1"),
+      memberAccountId: "user_1",
+      wrappedKey: "user-v1",
+    });
+
+    const substitute = await POST(
+      postRequest({ memberAccountId: "user_1", wrappedKey: "attacker-key", keyVersion: 1 }),
+      params(),
+    );
+    expect(substitute.status).toBe(409);
+    expect((await substitute.json()).code).toBe("product_key_grant_exists");
+    expect((await SpaceProductKey.findOne({ memberAccountId: "user_1" }).lean())?.ciphertext).toBe("user-v1");
+
+    const newVersion = await POST(
+      postRequest({ memberAccountId: "user_1", wrappedKey: "side-key", keyVersion: 2 }),
+      params(),
+    );
+    expect(newVersion.status).toBe(409);
+    expect((await newVersion.json()).code).toBe("unknown_key_version");
+    expect(await SpaceProductKey.countDocuments({ keyVersion: 2 })).toBe(0);
   });
 
   it("does not let members create product keys", async () => {
@@ -217,6 +259,11 @@ describe("organization product keys", () => {
     await addMember("admin_1", "admin");
     await addMember("user_1", "member");
     await addTeam("team_1");
+    await createTestProductKey({
+      spaceId: teamSpaceId("org_1", "team_1"),
+      memberAccountId: "admin_1",
+      wrappedKey: "admin-team-v1",
+    });
 
     const requestBody = {
       memberAccountId: "user_1",

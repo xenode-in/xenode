@@ -14,8 +14,8 @@ import { listUserOrgs } from "@/lib/orgs/listUserOrgs";
 import Bucket from "@/models/Bucket";
 import OrgUsage from "@/models/OrgUsage";
 import { createTestProductKey, SpaceProductKey } from "@/tests/helpers/spaceProductKeys";
-import { organizationSpaceId } from "@xenode/spaces/ids";
-import { ensureOrganizationSpace } from "@xenode/spaces/repository";
+import { organizationSpaceId, teamSpaceId } from "@xenode/spaces/ids";
+import { ensureOrganizationSpace, ensureTeamSpace } from "@xenode/spaces/repository";
 import OrgDomain from "@/models/OrgDomain";
 import mongoose from "mongoose";
 
@@ -55,6 +55,7 @@ async function createOrg(id = "org_1", extra: Record<string, unknown> = {}) {
     updatedAt: new Date(),
     ...extra,
   });
+  await ensureOrganizationSpace({ accountId: "owner_1", organizationId: id });
 }
 
 async function addMember(userId: string, role = "member", orgId = "org_1") {
@@ -200,6 +201,31 @@ describe("organization governance", () => {
     expect(err.code).toBe("space_key_rotation_required");
   });
 
+  it("drops team memberships and team grants when demoting to guest", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("owner_1");
+    await createOrg();
+    await addMember("owner_1", "owner");
+    await addMember("member_2", "member");
+    await createTestProductKey({ spaceId: organizationSpaceId("org_1"), memberAccountId: "owner_1", wrappedKey: "owner-v1" });
+    await createTestProductKey({ spaceId: organizationSpaceId("org_1"), memberAccountId: "member_2", wrappedKey: "m2-v1" });
+    await mongoose.connection.collection("team").insertOne({ id: "team_1", organizationId: "org_1", name: "Design", createdAt: new Date() });
+    await mongoose.connection.collection("teamMember").insertOne({ teamId: "team_1", userId: "member_2", createdAt: new Date() });
+    await ensureTeamSpace({ accountId: "owner_1", organizationId: "org_1", teamId: "team_1" });
+    await createTestProductKey({ spaceId: teamSpaceId("org_1", "team_1"), memberAccountId: "member_2", wrappedKey: "m2-team-v1" });
+
+    const res = await rolePATCH(
+      body("PATCH", {
+        role: "guest",
+        rotationGrants: [{ memberUserId: "owner_1", wrappedSpaceKey: "owner-v2", keyVersion: 2 }],
+      }),
+      { params: Promise.resolve({ orgId: "org_1", memberUserId: "member_2" }) },
+    );
+    expect(res.status).toBe(200);
+    expect(await mongoose.connection.collection("teamMember").countDocuments({ userId: "member_2" })).toBe(0);
+    expect(await SpaceProductKey.countDocuments({ memberAccountId: "member_2", status: "active" })).toBe(0);
+  });
+
   it("requires a wrapped key for guest promotion and rejects the removed manager role", async () => {
     process.env.ORGS_ENABLED = "true";
     mockSession("owner_1");
@@ -208,12 +234,38 @@ describe("organization governance", () => {
     await addMember("guest_2", "guest");
     await addMember("member_3", "member");
 
-    // guest -> member needs a wrapped key.
+    // guest -> member needs a wrapped key for every issued version.
+    for (const keyVersion of [1, 2]) {
+      await createTestProductKey({
+        spaceId: organizationSpaceId("org_1"),
+        memberAccountId: "owner_1",
+        wrappedKey: `owner-v${keyVersion}`,
+        keyVersion,
+      });
+    }
     const promote = await rolePATCH(
       body("PATCH", { role: "member" }),
       { params: Promise.resolve({ orgId: "org_1", memberUserId: "guest_2" }) },
     );
     expect(promote.status).toBe(400);
+    const latestOnly = await rolePATCH(
+      body("PATCH", { role: "member", grants: [{ keyVersion: 2, wrappedKey: "guest-v2" }] }),
+      { params: Promise.resolve({ orgId: "org_1", memberUserId: "guest_2" }) },
+    );
+    expect(latestOnly.status).toBe(409);
+    expect((await mongoose.connection.collection("member").findOne({ userId: "guest_2" }))?.role).toBe("guest");
+    const promoted = await rolePATCH(
+      body("PATCH", {
+        role: "member",
+        grants: [
+          { keyVersion: 1, wrappedKey: "guest-v1" },
+          { keyVersion: 2, wrappedKey: "guest-v2" },
+        ],
+      }),
+      { params: Promise.resolve({ orgId: "org_1", memberUserId: "guest_2" }) },
+    );
+    expect(promoted.status).toBe(200);
+    expect(await SpaceProductKey.countDocuments({ memberAccountId: "guest_2", status: "active" })).toBe(2);
 
     // member -> admin is lateral and does not rotate the product key.
     const lateral = await rolePATCH(

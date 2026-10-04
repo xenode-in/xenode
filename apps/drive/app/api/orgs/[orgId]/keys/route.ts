@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { withTransaction } from "@xenode/database";
 import {
   isAuthzError,
   requireAccessContext,
@@ -14,7 +15,10 @@ import dbConnect from "@/lib/mongodb";
 import { organizationSpaceId, teamSpaceId } from "@xenode/spaces/ids";
 import type { SpaceProductKeyRecord } from "@xenode/database/models";
 import {
+  fenceSpaceKeyring,
   listMemberProductKeys,
+  ProductKeyGrantError,
+  productKeyVersions,
   putMemberProductKey,
   type KeyRotationReason,
 } from "@xenode/spaces/product-keys";
@@ -132,17 +136,29 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const spaceId = teamId
       ? teamSpaceId(orgId, teamId)
       : organizationSpaceId(orgId);
-    const key = await putMemberProductKey({
-      spaceId,
-      productId: "drive",
-      memberAccountId,
-      wrappedKey,
-      keyVersion,
-      createdByAccountId: ctx.accountId,
-      rotationReason,
+    // Distributes an issued version a member lacks; never a new version (only
+    // rotation issues those) and never a replacement (grants are create-only).
+    const key = await withTransaction(async (session) => {
+      await fenceSpaceKeyring({ spaceId, session });
+      const versions = await productKeyVersions({ spaceId, session });
+      if (!versions.includes(keyVersion)) {
+        throw new ProductKeyGrantError(
+          409,
+          "unknown_key_version",
+          "Only an issued key version can be granted",
+        );
+      }
+      return putMemberProductKey({
+        spaceId,
+        productId: "drive",
+        memberAccountId,
+        wrappedKey,
+        keyVersion,
+        createdByAccountId: ctx.accountId,
+        rotationReason,
+        session,
+      });
     });
-
-    if (!key) throw new Error("Failed to persist product key");
     return NextResponse.json({ key: serializeKey(key) }, { status: 201 });
   } catch (error) {
     if (isAuthzError(error)) return toJsonResponse(error);

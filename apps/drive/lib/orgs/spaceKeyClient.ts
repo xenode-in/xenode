@@ -71,6 +71,47 @@ export async function unwrapSpaceKeyGrant(args: {
   return new Uint8Array(plaintext);
 }
 
+export interface SpaceKeyringEntry {
+  keyVersion: number;
+  rawSpaceKey: Uint8Array;
+}
+
+/** Unwrap every Space key version this member holds, newest first. */
+export async function unwrapSpaceKeyring(args: {
+  keys: Array<{ wrappedKey: string; keyVersion: number }>;
+  privateKey: CryptoKey;
+}): Promise<SpaceKeyringEntry[]> {
+  const keyring = await Promise.all(
+    args.keys.map(async (grant) => ({
+      keyVersion: grant.keyVersion,
+      rawSpaceKey: await unwrapSpaceKeyGrant({
+        wrappedSpaceKey: grant.wrappedKey,
+        privateKey: args.privateKey,
+      }),
+    })),
+  );
+  return keyring.sort((left, right) => right.keyVersion - left.keyVersion);
+}
+
+/**
+ * One grant per version: a new keyholder needs every version to read content
+ * written before the latest rotation, and the server refuses partial sets.
+ */
+export async function wrapSpaceKeyringForPublicKey(args: {
+  keyring: SpaceKeyringEntry[];
+  recipientPublicKey: string;
+}): Promise<Array<{ keyVersion: number; wrappedKey: string }>> {
+  return Promise.all(
+    args.keyring.map(async (entry) => ({
+      keyVersion: entry.keyVersion,
+      wrappedKey: await wrapSpaceKeyForPublicKey({
+        rawSpaceKey: entry.rawSpaceKey,
+        recipientPublicKey: args.recipientPublicKey,
+      }),
+    })),
+  );
+}
+
 export async function encryptOrgFile(args: {
   file: File;
   rawSpaceKey: Uint8Array;

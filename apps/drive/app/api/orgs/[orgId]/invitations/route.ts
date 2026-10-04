@@ -1,6 +1,7 @@
 import { randomBytes } from "crypto";
 import mongoose from "mongoose";
 import { NextRequest, NextResponse } from "next/server";
+import { withTransaction } from "@xenode/database";
 import {
   AuthzError,
   isAuthzError,
@@ -21,7 +22,12 @@ import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { emitNotification } from "@/lib/notifications/emit";
 import { enforceRateLimit } from "@/lib/ratelimit/limiter";
 import { organizationSpaceId } from "@xenode/spaces/ids";
-import { latestProductKeyVersion, putMemberProductKey } from "@xenode/spaces/product-keys";
+import {
+  fenceSpaceKeyring,
+  parseKeyringGrants,
+  productKeyVersions,
+  putMemberKeyring,
+} from "@xenode/spaces/product-keys";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +49,6 @@ interface InvitationRecord {
   updatedAt?: Date;
   recipientUserId?: string | null;
   productKeyReady?: boolean;
-  keyVersion?: number | null;
   recipientReadyAt?: Date | null;
   previouslyMember?: boolean;
   lastRemovedAt?: Date | null;
@@ -142,8 +147,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const email = normalizeEmail(body.email);
     const role = normalizeRole(body.role);
     const recipientUserId = normalizeOptionalString(body.recipientUserId);
-    const wrappedSpaceKey = normalizeOptionalString(body.wrappedSpaceKey);
-    const keyVersion = Number(body.keyVersion ?? 1);
+    // Grants for every issued space key version may be supplied when the
+    // recipient already has a vault (immediate encrypted access). Without them
+    // a non-guest invite is DEFERRED: the recipient has no public key yet, so
+    // the keyring is granted once they onboard. Guests never carry keys.
+    const hasGrants = Array.isArray(body.grants) && body.grants.length > 0;
 
     if (!email || !role) {
       return NextResponse.json(
@@ -151,22 +159,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         { status: 400 },
       );
     }
-    // A wrapped space key may be supplied when the recipient already has a vault
-    // (immediate encrypted access). When it is absent for a non-guest role, this
-    // is a DEFERRED invite: the recipient has no public key yet (no account or no
-    // vault), so the key is granted later once they onboard. Guests never carry a
-    // key. Only validate keyVersion when a wrapped key is actually present.
-    if (wrappedSpaceKey && (!Number.isInteger(keyVersion) || keyVersion < 1)) {
-      return NextResponse.json(
-        {
-          error: "A positive integer keyVersion is required with a wrapped space key",
-          code: "space_key_grant_required",
-        },
-        { status: 400 },
-      );
-    }
 
-    if (role === "guest" && wrappedSpaceKey) {
+    if (role === "guest" && hasGrants) {
       return NextResponse.json(
         { error: "Guest invitations cannot include a product key" },
         { status: 400 },
@@ -218,10 +212,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (!organization) {
       throw new AuthzError(404, "organization_not_found", "Organization not found");
     }
-    // A wrapped key must have a resolvable recipient to grant it to. Deferred
-    // invites (no wrapped key) are allowed with a null recipient — the account
-    // may not exist yet.
-    if (wrappedSpaceKey && !resolvedRecipientUserId) {
+    // Grants must have a resolvable recipient. Deferred invites (no grants) are
+    // allowed with a null recipient — the account may not exist yet.
+    if (hasGrants && !resolvedRecipientUserId) {
       return NextResponse.json(
         {
           error:
@@ -264,52 +257,32 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       createdAt: now,
       updatedAt: now,
       recipientUserId: resolvedRecipientUserId,
-      productKeyReady: !!wrappedSpaceKey,
-      keyVersion: wrappedSpaceKey ? keyVersion : null,
+      productKeyReady: hasGrants,
       recipientReadyAt: null,
       previouslyMember: !!priorDeparture,
       lastRemovedAt: priorDeparture?.removedAt ?? null,
     };
 
-    await mongoose.connection
-      .collection<InvitationRecord>("invitation")
-      .insertOne(invitation);
-
-    if (wrappedSpaceKey && resolvedRecipientUserId) {
-      try {
-        const currentKeyVersion = await latestProductKeyVersion({
-          spaceId: organizationSpaceId(orgId),
-          productId: "drive",
-        });
-        if (currentKeyVersion > 0 && keyVersion !== currentKeyVersion) {
-          await mongoose.connection
-            .collection<InvitationRecord>("invitation")
-            .deleteOne({ id: invitation.id });
-          return NextResponse.json(
-            {
-              error: "Stale space key version — reload and invite again",
-              code: "stale_key_version",
-            },
-            { status: 409 },
-          );
-        }
-        await putMemberProductKey({
-          spaceId: organizationSpaceId(orgId),
+    const spaceId = organizationSpaceId(orgId);
+    await withTransaction(async (session) => {
+      await mongoose.connection
+        .collection<InvitationRecord>("invitation")
+        .insertOne(invitation, { session });
+      if (hasGrants && resolvedRecipientUserId) {
+        // A stale client (missing a version issued since it loaded) gets 409.
+        await fenceSpaceKeyring({ spaceId, session });
+        await putMemberKeyring({
+          spaceId,
           productId: "drive",
           memberAccountId: resolvedRecipientUserId,
-          wrappedKey: wrappedSpaceKey,
-          keyVersion,
+          grants: parseKeyringGrants(body.grants, await productKeyVersions({ spaceId, session })),
           createdByAccountId: ctx.accountId,
           rotationReason: "member_added",
           status: "pending",
+          session,
         });
-      } catch (error) {
-        await mongoose.connection
-          .collection<InvitationRecord>("invitation")
-          .deleteOne({ id: invitation.id });
-        throw error;
       }
-    }
+    });
     await notifyOrganizationInvitation({
       to: email,
       inviterName: ctx.session.user.name ?? ctx.session.user.email ?? "A Xenode user",

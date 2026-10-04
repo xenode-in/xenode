@@ -1,6 +1,8 @@
 import { randomBytes } from "crypto";
 import mongoose from "mongoose";
 import { NextRequest, NextResponse } from "next/server";
+import { withTransaction } from "@xenode/database";
+import { SpaceProductKey } from "@xenode/database/models";
 import {
   AuthzError,
   isAuthzError,
@@ -14,8 +16,9 @@ import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { emitNotification } from "@/lib/notifications/emit";
 import { organizationSpaceId } from "@xenode/spaces/ids";
 import {
-  getMemberProductKey,
-  setMemberProductKeyStatus,
+  fenceSpaceKeyring,
+  productKeyVersions,
+  setMemberKeyringStatus,
 } from "@xenode/spaces/product-keys";
 
 export const dynamic = "force-dynamic";
@@ -38,7 +41,6 @@ interface InvitationRecord {
   rejectedAt?: Date;
   recipientUserId?: string | null;
   productKeyReady?: boolean;
-  keyVersion?: number | null;
 }
 
 function newPluginId(prefix: string): string {
@@ -87,9 +89,6 @@ function ensureInvitationCanBeUsed(args: {
 }
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
-  let createdMembership = false;
-  let activatedKey = false;
-
   try {
     const ctx = await requireAccessContext(request);
     assertOrganizationsEnabled();
@@ -114,22 +113,17 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const spaceId = organizationSpaceId(invitation.organizationId);
     const hasProductKey =
-      invitation.role !== "guest" &&
-      invitation.productKeyReady === true &&
-      Number.isInteger(invitation.keyVersion) &&
-      Number(invitation.keyVersion) > 0;
+      invitation.role !== "guest" && invitation.productKeyReady === true;
 
     if (action === "reject") {
-      if (hasProductKey) {
-        await setMemberProductKeyStatus({
-          spaceId,
-          productId: "drive",
-          memberAccountId: ctx.accountId,
-          keyVersion: Number(invitation.keyVersion),
-          status: "revoked",
-          rotationReason: "member_added",
-        });
-      }
+      await setMemberKeyringStatus({
+        spaceId,
+        productId: "drive",
+        memberAccountId: ctx.accountId,
+        from: ["pending"],
+        status: "revoked",
+        rotationReason: "member_added",
+      });
       const now = new Date();
       await invitations.updateOne(
         { id: invitation.id, status: "pending" },
@@ -170,58 +164,49 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    if (hasProductKey) {
-      const pendingKey = await getMemberProductKey({
-        spaceId,
-        productId: "drive",
-        memberAccountId: ctx.accountId,
-        keyVersion: Number(invitation.keyVersion),
-        statuses: ["pending"],
-      });
-      if (!pendingKey) {
-        throw new AuthzError(
-          409,
-          "product_key_not_pending",
-          "Invitation product key is unavailable or already consumed",
-        );
-      }
-    }
-
     const now = new Date();
-    const memberResult = await mongoose.connection.collection("member").updateOne(
-      {
-        organizationId: invitation.organizationId,
-        userId: ctx.userId,
-      },
-      {
-        $setOnInsert: {
-          id: newPluginId("mem"),
-          organizationId: invitation.organizationId,
-          userId: ctx.userId,
-          role: invitation.role,
-          createdAt: now,
-        },
-      },
-      { upsert: true },
-    );
-    createdMembership = memberResult.upsertedCount > 0;
-
-    try {
+    const createdMembership = await withTransaction(async (session) => {
       if (hasProductKey) {
-        const activated = await setMemberProductKeyStatus({
+        // The invitee joins holding every issued version or not at all.
+        await fenceSpaceKeyring({ spaceId, session });
+        const versions = await productKeyVersions({ spaceId, session });
+        const activated = await setMemberKeyringStatus({
           spaceId,
           productId: "drive",
           memberAccountId: ctx.accountId,
-          keyVersion: Number(invitation.keyVersion),
+          from: ["pending"],
           status: "active",
           rotationReason: "member_added",
+          session,
         });
-        if (!activated) {
-          throw new Error("Failed to activate invitation product key");
+        const held = await SpaceProductKey.countDocuments(
+          { spaceId, productId: "drive", memberAccountId: ctx.accountId, status: "active" },
+          { session },
+        );
+        if (!activated || held !== versions.length) {
+          throw new AuthzError(
+            409,
+            "space_key_grant_required",
+            "Invitation keys are incomplete; ask an admin to grant access again",
+          );
         }
-        activatedKey = true;
       }
-
+      const memberResult = await mongoose.connection.collection("member").updateOne(
+        {
+          organizationId: invitation.organizationId,
+          userId: ctx.userId,
+        },
+        {
+          $setOnInsert: {
+            id: newPluginId("mem"),
+            organizationId: invitation.organizationId,
+            userId: ctx.userId,
+            role: invitation.role,
+            createdAt: now,
+          },
+        },
+        { upsert: true, session },
+      );
       const result = await invitations.updateOne(
         { id: invitation.id, status: "pending" },
         {
@@ -232,6 +217,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
             recipientUserId: ctx.userId,
           },
         },
+        { session },
       );
       if (result.matchedCount !== 1) {
         throw new AuthzError(
@@ -240,25 +226,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           "Invitation is no longer pending",
         );
       }
-    } catch (error) {
-      if (activatedKey) {
-        await setMemberProductKeyStatus({
-          spaceId,
-          productId: "drive",
-          memberAccountId: ctx.accountId,
-          keyVersion: Number(invitation.keyVersion),
-          status: "pending",
-          rotationReason: "member_added",
-        }).catch(() => {});
-      }
-      if (createdMembership) {
-        await mongoose.connection.collection("member").deleteOne({
-          organizationId: invitation.organizationId,
-          userId: ctx.userId,
-        });
-      }
-      throw error;
-    }
+      return memberResult.upsertedCount > 0;
+    });
 
     if (invitation.role !== "guest") {
       await syncSeatsUsed(invitation.organizationId).catch(() => {});

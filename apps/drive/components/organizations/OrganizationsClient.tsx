@@ -63,9 +63,11 @@ import {
 } from "@/components/ui/sheet";
 import {
   generateOrgSpaceKey,
-  unwrapSpaceKeyGrant,
+  unwrapSpaceKeyring,
   wrapSpaceKeyForCryptoKey,
   wrapSpaceKeyForPublicKey,
+  wrapSpaceKeyringForPublicKey,
+  type SpaceKeyringEntry,
 } from "@/lib/orgs/spaceKeyClient";
 import { cn, formatDate } from "@/lib/utils";
 
@@ -440,9 +442,8 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
     }
   };
 
-  const loadRawSpaceKey = async (
-    orgId: string,
-  ): Promise<{ rawSpaceKey: Uint8Array; keyVersion: number }> => {
+  // Every organization key version this member holds, newest first.
+  const loadSpaceKeyring = async (orgId: string): Promise<SpaceKeyringEntry[]> => {
     if (!privateKey) {
       setModalOpen(true);
       throw new Error("Unlock your vault before inviting encrypted members");
@@ -451,15 +452,11 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
     const data = await readJson<{ keys: SpaceProductKey[] }>(
       await fetch(`/api/orgs/${orgId}/keys`),
     );
-    const grant = data.keys[0];
-    if (!grant) {
+    const keyring = await unwrapSpaceKeyring({ keys: data.keys, privateKey });
+    if (!keyring.length) {
       throw new Error("Your organization space key is not available");
     }
-    const rawSpaceKey = await unwrapSpaceKeyGrant({
-      wrappedSpaceKey: grant.wrappedKey,
-      privateKey,
-    });
-    return { rawSpaceKey, keyVersion: grant.keyVersion };
+    return keyring;
   };
 
   const inviteMember = async () => {
@@ -472,9 +469,8 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
 
     setBusy("invite");
     try {
-      let wrappedSpaceKey = "";
+      let grants: Array<{ keyVersion: number; wrappedKey: string }> = [];
       let recipientUserId: string | null = null;
-      let keyVersion = 1;
       let deferred = false;
 
       if (inviteRole !== "guest") {
@@ -492,10 +488,8 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
         const recipient = lookup.recipients[0];
         if (recipient) {
           // Recipient already has a vault → wrap the key now (immediate access).
-          const key = await loadRawSpaceKey(manageOrg.id);
-          keyVersion = key.keyVersion;
-          wrappedSpaceKey = await wrapSpaceKeyForPublicKey({
-            rawSpaceKey: key.rawSpaceKey,
+          grants = await wrapSpaceKeyringForPublicKey({
+            keyring: await loadSpaceKeyring(manageOrg.id),
             recipientPublicKey: recipient.publicKey,
           });
           recipientUserId = recipient.userId;
@@ -520,8 +514,7 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
             email,
             role: inviteRole,
             recipientUserId,
-            wrappedSpaceKey,
-            keyVersion,
+            grants,
           }),
         }),
       );
@@ -570,9 +563,8 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
         );
       }
 
-      const { rawSpaceKey, keyVersion } = await loadRawSpaceKey(manageOrg.id);
-      const wrappedSpaceKey = await wrapSpaceKeyForPublicKey({
-        rawSpaceKey,
+      const grants = await wrapSpaceKeyringForPublicKey({
+        keyring: await loadSpaceKeyring(manageOrg.id),
         recipientPublicKey: recipient.publicKey,
       });
 
@@ -583,8 +575,7 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              wrappedSpaceKey,
-              keyVersion,
+              grants,
               memberAccountId: recipient.userId,
             }),
           },

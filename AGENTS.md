@@ -90,6 +90,13 @@ sharing/grant compatibility. Metadata purpose keys come from
 `@xenode/crypto-core` HKDF and must be Space-bound. Never reintroduce Vault v1,
 PBKDF2, private-key hashing, server plaintext, or persisted raw product keys.
 
+Organization and team Space keys are versioned keyrings (`SpaceProductKey`
+grants, one per member and version). Grants are create-only; every new keyholder
+receives every issued version; rotation adds a version and keeps older grants
+for remaining members; grant changes go through `@xenode/spaces/product-keys`
+inside a `fenceSpaceKeyring` transaction
+(docs/gpt-6-astra-audit/32-workspace-keyring.md).
+
 ### Space, storage, and billing
 
 - `Space` is the authorization boundary. Every object query and mutation must

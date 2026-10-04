@@ -33,9 +33,10 @@ import {
 import { OrgPageHeader, OrgSectionCard, OrgLoading } from "@/components/organizations/org-ui";
 import {
   generateOrgSpaceKey,
-  unwrapSpaceKeyGrant,
+  unwrapSpaceKeyring,
   wrapSpaceKeyForCryptoKey,
   wrapSpaceKeyForPublicKey,
+  wrapSpaceKeyringForPublicKey,
 } from "@/lib/orgs/spaceKeyClient";
 import { formatDate } from "@/lib/utils";
 import type { OrgRole } from "@/lib/auth/organization";
@@ -112,7 +113,8 @@ export function OrgUsersClient({ orgId, role }: { orgId: string; role: OrgRole }
     void load();
   }, [load]);
 
-  const loadSpaceKey = useCallback(async () => {
+  // Every organization key version this member holds, newest first.
+  const loadSpaceKeyring = useCallback(async () => {
     if (!privateKey) {
       setModalOpen(true);
       throw new Error("Unlock your vault first");
@@ -120,12 +122,9 @@ export function OrgUsersClient({ orgId, role }: { orgId: string; role: OrgRole }
     const data = await readJson<{ keys: { wrappedKey: string; keyVersion: number }[] }>(
       await fetch(`/api/orgs/${orgId}/keys`),
     );
-    const grant = data.keys[0];
-    if (!grant) throw new Error("Your organization space key is not available");
-    return {
-      rawSpaceKey: await unwrapSpaceKeyGrant({ wrappedSpaceKey: grant.wrappedKey, privateKey }),
-      keyVersion: grant.keyVersion,
-    };
+    const keyring = await unwrapSpaceKeyring({ keys: data.keys, privateKey });
+    if (!keyring.length) throw new Error("Your organization space key is not available");
+    return keyring;
   }, [orgId, privateKey, setModalOpen]);
 
   async function lookupRecipients(emails: string[]): Promise<Map<string, Recipient>> {
@@ -150,7 +149,7 @@ export function OrgUsersClient({ orgId, role }: { orgId: string; role: OrgRole }
       setModalOpen(true);
       throw new Error("Unlock your vault before rotating keys");
     }
-    const { keyVersion } = await loadSpaceKey();
+    const [{ keyVersion }] = await loadSpaceKeyring();
     const nextKeyVersion = keyVersion + 1;
     const nextSpaceKey = generateOrgSpaceKey();
     const remaining = members.filter((m) => m.userId !== excludeUserId && m.role !== "guest");
@@ -180,8 +179,7 @@ export function OrgUsersClient({ orgId, role }: { orgId: string; role: OrgRole }
     setBusy("invite");
     try {
       let recipientUserId: string | null = null;
-      let wrappedSpaceKey = "";
-      let keyVersion = 1;
+      let grants: Array<{ keyVersion: number; wrappedKey: string }> = [];
       let deferred = false;
       if (inviteRole !== "guest") {
         const data = await readJson<{
@@ -201,10 +199,11 @@ export function OrgUsersClient({ orgId, role }: { orgId: string; role: OrgRole }
             setModalOpen(true);
             throw new Error("Unlock your vault to invite encrypted members");
           }
-          const { rawSpaceKey, keyVersion: v } = await loadSpaceKey();
-          keyVersion = v;
           recipientUserId = recipient.userId;
-          wrappedSpaceKey = await wrapSpaceKeyForPublicKey({ rawSpaceKey, recipientPublicKey: recipient.publicKey });
+          grants = await wrapSpaceKeyringForPublicKey({
+            keyring: await loadSpaceKeyring(),
+            recipientPublicKey: recipient.publicKey,
+          });
         } else {
           // No account / no vault yet → deferred invite; key is granted later.
           const reason = data.unavailable[0]?.reason || "";
@@ -217,7 +216,7 @@ export function OrgUsersClient({ orgId, role }: { orgId: string; role: OrgRole }
         await fetch(`/api/orgs/${orgId}/invitations`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, role: inviteRole, recipientUserId, wrappedSpaceKey, keyVersion }),
+          body: JSON.stringify({ email, role: inviteRole, recipientUserId, grants }),
         }),
       );
       setInviteEmail("");
@@ -259,20 +258,15 @@ export function OrgUsersClient({ orgId, role }: { orgId: string; role: OrgRole }
             "The invitee hasn't finished setting up their vault yet",
         );
       }
-      const { rawSpaceKey, keyVersion } = await loadSpaceKey();
-      const wrappedSpaceKey = await wrapSpaceKeyForPublicKey({
-        rawSpaceKey,
+      const grants = await wrapSpaceKeyringForPublicKey({
+        keyring: await loadSpaceKeyring(),
         recipientPublicKey: recipient.publicKey,
       });
       await readJson(
         await fetch(`/api/orgs/${orgId}/invitations/${inv.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-              wrappedSpaceKey,
-              keyVersion,
-              memberAccountId: recipient.userId,
-            }),
+          body: JSON.stringify({ grants, memberAccountId: recipient.userId }),
         }),
       );
       toast.success("Access granted — they can now join");
@@ -306,14 +300,15 @@ export function OrgUsersClient({ orgId, role }: { orgId: string; role: OrgRole }
       if (!wasGuest && newRole === "guest") {
         body.rotationGrants = await buildRotation(member.userId);
       } else if (wasGuest && newRole !== "guest") {
-        const { rawSpaceKey, keyVersion } = await loadSpaceKey();
         const email = member.user?.email;
         if (!email) throw new Error("This member needs an email to gain key access");
         const byEmail = await lookupRecipients([email]);
         const recipient = byEmail.get(email.toLowerCase());
         if (!recipient) throw new Error("Member public key is unavailable");
-        body.wrappedSpaceKey = await wrapSpaceKeyForPublicKey({ rawSpaceKey, recipientPublicKey: recipient.publicKey });
-        body.keyVersion = keyVersion;
+        body.grants = await wrapSpaceKeyringForPublicKey({
+          keyring: await loadSpaceKeyring(),
+          recipientPublicKey: recipient.publicKey,
+        });
       }
       await readJson(
         await fetch(`/api/orgs/${orgId}/members/${member.userId}`, {

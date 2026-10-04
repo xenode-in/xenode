@@ -1,6 +1,7 @@
 import { randomBytes } from "crypto";
 import mongoose from "mongoose";
 import { NextRequest, NextResponse } from "next/server";
+import { withTransaction } from "@xenode/database";
 import { isAuthzError, requireAccessContext, toJsonResponse } from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import {
@@ -13,7 +14,12 @@ import {
 import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { enforceRateLimit } from "@/lib/ratelimit/limiter";
 import { teamSpaceId } from "@xenode/spaces/ids";
-import { putMemberProductKey } from "@xenode/spaces/product-keys";
+import {
+  fenceSpaceKeyring,
+  parseKeyringGrants,
+  productKeyVersions,
+  putMemberKeyring,
+} from "@xenode/spaces/product-keys";
 
 export const dynamic = "force-dynamic";
 
@@ -78,7 +84,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
 /**
  * POST /api/orgs/[orgId]/teams/[teamId]/members — add an existing org member to
- * a team, granting them the (client-wrapped) team space key. Owner/admin.
+ * a team with `grants`: the client-wrapped team key for every issued version,
+ * so content written before the latest rotation stays readable. Owner/admin.
  */
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
@@ -99,17 +106,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const body = await request.json().catch(() => ({}));
     const memberUserId =
       typeof body.memberUserId === "string" ? body.memberUserId.trim() : "";
-    const wrappedTeamKey =
-      typeof body.wrappedTeamKey === "string" ? body.wrappedTeamKey.trim() : "";
-    const keyVersion = Number(body.keyVersion ?? 1);
-
-    if (!memberUserId || !wrappedTeamKey || !Number.isInteger(keyVersion) || keyVersion < 1) {
+    if (!memberUserId) {
       return NextResponse.json(
-        {
-          error:
-            "memberUserId, wrappedTeamKey, and positive integer keyVersion are required",
-          code: "team_key_grant_required",
-        },
+        { error: "memberUserId is required", code: "team_member_required" },
         { status: 400 },
       );
     }
@@ -127,39 +126,39 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     }
 
     await dbConnect();
-    const existing = await mongoose.connection
-      .collection("teamMember")
-      .findOne({ teamId, userId: memberUserId });
-    if (existing) {
+    const spaceId = teamSpaceId(orgId, teamId);
+    const added = await withTransaction(async (session) => {
+      await fenceSpaceKeyring({ spaceId, session });
+      const existing = await mongoose.connection
+        .collection("teamMember")
+        .findOne({ teamId, userId: memberUserId }, { session });
+      if (existing) return false;
+      const grants = parseKeyringGrants(
+        body.grants,
+        await productKeyVersions({ spaceId, session }),
+      );
+      await mongoose.connection.collection("teamMember").insertOne({
+        id: `tmem_${randomBytes(12).toString("hex")}`,
+        teamId,
+        userId: memberUserId,
+        createdAt: new Date(),
+      }, { session });
+      await putMemberKeyring({
+        spaceId,
+        productId: "drive",
+        memberAccountId: memberUserId,
+        grants,
+        createdByAccountId: ctx.accountId,
+        rotationReason: "member_added",
+        session,
+      });
+      return true;
+    });
+    if (!added) {
       return NextResponse.json(
         { error: "User is already a member of this team" },
         { status: 409 },
       );
-    }
-
-    const now = new Date();
-    await mongoose.connection.collection("teamMember").insertOne({
-      id: `tmem_${randomBytes(12).toString("hex")}`,
-      teamId,
-      userId: memberUserId,
-      createdAt: now,
-    });
-
-    try {
-      await putMemberProductKey({
-        spaceId: teamSpaceId(orgId, teamId),
-        productId: "drive",
-        memberAccountId: memberUserId,
-        wrappedKey: wrappedTeamKey,
-        keyVersion,
-        createdByAccountId: ctx.accountId,
-        rotationReason: "member_added",
-      });
-    } catch (error) {
-      await mongoose.connection
-        .collection("teamMember")
-        .deleteOne({ teamId, userId: memberUserId });
-      throw error;
     }
 
     await emitActivity({

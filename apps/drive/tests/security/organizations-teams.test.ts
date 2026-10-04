@@ -141,8 +141,7 @@ describe("organization teams & team drives", () => {
     const res = await teamMemberPOST(
       req(`/api/orgs/org_1/teams/${teamId}/members`, {
         memberUserId: "member_2",
-        wrappedTeamKey: "wrapped-for-member2",
-        keyVersion: 1,
+        grants: [{ keyVersion: 1, wrappedKey: "wrapped-for-member2" }],
       }),
       teamParams(teamId),
     );
@@ -167,8 +166,7 @@ describe("organization teams & team drives", () => {
     const res = await teamMemberPOST(
       req(`/api/orgs/org_1/teams/${teamId}/members`, {
         memberUserId: "stranger",
-        wrappedTeamKey: "k",
-        keyVersion: 1,
+        grants: [{ keyVersion: 1, wrappedKey: "k" }],
       }),
       teamParams(teamId),
     );
@@ -186,8 +184,7 @@ describe("organization teams & team drives", () => {
     await teamMemberPOST(
       req(`/api/orgs/org_1/teams/${teamId}/members`, {
         memberUserId: "member_2",
-        wrappedTeamKey: "k",
-        keyVersion: 1,
+        grants: [{ keyVersion: 1, wrappedKey: "k" }],
       }),
       teamParams(teamId),
     );
@@ -200,6 +197,46 @@ describe("organization teams & team drives", () => {
     expect(res.status).toBe(400);
     const err = await res.json();
     expect(err.code).toBe("team_key_rotation_required");
+  });
+
+  it("keeps every team key version and gives new members the whole keyring", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("owner_1");
+    await createOrg();
+    await addOrgMember("owner_1", "owner");
+    await addOrgMember("member_2", "member");
+    await addOrgMember("member_3", "member");
+    const { body } = await createTeam();
+    const teamId = body.team.id;
+    const spaceId = teamSpaceId("org_1", teamId);
+    const add = (memberUserId: string, grants: unknown) => teamMemberPOST(
+      req(`/api/orgs/org_1/teams/${teamId}/members`, { memberUserId, grants }),
+      teamParams(teamId),
+    );
+    expect((await add("member_2", [{ keyVersion: 1, wrappedKey: "m2-v1" }])).status).toBe(201);
+
+    const removed = await teamMemberDELETE(
+      req(`/api/orgs/org_1/teams/${teamId}/members/member_2`, {
+        rotationGrants: [{ memberUserId: "owner_1", wrappedSpaceKey: "owner-v2", keyVersion: 2 }],
+      }),
+      { params: Promise.resolve({ orgId: "org_1", teamId, memberUserId: "member_2" }) },
+    );
+    expect(removed.status).toBe(200);
+    // The remaining owner still reads v1 content and writes with v2.
+    const ownerKeys = await SpaceProductKey.find({ spaceId, memberAccountId: "owner_1", status: "active" }).lean();
+    expect(ownerKeys.map((key) => key.keyVersion).sort()).toEqual([1, 2]);
+
+    // A new member must receive both versions; a latest-only grant is refused.
+    const partial = await add("member_3", [{ keyVersion: 2, wrappedKey: "m3-v2" }]);
+    expect(partial.status).toBe(409);
+    expect((await partial.json()).code).toBe("key_grants_incomplete");
+    expect(await mongoose.connection.collection("teamMember").countDocuments({ teamId, userId: "member_3" })).toBe(0);
+    const full = await add("member_3", [
+      { keyVersion: 1, wrappedKey: "m3-v1" },
+      { keyVersion: 2, wrappedKey: "m3-v2" },
+    ]);
+    expect(full.status).toBe(201);
+    expect(await SpaceProductKey.countDocuments({ spaceId, memberAccountId: "member_3", status: "active" })).toBe(2);
   });
 
   it("finalizes a space-wrapped team object and rolls it up to OrgUsage", async () => {

@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { NextRequest, NextResponse } from "next/server";
+import { withTransaction } from "@xenode/database";
 import {
   AuthzError,
   isAuthzError,
@@ -15,9 +16,9 @@ import {
 } from "@xenode/database/models";
 import { teamSpaceId } from "@xenode/spaces/ids";
 import {
-  latestProductKeyVersion,
+  fenceSpaceKeyring,
+  productKeyVersions,
   putMemberProductKey,
-  retireOlderProductKeys,
   revokeMemberProductKeys,
 } from "@xenode/spaces/product-keys";
 import { publishSyncEvent } from "@/lib/realtime/publish";
@@ -123,7 +124,6 @@ function validateTeamRotation(args: {
 }
 
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
-  const mongoSession = await mongoose.startSession();
   try {
     const ctx = await requireAccessContext(request);
     const { orgId, teamId, memberUserId } = await params;
@@ -138,33 +138,27 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const rotationGrants = normalizeRotationGrants(body.rotationGrants);
 
     await dbConnect();
-    const teamMembers = await mongoose.connection
-      .collection("teamMember")
-      .find({ teamId })
-      .toArray();
-    const target = teamMembers.find((tm) => tm.userId === memberUserId);
-    if (!target) {
-      throw new AuthzError(404, "team_member_not_found", "Team member not found");
-    }
-
-    const remainingMemberIds = teamMembers
-      .map((tm) => tm.userId as string)
-      .filter((id) => id !== memberUserId);
-
     const spaceId = teamSpaceId(orgId, teamId);
-    const currentKeyVersion = await latestProductKeyVersion({
-      spaceId,
-      productId: "drive",
-    });
-
-    const nextKeyVersion = validateTeamRotation({
-      remainingMemberIds,
-      currentMaxKeyVersion: currentKeyVersion,
-      rotationGrants,
-    });
-
     const now = new Date();
-    await mongoSession.withTransaction(async () => {
+    const nextKeyVersion = await withTransaction(async (mongoSession) => {
+      // Validate against the membership and key versions this commit sees.
+      await fenceSpaceKeyring({ spaceId, session: mongoSession });
+      const teamMembers = await mongoose.connection
+        .collection("teamMember")
+        .find({ teamId }, { session: mongoSession })
+        .toArray();
+      if (!teamMembers.some((tm) => tm.userId === memberUserId)) {
+        throw new AuthzError(404, "team_member_not_found", "Team member not found");
+      }
+      const versions = await productKeyVersions({ spaceId, session: mongoSession });
+      const nextKeyVersion = validateTeamRotation({
+        remainingMemberIds: teamMembers
+          .map((tm) => tm.userId as string)
+          .filter((id) => id !== memberUserId),
+        currentMaxKeyVersion: versions.at(-1) ?? 0,
+        rotationGrants,
+      });
+
       await mongoose.connection
         .collection("teamMember")
         .deleteOne({ teamId, userId: memberUserId }, { session: mongoSession });
@@ -194,14 +188,8 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       });
 
       if (nextKeyVersion) {
-        await retireOlderProductKeys({
-          spaceId,
-          productId: "drive",
-          memberAccountIds: remainingMemberIds,
-          keyVersion: nextKeyVersion,
-          rotationReason: "member_removed",
-          session: mongoSession,
-        });
+        // Remaining members keep every older version: content keeps the
+        // spaceKeyVersion it was written with.
         for (const grant of rotationGrants) {
           await putMemberProductKey({
             spaceId,
@@ -215,6 +203,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
           });
         }
       }
+      return nextKeyVersion;
     });
 
     await emitActivity({
@@ -255,7 +244,5 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const message =
       error instanceof Error ? error.message : "Failed to remove team member";
     return NextResponse.json({ error: message }, { status: 500 });
-  } finally {
-    await mongoSession.endSession();
   }
 }

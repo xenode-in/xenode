@@ -2,7 +2,6 @@ import type { ProductSlug } from "@xenode/contracts";
 import { SpaceProductKey } from "@xenode/database/models";
 import {
   putMemberProductKey,
-  setMemberProductKeyStatus,
   type KeyRotationReason,
   type MemberKeyStatus,
 } from "@xenode/spaces/product-keys";
@@ -32,14 +31,8 @@ export async function createTestProductKey(args: {
     status: status === "pending" ? "pending" : "active",
   });
   if (status !== "pending" && status !== "active") {
-    return setMemberProductKeyStatus({
-      spaceId: args.spaceId,
-      productId: args.productId ?? "drive",
-      memberAccountId: args.memberAccountId,
-      keyVersion,
-      status,
-      rotationReason: args.rotationReason ?? "initial",
-    });
+    await SpaceProductKey.updateOne({ _id: key._id }, { $set: { status } });
+    return { ...key, status };
   }
   return key;
 }

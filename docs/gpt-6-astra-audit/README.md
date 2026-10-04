@@ -38,6 +38,7 @@ Start with [the executive summary](00-executive-summary.md), then [the migration
 | [29 — Accounts sensitive actions](29-accounts-sensitive-actions.md) | Recent authentication, rate limits and revocation semantics |
 | [30 — Realtime contract](30-realtime-contract.md) | Ticket binding, handshake Origin gate and connection lifetime |
 | [31 — Drive folder model](31-drive-folder-model.md) | Immutable physical keys, metadata folders, move, Bin batches |
+| [32 — Workspace keyring](32-workspace-keyring.md) | Versioned workspace key grants, rotation and new keyholders |
 
 ## Reading the judgments
 

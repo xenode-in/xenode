@@ -146,6 +146,24 @@ describe("organization member removal", () => {
     await addProductKey("admin_1", 1);
     await addProductKey("user_1", 1);
     await addSession("user_1");
+    // A key-ready invitation never received the version this removal issues.
+    await Bucket.db.collection("invitation").insertOne({
+      id: "inv_ready",
+      organizationId: "org_1",
+      email: "invitee@example.com",
+      role: "member",
+      status: "pending",
+      recipientUserId: "invitee_1",
+      productKeyReady: true,
+      expiresAt: new Date(Date.now() + 60_000),
+      createdAt: new Date(),
+    });
+    await createTestProductKey({
+      spaceId: organizationSpaceId("org_1"),
+      memberAccountId: "invitee_1",
+      wrappedKey: "wrapped-invitee-v1",
+      status: "pending",
+    });
     await Bucket.db.collection("team").insertOne({
       id: "team_1",
       organizationId: "org_1",
@@ -203,6 +221,16 @@ describe("organization member removal", () => {
       keyVersion: 2,
       status: "active",
     })).toBe(2);
+    // Remaining members keep v1: content written before the rotation keeps
+    // its spaceKeyVersion and must stay readable.
+    expect(await SpaceProductKey.countDocuments({
+      spaceId: organizationSpaceId("org_1"),
+      memberAccountId: { $in: ["owner_1", "admin_1"] },
+      keyVersion: 1,
+      status: "active",
+    })).toBe(2);
+    expect((await Bucket.db.collection("invitation").findOne({ id: "inv_ready" }))?.productKeyReady).toBe(false);
+    expect(await SpaceProductKey.countDocuments({ memberAccountId: "invitee_1", status: "revoked" })).toBe(1);
   });
 
   it("removes guests without requiring key rotation", async () => {

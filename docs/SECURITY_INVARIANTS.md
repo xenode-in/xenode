@@ -28,6 +28,9 @@ These are release-blocking rules.
 - Product keys and Drive sharing private keys remain in browser memory.
 - Each file has an independent AES-256-GCM DEK. Metadata purpose keys are
   derived with HKDF and bound to the Space.
+- Workspace key grants are create-only per member and version, every new
+  keyholder receives every issued version, and rotation never retires the
+  remaining members' older versions.
 - No PBKDF2 Vault v1, private-key hashing, wildcard postMessage origin, or
   server-side plaintext fallback may be introduced.
 

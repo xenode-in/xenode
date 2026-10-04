@@ -12,6 +12,7 @@ import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import { createTestProductKey, SpaceProductKey } from "@/tests/helpers/spaceProductKeys";
 import { organizationSpaceId } from "@xenode/spaces/ids";
+import { ensureOrganizationSpace } from "@xenode/spaces/repository";
 import { UserVault } from "@xenode/database";
 import OrgMembershipHistory from "@/models/OrgMembershipHistory";
 
@@ -48,6 +49,21 @@ async function createOrg() {
     createdAt: new Date(),
     updatedAt: new Date(),
   });
+  await ensureOrganizationSpace({ accountId: "owner_1", organizationId: "org_1" });
+}
+
+/** The owner's keyring: one active grant per issued org key version. */
+async function addOwnerKeys(...versions: number[]) {
+  for (const keyVersion of versions) {
+    await createTestProductKey({
+      spaceId: organizationSpaceId("org_1"),
+      memberAccountId: "owner_1",
+      wrappedKey: `owner-v${keyVersion}`,
+      keyVersion,
+      createdByAccountId: "owner_1",
+      rotationReason: "initial",
+    });
+  }
 }
 
 async function addMember(userId: string, role = "member") {
@@ -93,7 +109,6 @@ async function addInvitation(args: {
     inviterId: "owner_1",
     recipientUserId,
     productKeyReady: !!args.wrappedSpaceKey,
-    keyVersion,
     expiresAt: args.expiresAt ?? new Date(Date.now() + 60_000),
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -207,14 +222,17 @@ describe("organization invitations", () => {
     mockSession("owner_1", "owner@example.com");
     await createOrg();
     await addMember("owner_1", "owner");
+    await addOwnerKeys(1, 2);
     await addUser("user_1", "invitee@example.com");
 
     const response = await orgInvitationsPOST(
       postOrgInvite({
         email: "INVITEE@example.com",
         role: "member",
-        wrappedSpaceKey: "wrapped-for-invitee",
-        keyVersion: 2,
+        grants: [
+          { keyVersion: 1, wrappedKey: "invitee-v1" },
+          { keyVersion: 2, wrappedKey: "invitee-v2" },
+        ],
       }),
       orgParams(),
     );
@@ -225,6 +243,34 @@ describe("organization invitations", () => {
     expect(body.invitation.recipientUserId).toBe("user_1");
     expect(body.invitation.spaceKeyReady).toBe(true);
     expect(await Bucket.db.collection("invitation").countDocuments()).toBe(1);
+    expect(await SpaceProductKey.countDocuments({
+      spaceId: organizationSpaceId("org_1"),
+      memberAccountId: "user_1",
+      status: "pending",
+    })).toBe(2);
+  });
+
+  it("refuses an invitation keyring that misses an issued version", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("owner_1", "owner@example.com");
+    await createOrg();
+    await addMember("owner_1", "owner");
+    await addOwnerKeys(1, 2);
+    await addUser("user_1", "invitee@example.com");
+
+    const response = await orgInvitationsPOST(
+      postOrgInvite({
+        email: "invitee@example.com",
+        role: "member",
+        grants: [{ keyVersion: 2, wrappedKey: "invitee-v2" }],
+      }),
+      orgParams(),
+    );
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("key_grants_incomplete");
+    expect(await Bucket.db.collection("invitation").countDocuments()).toBe(0);
+    expect(await SpaceProductKey.countDocuments({ memberAccountId: "user_1" })).toBe(0);
   });
 
   it("rejects duplicate pending invitations", async () => {
@@ -376,6 +422,29 @@ describe("organization invitations", () => {
     })).toBe(1);
   });
 
+  it("refuses to activate an invitation keyring missing a later version", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("user_1", "invitee@example.com");
+    await createOrg();
+    await addOwnerKeys(1, 2);
+    await addInvitation({
+      email: "invitee@example.com",
+      recipientUserId: "user_1",
+      wrappedSpaceKey: "invitee-v1",
+      keyVersion: 1,
+    });
+
+    const response = await invitationActionPOST(
+      postInvitationAction({ action: "accept" }),
+      invitationParams(),
+    );
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).code).toBe("space_key_grant_required");
+    expect(await Bucket.db.collection("member").countDocuments({ userId: "user_1" })).toBe(0);
+    expect(await SpaceProductKey.countDocuments({ memberAccountId: "user_1", status: "pending" })).toBe(1);
+  });
+
   it("fails closed before membership when an encrypted invite lacks a key", async () => {
     process.env.ORGS_ENABLED = "true";
     mockSession("user_1", "invitee@example.com");
@@ -521,8 +590,7 @@ describe("organization invitations", () => {
 
     const response = await invitationGrantPATCH(
       patchGrant({
-        wrappedSpaceKey: "wrapped-for-nh",
-        keyVersion: 1,
+        grants: [{ keyVersion: 1, wrappedKey: "wrapped-for-nh" }],
         memberAccountId: "nh_1",
       }),
       orgInvitationParams(),
@@ -536,7 +604,6 @@ describe("organization invitations", () => {
       .findOne({ id: "inv_1" });
     expect(invitation?.productKeyReady).toBe(true);
     expect(invitation?.wrappedSpaceKey).toBeUndefined();
-    expect(invitation?.keyVersion).toBe(1);
     expect(await SpaceProductKey.countDocuments({
       spaceId: organizationSpaceId("org_1"),
       memberAccountId: "nh_1",
@@ -545,7 +612,46 @@ describe("organization invitations", () => {
     })).toBe(1);
   });
 
-  it("rejects granting a stale key version", async () => {
+  it("re-grants the full keyring after a rotation revoked the pending one", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("owner_1", "owner@example.com");
+    await createOrg();
+    await addMember("owner_1", "owner");
+    await addOwnerKeys(1, 2);
+    await addUser("nh_1", "newhire@example.com");
+    await addInvitation({
+      email: "newhire@example.com",
+      role: "member",
+      recipientUserId: "nh_1",
+    });
+    // What a rotation leaves behind: the old pending grant, revoked.
+    await createTestProductKey({
+      spaceId: organizationSpaceId("org_1"),
+      memberAccountId: "nh_1",
+      wrappedKey: "stale-v1",
+      status: "revoked",
+    });
+
+    const response = await invitationGrantPATCH(
+      patchGrant({
+        grants: [
+          { keyVersion: 1, wrappedKey: "nh-v1" },
+          { keyVersion: 2, wrappedKey: "nh-v2" },
+        ],
+        memberAccountId: "nh_1",
+      }),
+      orgInvitationParams(),
+    );
+
+    expect(response.status).toBe(200);
+    const grants = await SpaceProductKey.find({ memberAccountId: "nh_1" }).sort({ keyVersion: 1 }).lean();
+    expect(grants.map((grant) => [grant.keyVersion, grant.status, grant.ciphertext])).toEqual([
+      [1, "pending", "nh-v1"],
+      [2, "pending", "nh-v2"],
+    ]);
+  });
+
+  it("rejects granting a stale keyring", async () => {
     process.env.ORGS_ENABLED = "true";
     mockSession("owner_1", "owner@example.com");
     await createOrg();
@@ -567,8 +673,7 @@ describe("organization invitations", () => {
 
     const response = await invitationGrantPATCH(
       patchGrant({
-        wrappedSpaceKey: "wrapped",
-        keyVersion: 1,
+        grants: [{ keyVersion: 1, wrappedKey: "wrapped" }],
         memberAccountId: "nh_1",
       }),
       orgInvitationParams(),
@@ -576,8 +681,9 @@ describe("organization invitations", () => {
 
     expect(response.status).toBe(409);
     await expect(response.json()).resolves.toMatchObject({
-      code: "stale_key_version",
+      code: "key_grants_incomplete",
     });
+    expect((await Bucket.db.collection("invitation").findOne({ id: "inv_1" }))?.productKeyReady).toBe(false);
   });
 
   it("marks the invitee ready on claim when their vault exists", async () => {

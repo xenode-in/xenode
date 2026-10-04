@@ -1,5 +1,6 @@
-import mongoose from "mongoose";
+import mongoose, { type ClientSession } from "mongoose";
 import { NextRequest, NextResponse } from "next/server";
+import { withTransaction } from "@xenode/database";
 import {
   AuthzError,
   isAuthzError,
@@ -25,11 +26,14 @@ import {
 import { publishSyncEvent } from "@/lib/realtime/publish";
 import { organizationSpaceId } from "@xenode/spaces/ids";
 import {
-  latestProductKeyVersion,
+  fenceSpaceKeyring,
+  parseKeyringGrants,
+  productKeyVersions,
+  putMemberKeyring,
   putMemberProductKey,
-  retireOlderProductKeys,
   revokeMemberProductKeys,
 } from "@xenode/spaces/product-keys";
+import { SpaceProductKey } from "@xenode/database/models";
 
 export const dynamic = "force-dynamic";
 
@@ -180,9 +184,45 @@ function validateRotation(args: {
   return nextKeyVersion;
 }
 
-export async function DELETE(request: NextRequest, { params }: RouteParams) {
-  const mongoSession = await mongoose.startSession();
+/**
+ * Add the rotated version for every remaining keyholder. Older versions stay
+ * active for them: content keeps its original `spaceKeyVersion`. Invitees
+ * never received the new version, so their pending grants are revoked and the
+ * invitation waits for an admin to grant the full keyring again.
+ */
+async function storeRotation(args: {
+  orgId: string;
+  spaceId: string;
+  actorAccountId: string;
+  rotationGrants: ReturnType<typeof normalizeRotationGrants>;
+  session: ClientSession;
+  now: Date;
+}) {
+  await SpaceProductKey.updateMany(
+    { spaceId: args.spaceId, productId: "drive", status: "pending" },
+    { $set: { status: "revoked", rotationReason: "member_removed" } },
+    { session: args.session },
+  );
+  await mongoose.connection.collection("invitation").updateMany(
+    { organizationId: args.orgId, status: "pending", productKeyReady: true },
+    { $set: { productKeyReady: false, updatedAt: args.now } },
+    { session: args.session },
+  );
+  for (const grant of args.rotationGrants) {
+    await putMemberProductKey({
+      spaceId: args.spaceId,
+      productId: "drive",
+      memberAccountId: grant.memberUserId,
+      wrappedKey: grant.wrappedSpaceKey,
+      keyVersion: grant.keyVersion,
+      createdByAccountId: args.actorAccountId,
+      rotationReason: "member_removed",
+      session: args.session,
+    });
+  }
+}
 
+export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     const ctx = await requireAccessContext(request);
     const { orgId, memberUserId } = await params;
@@ -195,49 +235,47 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     await dbConnect();
     const membersCollection =
       mongoose.connection.collection<OrgMemberRecord>("member");
-    const [targetMember, allMembers] = await Promise.all([
-      membersCollection.findOne({ organizationId: orgId, userId: memberUserId }),
-      membersCollection.find({ organizationId: orgId }).toArray(),
-    ]);
     const orgSpaceId = organizationSpaceId(orgId);
-    const currentKeyVersion = await latestProductKeyVersion({
-      spaceId: orgSpaceId,
-      productId: "drive",
-    });
-
-    if (!targetMember) {
-      throw new AuthzError(404, "member_not_found", "Member not found");
-    }
-
-    const targetRole = normalizeOrgRole(targetMember.role);
-    const ownerCount = allMembers.filter(
-      (member) => normalizeOrgRole(member.role) === "owner",
-    ).length;
-    assertCanRemoveTarget({
-      actorRole: membership.role,
-      actorUserId: ctx.userId,
-      targetUserId: memberUserId,
-      targetRole,
-      ownerCount,
-    });
-
-    const remainingMembers = allMembers.filter(
-      (member) => member.userId !== memberUserId,
-    );
-    const remainingKeyMembers = remainingMembers.filter(nonGuest);
-    const nextKeyVersion = validateRotation({
-      targetRole,
-      currentMaxKeyVersion: currentKeyVersion,
-      remainingKeyMembers,
-      rotationGrants,
-    });
-
     const affectedSpaces = await Space.find({ organizationId: orgId })
       .select("_id")
       .lean<Array<{ _id: string }>>();
     const affectedSpaceIds = affectedSpaces.map((space) => space._id);
     const now = new Date();
-    await mongoSession.withTransaction(async () => {
+    const { targetMember, targetRole, remainingMembers, nextKeyVersion } =
+      await withTransaction(async (mongoSession) => {
+      // Validate against the membership and key versions this commit sees.
+      await fenceSpaceKeyring({ spaceId: orgSpaceId, session: mongoSession });
+      const allMembers = await membersCollection
+        .find({ organizationId: orgId }, { session: mongoSession })
+        .toArray();
+      const targetMember = allMembers.find((member) => member.userId === memberUserId);
+      if (!targetMember) {
+        throw new AuthzError(404, "member_not_found", "Member not found");
+      }
+
+      const targetRole = normalizeOrgRole(targetMember.role);
+      const ownerCount = allMembers.filter(
+        (member) => normalizeOrgRole(member.role) === "owner",
+      ).length;
+      assertCanRemoveTarget({
+        actorRole: membership.role,
+        actorUserId: ctx.userId,
+        targetUserId: memberUserId,
+        targetRole,
+        ownerCount,
+      });
+
+      const remainingMembers = allMembers.filter(
+        (member) => member.userId !== memberUserId,
+      );
+      const versions = await productKeyVersions({ spaceId: orgSpaceId, session: mongoSession });
+      const nextKeyVersion = validateRotation({
+        targetRole,
+        currentMaxKeyVersion: versions.at(-1) ?? 0,
+        remainingKeyMembers: remainingMembers.filter(nonGuest),
+        rotationGrants,
+      });
+
       const teams = await mongoose.connection
         .collection<TeamRecord>("team")
         .find({ organizationId: orgId }, { session: mongoSession })
@@ -290,28 +328,16 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       });
 
       if (nextKeyVersion) {
-        const remainingIds = remainingKeyMembers.map((member) => member.userId);
-        await retireOlderProductKeys({
+        await storeRotation({
+          orgId,
           spaceId: orgSpaceId,
-          productId: "drive",
-          memberAccountIds: remainingIds,
-          keyVersion: nextKeyVersion,
-          rotationReason: "member_removed",
+          actorAccountId: ctx.accountId,
+          rotationGrants,
           session: mongoSession,
+          now,
         });
-        for (const grant of rotationGrants) {
-          await putMemberProductKey({
-            spaceId: orgSpaceId,
-            productId: "drive",
-            memberAccountId: grant.memberUserId,
-            wrappedKey: grant.wrappedSpaceKey,
-            keyVersion: grant.keyVersion,
-            createdByAccountId: ctx.accountId,
-            rotationReason: "member_removed",
-            session: mongoSession,
-          });
-        }
       }
+      return { targetMember, targetRole, remainingMembers, nextKeyVersion };
     });
 
     // Refresh the cached seat count now that a member is gone (best-effort).
@@ -374,8 +400,6 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const message =
       error instanceof Error ? error.message : "Failed to remove member";
     return NextResponse.json({ error: message }, { status: 500 });
-  } finally {
-    await mongoSession.endSession();
   }
 }
 
@@ -386,12 +410,11 @@ const ASSIGNABLE_ROLES: OrgRole[] = ["admin", "member", "guest"];
  *
  * Owner/admin only. Owner role is managed via ownership transfer, not here.
  * E2EE: rotation is driven by crossing the guest boundary —
- *   - non-guest → guest: revoke their grant + rotate the space key (rotationGrants required)
- *   - guest → non-guest: install a fresh wrapped grant (no version bump)
+ *   - non-guest → guest: revoke their grants + rotate the space key (rotationGrants required)
+ *   - guest → non-guest: install grants for every issued version (`grants`, no bump)
  *   - admin ↔ member: no key change.
  */
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
-  const mongoSession = await mongoose.startSession();
   try {
     const ctx = await requireAccessContext(request);
     const { orgId, memberUserId } = await params;
@@ -414,121 +437,108 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     await dbConnect();
     const membersCol = mongoose.connection.collection<OrgMemberRecord>("member");
-    const [target, allMembers] = await Promise.all([
-      membersCol.findOne({ organizationId: orgId, userId: memberUserId }),
-      membersCol.find({ organizationId: orgId }).toArray(),
-    ]);
     const orgSpaceId = organizationSpaceId(orgId);
-    const currentKeyVersion = await latestProductKeyVersion({
-      spaceId: orgSpaceId,
-      productId: "drive",
-    });
-
-    if (!target) {
-      throw new AuthzError(404, "member_not_found", "Member not found");
-    }
-    const currentRole = normalizeOrgRole(target.role);
-    if (currentRole === "owner") {
-      throw new AuthzError(
-        403,
-        "cannot_change_owner_role",
-        "Use ownership transfer to change the owner",
-      );
-    }
-    if (currentRole === newRole) {
-      return NextResponse.json({ memberUserId, role: newRole, unchanged: true });
-    }
-
-    const wasNonGuest = currentRole !== "guest";
-    const willBeNonGuest = newRole !== "guest";
-    let rotated = false;
-
-    if (wasNonGuest && !willBeNonGuest) {
-      // Demotion out of key access → revoke + rotate for remaining members.
-      const rotationGrants = normalizeRotationGrants(body.rotationGrants);
-      const remainingKeyMembers = allMembers.filter(
-        (m) => m.userId !== memberUserId && nonGuest(m),
-      );
-      const nextKeyVersion = validateRotation({
-        targetRole: "member",
-        currentMaxKeyVersion: currentKeyVersion,
-        remainingKeyMembers,
-        rotationGrants,
-      });
-      rotated = !!nextKeyVersion;
-
-      await mongoSession.withTransaction(async () => {
-        await membersCol.updateOne(
-          { organizationId: orgId, userId: memberUserId },
-          { $set: { role: newRole } },
-          { session: mongoSession },
-        );
-        await revokeMemberProductKeys({
-          spaceIds: orgSpaceId,
-          memberAccountId: memberUserId,
-          productId: "drive",
-          rotationReason: "member_removed",
-          session: mongoSession,
-        });
-        if (nextKeyVersion) {
-          const remainingIds = remainingKeyMembers.map((m) => m.userId);
-          await retireOlderProductKeys({
-            spaceId: orgSpaceId,
-            productId: "drive",
-            memberAccountIds: remainingIds,
-            keyVersion: nextKeyVersion,
-            rotationReason: "member_removed",
-            session: mongoSession,
-          });
-          for (const grant of rotationGrants) {
-            await putMemberProductKey({
-              spaceId: orgSpaceId,
-              productId: "drive",
-              memberAccountId: grant.memberUserId,
-              wrappedKey: grant.wrappedSpaceKey,
-              keyVersion: grant.keyVersion,
-              createdByAccountId: ctx.accountId,
-              rotationReason: "member_removed",
-              session: mongoSession,
-            });
-          }
-        }
-      });
-    } else if (!wasNonGuest && willBeNonGuest) {
-      // Promotion into key access → requires a fresh wrapped grant (no bump).
-      const wrappedSpaceKey =
-        typeof body.wrappedSpaceKey === "string" ? body.wrappedSpaceKey.trim() : "";
-      const keyVersion = Number(body.keyVersion);
-      if (!wrappedSpaceKey || !Number.isInteger(keyVersion) || keyVersion < 1) {
+    const now = new Date();
+    const change = await withTransaction(async (session) => {
+      await fenceSpaceKeyring({ spaceId: orgSpaceId, session });
+      const allMembers = await membersCol
+        .find({ organizationId: orgId }, { session })
+        .toArray();
+      const target = allMembers.find((member) => member.userId === memberUserId);
+      if (!target) {
+        throw new AuthzError(404, "member_not_found", "Member not found");
+      }
+      const currentRole = normalizeOrgRole(target.role);
+      if (currentRole === "owner") {
         throw new AuthzError(
-          400,
-          "space_key_grant_required",
-          "Promoting a guest requires a wrapped space key",
+          403,
+          "cannot_change_owner_role",
+          "Use ownership transfer to change the owner",
         );
       }
-      await mongoSession.withTransaction(async () => {
-        await membersCol.updateOne(
-          { organizationId: orgId, userId: memberUserId },
-          { $set: { role: newRole } },
-          { session: mongoSession },
+      if (currentRole === newRole) return { currentRole, rotated: false, unchanged: true };
+
+      const wasNonGuest = currentRole !== "guest";
+      const willBeNonGuest = newRole !== "guest";
+      const setRole = () => membersCol.updateOne(
+        { organizationId: orgId, userId: memberUserId },
+        { $set: { role: newRole } },
+        { session },
+      );
+
+      if (wasNonGuest && !willBeNonGuest) {
+        // Demotion out of key access → revoke + rotate for remaining members.
+        const rotationGrants = normalizeRotationGrants(body.rotationGrants);
+        const versions = await productKeyVersions({ spaceId: orgSpaceId, session });
+        const nextKeyVersion = validateRotation({
+          targetRole: "member",
+          currentMaxKeyVersion: versions.at(-1) ?? 0,
+          remainingKeyMembers: allMembers.filter(
+            (member) => member.userId !== memberUserId && nonGuest(member),
+          ),
+          rotationGrants,
+        });
+        await setRole();
+        // Guests hold no workspace keys: drop team memberships and every
+        // grant in the organization's Spaces, as removal does.
+        const teams = await mongoose.connection
+          .collection<TeamRecord>("team")
+          .find({ organizationId: orgId }, { session })
+          .project<{ id: string }>({ id: 1 })
+          .toArray();
+        await mongoose.connection.collection("teamMember").deleteMany(
+          { userId: memberUserId, teamId: { $in: teams.map((team) => team.id) } },
+          { session },
         );
-        await putMemberProductKey({
+        const orgSpaces = await Space.find({ organizationId: orgId })
+          .select("_id")
+          .session(session)
+          .lean<Array<{ _id: string }>>();
+        await revokeMemberProductKeys({
+          spaceIds: orgSpaces.map((space) => space._id),
+          memberAccountId: memberUserId,
+          productIds: ["accounts", "drive", "photos", "mobile", "office-editor"],
+          rotationReason: "member_removed",
+          session,
+        });
+        if (nextKeyVersion) {
+          await storeRotation({
+            orgId,
+            spaceId: orgSpaceId,
+            actorAccountId: ctx.accountId,
+            rotationGrants,
+            session,
+            now,
+          });
+        }
+        return { currentRole, rotated: !!nextKeyVersion, unchanged: false };
+      }
+      if (!wasNonGuest && willBeNonGuest) {
+        // Promotion into key access → every issued version, no bump.
+        const grants = parseKeyringGrants(
+          body.grants,
+          await productKeyVersions({ spaceId: orgSpaceId, session }),
+        );
+        await setRole();
+        await putMemberKeyring({
           spaceId: orgSpaceId,
           productId: "drive",
           memberAccountId: memberUserId,
-          wrappedKey: wrappedSpaceKey,
-          keyVersion,
+          grants,
           createdByAccountId: ctx.accountId,
           rotationReason: "member_added",
-          session: mongoSession,
-        });      });
-    } else {
+          session,
+        });
+        return { currentRole, rotated: false, unchanged: false };
+      }
       // Lateral non-guest change — no key implications.
-      await membersCol.updateOne(
-        { organizationId: orgId, userId: memberUserId },
-        { $set: { role: newRole } },
-      );
+      await setRole();
+      return { currentRole, rotated: false, unchanged: false };
+    });
+    if (change.unchanged) {
+      return NextResponse.json({ memberUserId, role: newRole, unchanged: true });
     }
+    const { currentRole, rotated } = change;
 
     await emitActivity({
       orgId,
@@ -552,7 +562,5 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const message =
       error instanceof Error ? error.message : "Failed to change member role";
     return NextResponse.json({ error: message }, { status: 500 });
-  } finally {
-    await mongoSession.endSession();
   }
 }

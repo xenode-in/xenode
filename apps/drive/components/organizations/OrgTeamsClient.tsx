@@ -21,9 +21,11 @@ import { Badge } from "@/components/ui/badge";
 import { OrgFilesClient } from "@/components/organizations/OrgFilesClient";
 import {
   generateOrgSpaceKey,
-  unwrapSpaceKeyGrant,
+  unwrapSpaceKeyring,
   wrapSpaceKeyForCryptoKey,
   wrapSpaceKeyForPublicKey,
+  wrapSpaceKeyringForPublicKey,
+  type SpaceKeyringEntry,
 } from "@/lib/orgs/spaceKeyClient";
 import type { OrgRole } from "@/lib/auth/organization";
 
@@ -114,8 +116,9 @@ export function OrgTeamsClient({
     if (openTeam) void loadMembers(openTeam.id).catch(() => setMembers([]));
   }, [openTeam, loadMembers]);
 
-  const loadRawTeamKey = useCallback(
-    async (teamId: string): Promise<{ rawSpaceKey: Uint8Array; keyVersion: number }> => {
+  // Every team key version this member holds, newest first.
+  const loadTeamKeyring = useCallback(
+    async (teamId: string): Promise<SpaceKeyringEntry[]> => {
       if (!privateKey) {
         setModalOpen(true);
         throw new Error("Unlock your vault first");
@@ -123,15 +126,9 @@ export function OrgTeamsClient({
       const data = await readJson<{ keys: { wrappedKey: string; keyVersion: number }[] }>(
         await fetch(`/api/orgs/${orgId}/keys?teamId=${teamId}`),
       );
-      const grant = data.keys[0];
-      if (!grant) throw new Error("Your team space key is not available");
-      return {
-        rawSpaceKey: await unwrapSpaceKeyGrant({
-          wrappedSpaceKey: grant.wrappedKey,
-          privateKey,
-        }),
-        keyVersion: grant.keyVersion,
-      };
+      const keyring = await unwrapSpaceKeyring({ keys: data.keys, privateKey });
+      if (!keyring.length) throw new Error("Your team space key is not available");
+      return keyring;
     },
     [orgId, privateKey, setModalOpen],
   );
@@ -231,20 +228,15 @@ export function OrgTeamsClient({
         throw new Error(lookup.unavailable[0]?.reason || "Recipient is not available");
       }
       const recipient = lookup.recipients[0];
-      const { rawSpaceKey, keyVersion } = await loadRawTeamKey(openTeam.id);
-      const wrappedTeamKey = await wrapSpaceKeyForPublicKey({
-        rawSpaceKey,
+      const grants = await wrapSpaceKeyringForPublicKey({
+        keyring: await loadTeamKeyring(openTeam.id),
         recipientPublicKey: recipient.publicKey,
       });
       await readJson(
         await fetch(`/api/orgs/${orgId}/teams/${openTeam.id}/members`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            memberUserId: recipient.userId,
-            wrappedTeamKey,
-            keyVersion,
-          }),
+          body: JSON.stringify({ memberUserId: recipient.userId, grants }),
         }),
       );
       setInviteEmail("");
@@ -272,7 +264,7 @@ export function OrgTeamsClient({
     }
     setBusy(`remove-${member.userId}`);
     try {
-      const { keyVersion } = await loadRawTeamKey(openTeam.id);
+      const [{ keyVersion }] = await loadTeamKeyring(openTeam.id);
       const nextKeyVersion = keyVersion + 1;
       const nextSpaceKey = generateOrgSpaceKey();
       const remaining = members.filter((m) => m.userId !== member.userId);

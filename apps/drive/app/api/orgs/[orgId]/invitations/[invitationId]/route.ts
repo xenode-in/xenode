@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { NextRequest, NextResponse } from "next/server";
+import { withTransaction } from "@xenode/database";
 import {
   AuthzError,
   isAuthzError,
@@ -12,9 +13,11 @@ import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { emitNotification } from "@/lib/notifications/emit";
 import { organizationSpaceId } from "@xenode/spaces/ids";
 import {
-  latestProductKeyVersion,
-  putMemberProductKey,
-  setMemberProductKeyStatus,
+  fenceSpaceKeyring,
+  parseKeyringGrants,
+  productKeyVersions,
+  putMemberKeyring,
+  setMemberKeyringStatus,
 } from "@xenode/spaces/product-keys";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +34,6 @@ interface InvitationRecord {
   status: "pending" | "accepted" | "rejected" | "canceled";
   recipientUserId?: string | null;
   productKeyReady?: boolean;
-  keyVersion?: number | null;
   expiresAt?: Date;
 }
 
@@ -50,19 +52,12 @@ function userIdLookup(userId: string) {
 }
 
 async function revokePendingInvitationKey(invitation: InvitationRecord) {
-  if (
-    !invitation.productKeyReady ||
-    !invitation.recipientUserId ||
-    !Number.isInteger(invitation.keyVersion) ||
-    Number(invitation.keyVersion) < 1
-  ) {
-    return;
-  }
-  await setMemberProductKeyStatus({
+  if (!invitation.recipientUserId) return;
+  await setMemberKeyringStatus({
     spaceId: organizationSpaceId(invitation.organizationId),
     productId: "drive",
     memberAccountId: invitation.recipientUserId,
-    keyVersion: Number(invitation.keyVersion),
+    from: ["pending"],
     status: "revoked",
     rotationReason: "member_added",
   });
@@ -126,9 +121,9 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 }
 
 /**
- * Stores a pending RSA-wrapped Drive key for an invitee whose account and vault
- * now exist. Ciphertext lives only in SpaceProductKey; the invitation stores
- * readiness and version metadata.
+ * Stores pending RSA-wrapped Drive keys (`grants`, one per issued version) for
+ * an invitee whose account and vault now exist. Ciphertext lives only in
+ * SpaceProductKey; the invitation stores readiness.
  */
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
@@ -141,20 +136,11 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     });
 
     const body = await request.json().catch(() => ({}));
-    const wrappedSpaceKey =
-      typeof body.wrappedSpaceKey === "string" ? body.wrappedSpaceKey.trim() : "";
     const memberAccountId =
       typeof body.memberAccountId === "string" ? body.memberAccountId.trim() : "";
-    const keyVersion = Number(body.keyVersion);
-    if (!wrappedSpaceKey || !memberAccountId) {
+    if (!memberAccountId) {
       return NextResponse.json(
-        { error: "wrappedSpaceKey and memberAccountId are required" },
-        { status: 400 },
-      );
-    }
-    if (!Number.isInteger(keyVersion) || keyVersion < 1) {
-      return NextResponse.json(
-        { error: "keyVersion must be a positive integer" },
+        { error: "memberAccountId is required" },
         { status: 400 },
       );
     }
@@ -204,58 +190,42 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     }
 
     const spaceId = organizationSpaceId(orgId);
-    const currentKeyVersion = await latestProductKeyVersion({
-      spaceId,
-      productId: "drive",
-    });
-    if (currentKeyVersion > 0 && keyVersion !== currentKeyVersion) {
-      return NextResponse.json(
-        {
-          error: "Stale space key version — reload and grant again",
-          code: "stale_key_version",
-        },
-        { status: 409 },
+    await withTransaction(async (session) => {
+      // A stale client (missing a version issued since it loaded) gets 409.
+      await fenceSpaceKeyring({ spaceId, session });
+      const grants = parseKeyringGrants(
+        body.grants,
+        await productKeyVersions({ spaceId, session }),
       );
-    }
-
-    await putMemberProductKey({
-      spaceId,
-      productId: "drive",
-      memberAccountId,
-      wrappedKey: wrappedSpaceKey,
-      keyVersion,
-      createdByAccountId: ctx.accountId,
-      rotationReason: "member_added",
-      status: "pending",
-    });
-
-    const now = new Date();
-    const result = await invitations.updateOne(
-      { id: invitationId, organizationId: orgId, status: "pending" },
-      {
-        $set: {
-          recipientUserId: memberAccountId,
-          productKeyReady: true,
-          keyVersion,
-          updatedAt: now,
+      const result = await invitations.updateOne(
+        { id: invitationId, organizationId: orgId, status: "pending" },
+        {
+          $set: {
+            recipientUserId: memberAccountId,
+            productKeyReady: true,
+            updatedAt: new Date(),
+          },
         },
-      },
-    );
-    if (result.matchedCount !== 1) {
-      await setMemberProductKeyStatus({
+        { session },
+      );
+      if (result.matchedCount !== 1) {
+        throw new AuthzError(
+          409,
+          "invitation_not_pending",
+          "Invitation is no longer pending",
+        );
+      }
+      await putMemberKeyring({
         spaceId,
         productId: "drive",
         memberAccountId,
-        keyVersion,
-        status: "revoked",
+        grants,
+        createdByAccountId: ctx.accountId,
         rotationReason: "member_added",
+        status: "pending",
+        session,
       });
-      throw new AuthzError(
-        409,
-        "invitation_not_pending",
-        "Invitation is no longer pending",
-      );
-    }
+    });
 
     await emitActivity({
       orgId,
@@ -277,7 +247,6 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       invitationId,
       status: "pending",
       spaceKeyReady: true,
-      keyVersion,
     });
   } catch (error) {
     if (isAuthzError(error)) return toJsonResponse(error);
