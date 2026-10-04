@@ -20,8 +20,9 @@ export function folderResponseKey(params: {
   return `folder:${userId}:${bucketId}:${encodedPrefix}:v${version}:${sortBy}:${sortDir}:${limit}`;
 }
 
-export function storageCacheKey(userId: string): string {
-  return `storage:${userId}`;
+/** Usage is a property of the Space, shared by every member who can read it. */
+export function storageCacheKey(spaceId: string): string {
+  return `storage:space:${spaceId}`;
 }
 
 export function recentCacheKey(userId: string): string {

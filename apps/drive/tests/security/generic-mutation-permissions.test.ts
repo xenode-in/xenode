@@ -16,7 +16,6 @@ import { requireAccessContext } from "@/lib/authz";
 import { POST as presign } from "@/app/api/objects/presign-upload/route";
 import { POST as multipart } from "@/app/api/objects/presign-upload-multipart/route";
 import { POST as complete } from "@/app/api/objects/complete-upload/route";
-import { POST as upload } from "@/app/api/objects/upload/route";
 import { PATCH as reorder } from "@/app/api/objects/reorder/route";
 import { POST as metadata } from "@/app/api/objects/update-metadata/route";
 import { POST as restore } from "@/app/api/objects/restore/route";
@@ -60,7 +59,7 @@ describe("generic storage mutation permissions", () => {
 
   const routes: Array<[string, string, (req: NextRequest) => Promise<Response>]> = [
     ["presign", "POST", presign], ["multipart presign", "POST", multipart],
-    ["complete upload", "POST", complete], ["legacy upload", "POST", upload],
+    ["complete upload", "POST", complete],
     ["reorder", "PATCH", reorder], ["metadata", "POST", metadata],
     ["restore", "POST", restore], ["purge", "POST", purge],
     ["patch object", "PATCH", (req) => patchObject(req, params)],

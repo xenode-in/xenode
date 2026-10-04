@@ -20,7 +20,7 @@ import StorageObject from "@/models/StorageObject";
 import Usage from "@/models/Usage";
 import OrgUsage from "@/models/OrgUsage";
 import { createUsage, makeUserId } from "../helpers/factories";
-import { recalculateUsage } from "@/lib/metering/usage";
+import { computePersonalUsageTotals } from "@/lib/metering/usage";
 
 function request(body: object, spaceId?: string) {
   return new NextRequest(`http://localhost/api/objects/complete-upload${spaceId ? `?spaceId=${spaceId}` : ""}`, {
@@ -273,9 +273,8 @@ describe("Drive verified transactional upload finalization", () => {
       productId: "photos", spaceId: input.spaceId, bucketId: input.bucket._id,
       key: `users/${input.accountId}/photo`, size: 50, thumbnailSize: 10,
     });
-    const usage = await recalculateUsage(input.accountId);
-    expect(usage?.totalStorageBytes).toBe(230);
-    expect(usage?.totalObjects).toBe(2);
+    const usage = await computePersonalUsageTotals(input.accountId);
+    expect(usage).toEqual({ totalStorageBytes: 230, totalObjects: 2 });
   });
 
   const presignRoutes = [["single", presign], ["multipart", multipart]] as const;

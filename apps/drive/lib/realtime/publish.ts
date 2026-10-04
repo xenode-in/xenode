@@ -74,7 +74,7 @@ export async function publishSyncEvent(
       }
     }
     if (params.invalidateStorage) {
-      pipeline.del(storageCacheKey(params.userId));
+      pipeline.del(storageCacheKey(params.spaceId));
     }
     if (params.invalidateRecent) {
       pipeline.del(recentCacheKey(params.userId));

@@ -24,10 +24,10 @@ entries (2 critical, 13 high, 9 moderate).
 | F05 | HIGH | Addressed | 0C: sign-in password change is credential-only; staged envelope endpoints return 410 | Revocation semantics of change/set/reset tracked under F04 |
 | F06 | HIGH | Addressed | 0ZC `71c940b`: one transactional bootstrap with idempotency | Org/team keys can still overwrite a member grant at the same version (tracked under F18) |
 | F07 | HIGH | Partial | 0B `6440e31`: shared action checks on generic upload/metadata/purge routes | Object DELETE, bulk-delete, folder, move and comment routes use copied role checks; share PATCH/DELETE and access-request approval skip Space/policy rechecks; sidecar parent not Space-bound; legacy bucket DELETE |
-| F08 | HIGH | Partial | 0H–0L, 0S, 0ZA: server-random key suffix, reservations, Space-bound completion, create-only PUTs | Physical keys still embed caller folder prefixes; folder POST writes plaintext-capable key objects; move rewrites physical keys (F35); legacy `objects/upload` accepts unencrypted bytes |
+| F08 | HIGH | Partial | 0H–0L, 0S, 0ZA, 0ZH: server-random key suffix, reservations, Space-bound completion, create-only PUTs; legacy unencrypted `objects/upload` removed | Physical keys still embed caller folder prefixes; folder POST writes plaintext-capable key objects; move rewrites physical keys (F35) |
 | F09 | HIGH | Addressed | 0A, 0U, 0V, 0W, 0X, 0Z: confirmed exact deletion, durable purge intents, transactional retirement | Live R2 and deployed scheduler remain release gates |
 | F10 | HIGH | Addressed | 0A, 0R `1764f03`: leased exact-ledger cleanup with cross-product references | Quarantined manifest review is operational work |
-| F11 | HIGH | Partial | 0Q, 0S, 0T, 0V: verified bytes and transactional finalize/revision/purge accounting | `GET /api/usage` overwrites counters on cache miss; legacy upload/bucket/admin-delete paths mutate usage outside transactions; no OrgUsage recalculation |
+| F11 | HIGH | Partial | 0Q, 0S, 0T, 0V, 0ZH: verified bytes and transactional finalize/revision/purge accounting; usage reads are read-only from the Space owner; non-transactional writers removed | Admin user DELETE removes objects/Usage without deleting blobs; no OrgUsage reconciliation report |
 | F12 | HIGH | Addressed | 0M, 0N, 0P `4e04408`: exact manifests, transactional completion | — |
 | F13 | HIGH | Addressed | 0M–0O, 0ZB `cffd54b`: manifest-owned cleanup honoring PUT expiry | — |
 | F14 | HIGH | Partial | R2 endpoint validation (0Z) makes uploads/previews match the CSP wildcard | Photos `connect-src` uses `*.r2.cloudflarestorage.com` instead of configured origins and omits the realtime origin; Drive's main app only sends a report-only CSP |
@@ -37,7 +37,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F18 | HIGH | Open | Rotation retires remaining members' old grants; client loads `keys[0]`; raw workspace key encrypts names | Version-aware keyring, historical grants on member add, HKDF metadata key, no same-version overwrite |
 | F19 | MED | Partial | 0T removed the editor byte proxy | Downloads, version content and shares still stream through Next with `max-age=3600` regardless of token lifetime |
 | F20 | MED | Open | `updatedAt > lastSync`, time-only sort, global `localStorage` cursor, no tombstones | Tuple cursor per account/Space with tombstones |
-| F21 | MED | Open | Presign no longer writes plans (0S) | Expired-plan downgrades in metering, onboarding plan reset, expire-plans cron, refund/campaign handlers, admin plan routes and OrgUsage writers bypass the canonical service |
+| F21 | MED | Partial | Presign no longer writes plans (0S); 0ZH removed metering's expired-plan downgrades and usage upserts | Onboarding plan reset, expire-plans cron, refund/campaign handlers, admin plan routes and OrgUsage creation on billing reads bypass the canonical service |
 | F22 | HIGH | Open | Dockerfile copies 3 of 18 manifests and omits `server-events.mjs`; Compose lacks Accounts/Photos and calls removed PayU route; editor nginx invalid | Reproducible all-product deployment; see F36 |
 | F23 | HIGH | Addressed | 0ZF: non-force upgrades (Next 16.3.8, pdfjs-dist 6.3.289, Better Auth family 1.7.7, socket.io-parser 4.2.7, engine.io 6.6.11, sharp 0.35.5, axios 1.20.0, vitest 4.1.11); `npm audit` 24 → 0; CI now gates on `npm audit` | Re-triage whenever the CI audit gate fails; renderer corpus re-run is a release gate |
 | F24 | HIGH | Partial | No Vault v1/PBKDF2 code remains | `decryptMetadataString` still decrypts a legacy format whose key is embedded in the value |
@@ -58,7 +58,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F34 | MED | Addressed | 0ZE: native GETs from pending sessions are allowlisted (session listings return 403) | — |
 | F35 | HIGH | Open | `objects/move` copies to a new key, then deletes the old physical key that version snapshots may still reference | Immutable physical keys; metadata-only move |
 | F36 | MED | Open | Compose cron runs `cat /etc/crontabs/root`, printing the expanded `CRON_SECRET` to logs | Remove secret echo; one scheduler contract |
-| F37 | MED | Open | Legacy `buckets/[id]` DELETE runs unscoped `StorageObject.deleteMany({ bucketId })` on the shared system bucket if its owner filter matches; `objects/upload` bypasses reservations, encryption and quota | Delete both routes |
+| F37 | MED | Addressed | 0ZH: both routes and their orphaned non-transactional helpers removed | — |
 
 ## Release gates not verified by tests
 

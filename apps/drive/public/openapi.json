@@ -308,19 +308,6 @@
       }
     },
 
-    "/api/buckets/{id}": {
-      "delete": {
-        "tags": ["Buckets"],
-        "summary": "Delete a bucket",
-        "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
-        ],
-        "responses": {
-          "200": { "description": "Bucket deleted" },
-          "404": { "description": "Not found" }
-        }
-      }
-    },
 
     "/api/drive/config": {
       "get": {
@@ -852,35 +839,6 @@
       }
     },
 
-    "/api/objects/upload": {
-      "post": {
-        "tags": ["Uploads"],
-        "summary": "Upload file via server (multipart/form-data)",
-        "description": "Alternative to the presign flow. Uploads file through the Next.js server directly to B2. Uses `multipart/form-data`. Enforces storage access and quota.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "type": "object",
-                "required": ["file", "bucketId"],
-                "properties": {
-                  "file": { "type": "string", "format": "binary" },
-                  "bucketId": { "type": "string" },
-                  "encryptedName": { "type": "string" },
-                  "isEncrypted": { "type": "string", "enum": ["true", "false"] }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": { "description": "File uploaded", "content": { "application/json": { "schema": { "type": "object", "properties": { "object": { "$ref": "#/components/schemas/StorageObject" } } } } } },
-          "402": { "description": "Subscription required or quota exceeded" },
-          "502": { "description": "B2 upload failure" }
-        }
-      }
-    },
 
     "/api/objects/update-metadata": {
       "post": {

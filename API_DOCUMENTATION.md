@@ -126,8 +126,9 @@ Buckets are the top-level storage containers.
     *   `POST /api/buckets`
     *   **Body:** `{ "name": "My Vault" }`
     *   *Note: Rate-limited to 5 requests per minute per user (Returns `429 Too Many Requests`).*
-*   **Delete Bucket**
-    *   `DELETE /api/buckets/[id]`
+*   **Get Bucket**
+    *   `GET /api/buckets/[id]`
+    *   *Note: Drive uses one shared system bucket; buckets are not deleted through the API. Objects leave storage only through the Bin purge contract.*
 
 ### 3.2 File & Folder Management (Objects)
 *   **List Files/Folders**

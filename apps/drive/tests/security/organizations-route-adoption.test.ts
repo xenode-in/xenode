@@ -7,7 +7,6 @@ const { createB2Bucket } = vi.hoisted(() => ({
 
 vi.mock("@/lib/b2/buckets", () => ({
   createB2Bucket,
-  deleteB2Bucket: vi.fn(),
 }));
 
 import { GET, POST } from "@/app/api/buckets/route";

@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { DriveUploadCommitError, loadSpaceUsage } from "@xenode/database";
 import {
   isAuthzError,
   objectOwnershipClause,
-  ownerClause,
   requireAccessContext,
   toJsonResponse,
 } from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
-import { getOrCreateUsage, recalculateUsage } from "@/lib/metering/usage";
 import StorageObject from "@/models/StorageObject";
 import { storageCacheKey } from "@/lib/realtime/cache-keys";
 import { withRedis } from "@/lib/redis";
@@ -35,11 +34,15 @@ function normalizeCategory(category: string | null | undefined): string {
   }
 }
 
+/**
+ * Read the authoritative counters of the requested Space's storage owner
+ * (personal Usage or OrgUsage). This route never writes Usage: byte counters
+ * belong to the storage transactions and plan state to the billing service.
+ */
 export async function GET(request: NextRequest) {
   try {
     const ctx = await requireAccessContext(request);
-    ownerClause(ctx);
-    const cacheKey = storageCacheKey(ctx.userId);
+    const cacheKey = storageCacheKey(ctx.spaceId);
     const cached = await withRedis((redis) => redis.get(cacheKey));
     if (cached) {
       return NextResponse.json(JSON.parse(cached), {
@@ -49,10 +52,8 @@ export async function GET(request: NextRequest) {
 
     await dbConnect();
 
-    const [usage, rawBreakdown] = await Promise.all([
-      recalculateUsage(ctx.userId).then(
-        (value) => value || getOrCreateUsage(ctx.userId),
-      ),
+    const [{ usage }, rawBreakdown] = await Promise.all([
+      loadSpaceUsage(ctx.spaceId, ctx.accountId),
       StorageObject.aggregate<{
         _id: string | null;
         bytes: number;
@@ -93,7 +94,8 @@ export async function GET(request: NextRequest) {
       totalBuckets: usage.totalBuckets ?? 0,
       storageLimitBytes: usage.storageLimitBytes ?? null,
       plan: usage.plan ?? "free",
-      updatedAt: usage.updatedAt?.toISOString?.() ?? null,
+      updatedAt:
+        usage.updatedAt instanceof Date ? usage.updatedAt.toISOString() : null,
       breakdown,
     };
     await withRedis((redis) =>
@@ -106,10 +108,13 @@ export async function GET(request: NextRequest) {
     if (isAuthzError(error)) {
       return toJsonResponse(error);
     }
-    const message = error instanceof Error ? error.message : "Failed to load usage";
-    if (message === "Unauthorized") {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (error instanceof DriveUploadCommitError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.status },
+      );
     }
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("[usage] Failed to load usage", error);
+    return NextResponse.json({ error: "Failed to load usage" }, { status: 500 });
   }
 }
