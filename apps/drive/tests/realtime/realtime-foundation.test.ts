@@ -10,7 +10,7 @@ import { createRealtimeToken } from "@/lib/realtime/token";
 import {
   parseRealtimeEvent,
   shouldDisconnectRealtimeSocket,
-} from "@/lib/realtime/server-events.mjs";
+} from "@xenode/realtime";
 
 const originalEnv = {
   REALTIME_TICKET_SECRET: process.env.REALTIME_TICKET_SECRET,
@@ -76,15 +76,18 @@ describe("realtime foundation", () => {
     });
   });
 
-  it("issues a 60-second ticket bound to account, product, Space, and session", async () => {
+  it("issues a 60-second ticket bound to account, product, Space, session, origin and session expiry", async () => {
     process.env.REALTIME_TICKET_SECRET = "r".repeat(48);
     process.env.CDN_SIGNING_SECRET = "c".repeat(48);
     process.env.BETTER_AUTH_SECRET = "a".repeat(48);
+    const sessionExpiresAt = new Date(Date.now() + 3_600_000);
     const { token, expiresAt } = await createRealtimeToken({
       accountId: "acct_1",
       productId: "drive",
       spaceId: "space_1",
       sessionId: "session_1",
+      sessionExpiresAt,
+      origin: "https://drive.example.test",
     });
     const [body, signature] = token.split(".");
     const expected = createHmac("sha256", process.env.REALTIME_TICKET_SECRET)
@@ -100,6 +103,8 @@ describe("realtime foundation", () => {
       productId: "drive",
       spaceId: "space_1",
       sessionId: "session_1",
+      origin: "https://drive.example.test",
+      sessionExpiresAt: Math.floor(sessionExpiresAt.getTime() / 1000),
     });
     expect(Number(payload.expiresAt) - Number(payload.issuedAt)).toBe(60);
     expect(new Date(expiresAt).getTime()).toBeGreaterThan(Date.now());
@@ -115,6 +120,8 @@ describe("realtime foundation", () => {
         productId: "drive",
         spaceId: "space_1",
         sessionId: "session_1",
+        sessionExpiresAt: new Date(Date.now() + 60_000),
+        origin: null,
       }),
     ).rejects.toThrow("32 bytes");
 
@@ -125,6 +132,8 @@ describe("realtime foundation", () => {
         productId: "drive",
         spaceId: "space_1",
         sessionId: "session_1",
+        sessionExpiresAt: new Date(Date.now() + 60_000),
+        origin: null,
       }),
     ).rejects.toThrow("independent");
 

@@ -112,8 +112,13 @@ PBKDF2, private-key hashing, server plaintext, or persisted raw product keys.
 
 ### Realtime and file runtimes
 
-Realtime tickets are always v2: 60-second, single-purpose credentials signed by
-`REALTIME_TICKET_SECRET`, with exact allowed origins. Do not add a legacy or
+Realtime tickets are 60-second, one-use credentials signed by
+`REALTIME_TICKET_SECRET`, bound to the ProductSession expiry and the exact page
+origin (null only for bearer-authenticated native clients). The protocol lives
+only in `@xenode/realtime` (`protocol.mjs`); the Drive server must reject
+non-allowlisted Origins at the Engine.IO handshake, offer WebSockets only,
+fail closed when Redis is unavailable and disconnect at session expiry. Clients
+fetch a fresh ticket for every connection attempt. Do not add a legacy or
 feature-flag bypass.
 
 `edit.xenode.in` and `preview.xenode.in` are static-only hostile-file runtime

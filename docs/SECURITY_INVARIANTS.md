@@ -50,8 +50,10 @@ These are release-blocking rules.
 
 ## Realtime and rendering
 
-- Realtime always requires a short-lived ticket bound to account, product,
-  Space, and ProductSession, signed by `REALTIME_TICKET_SECRET`.
+- Realtime always requires a short-lived, one-use ticket bound to account,
+  product, Space, ProductSession and its expiry, and the exact page origin,
+  signed by `REALTIME_TICKET_SECRET`. The socket handshake rejects
+  non-allowlisted Origins and sockets end at session expiry.
 - Realtime, CDN, Better Auth, admin JWT, and cron secrets are independent.
 - `edit.` and `preview.` are static-only origins. Application/API paths return
   404 on those hosts.

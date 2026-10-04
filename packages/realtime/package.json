@@ -3,7 +3,13 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts",
+    "./protocol": {
+      "types": "./src/protocol.d.mts",
+      "default": "./src/protocol.mjs"
+    }
+  },
   "dependencies": {
     "@xenode/contracts": "*"
   },

@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
-import { issueRealtimeTicket } from "@xenode/realtime";
+import {
+  REALTIME_TICKET_MAX_TTL_SECONDS,
+  issueRealtimeTicket,
+} from "@xenode/realtime";
 
+/** Issue a one-use realtime ticket bound to the page origin and session expiry. */
 export async function createPhotosRealtimeToken(args: {
   accountId: string;
   spaceId: string;
   sessionId: string;
+  sessionExpiresAt: Date;
+  origin: string;
 }) {
   const secret = process.env.REALTIME_TICKET_SECRET;
   if (!secret || Buffer.byteLength(secret) < 32) {
@@ -17,7 +23,7 @@ export async function createPhotosRealtimeToken(args: {
     throw new Error("REALTIME_TICKET_SECRET must be independent");
   }
   const issuedAt = Math.floor(Date.now() / 1000);
-  const expiresAt = issuedAt + 60;
+  const expiresAt = issuedAt + REALTIME_TICKET_MAX_TTL_SECONDS;
   return {
     token: await issueRealtimeTicket(
       {
@@ -26,8 +32,10 @@ export async function createPhotosRealtimeToken(args: {
         productId: "photos",
         spaceId: args.spaceId,
         sessionId: args.sessionId,
+        origin: args.origin,
         issuedAt,
         expiresAt,
+        sessionExpiresAt: Math.floor(args.sessionExpiresAt.getTime() / 1000),
       },
       secret,
     ),

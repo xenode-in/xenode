@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { ProductSlug } from "@xenode/contracts";
-import { issueRealtimeTicket } from "@xenode/realtime";
-
-const TICKET_TTL_SECONDS = 60;
+import {
+  REALTIME_TICKET_MAX_TTL_SECONDS,
+  isRealtimeProduct,
+  issueRealtimeTicket,
+} from "@xenode/realtime";
 
 function ticketSecret(): string {
   const value = process.env.REALTIME_TICKET_SECRET;
@@ -18,14 +20,24 @@ function ticketSecret(): string {
   return value;
 }
 
+/**
+ * Issue a 60-second, one-use realtime ticket. `origin` is the exact page
+ * origin of a browser request (null only for bearer-authenticated native
+ * clients); `sessionExpiresAt` bounds how long the socket may stay connected.
+ */
 export async function createRealtimeToken(args: {
   accountId: string;
   productId: ProductSlug;
   spaceId: string;
   sessionId: string;
+  sessionExpiresAt: Date;
+  origin: string | null;
 }): Promise<{ token: string; expiresAt: string }> {
+  if (!isRealtimeProduct(args.productId)) {
+    throw new Error("Realtime is not available for this product");
+  }
   const issuedAt = Math.floor(Date.now() / 1000);
-  const expiresAt = issuedAt + TICKET_TTL_SECONDS;
+  const expiresAt = issuedAt + REALTIME_TICKET_MAX_TTL_SECONDS;
   const token = await issueRealtimeTicket(
     {
       ticketId: randomUUID(),
@@ -33,8 +45,10 @@ export async function createRealtimeToken(args: {
       productId: args.productId,
       spaceId: args.spaceId,
       sessionId: args.sessionId,
+      origin: args.origin,
       issuedAt,
       expiresAt,
+      sessionExpiresAt: Math.floor(args.sessionExpiresAt.getTime() / 1000),
     },
     ticketSecret(),
   );

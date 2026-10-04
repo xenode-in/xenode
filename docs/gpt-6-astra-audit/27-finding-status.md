@@ -44,7 +44,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F25 | MED | Open | `update-metadata` writes plaintext description/link; share `bundleName` and access-request notes are plaintext; tag/folder plaintext fallbacks | Encrypt user text or remove the fields; define observable metadata |
 | F26 | MED | Open | Drive content/chunk/metadata AES-GCM has no AAD; chunk order is unauthenticated | Versioned authenticated file manifest |
 | F27 | HIGH | Addressed | 0ZD `c6044ec`: current Admin authority and versioned revocation | Live browser/deployment check is a release gate |
-| F28 | MED | Open | `server.mjs` relies on CORS only, duplicates the ticket verifier, has no session-lifetime disconnect; both clients reuse one-time tickets on reconnect | Shared verifier, exact Origin gate, lifetime timer, fresh ticket per attempt |
+| F28 | MED | Addressed | 0ZI: shared protocol module, Engine.IO Origin allowlist, origin- and session-bound tickets, WebSocket-only, fail-fast Redis, session/15-minute deadline, fresh ticket per attempt; see [30](30-realtime-contract.md) | Deployed proxy/Redis and real browsers are release gates |
 | F29 | MED | Partial | 0Z requires R2 endpoints and region `auto` | Shared bucket-name default, unknown bucket → `asia`, no startup validation of complete distinct regions |
 | F30 | HIGH | Open | Photos `assets` POST projects any encrypted Space object; `migrate-storage-ownership` relabels `productId` | Remove projection and script or implement client-assisted transfer |
 | F31 | MED | Open | `test:security` is scoped ESLint and fails; CI Node 22, Docker Node 20, no `engines` | Repair gates, align runtime, add lint/audit/container checks |

@@ -36,6 +36,7 @@ Start with [the executive summary](00-executive-summary.md), then [the migration
 | [27 — Finding status](27-finding-status.md) | Evidence-backed status of every finding and open release gate |
 | [28 — Second-factor contract](28-second-factor-contract.md) | Pending sessions, step-up lockout and the OIDC code gate |
 | [29 — Accounts sensitive actions](29-accounts-sensitive-actions.md) | Recent authentication, rate limits and revocation semantics |
+| [30 — Realtime contract](30-realtime-contract.md) | Ticket binding, handshake Origin gate and connection lifetime |
 
 ## Reading the judgments
 

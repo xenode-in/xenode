@@ -2,6 +2,18 @@
 
 import { useEffect } from "react";
 import { io } from "socket.io-client";
+import { realtimeTicketAuth } from "@xenode/realtime";
+
+async function fetchRealtimeTicket(): Promise<string> {
+  const response = await fetch("/api/realtime/token", {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!response.ok) throw new Error("Realtime ticket unavailable");
+  const value = (await response.json()) as { token?: unknown };
+  if (typeof value.token !== "string") throw new Error("Malformed ticket");
+  return value.token;
+}
 
 export function SessionRevocationGuard({
   sessionId,
@@ -10,12 +22,14 @@ export function SessionRevocationGuard({
 }) {
   useEffect(() => {
     let disposed = false;
+    let revoked = false;
     const channel =
       typeof BroadcastChannel === "undefined"
         ? null
         : new BroadcastChannel("xenode-auth:photos");
     const revoke = () => {
-      if (disposed) return;
+      if (disposed || revoked) return;
+      revoked = true;
       channel?.postMessage({ type: "logout" });
       window.location.reload();
     };
@@ -33,44 +47,35 @@ export function SessionRevocationGuard({
     window.addEventListener("focus", onFocus);
     document.addEventListener("visibilitychange", onVisibility);
 
-    let socket: ReturnType<typeof io> | undefined;
-    void fetch("/api/realtime/token", {
-      method: "POST",
-      credentials: "include",
-    })
-      .then(async (response) => {
-        if (!response.ok || disposed) return null;
-        return (await response.json()) as { token: string };
-      })
-      .then((ticket) => {
-        if (!ticket || disposed) return;
-        const realtimeOrigin =
-          process.env.NEXT_PUBLIC_REALTIME_ORIGIN ??
-          (process.env.NODE_ENV === "production"
-            ? "https://drive.xenode.in"
-            : "http://localhost:3000");
-        socket = io(realtimeOrigin, {
-          path: "/api/socket.io",
-          transports: ["websocket"],
-          withCredentials: true,
-          auth: { token: ticket.token },
-        });
-        socket.on("sync:event", (event: {
-          type?: string;
-          sessionId?: string;
-        }) => {
-          if (
-            event.type === "SESSION_REVOKED" &&
-            event.sessionId === sessionId
-          ) {
-            revoke();
-          }
-        });
-      })
-      .catch(() => undefined);
+    const realtimeOrigin =
+      process.env.NEXT_PUBLIC_REALTIME_ORIGIN ??
+      (process.env.NODE_ENV === "production"
+        ? "https://drive.xenode.in"
+        : "http://localhost:3000");
+    // Each connection attempt, including reconnects, spends a fresh one-use
+    // ticket; tickets authenticate the socket, so no cookies are sent.
+    const socket = io(realtimeOrigin, {
+      path: "/api/socket.io",
+      transports: ["websocket"],
+      withCredentials: false,
+      auth: realtimeTicketAuth(fetchRealtimeTicket),
+    });
+    socket.on("sync:event", (event: { type?: string; sessionId?: string }) => {
+      if (event.type === "SESSION_REVOKED" && event.sessionId === sessionId) {
+        revoke();
+      }
+    });
+    // The server disconnects at session expiry and periodically to
+    // re-authorize; Socket.IO does not reconnect those by itself.
+    socket.on("disconnect", (reason) => {
+      if (reason !== "io server disconnect") return;
+      void probe().then(() => {
+        if (!disposed && !revoked) socket.connect();
+      });
+    });
     return () => {
       disposed = true;
-      socket?.disconnect();
+      socket.disconnect();
       channel?.close();
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
