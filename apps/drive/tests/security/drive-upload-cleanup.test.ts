@@ -6,7 +6,7 @@ const { deleteObjects, send } = vi.hoisted(() => ({ deleteObjects: vi.fn(), send
 vi.mock("@/lib/b2/objects", () => ({ deleteObjects }));
 vi.mock("@/lib/b2/client", () => ({ getS3Client: () => ({ send }) }));
 vi.mock("@/lib/realtime/publish", () => ({
-  publishSyncEvent: vi.fn(), parentPrefixForKey: vi.fn(), toSyncObjectSnapshot: vi.fn(),
+  publishSyncEvent: vi.fn(), toSyncObjectSnapshot: vi.fn(),
 }));
 
 import { GET } from "@/app/api/cron/cleanup-orphans/route";

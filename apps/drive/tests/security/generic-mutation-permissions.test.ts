@@ -8,7 +8,7 @@ vi.mock("@/lib/b2/client", () => ({ getS3Client: () => ({ send }) }));
 vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: sign }));
 vi.mock("@/lib/subscriptions/service", () => ({ enforceStorageAccess: vi.fn() }));
 vi.mock("@/lib/logRequest", () => ({ logRequest: vi.fn() }));
-vi.mock("@/lib/realtime/publish", () => ({ publishSyncEvent: publish, parentPrefixForKey: vi.fn(), toSyncObjectSnapshot: vi.fn() }));
+vi.mock("@/lib/realtime/publish", () => ({ publishSyncEvent: publish, toSyncObjectSnapshot: vi.fn() }));
 vi.mock("@/lib/albums/cleanup", () => ({ removeObjectsFromAlbums: vi.fn() }));
 
 import { getServerSession } from "@/lib/auth/session";

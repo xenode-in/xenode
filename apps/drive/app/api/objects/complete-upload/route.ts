@@ -8,8 +8,8 @@ import { commitDriveUpload, DriveUploadCommitError, type VerifiedDriveBlob } fro
 import { getS3Client } from "@/lib/b2/client";
 import { activeStorageBucketName } from "@/lib/storage/region-context";
 import { HeadObjectCommand } from "@aws-sdk/client-s3";
-import { parentPrefixForKey, publishSyncEvent, toSyncObjectSnapshot } from "@/lib/realtime/publish";
-import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
+import { publishSyncEvent, toSyncObjectSnapshot } from "@/lib/realtime/publish";
+import { folderListingId, spaceStorageRoot } from "@/lib/storage/folders";
 
 export const dynamic = "force-dynamic";
 const MAX_CHUNKS = 4096;
@@ -54,10 +54,10 @@ async function emitObjectChange(userId: string, object: InstanceType<typeof Stor
     userId, spaceId: object.spaceId, type: "FILE_CREATED",
     payload: {
       bucketId: object.bucketId.toString(), objectId: object._id.toString(),
-      key: object.key, parentPrefix: parentPrefixForKey(object.key),
+      folderIds: [folderListingId(object.folderId)],
       object: toSyncObjectSnapshot(object),
     },
-    invalidatePrefixes: [parentPrefixForKey(object.key)],
+    invalidateFolders: [object.folderId ?? null],
     invalidateStorage: true, invalidateRecent: true,
   });
 }
@@ -72,19 +72,18 @@ export async function POST(request: NextRequest) {
       chunks, encryptedMetadata, optimizedKey, optimizedSize, optimizedContentType,
       optimizedIV, optimizedEncryptedDEK, optimizedSpaceKeyWrapIv, aspectRatio,
       wrappedBy, spaceKeyVersion, spaceKeyWrapIv, isSidecar, parentObjectId,
-      syncContentFp, syncMetaFp, uploadSource,
+      syncContentFp, syncMetaFp, uploadSource, folderId,
     } = await request.json();
     if (typeof objectKey !== "string" || typeof bucketId !== "string" ||
       !/^[0-9a-f]{24}$/iu.test(bucketId) || typeof sessionId !== "string" ||
       !/^[0-9a-f]{24}$/iu.test(sessionId) || !Number.isSafeInteger(size) || size < 1 ||
       (contentType !== undefined && typeof contentType !== "string") ||
       (originalContentType !== undefined && typeof originalContentType !== "string") ||
-      (isChunked !== undefined && typeof isChunked !== "boolean")) {
+      (isChunked !== undefined && typeof isChunked !== "boolean") ||
+      (folderId !== undefined && folderId !== null && typeof folderId !== "string")) {
       return NextResponse.json({ error: "Invalid required upload fields" }, { status: 400 });
     }
-    const allowedPrefix = ctx.spaceType === "organization" ? orgObjectKeyPrefix(ctx.organizationId!)
-      : ctx.spaceType === "team" ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
-        : `users/${ctx.userId}/`;
+    const allowedPrefix = spaceStorageRoot(ctx);
     if (!belongsToPrefix(objectKey, allowedPrefix)) {
       return NextResponse.json({ error: "Invalid object key" }, { status: 403 });
     }
@@ -201,7 +200,7 @@ export async function POST(request: NextRequest) {
     await StorageObject.init();
     const result = await commitDriveUpload({
       sessionId, accountId: ctx.accountId, spaceId: ctx.spaceId, bucketId: bucket._id,
-      storageObject: { ...storageObject.toObject() }, verifiedBlobs,
+      storageObject: { ...storageObject.toObject() }, verifiedBlobs, folderId: folderId ?? null,
     });
     const committed = StorageObject.hydrate(result.object);
     if (result.created) {

@@ -18,19 +18,15 @@ export const dynamic = "force-dynamic";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
-import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
+import { folderListingId, parseFolderParam } from "@/lib/storage/folders";
 
 const LIST_PROJECTION =
-  "key size contentType encryptedContentType thumbnail tags position starred lastAccessedAt uploadSource createdAt " +
+  "key spaceId folderId ancestorIds size contentType encryptedContentType thumbnail tags position starred lastAccessedAt uploadSource createdAt " +
   "isEncrypted encryptedName encryptedDisplayName mediaCategory wrappedBy spaceKeyVersion spaceKeyWrapIv " +
   "optimizedKey optimizedEncryptedDEK optimizedIV optimizedSpaceKeyWrapIv optimizedSize aspectRatio syncContentFp";
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
-
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 /** GET /api/objects?bucketId=xxx&limit=50&before=<ISO>&contentType=image */
 export async function GET(request: NextRequest) {
@@ -98,7 +94,10 @@ export async function GET(request: NextRequest) {
     const mediaCategoryFilter = searchParams.get("mediaCategory");
     const excludeMobileBackup =
       searchParams.get("excludeMobileBackup") === "true";
-    const prefix = searchParams.get("prefix");
+    // `folder` lists one folder (`root` or a folder id); absent lists the Space.
+    const folderParam = searchParams.get("folder");
+    const folderId =
+      folderParam === null ? undefined : parseFolderParam(folderParam);
 
     await dbConnect();
 
@@ -118,25 +117,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    const allowedSystemPrefix =
-      ctx.spaceType === "organization"
-        ? orgObjectKeyPrefix(ctx.organizationId!)
-        : ctx.spaceType === "team"
-          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
-        : `users/${userId}/`;
-
-    if (
-      prefix !== null &&
-      bucket.systemKey === "drive" &&
-      !prefix.startsWith(allowedSystemPrefix)
-    ) {
-      statusCode = 403;
-      errorMessage = "Access denied to this folder";
-      return NextResponse.json({ error: errorMessage }, { status: statusCode });
-    }
-
     const canUseFolderCache =
-      prefix !== null &&
+      folderId !== undefined &&
       !before &&
       !fetchAll &&
       !deleted &&
@@ -146,18 +128,15 @@ export async function GET(request: NextRequest) {
       !mediaCategoryFilter;
     let cacheKey: string | null = null;
 
-    if (canUseFolderCache && prefix !== null) {
-      const cachePrefix = prefix;
+    if (canUseFolderCache) {
+      const listingId = folderListingId(folderId);
       const version =
         (await withRedis((redis) =>
-          redis.get(
-            folderVersionKey(ctx.userId, bucketId, cachePrefix),
-          ),
+          redis.get(folderVersionKey(ctx.spaceId, listingId)),
         )) ?? "0";
       cacheKey = folderResponseKey({
-        userId: ctx.userId,
-        bucketId,
-        prefix: cachePrefix,
+        spaceId: ctx.spaceId,
+        folderId: listingId,
         version,
         limit,
         sortBy: sortByParam,
@@ -193,14 +172,8 @@ export async function GET(request: NextRequest) {
       ];
     }
 
-    if (bucket.systemKey === "drive") {
-      query.key = { $gte: allowedSystemPrefix, $lt: allowedSystemPrefix + "\uffff" };
-    }
-
-    if (prefix !== null) {
-      query.key = {
-        $regex: `^${escapeRegex(prefix)}[^/]+/?$`,
-      };
+    if (folderId !== undefined) {
+      query.folderId = folderId;
     }
 
     if (mediaCategoryFilter) {

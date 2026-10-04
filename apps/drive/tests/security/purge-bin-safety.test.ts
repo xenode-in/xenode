@@ -155,7 +155,8 @@ describe("durable Bin purge and restore", () => {
   });
   it("deduplicates overlapping folder/child selection and uses one owner", async () => {
     const input = await fixture();
-    const folder = await StorageObject.create({ bucketId: input.bucketId, spaceId, createdByAccountId: owner, key: `users/${owner}/`, size: 0, b2FileId: "folder", deletedAt: input.object.deletedAt });
+    const folder = await StorageObject.create({ bucketId: input.bucketId, spaceId, createdByAccountId: owner, key: `users/${owner}/folder/`, contentType: "application/x-directory", size: 0, b2FileId: "", deletedAt: input.object.deletedAt });
+    await StorageObject.updateOne({ _id: input.objectId }, { $set: { folderId: folder._id, ancestorIds: [folder._id] } });
     await Usage.updateOne({ userId: owner }, { $inc: { totalObjects: 1 } }); await Bucket.updateOne({ _id: input.bucketId }, { $inc: { objectCount: 1 } });
     const selected = await queueDriveBinPurge({ ...input, ids: [folder._id, input.objectId] });
     expect(selected).toHaveLength(2);
@@ -236,12 +237,34 @@ describe("durable Bin purge and restore", () => {
     const input = await fixture();
     const oldDate = input.object.deletedAt;
     await StorageObject.updateOne({ _id: input.objectId }, { $set: { deletedAt: new Date() } });
-    const folder = await StorageObject.create({ bucketId: input.bucketId, spaceId, createdByAccountId: owner, key: "users/bin-owner/", size:0, b2FileId:"folder", deletedAt:oldDate });
+    const folder = await StorageObject.create({ bucketId: input.bucketId, spaceId, createdByAccountId: owner, key: "users/bin-owner/folder/", contentType: "application/x-directory", size:0, b2FileId:"", deletedAt:oldDate });
+    await StorageObject.updateOne({ _id: input.objectId }, { $set: { folderId: folder._id, ancestorIds: [folder._id] } });
     await Usage.updateOne({ userId:owner },{ $inc:{ totalObjects:1 } }); await Bucket.updateOne({ _id:input.bucketId },{ $inc:{ objectCount:1 } });
     const response = await cron(new NextRequest("http://localhost/cron",{ headers:{ authorization:"Bearer bin-test" } }));
     expect(response.status).toBe(200);
     expect(await StorageObject.findById(folder._id)).toBeNull();
     expect(await lookup(input)).not.toBeNull();
     expect(deleted).not.toHaveBeenCalled();
+  });
+  it("expands an explicit folder purge to the children binned with it", async () => {
+    const input = await fixture();
+    const folder = await StorageObject.create({ bucketId: input.bucketId, spaceId, createdByAccountId: owner, key: "users/bin-owner/folder/", contentType: "application/x-directory", size: 0, b2FileId: "", deletedAt: input.object.deletedAt });
+    await StorageObject.updateOne({ _id: input.objectId }, { $set: { folderId: folder._id, ancestorIds: [folder._id] } });
+    expect((await queueDriveBinPurge({ ...input, ids: [folder._id] })).map(String).sort()).toEqual([String(folder._id), String(input.objectId)].sort());
+  });
+  it("drains an expired folder batch larger than one manifest across cron runs", async () => {
+    const input = await fixture();
+    const deletedAt = input.object.deletedAt;
+    const folder = await StorageObject.create({ bucketId: input.bucketId, spaceId, createdByAccountId: owner, key: "users/bin-owner/big/", contentType: "application/x-directory", size: 0, b2FileId: "", deletedAt });
+    await StorageObject.insertMany(Array.from({ length: 120 }, (_, index) => ({
+      bucketId: input.bucketId, spaceId, createdByAccountId: owner, key: `users/bin-owner/child-${index}`, size: 0, b2FileId: `child-${index}`,
+      folderId: folder._id, ancestorIds: [folder._id], deletedAt,
+    })));
+    await Usage.updateOne({ userId: owner }, { $inc: { totalObjects: 121 } }); await Bucket.updateOne({ _id: input.bucketId }, { $inc: { objectCount: 121 } });
+    const run = () => cron(new NextRequest("http://localhost/cron", { headers: { authorization: "Bearer bin-test" } }));
+    expect((await run()).status).toBe(200);
+    expect((await run()).status).toBe(200);
+    expect(await StorageObject.countDocuments({ spaceId })).toBe(0);
+    expect((await Usage.findOne({ userId: owner }))?.toObject()).toMatchObject({ totalObjects: 0, totalStorageBytes: 0 });
   });
 });

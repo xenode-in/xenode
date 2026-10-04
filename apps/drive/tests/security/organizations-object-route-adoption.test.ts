@@ -8,6 +8,7 @@ import { PATCH as reorderPATCH } from "@/app/api/objects/reorder/route";
 import { getServerSession } from "@/lib/auth/session";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import OrgUsage from "@/models/OrgUsage";
 import {
   ensurePersonalSpace,
   ensureOrganizationSpace,
@@ -151,20 +152,22 @@ describe("organization object route adoption", () => {
     expect(body.items).toEqual([]);
   });
 
-  it("does not create folders under a personal prefix in org scope", async () => {
-    // A personal-prefixed key ("users/...") is outside the org key namespace;
-    // the route must reject it rather than plant an org folder in personal space.
+  it("derives org folder identity from the Space, ignoring client prefixes and plaintext names", async () => {
+    // Folder keys are opaque and server-derived; a client-supplied personal
+    // prefix ("users/...") cannot plant an org folder in personal key space.
     process.env.ORGS_ENABLED = "true";
     mockSession("user_1");
     const bucket = await createBucket("user_1");
     await addOrgMember("user_1");
     await ensureOrganizationSpace({ accountId: "user_1", organizationId: "org_1" });
+    await OrgUsage.create({ orgId: "org_1", accountId: "org:org_1", storageLimitBytes: 1_000_000 });
 
     const response = await folderPOST(
       new NextRequest("http://localhost/api/objects/folder", {
         method: "POST",
         body: JSON.stringify({
           bucketId: String(bucket._id),
+          encryptedDisplayName: "encrypted-folder-name-envelope",
           name: "Design",
           prefix: "users/user_1/",
         }),
@@ -175,10 +178,11 @@ describe("organization object route adoption", () => {
       }),
     );
 
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({
-      error: "Access denied to this folder",
-    });
+    expect(response.status).toBe(201);
+    const { folder } = await response.json();
+    expect(folder.spaceId).toBe("space_org_org_1");
+    expect(folder.key).toBe(`workspaces/org_1/objects/${folder._id}/`);
+    expect(folder.name).toBeUndefined();
   });
 
   it("does not reorder personal-space objects under org scope", async () => {
@@ -296,8 +300,9 @@ describe("organization object route adoption", () => {
     expect(response.status).toBe(403);
     await expect(response.json()).resolves.toEqual({
       error: "Forbidden",
-      code: "workspace_delete_role_required",
+      code: "space_role_required",
     });
+    expect((await StorageObject.findById(object._id).lean())?.deletedAt).toBeUndefined();
   });
 
   it("allows org admins to delete team drive objects", async () => {

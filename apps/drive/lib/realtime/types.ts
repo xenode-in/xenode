@@ -26,6 +26,8 @@ export interface SyncObjectSnapshot {
   _id: string;
   bucketId: string;
   key: string;
+  folderId?: string | null;
+  ancestorIds?: string[];
   size: number;
   contentType: string;
   encryptedContentType?: string | null;
@@ -53,11 +55,9 @@ export interface SyncEventPayload {
   bucketId?: string;
   objectId?: string;
   objectIds?: string[];
-  key?: string;
-  keys?: string[];
-  parentPrefix?: string;
-  affectedPrefixes?: string[];
-  destinationPrefix?: string;
+  /** Folder listings whose contents changed ("root" for the Space root). */
+  folderIds?: string[];
+  destinationFolderId?: string | null;
   object?: SyncObjectSnapshot;
   objects?: SyncObjectSnapshot[];
   storageBytes?: number;

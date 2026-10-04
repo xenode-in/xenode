@@ -1,65 +1,30 @@
 /**
  * POST /api/objects/bulk-delete
  *
- * Soft-delete many objects in a single request → they move to the Bin.
- * Replaces the client's old "loop DELETE /api/objects/[id] N times" pattern,
- * which made deleting a 3000+ photo selection take thousands of round trips.
+ * Move a selection to the Bin in one request. Body: `{ bucketId, ids }`
+ * (at most 10 000 ids). Reply: `{ success, deletedCount, removedCount }` where
+ * `removedCount` includes folder subtrees and sidecars binned with the
+ * selection.
  *
- * Body:  { bucketId: string, ids: string[] }
- * Reply: { success: true, deletedCount, removedCount }
- *          deletedCount = primary objects binned (what the user selected)
- *          removedCount = deletedCount + cascaded sidecars
- *
- * Semantics match the single DELETE /api/objects/[id]:
- *   - Soft-delete (sets `deletedAt`). The encrypted B2 blobs are deliberately
- *     RETAINED so the item can be restored within the 30-day window; they're
- *     purged later via /api/objects/purge (empty bin / delete forever) or the
- *     /api/cron/purge-bin job.
- *   - Storage metering is NOT decremented here — the bytes still occupy B2, so
- *     binned items keep counting against quota until they're actually purged.
- *   - Sidecars (subtitles / extra audio tracks) cascade.
- *   - ShareLink / DirectShare rows are revoked (a binned item shouldn't stay
- *     publicly reachable).
- *
- * Only the caller's own, not-already-deleted objects in the named bucket are
- * touched — ids that don't resolve are silently ignored (already gone/binned).
+ * Soft delete only: encrypted blobs and metering stay until the Bin purge
+ * contract removes them; shares and album references are retired.
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { Types } from "mongoose";
+import { DriveUploadCommitError } from "@xenode/database";
 import {
   bucketOwnershipClause,
   isAuthzError,
-  objectOwnershipClause,
   requireAccessContext,
   toJsonResponse,
 } from "@/lib/authz";
 import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
-import StorageObject from "@/models/StorageObject";
-import ShareLink from "@/models/ShareLink";
-import DirectShare from "@/models/DirectShare";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
-import { removeObjectsFromAlbums } from "@/lib/albums/cleanup";
-import {
-  parentPrefixForKey,
-  publishSyncEvent,
-} from "@/lib/realtime/publish";
+import { binObjectsInSpace } from "@/lib/storage/bin-objects";
 
 export const dynamic = "force-dynamic";
-
-// Upper bound on ids per request. Comfortably covers "select all" on a large
-// library; the client chunks anything bigger. Keeps the $in queries sane.
-const MAX_IDS = 10000;
-
-function canDeleteInScope(ctx: Awaited<ReturnType<typeof requireAccessContext>>): boolean {
-  if (ctx.spaceType === "personal") return true;
-  return (
-    ctx.role === "owner" ||
-    ctx.role === "admin"
-  );
-}
 
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
@@ -68,18 +33,9 @@ export async function POST(request: NextRequest) {
   let errorMessage: string | undefined;
 
   try {
-    const ctx = await requireAccessContext(request);
+    const ctx = await requireAccessContext(request, "delete");
     userId = ctx.userId;
     await enforceStorageAccess(userId);
-
-    if (!canDeleteInScope(ctx)) {
-      statusCode = 403;
-      errorMessage = "Forbidden";
-      return NextResponse.json(
-        { error: errorMessage, code: "workspace_delete_role_required" },
-        { status: statusCode },
-      );
-    }
 
     let body: { bucketId?: unknown; ids?: unknown };
     try {
@@ -89,121 +45,39 @@ export async function POST(request: NextRequest) {
       errorMessage = "Invalid JSON";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
-
-    const bucketId = body.bucketId;
-    const rawIds = body.ids;
-
-    if (typeof bucketId !== "string" || !bucketId) {
+    if (typeof body.bucketId !== "string" || !body.bucketId) {
       statusCode = 400;
       errorMessage = "bucketId is required";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
-    if (!Array.isArray(rawIds)) {
+    if (!Array.isArray(body.ids)) {
       statusCode = 400;
       errorMessage = "ids must be an array";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
-
-    const ids = Array.from(
-      new Set(rawIds.filter((x): x is string => typeof x === "string" && !!x)),
-    );
-
-    if (ids.length === 0) {
-      return NextResponse.json({
-        success: true,
-        deletedCount: 0,
-        removedCount: 0,
-      });
-    }
-    if (ids.length > MAX_IDS) {
-      statusCode = 400;
-      errorMessage = `Too many ids (max ${MAX_IDS} per request)`;
-      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    if (body.ids.length === 0) {
+      return NextResponse.json({ success: true, deletedCount: 0, removedCount: 0 });
     }
 
     await dbConnect();
-
     const bucket = await Bucket.findOne({
-      _id: bucketId,
+      _id: body.bucketId,
       ...bucketOwnershipClause(ctx),
     })
       .select("_id")
-      .lean<{ _id: unknown }>();
-
+      .lean();
     if (!bucket) {
       statusCode = 404;
       errorMessage = "Bucket not found";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    // Ownership-scoped: only the caller's own, not-already-binned objects in
-    // this bucket. Unknown / foreign / already-gone ids drop out here.
-    const objects = await StorageObject.find({
-      _id: { $in: ids },
-      bucketId,
-      ...objectOwnershipClause(ctx),
-      deletedAt: { $exists: false },
-    })
-      .select("_id key")
-      .lean<{ _id: Types.ObjectId; key: string }[]>();
-
-    if (objects.length === 0) {
-      return NextResponse.json({
-        success: true,
-        deletedCount: 0,
-        removedCount: 0,
-      });
-    }
-
-    const objectIds = objects.map((o) => o._id);
-
-    // Cascade to sidecars (subtitles / extra audio tracks) of every object.
-    const sidecars = await StorageObject.find({
-      parentObjectId: { $in: objectIds },
-      ...objectOwnershipClause(ctx),
-      deletedAt: { $exists: false },
-    })
-      .select("_id")
-      .lean<{ _id: Types.ObjectId }[]>();
-
-    const allDocIds = [...objectIds, ...sidecars.map((s) => s._id)];
-    const now = new Date();
-
-    // Soft-delete every record in one write. Blobs + metering untouched.
-    await StorageObject.updateMany(
-      { _id: { $in: allDocIds } },
-      { $set: { deletedAt: now } },
-    );
-
-    // Revoke shares for everything binned.
-    await ShareLink.deleteMany({ objectId: { $in: allDocIds } });
-    await DirectShare.deleteMany({ objectId: { $in: allDocIds } });
-
-    // Drop them from any albums + album shares.
-    await removeObjectsFromAlbums(ctx.spaceId, userId, allDocIds);
-
-    const keys = objects.map((object) => object.key);
-    const affectedPrefixes = Array.from(
-      new Set(keys.map(parentPrefixForKey)),
-    );
-    await publishSyncEvent({
-      userId,
-      spaceId: ctx.spaceId,
-      type: "FILE_DELETED",
-      payload: {
-        bucketId,
-        objectIds: objectIds.map(String),
-        keys,
-        affectedPrefixes,
-      },
-      invalidatePrefixes: affectedPrefixes,
-      invalidateRecent: true,
-    });
-
+    const selected = new Set(body.ids.map(String));
+    const result = await binObjectsInSpace(ctx, [...selected]);
     return NextResponse.json({
       success: true,
-      deletedCount: objects.length,
-      removedCount: allDocIds.length,
+      deletedCount: result.objectIds.filter((id) => selected.has(id)).length,
+      removedCount: result.binnedCount,
     });
   } catch (error: unknown) {
     if (isAuthzError(error)) {
@@ -211,20 +85,19 @@ export async function POST(request: NextRequest) {
       errorMessage = error.message;
       return toJsonResponse(error);
     }
-    if (error instanceof Error && error.message === "Unauthorized") {
-      statusCode = 401;
-      errorMessage = "Unauthorized";
-      return NextResponse.json({ error: errorMessage }, { status: statusCode });
+    if (error instanceof DriveUploadCommitError) {
+      statusCode = error.status;
+      errorMessage = error.message;
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
     }
     if (error instanceof Error && error.name === "SubscriptionRequired") {
       statusCode = 402;
       errorMessage = "Active subscription required";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
-
     statusCode = 500;
-    errorMessage =
-      error instanceof Error ? error.message : "Internal server error";
+    errorMessage = "Internal server error";
+    console.error("[bulk-delete] Failed", error);
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
     logRequest({

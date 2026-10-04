@@ -3,9 +3,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { generateFileToken, verifyFileToken } from "@/lib/b2/cdn";
 import {
   createSyncEvent,
-  parentPrefixForKey,
   toSyncObjectSnapshot,
 } from "@/lib/realtime/publish";
+import { folderListingId } from "@/lib/storage/folders";
 import { createRealtimeToken } from "@/lib/realtime/token";
 import {
   parseRealtimeEvent,
@@ -31,13 +31,10 @@ describe("realtime foundation", () => {
     restore("BETTER_AUTH_SECRET");
   });
 
-  it("derives the containing folder for files and folders", () => {
-    expect(parentPrefixForKey("users/u1/root/file.bin")).toBe(
-      "users/u1/root/",
-    );
-    expect(parentPrefixForKey("users/u1/root/nested/")).toBe(
-      "users/u1/root/",
-    );
+  it("identifies folder listings by folder id, with the Space root as root", () => {
+    expect(folderListingId(null)).toBe("root");
+    expect(folderListingId(undefined)).toBe("root");
+    expect(folderListingId("65f0c0ffee0000000000abcd")).toBe("65f0c0ffee0000000000abcd");
   });
 
   it("normalizes database identifiers and dates for socket payloads", () => {

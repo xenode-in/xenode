@@ -14,12 +14,6 @@ export function newVersionId(): string {
   return randomBytes(12).toString("hex");
 }
 
-/** Fresh opaque B2 object key for new content (never derived from a filename). */
-export function newObjectKey(ownerId: string, prefix = `users/${ownerId}/`): string {
-  const normalizedPrefix = prefix.endsWith("/") ? prefix : `${prefix}/`;
-  return `${normalizedPrefix}${randomBytes(16).toString("hex")}`;
-}
-
 /**
  * Build a version entry from an object's CURRENT content fields, attributing it
  * to `actorUserId`. Call this BEFORE overwriting the object's current pointers.

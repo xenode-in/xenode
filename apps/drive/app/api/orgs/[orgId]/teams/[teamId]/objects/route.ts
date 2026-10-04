@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { parseFolderParam } from "@/lib/storage/folders";
 import { isAuthzError, requireAccessContext, toJsonResponse } from "@/lib/authz";
 import { getSignedFileUrl } from "@/lib/b2/cdn";
 import dbConnect from "@/lib/mongodb";
@@ -23,9 +24,6 @@ const LIST_PROJECTION =
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
 
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
 
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
@@ -43,7 +41,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       MAX_PAGE_SIZE,
       Math.max(1, parseInt(searchParams.get("limit") || String(DEFAULT_PAGE_SIZE), 10)),
     );
-    const prefix = searchParams.get("prefix");
+    // `folder` lists one folder (`root` or a folder id); absent lists the Space.
+    const folderParam = searchParams.get("folder");
+    const folderId =
+      folderParam === null ? undefined : parseFolderParam(folderParam);
     const deleted = searchParams.get("deleted") === "true";
     const fetchAll = searchParams.get("fetchAll") === "true";
     const mediaCategoryFilter = searchParams.get("mediaCategory");
@@ -59,8 +60,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       isSidecar: { $ne: true },
     };
 
-    if (prefix !== null) {
-      query.key = { $regex: `^${escapeRegex(prefix)}[^/]+/?$` };
+    if (folderId !== undefined) {
+      query.folderId = folderId;
     }
 
     if (mediaCategoryFilter) {

@@ -3,11 +3,11 @@ import { type ClientSession, Types } from "mongoose";
 import { isStorageRegion, resolveRegionBucketConfig } from "@xenode/config/storage";
 import { connectDatabase, getDatabase, withTransaction } from "../connection";
 import { DriveUploadCommitError, loadSpaceUsage } from "./drive-uploads";
+import { DRIVE_FOLDER_CONTENT_TYPE, rehomeRestoredDriveObjects } from "./drive-folders";
 import { findReferencedStorageObjectKeys, storedObjectBlobKeys, storageObjectTotalBytes } from "./storage-objects";
 
 export const BIN_BATCH_LIMIT = 100;
 export const BIN_PURGE_LEASE_MS = 5 * 60 * 1000;
-const escapeRegex = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 interface BinSelection { spaceId: string; bucketId: Types.ObjectId; ids?: Types.ObjectId[]; all?: boolean; cutoff?: Date; includeRelated?: boolean }
 
 async function selectBinned(input: BinSelection, session?: ClientSession) {
@@ -17,8 +17,10 @@ async function selectBinned(input: BinSelection, session?: ClientSession) {
     .sort({ deletedAt: 1, _id: 1 }).limit(BIN_BATCH_LIMIT + 1).toArray();
   if (input.all) return primaries.slice(0, BIN_BATCH_LIMIT);
   if (input.includeRelated === false) return primaries;
-  const prefixes = primaries.filter((object) => object.key?.endsWith("/")).map((object) => object.key as string);
-  const children = prefixes.length ? await objects.find({ ...base, $or: prefixes.map((key) => ({ key: { $regex: `^${escapeRegex(key)}` } })) }, { session })
+  // A folder carries the descendants binned with it (same deletedAt); items
+  // binned separately earlier keep their own lifecycle.
+  const folders = primaries.filter((object) => object.contentType === DRIVE_FOLDER_CONTENT_TYPE);
+  const children = folders.length ? await objects.find({ ...base, $or: folders.map((folder) => ({ ancestorIds: folder._id, deletedAt: folder.deletedAt })) }, { session })
     .limit(BIN_BATCH_LIMIT + 1).toArray() : [];
   const selected = [...new Map([...primaries, ...children].map((object) => [String(object._id), object])).values()];
   const sidecars = await objects.find({ ...base, parentObjectId: { $in: selected.map((object) => object._id) } }, { session })
@@ -28,16 +30,36 @@ async function selectBinned(input: BinSelection, session?: ClientSession) {
   return result;
 }
 
+/**
+ * Restore is metadata-only, so a folder brings back its whole batch (selected
+ * by query, uncapped like binning) and files their sidecars. Live objects only
+ * ever have live parents, so only the selected items can need re-homing.
+ */
 export async function restoreDriveBin(input: BinSelection) {
   return withTransaction(async (session) => {
-    const selected = await selectBinned(input, session);
-    if (selected.some((object) => object.purgeState)) throw new DriveUploadCommitError(409, "purge_pending", "Permanent deletion has already started");
-    if (!selected.length) return { restoredCount: 0 };
-    await getDatabase().collection("storageobjects").updateMany({
-      productId: "drive", spaceId: input.spaceId, bucketId: input.bucketId,
-      _id: { $in: selected.map((object) => object._id) }, purgeState: { $exists: false }, deletedAt: { $type: "date" },
-    }, { $unset: { deletedAt: "" }, $inc: { __v: 1 }, $set: { updatedAt: new Date() } }, { session });
-    return { restoredCount: selected.length };
+    const objects = getDatabase().collection("storageobjects");
+    const primaries = await selectBinned({ ...input, includeRelated: false }, session);
+    if (!primaries.length) return { restoredCount: 0 };
+    const ids = primaries.map((object) => object._id);
+    const batch = {
+      productId: "drive", spaceId: input.spaceId, bucketId: input.bucketId, deletedAt: { $type: "date" as const },
+      $or: [
+        { _id: { $in: ids } },
+        { parentObjectId: { $in: ids } },
+        ...primaries.filter((object) => object.contentType === DRIVE_FOLDER_CONTENT_TYPE)
+          .map((folder) => ({ ancestorIds: folder._id, deletedAt: folder.deletedAt })),
+      ],
+    };
+    if (await objects.countDocuments({ ...batch, purgeState: { $exists: true } }, { session, limit: 1 })) {
+      throw new DriveUploadCommitError(409, "purge_pending", "Permanent deletion has already started");
+    }
+    const restored = await objects.updateMany(
+      { ...batch, purgeState: { $exists: false } },
+      { $unset: { deletedAt: "" }, $inc: { __v: 1 }, $set: { updatedAt: new Date() } },
+      { session },
+    );
+    await rehomeRestoredDriveObjects(input.spaceId, ids, session);
+    return { restoredCount: restored.modifiedCount };
   });
 }
 

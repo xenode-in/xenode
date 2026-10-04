@@ -1969,8 +1969,6 @@ export function FilePreviewDialog({
     }
     if (scope?.type === "team") params.set("teamId", scope.teamId);
     if (file.bucketId) params.set("bucketId", file.bucketId);
-    const slash = file.key.lastIndexOf("/");
-    if (slash >= 0) params.set("prefix", file.key.slice(0, slash + 1));
     onClose();
     window.location.assign(editorPath + "?" + params.toString());
   };

@@ -45,7 +45,8 @@ export interface UploadTask {
   id: string;
   file: File;
   bucketId: string;
-  prefix: string;
+  /** Destination folder record id (null = Space root); never part of the key. */
+  folderId: string | null;
   status: "pending" | "uploading" | "paused" | "completed" | "failed";
   progress: number;
   error?: string;
@@ -58,7 +59,7 @@ export interface UploadTask {
 interface UploadContextType {
   tasks: UploadTask[];
   isPaused: boolean;
-  addTasks: (files: File[], bucketId: string, prefix: string) => void;
+  addTasks: (files: File[], bucketId: string, folderId: string | null) => void;
   removeTask: (id: string) => void;
   cancelTask: (id: string) => void;
   clearCompleted: () => void;
@@ -420,9 +421,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             fileSize: blob.size,
             fileType: "application/octet-stream",
             bucketId,
-            prefix: fileStorageKey.includes("/")
-              ? fileStorageKey.substring(0, fileStorageKey.lastIndexOf("/") + 1)
-              : `users/${sessionRef.current?.user?.id}/`,
             // The parent reservation determines this thumbnail's B2 key and
             // keeps it protected through completion or orphan cleanup.
             parentSessionId,
@@ -644,7 +642,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                         fileSize: sidecarEnc.ciphertext.size,
                         fileType: "application/octet-stream",
                         bucketId: task.bucketId,
-                        prefix: task.prefix,
                         chunkCount: sidecarEnc.chunkCount,
                         chunkSize: sidecarEnc.chunkSize,
                       }),
@@ -737,7 +734,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                         fileSize: sidecarEnc.ciphertext.size,
                         fileType: "application/octet-stream",
                         bucketId: task.bucketId,
-                        prefix: task.prefix,
                         chunkCount: sidecarEnc.chunkCount,
                         chunkSize: sidecarEnc.chunkSize,
                       }),
@@ -862,7 +858,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 fileSize: uploadBody.size,
                 fileType: uploadContentType,
                 bucketId: task.bucketId,
-                prefix: task.prefix,
                 chunkCount,
                 chunkSize,
                 sessionId,
@@ -924,7 +919,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             type: uploadFile.type,
             mediaCategory: getMediaCategory(uploadFile.type),
             bucketId: returnedBucketId,
-            prefix: task.prefix,
+            folderId: task.folderId,
             aspectRatio,
             isChunked: true,
             isEncrypted: !!encryptedDEK,
@@ -1010,6 +1005,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             objectKey: fileId,
             bucketId: returnedBucketId,
             sessionId,
+            folderId: task.folderId,
             size: totalSize,
             contentType: uploadFile.type || "application/octet-stream",
             originalContentType: uploadFile.type,
@@ -1144,7 +1140,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               ? "application/octet-stream"
               : task.file.type,
             bucketId: task.bucketId,
-            prefix: task.prefix,
             sessionId: mainSessionId,
           }),
         });
@@ -1286,7 +1281,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           type: task.file.type,
           mediaCategory: getMediaCategory(task.file.type),
           bucketId: returnedBucketId,
-          prefix: task.prefix,
+          folderId: task.folderId,
           aspectRatio,
           isChunked: false,
           isEncrypted: !!encryptedDEK,
@@ -1335,6 +1330,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           objectKey,
           bucketId: returnedBucketId,
           sessionId: mainSessionId,
+          folderId: task.folderId,
           size: uploadBody instanceof Blob ? uploadBody.size : task.file.size,
           contentType: shouldEncryptNow()
             ? "application/octet-stream"
@@ -1506,7 +1502,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             fileSize: total,
             fileType: rec.uploadContentType,
             bucketId: rec.bucketId,
-            prefix: rec.prefix,
             chunkCount,
             chunkSize: rec.chunkSize,
             sessionId: rec.sessionId,
@@ -1586,6 +1581,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               objectKey: rec.fileId,
               bucketId: rec.bucketId,
               sessionId: rec.sessionId,
+              folderId: rec.folderId ?? null,
               size: total,
               contentType: rec.type || "application/octet-stream",
               originalContentType: rec.type,
@@ -1625,7 +1621,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                       ? "application/octet-stream"
                       : rec.optimizedContentType,
                     bucketId: rec.bucketId,
-                    prefix: rec.prefix,
                     parentSessionId: rec.sessionId,
                     variant: "optimized",
                   }),
@@ -1659,7 +1654,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                   fileSize: total,
                   fileType: rec.uploadContentType,
                   bucketId: rec.bucketId,
-                  prefix: rec.prefix,
                   sessionId: rec.sessionId,
                 }),
               })
@@ -1688,6 +1682,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               objectKey: rec.fileId,
               bucketId: rec.bucketId,
               sessionId: rec.sessionId,
+              folderId: rec.folderId ?? null,
               size: total,
               contentType: rec.isEncrypted
                 ? "application/octet-stream"
@@ -1747,12 +1742,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   );
 
   const addTasks = useCallback(
-    (files: File[], bucketId: string, prefix: string) => {
+    (files: File[], bucketId: string, folderId: string | null) => {
       const newTasks: UploadTask[] = files.map((file) => ({
         id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
         file,
         bucketId,
-        prefix,
+        folderId,
         status: "pending",
         progress: 0,
       }));
@@ -1848,7 +1843,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             id: r.id,
             file: new File([], r.fileName, { type: r.type }),
             bucketId: r.bucketId,
-            prefix: r.prefix,
+            folderId: r.folderId ?? null,
             status: "paused",
             progress: 0,
             statusText: "Waiting to resume…",
@@ -1860,7 +1855,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             id: r.id,
             file: new File([], r.fileName, { type: r.type }),
             bucketId: r.bucketId,
-            prefix: r.prefix,
+            folderId: r.folderId ?? null,
             status: "failed",
             progress: 0,
             interrupted: true,

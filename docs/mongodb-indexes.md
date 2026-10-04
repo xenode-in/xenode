@@ -25,6 +25,8 @@ do not carry historical indexes forward implicitly.
 | `{ bucketId, createdAt: -1 }` | Primary bucket listing |
 | `{ spaceId, _id }` | Tenant-scoped point authorization |
 | `{ spaceId, createdAt: -1 }` | Space listing |
+| `{ spaceId, folderId, deletedAt, createdAt: -1, _id: -1 }` | Folder listing |
+| `{ spaceId, ancestorIds }` | Folder subtree move, Bin and restore |
 | `{ bucketId, deletedAt, createdAt: -1, _id: -1 }` | Bin listing and cursor order |
 | `{ bucketId, deletedAt, size: -1, _id: -1 }` | Bin size sorting |
 | `{ bucketId, deletedAt, contentType, _id: -1 }` | Content-type listing |

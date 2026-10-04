@@ -17,12 +17,7 @@ import {
   type SyncEventType,
 } from "@/lib/realtime/types";
 import { withRedis } from "@/lib/redis";
-
-export function parentPrefixForKey(key: string): string {
-  const normalized = key.endsWith("/") ? key.slice(0, -1) : key;
-  const slash = normalized.lastIndexOf("/");
-  return slash < 0 ? "" : normalized.slice(0, slash + 1);
-}
+import { folderListingId } from "@/lib/storage/folders";
 
 export function toSyncObjectSnapshot(value: unknown): SyncObjectSnapshot {
   return JSON.parse(JSON.stringify(value)) as SyncObjectSnapshot;
@@ -34,7 +29,8 @@ export interface PublishSyncEventParams {
   spaceId: string;
   type: SyncEventType;
   payload: SyncEventPayload;
-  invalidatePrefixes?: string[];
+  /** Folder listings to invalidate: folder ids, or null for the Space root. */
+  invalidateFolders?: Array<string | { toString(): string } | null | undefined>;
   invalidateStorage?: boolean;
   invalidateRecent?: boolean;
 }
@@ -62,16 +58,10 @@ export async function publishSyncEvent(
 
   await withRedis(async (redis) => {
     const pipeline = redis.multi();
-    for (const prefix of new Set(params.invalidatePrefixes ?? [])) {
-      if (params.payload.bucketId) {
-        pipeline.incr(
-          folderVersionKey(
-            params.userId,
-            params.payload.bucketId,
-            prefix,
-          ),
-        );
-      }
+    for (const folderId of new Set(
+      (params.invalidateFolders ?? []).map(folderListingId),
+    )) {
+      pipeline.incr(folderVersionKey(params.spaceId, folderId));
     }
     if (params.invalidateStorage) {
       pipeline.del(storageCacheKey(params.spaceId));

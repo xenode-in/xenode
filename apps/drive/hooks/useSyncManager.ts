@@ -7,6 +7,9 @@ import { useCrypto } from "@/contexts/CryptoContext";
 interface SyncFile {
   _id: unknown;
   key: string;
+  spaceId?: string;
+  folderId?: unknown;
+  ancestorIds?: unknown[];
   size: number;
   createdAt: string | Date;
   updatedAt: string | Date;
@@ -63,6 +66,9 @@ export function useSyncManager() {
           toStore.push({
             id: String(f._id),
             key: f.key,
+            spaceId: f.spaceId,
+            folderId: f.folderId ? String(f.folderId) : null,
+            ancestorIds: (f.ancestorIds ?? []).map(String),
             encryptedName: f.isEncrypted && f.encryptedName ? f.encryptedName : null,
             encryptedDisplayName: f.encryptedDisplayName || undefined,
             encryptedContentType: f.encryptedContentType || undefined,

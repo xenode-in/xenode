@@ -4,6 +4,9 @@ export type ServerObject = {
   _id?: string;
   id?: string;
   key: string;
+  spaceId?: string;
+  folderId?: string | null;
+  ancestorIds?: string[];
   size?: number;
   contentType?: string;
   createdAt?: string | Date;
@@ -49,6 +52,9 @@ export function mapServerObjectToLocalFile(
   return {
     id: String(object._id || object.id),
     key: object.key,
+    spaceId: object.spaceId,
+    folderId: object.folderId ? String(object.folderId) : null,
+    ancestorIds: (object.ancestorIds ?? []).map(String),
     encryptedName: object.encryptedName || object.encryptedDisplayName || null,
     name: object.key.split("/").filter(Boolean).pop() || object.key,
     size: object.size || 0,
@@ -114,17 +120,16 @@ export async function deleteLocalObjects(
   await getDb(userId).files.bulkDelete(ids);
 }
 
-export async function deleteLocalPrefix(
+/** Remove a folder and every cached descendant (they leave together). */
+export async function deleteLocalSubtree(
   userId: string | null | undefined,
-  bucketId: string | null | undefined,
-  prefix: string,
+  folderId: string,
 ) {
-  if (!userId || !bucketId || !prefix) return;
+  if (!userId || !folderId) return;
   const db = getDb(userId);
-  const rows = await db.files
-    .where("bucketId")
-    .equals(bucketId)
-    .filter((file) => file.key.startsWith(prefix))
+  const descendants = await db.files
+    .where("ancestorIds")
+    .equals(folderId)
     .primaryKeys();
-  if (rows.length > 0) await db.files.bulkDelete(rows as string[]);
+  await db.files.bulkDelete([folderId, ...(descendants as string[])]);
 }

@@ -340,7 +340,7 @@
         "description": "Returns files and folders with full metadata, signed thumbnail/optimized URLs. Supports pagination, filtering by bucket/folder, content type, and media category.",
         "parameters": [
           { "name": "bucketId", "in": "query", "schema": { "type": "string" } },
-          { "name": "folderId", "in": "query", "schema": { "type": "string" } },
+          { "name": "folder", "in": "query", "schema": { "type": "string" }, "description": "Direct children of one folder: a folder id or 'root'. Omit to list the whole Space." },
           { "name": "contentType", "in": "query", "schema": { "type": "string" }, "description": "Filter by content type prefix (e.g. 'image')" },
           { "name": "mediaCategory", "in": "query", "schema": { "type": "string" }, "description": "Filter by media category" },
           { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
@@ -536,32 +536,42 @@
     "/api/objects/folder": {
       "post": {
         "tags": ["Objects"],
-        "summary": "Create a virtual folder",
+        "summary": "Create a folder",
+        "description": "Requires Space manage permission. Folders are metadata records with no blob; the server assigns the opaque key <spaceRoot><folderId>/. Plaintext names are not accepted.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["name", "bucketId"],
+                "required": ["bucketId", "encryptedDisplayName"],
                 "properties": {
-                  "name": { "type": "string", "example": "Documents" },
-                  "parentId": { "type": "string" },
-                  "bucketId": { "type": "string" }
+                  "bucketId": { "type": "string" },
+                  "encryptedDisplayName": { "type": "string", "minLength": 16, "maxLength": 4096, "description": "Folder name encrypted with the Space metadata key" },
+                  "parentFolderId": { "type": ["string", "null"], "description": "Live parent folder in the same Space; null or omitted for the Space root" }
                 }
               }
             }
           }
         },
         "responses": {
-          "201": { "description": "Folder created" }
+          "201": { "description": "Folder created; body { folder }" },
+          "400": { "description": "Missing encrypted name or nesting deeper than 32 folders" },
+          "403": { "description": "Space manage permission required" },
+          "404": { "description": "Bucket or parent folder not found in this Space" },
+          "409": { "description": "Space inactive or storage usage not initialized" }
         }
       },
       "delete": {
         "tags": ["Objects"],
-        "summary": "Delete a folder",
+        "summary": "Move a folder to the Bin",
+        "description": "Requires Space delete permission. The folder, its live descendants and their sidecars share one deletedAt so restore and purge act on exactly that batch.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": {
+          "type": "object", "required": ["folderId"], "properties": { "folderId": { "type": "string" } }
+        } } } },
         "responses": {
-          "200": { "description": "Folder deleted" }
+          "200": { "description": "Folder subtree binned" },
+          "404": { "description": "Live folder not found in this Space" }
         }
       }
     },
@@ -570,6 +580,7 @@
       "post": {
         "tags": ["Objects"],
         "summary": "Move files or folders",
+        "description": "Requires Space manage permission. Changes folder placement metadata only; physical keys, chunks, versions and signed URLs are untouched. Items inside another selected folder move with it.",
         "requestBody": {
           "required": true,
           "content": {
@@ -578,15 +589,18 @@
                 "type": "object",
                 "required": ["objectIds", "destinationFolderId"],
                 "properties": {
-                  "objectIds": { "type": "array", "items": { "type": "string" } },
-                  "destinationFolderId": { "type": "string" }
+                  "objectIds": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "type": "string" } },
+                  "destinationFolderId": { "type": ["string", "null"], "description": "Live folder in the same Space, or null for the Space root" }
                 }
               }
             }
           }
         },
         "responses": {
-          "200": { "description": "Objects moved" }
+          "200": { "description": "Objects moved; body { movedIds, destinationFolderId }" },
+          "400": { "description": "Invalid selection, folder moved into itself or a descendant, or nesting deeper than 32 folders" },
+          "403": { "description": "Space manage permission required" },
+          "404": { "description": "Selected item or destination folder not found in this Space" }
         }
       }
     },
@@ -720,7 +734,6 @@
                   "bucketId": { "type": "string" },
                   "fileSize": { "type": "integer", "minimum": 1, "example": 1048576 },
                   "fileType": { "type": "string", "example": "application/octet-stream" },
-                  "prefix": { "type": "string", "description": "Optional authorized virtual folder prefix; the object-key suffix is generated by the server" },
                   "sessionId": { "type": "string", "description": "Reservation ID required when refreshing an existing upload key" },
                   "parentSessionId": { "type": "string", "description": "Parent reservation ID required for a secondary ciphertext blob" },
                   "variant": { "type": "string", "enum": ["thumbnail", "optimized"], "description": "Variant type required with parentSessionId" }
@@ -770,7 +783,6 @@
                   "bucketId": { "type": "string" },
                   "fileSize": { "type": "integer", "minimum": 1 },
                   "fileType": { "type": "string" },
-                  "prefix": { "type": "string", "description": "Optional authorized virtual folder prefix; the object-key suffix is generated by the server" },
                   "chunkCount": { "type": "integer", "minimum": 1, "maximum": 4096 },
                   "chunkSize": { "type": "integer", "minimum": 2097152, "maximum": 67108864 },
                   "sessionId": { "type": "string", "description": "Reservation ID required when refreshing an existing upload key" }
@@ -813,6 +825,7 @@
                   "encryptedDEK": { "type": "string", "description": "Base64 encrypted Data Encryption Key" },
                   "iv": { "type": "string", "description": "Base64 Initialization Vector" },
                   "encryptedName": { "type": "string" },
+                  "folderId": { "type": ["string", "null"], "description": "Live folder in the upload's Space; null or omitted for the Space root. Sidecars inherit their parent file's folder." },
                   "isChunked": { "type": "boolean", "default": false },
                   "chunkCount": { "type": "integer", "minimum": 1, "maximum": 4096 },
                   "chunkIvs": { "type": "string", "description": "JSON-encoded IV array in chunk order; count must match chunkCount" },
@@ -833,7 +846,7 @@
           "200": { "description": "Exact completed reservation retry" },
           "400": { "description": "Invalid encrypted metadata or chunk layout" },
           "402": { "description": "Actual ciphertext bytes exceed the Space owner's quota" },
-          "404": { "description": "Bucket or required ciphertext blob is missing" },
+          "404": { "description": "Bucket, destination folder or required ciphertext blob is missing" },
           "409": { "description": "Size mismatch, unavailable quota state, or upload/key/fingerprint conflict" }
         }
       }

@@ -34,7 +34,9 @@ These are release-blocking rules.
 ## Storage and authorization
 
 - Every object read/write is authorized by Space access.
-- Object keys are opaque and never contain real filenames.
+- Object keys are opaque, server-issued and immutable: they never contain real
+  filenames, folder names or client-supplied paths. Folder names are ciphertext;
+  moves and restores change only `folderId`/`ancestorIds` metadata.
 - Servers and logs may contain only ciphertext metadata, encrypted keys, byte
   counts, and non-sensitive operational identifiers.
 - Direct browser-to-R2 transfers use credential-free S3-compatible signed URLs.

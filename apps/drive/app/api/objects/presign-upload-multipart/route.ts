@@ -12,7 +12,7 @@ import { getS3Client } from "@/lib/b2/client";
 import { activeStorageBucketName } from "@/lib/storage/region-context";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
-import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
+import { spaceStorageRoot } from "@/lib/storage/folders";
 import { reserveUploadSession, findPendingUploadSession } from "@/lib/uploads/session";
 import { assertDriveUploadHeadroom, DriveUploadCommitError, findReferencedStorageObjectKeys } from "@xenode/database";
 
@@ -31,7 +31,6 @@ export async function POST(request: NextRequest) {
       fileType,
       bucketId,
       chunkCount,
-      prefix,
       chunkSize: clientChunkSize,
       sessionId: resumeSessionId,
     } = await request.json();
@@ -85,19 +84,10 @@ export async function POST(request: NextRequest) {
 
     const chunkSize = clientChunkSize ?? MIN_CHUNK;
 
-    const allowedPrefix =
-      ctx.spaceType === "organization"
-        ? orgObjectKeyPrefix(ctx.organizationId!)
-        : ctx.spaceType === "team"
-          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
-          : `users/${userId}/`;
-    const basePrefix = typeof prefix === "string" && prefix ? prefix : allowedPrefix;
-    if (!basePrefix.startsWith(allowedPrefix)) {
-      return NextResponse.json(
-        { error: "Access denied to destination" },
-        { status: 403 },
-      );
-    }
+    // Physical keys live directly under the Space root; folder placement is
+    // metadata chosen at completion, never part of the key.
+    const allowedPrefix = spaceStorageRoot(ctx);
+    const basePrefix = allowedPrefix;
 
     const existing = resumeSessionId
       ? await findPendingUploadSession({

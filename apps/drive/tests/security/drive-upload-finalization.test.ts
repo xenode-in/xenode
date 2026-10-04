@@ -7,7 +7,7 @@ const { send, publish, sign } = vi.hoisted(() => ({ send: vi.fn(), publish: vi.f
 vi.mock("@/lib/b2/client", () => ({ getS3Client: () => ({ send }) }));
 vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: sign }));
 vi.mock("@/lib/realtime/publish", () => ({
-  publishSyncEvent: publish, parentPrefixForKey: vi.fn(), toSyncObjectSnapshot: vi.fn(),
+  publishSyncEvent: publish, toSyncObjectSnapshot: vi.fn(),
 }));
 
 import { POST } from "@/app/api/objects/complete-upload/route";

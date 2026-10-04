@@ -28,7 +28,8 @@ export interface UploadRecord {
   type: string; // mime
   mediaCategory: string;
   bucketId: string;
-  prefix: string;
+  /** Destination folder record id (null = Space root). */
+  folderId: string | null;
   aspectRatio?: number;
 
   // routing / crypto
@@ -75,6 +76,11 @@ export interface UploadRecord {
 export interface LocalFile {
   id: string;
   key: string;
+  /** Owning Space; personal and workspace objects share one regional bucket. */
+  spaceId?: string;
+  /** Parent folder record id, or null at the Space root. */
+  folderId?: string | null;
+  ancestorIds?: string[];
   encryptedName: string | null;
   name: string;
   size: number;
@@ -172,6 +178,15 @@ export class XenodeDatabase extends Dexie {
     this.version(5).stores({
       thumbnailCache: null,
     });
+    // v6: folders are metadata (folderId/ancestorIds) and objects are
+    // partitioned by Space. Rows cached under the key-path folder model are
+    // meaningless, so the cache is cleared and refilled from the server.
+    this.version(6)
+      .stores({
+        files:
+          "id, key, spaceId, folderId, *ancestorIds, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName, mediaCategory, optimizedKey, uploadSource, syncContentFp",
+      })
+      .upgrade((transaction) => transaction.table("files").clear());
   }
 }
 

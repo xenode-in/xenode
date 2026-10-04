@@ -23,8 +23,8 @@ entries (2 critical, 13 high, 9 moderate).
 | F04 | HIGH | Addressed | 0F `94c2bba`, 0G `247569e`, 0ZE `8ab963a`, 0ZG: second-factor guard, native POST/GET gates, OIDC code gate, shared recent-auth policy, per-account and database-backed rate limits, password-change rotation semantics; see [29](29-accounts-sensitive-actions.md) | Browser/provider journeys and production proxy IP configuration are release gates |
 | F05 | HIGH | Addressed | 0C: sign-in password change is credential-only; staged envelope endpoints return 410 | Revocation semantics of change/set/reset tracked under F04 |
 | F06 | HIGH | Addressed | 0ZC `71c940b`: one transactional bootstrap with idempotency | Org/team keys can still overwrite a member grant at the same version (tracked under F18) |
-| F07 | HIGH | Partial | 0B `6440e31`: shared action checks on generic upload/metadata/purge routes | Object DELETE, bulk-delete, folder, move and comment routes use copied role checks; share PATCH/DELETE and access-request approval skip Space/policy rechecks; sidecar parent not Space-bound; legacy bucket DELETE |
-| F08 | HIGH | Partial | 0H–0L, 0S, 0ZA, 0ZH: server-random key suffix, reservations, Space-bound completion, create-only PUTs; legacy unencrypted `objects/upload` removed | Physical keys still embed caller folder prefixes; folder POST writes plaintext-capable key objects; move rewrites physical keys (F35) |
+| F07 | HIGH | Partial | 0B `6440e31`: shared action checks on generic upload/metadata/purge routes; 0ZJ: object DELETE, bulk-delete, folder and move use `requireAccessContext(request, action)`; sidecar parent must be a live file in the upload's Space; bucket DELETE removed | Share PATCH/DELETE and access-request approval skip Space/policy rechecks; comment routes not re-verified |
+| F08 | HIGH | Addressed | 0H–0L, 0S, 0ZA, 0ZH: server-random key suffix, reservations, Space-bound completion, create-only PUTs; legacy unencrypted `objects/upload` removed. 0ZJ: keys are `<spaceRoot><hex32>` with no client prefix; folders are blob-less records with encrypted names; placement is `folderId`/`ancestorIds` metadata | — |
 | F09 | HIGH | Addressed | 0A, 0U, 0V, 0W, 0X, 0Z: confirmed exact deletion, durable purge intents, transactional retirement | Live R2 and deployed scheduler remain release gates |
 | F10 | HIGH | Addressed | 0A, 0R `1764f03`: leased exact-ledger cleanup with cross-product references | Quarantined manifest review is operational work |
 | F11 | HIGH | Partial | 0Q, 0S, 0T, 0V, 0ZH: verified bytes and transactional finalize/revision/purge accounting; usage reads are read-only from the Space owner; non-transactional writers removed | Admin user DELETE removes objects/Usage without deleting blobs; no OrgUsage reconciliation report |
@@ -56,7 +56,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F32 | HIGH | Addressed | 0ZE: step-up reserves attempts from the account budget shared with Better Auth's lockout; native session-mode verification denied while pending; see [28](28-second-factor-contract.md) | Real authenticator journeys are a release gate |
 | F33 | HIGH | Addressed | 0ZE: deny-by-default pending sessions plus the provider's `postLogin` gate; reproduced code leak via `Location` on password sign-in with `oauth_query`, now prevented (negative control confirmed) | Real social-provider journey is a release gate |
 | F34 | MED | Addressed | 0ZE: native GETs from pending sessions are allowlisted (session listings return 403) | — |
-| F35 | HIGH | Open | `objects/move` copies to a new key, then deletes the old physical key that version snapshots may still reference | Immutable physical keys; metadata-only move |
+| F35 | HIGH | Addressed | 0ZJ: move is a metadata-only transaction (no copy, no delete); version snapshots, chunks and signed URLs keep their keys; contract in [31](31-drive-folder-model.md) | — |
 | F36 | MED | Open | Compose cron runs `cat /etc/crontabs/root`, printing the expanded `CRON_SECRET` to logs | Remove secret echo; one scheduler contract |
 | F37 | MED | Addressed | 0ZH: both routes and their orphaned non-transactional helpers removed | — |
 
@@ -66,6 +66,8 @@ entries (2 critical, 13 high, 9 moderate).
   unlock, handoff into Drive and Photos, lock/reload/account switch.
 - Live R2: signed create-only PUT, presigned GET, CORS, exact deletion and HEAD
   confirmation in every configured region.
+- Drive folder journeys in a real browser: create, upload into, move, Bin,
+  restore and Empty Bin across personal, organization and team Spaces.
 - Deployed schedulers calling every cron route with the production secret.
 - Realtime server behind the production proxy with hostile Origin, replay and
   session expiry.

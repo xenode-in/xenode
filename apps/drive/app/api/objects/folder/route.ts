@@ -1,210 +1,104 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Types } from "mongoose";
+import { DriveUploadCommitError, createDriveFolder } from "@xenode/database";
 import {
   bucketOwnershipClause,
   isAuthzError,
-  objectOwnershipClause,
   requireAccessContext,
   toJsonResponse,
 } from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
-import { uploadObject } from "@/lib/b2/objects";
-import ShareLink from "@/models/ShareLink";
-import DirectShare from "@/models/DirectShare";
+import { publishSyncEvent, toSyncObjectSnapshot } from "@/lib/realtime/publish";
+import { binObjectsInSpace } from "@/lib/storage/bin-objects";
 import {
-  parentPrefixForKey,
-  publishSyncEvent,
-  toSyncObjectSnapshot,
-} from "@/lib/realtime/publish";
-import {
-  orgObjectKeyPrefix,
-  teamObjectKeyPrefix,
-} from "@/lib/orgs/storage";
+  DRIVE_FOLDER_CONTENT_TYPE,
+  folderListingId,
+  spaceStorageRoot,
+} from "@/lib/storage/folders";
 
 export const dynamic = "force-dynamic";
 
-function canDeleteInScope(ctx: Awaited<ReturnType<typeof requireAccessContext>>): boolean {
-  if (ctx.spaceType === "personal") return true;
-  return (
-    ctx.role === "owner" ||
-    ctx.role === "admin"
-  );
+function errorResponse(error: unknown, fallback: string) {
+  if (isAuthzError(error)) return toJsonResponse(error);
+  if (error instanceof DriveUploadCommitError) {
+    return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+  }
+  if (error instanceof SyntaxError) {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+  console.error(`[folders] ${fallback}`, error);
+  return NextResponse.json({ error: fallback }, { status: 500 });
 }
 
-/** POST /api/objects/folder - Create a new folder */
+/**
+ * POST /api/objects/folder — create a folder record. Folders are metadata
+ * with an encrypted display name; no blob is written and the key is an opaque
+ * identity, never a name or path.
+ */
 export async function POST(request: NextRequest) {
   try {
-    const ctx = await requireAccessContext(request);
-    const userId = ctx.userId;
-    const body = await request.json();
-    const { bucketId, name, encryptedDisplayName, prefix = "" } = body;
-
-    if (!bucketId || !name) {
-      return NextResponse.json({ error: "Bucket ID and folder name are required" }, { status: 400 });
+    const ctx = await requireAccessContext(request, "manage");
+    const { bucketId, encryptedDisplayName, parentFolderId } = await request.json();
+    if (typeof bucketId !== "string" || !/^[a-f0-9]{24}$/iu.test(bucketId)) {
+      return NextResponse.json({ error: "bucketId is required" }, { status: 400 });
     }
-
-    if (!/^[a-zA-Z0-9\-_ ]+$/.test(name)) {
-      return NextResponse.json({ error: "Folder name contains invalid characters" }, { status: 400 });
-    }
-
-    if (!canDeleteInScope(ctx)) {
-      return NextResponse.json(
-        { error: "Forbidden", code: "workspace_manage_role_required" },
-        { status: 403 },
-      );
-    }
-
     await dbConnect();
-
-    const bucket = await Bucket.findOne({
-      _id: bucketId,
-      ...bucketOwnershipClause(ctx),
-    });
-
+    const bucket = await Bucket.findOne({ _id: bucketId, ...bucketOwnershipClause(ctx) })
+      .select("_id")
+      .lean<{ _id: Types.ObjectId }>();
     if (!bucket) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
-
-    const allowedPrefix =
-      ctx.spaceType === "organization"
-        ? orgObjectKeyPrefix(ctx.organizationId!)
-        : ctx.spaceType === "team"
-          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
-        : `users/${userId}/`;
-
-    if (bucket.systemKey === "drive" && !prefix.startsWith(allowedPrefix)) {
-      return NextResponse.json({ error: "Access denied to this folder" }, { status: 403 });
-    }
-
-    const fullKey = `${prefix}${name}/`;
-    const b2BucketName = bucket.b2BucketId;
-
-    const existing = await StorageObject.findOne({ bucketId, key: fullKey });
-    if (existing) {
-      return NextResponse.json({ error: "Folder already exists" }, { status: 409 });
-    }
-
-    const uploadResult = await uploadObject(b2BucketName, fullKey, Buffer.from(""), "application/x-directory", 0);
-
-    const folder = await StorageObject.create({
-      bucketId: bucket._id,
+    const created = await createDriveFolder({
       spaceId: ctx.spaceId,
-      createdByAccountId: ctx.accountId,
-      key: fullKey,
-      size: 0,
-      contentType: "application/x-directory",
+      bucketId: bucket._id,
+      accountId: ctx.accountId,
+      storageRoot: spaceStorageRoot(ctx),
+      parentFolderId: parentFolderId ?? null,
       encryptedDisplayName,
-      b2FileId: uploadResult.b2FileId,
     });
-
-    await Bucket.updateOne({ _id: bucket._id }, { $inc: { objectCount: 1 } });
-
+    const folder = StorageObject.hydrate(created);
     await publishSyncEvent({
-      userId,
+      userId: ctx.userId,
       spaceId: ctx.spaceId,
       type: "FOLDER_CREATED",
       payload: {
-        bucketId: bucket._id.toString(),
-        key: fullKey,
-        parentPrefix: prefix,
+        bucketId: String(bucket._id),
+        objectId: String(folder._id),
+        folderIds: [folderListingId(folder.folderId)],
         object: toSyncObjectSnapshot(folder),
       },
-      invalidatePrefixes: [prefix],
+      invalidateFolders: [folder.folderId ?? null],
     });
-
     return NextResponse.json({ folder }, { status: 201 });
   } catch (error: unknown) {
-    if (isAuthzError(error)) {
-      return toJsonResponse(error);
-    }
-    return NextResponse.json({ error: "Failed to create folder" }, { status: 500 });
+    return errorResponse(error, "Failed to create folder");
   }
 }
 
-/** DELETE /api/objects/folder - Recursively delete a folder and its contents */
+/** DELETE /api/objects/folder — move a folder and its live subtree to the Bin. */
 export async function DELETE(request: NextRequest) {
   try {
-    const ctx = await requireAccessContext(request);
-    const userId = ctx.userId;
-    const body = await request.json();
-    const { bucketId, prefix } = body;
-
-    if (!bucketId || !prefix) {
-      return NextResponse.json({ error: "Bucket ID and prefix are required" }, { status: 400 });
+    const ctx = await requireAccessContext(request, "delete");
+    const { folderId } = await request.json();
+    if (typeof folderId !== "string" || !/^[a-f0-9]{24}$/iu.test(folderId)) {
+      return NextResponse.json({ error: "folderId is required" }, { status: 400 });
     }
-
-    if (!canDeleteInScope(ctx)) {
-      return NextResponse.json(
-        { error: "Forbidden", code: "workspace_delete_role_required" },
-        { status: 403 },
-      );
-    }
-
     await dbConnect();
-
-    const bucket = await Bucket.findOne({
-      _id: bucketId,
-      ...bucketOwnershipClause(ctx),
-    });
-
-    if (!bucket) {
-      return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
-    }
-
-    const allowedPrefix =
-      ctx.spaceType === "organization"
-        ? orgObjectKeyPrefix(ctx.organizationId!)
-        : ctx.spaceType === "team"
-          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
-        : `users/${userId}/`;
-
-    if (bucket.systemKey === "drive" && !prefix.startsWith(allowedPrefix)) {
-      return NextResponse.json({ error: "Access denied to this folder" }, { status: 403 });
-    }
-
-    const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const objects = await StorageObject.find({
-      bucketId,
-      ...objectOwnershipClause(ctx),
-      key: { $regex: `^${escapedPrefix}` },
-    });
-
-    const deletedObjectIds: string[] = [];
-    const now = new Date();
-
-    for (const obj of objects) {
-      await StorageObject.findByIdAndUpdate(obj._id, {
-        $set: { deletedAt: now }
-      });
-      deletedObjectIds.push(obj._id.toString());
-    }
-
-    if (deletedObjectIds.length > 0) {
-      await ShareLink.deleteMany({ objectId: { $in: deletedObjectIds } });
-      await DirectShare.deleteMany({ objectId: { $in: deletedObjectIds } });
-    }
-
-    await publishSyncEvent({
-      userId,
+    const folder = await StorageObject.exists({
+      _id: folderId,
       spaceId: ctx.spaceId,
-      type: "FOLDER_DELETED",
-      payload: {
-        bucketId: bucket._id.toString(),
-        objectIds: deletedObjectIds,
-        key: prefix,
-        keys: objects.map((object) => object.key),
-        parentPrefix: parentPrefixForKey(prefix),
-      },
-      invalidatePrefixes: [parentPrefixForKey(prefix), prefix],
-      invalidateRecent: true,
+      contentType: DRIVE_FOLDER_CONTENT_TYPE,
+      deletedAt: null,
     });
-
-    return NextResponse.json({ success: true, deletedCount: deletedObjectIds.length });
-  } catch (error: unknown) {
-    if (isAuthzError(error)) {
-      return toJsonResponse(error);
+    if (!folder) {
+      return NextResponse.json({ error: "Folder not found" }, { status: 404 });
     }
-    return NextResponse.json({ error: "Failed to delete folder" }, { status: 500 });
+    const result = await binObjectsInSpace(ctx, [folderId]);
+    return NextResponse.json({ success: true, deletedCount: result.binnedCount });
+  } catch (error: unknown) {
+    return errorResponse(error, "Failed to delete folder");
   }
 }

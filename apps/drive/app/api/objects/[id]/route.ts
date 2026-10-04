@@ -5,28 +5,19 @@ import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import { getDownloadUrl } from "@/lib/b2/objects";
-import ShareLink from "@/models/ShareLink";
-import DirectShare from "@/models/DirectShare";
-import { removeObjectsFromAlbums } from "@/lib/albums/cleanup";
+import { DriveUploadCommitError } from "@xenode/database";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
 import {
-  parentPrefixForKey,
   publishSyncEvent,
   toSyncObjectSnapshot,
 } from "@/lib/realtime/publish";
+import { binObjectsInSpace } from "@/lib/storage/bin-objects";
+import { folderListingId } from "@/lib/storage/folders";
 
 export const dynamic = "force-dynamic";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
-}
-
-function canDeleteInScope(ctx: Awaited<ReturnType<typeof requireAccessContext>>): boolean {
-  if (ctx.spaceType === "personal") return true;
-  return (
-    ctx.role === "owner" ||
-    ctx.role === "admin"
-  );
 }
 
 /** 
@@ -108,9 +99,10 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       );
     }
 
-    const sidecars = await StorageObject.find({ 
-      parentObjectId: object._id, 
-      deletedAt: { $exists: false } 
+    const sidecars = await StorageObject.find({
+      parentObjectId: object._id,
+      spaceId: ctx.spaceId,
+      deletedAt: { $exists: false },
     }).select("mediaCategory encryptedName size contentType encryptedContentType").lean();
 
     return NextResponse.json({
@@ -186,7 +178,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   let errorMessage: string | undefined;
 
   try {
-    const ctx = await requireAccessContext(request);
+    const ctx = await requireAccessContext(request, "delete");
     userId = ctx.userId;
     await enforceStorageAccess(userId);
 
@@ -194,64 +186,31 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     await dbConnect();
 
-    if (!canDeleteInScope(ctx)) {
-      statusCode = 403;
-      errorMessage = "Forbidden";
-      return NextResponse.json(
-        { error: errorMessage, code: "workspace_delete_role_required" },
-        { status: statusCode },
-      );
-    }
-
-    const object = await StorageObject.findOne(objectFilter(ctx, id)).lean();
+    const object = await StorageObject.findOne(objectFilter(ctx, id))
+      .select("_id")
+      .lean();
     if (!object) {
       statusCode = 404;
       errorMessage = "Object not found";
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    // Soft-delete → Bin. The encrypted B2 blobs (main + thumbnail + optimized,
-    // plus any sidecars) are intentionally NOT removed here so the item can be
-    // restored within the 30-day window. They're purged later by the user
-    // ("delete forever" / empty bin → /api/objects/purge) or by the
-    // /api/cron/purge-bin job. Storage metering is likewise NOT decremented:
-    // the bytes still occupy B2, so binned items keep counting against quota
-    // until they're actually purged.
-    const now = new Date();
-    await StorageObject.findByIdAndUpdate(object._id, {
-      $set: { deletedAt: now },
-    });
-
-    // Cascade the soft-delete to sidecar children (subtitles, extra audio).
-    await StorageObject.updateMany(
-      { parentObjectId: object._id, userId },
-      { $set: { deletedAt: now } },
-    );
-
-    // Revoke any active shares — a binned item shouldn't stay publicly
-    // reachable. (Restore does not bring shares back; re-share if needed.)
-    await ShareLink.deleteMany({ objectId: object._id });
-    await DirectShare.deleteMany({ objectId: object._id });
-
-    // Drop it from any albums + album shares so it stops showing there.
-    await removeObjectsFromAlbums(ctx.spaceId, userId, [object._id]);
-
-    await publishSyncEvent({
-      userId,
-      spaceId: ctx.spaceId,
-      type: "FILE_DELETED",
-      payload: {
-        bucketId: object.bucketId.toString(),
-        objectId: object._id.toString(),
-        key: object.key,
-        parentPrefix: parentPrefixForKey(object.key),
-      },
-      invalidatePrefixes: [parentPrefixForKey(object.key)],
-      invalidateRecent: true,
-    });
+    // Soft delete to the Bin: a folder takes its live subtree, a file its
+    // sidecars. Blobs and metering remain until the Bin purge contract.
+    await binObjectsInSpace(ctx, [String(object._id)]);
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
+    if (isAuthzError(error)) {
+      statusCode = error.status;
+      errorMessage = error.message;
+      return toJsonResponse(error);
+    }
+    if (error instanceof DriveUploadCommitError) {
+      statusCode = error.status;
+      errorMessage = error.message;
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+    }
     if (error instanceof Error && error.message === "Unauthorized") {
       statusCode = 401;
       errorMessage = "Unauthorized";
@@ -336,11 +295,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       payload: {
         bucketId: object.bucketId.toString(),
         objectId: object._id.toString(),
-        key: object.key,
-        parentPrefix: parentPrefixForKey(object.key),
+        folderIds: [folderListingId(object.folderId)],
         object: toSyncObjectSnapshot(object),
       },
-      invalidatePrefixes: [parentPrefixForKey(object.key)],
+      invalidateFolders: [object.folderId ?? null],
       invalidateRecent: true,
     });
 

@@ -19,7 +19,9 @@ export async function GET(request: NextRequest) {
     let purgedCount = 0, failed = 0, blocked = 0, skipped = 0;
     for (const object of candidates) {
       try {
-        if (!object.purgeState) await queueDriveBinPurge({ spaceId: object.spaceId, bucketId: object.bucketId, ids: [object._id], cutoff });
+        // Every expired record is its own candidate, so a large folder batch
+        // drains across runs instead of exceeding one manifest.
+        if (!object.purgeState) await queueDriveBinPurge({ spaceId: object.spaceId, bucketId: object.bucketId, ids: [object._id], cutoff, includeRelated: false });
         const result = await cleanupDriveBinObject({ objectId: object._id, deleteBlobs: deleteObjects });
         if (result === "deleted") purgedCount++; else if (result === "retry") failed++; else if (result === "blocked") blocked++; else skipped++;
       } catch { failed++; }

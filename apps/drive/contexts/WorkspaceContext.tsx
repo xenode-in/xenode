@@ -12,6 +12,7 @@ import {
 import type { WorkspaceNav } from "@/lib/navigation/sidebar-nav";
 import {
   organizationSpaceId,
+  personalSpaceId,
   teamSpaceId,
 } from "@xenode/spaces/ids";
 
@@ -67,6 +68,14 @@ function scopeFromWorkspace(workspace: WorkspaceNav): DriveScope {
     orgName: workspace.orgName,
     role: workspace.role,
   };
+}
+
+/** The Space a Drive scope addresses; cached objects are partitioned by it. */
+export function driveScopeSpaceId(scope: DriveScope, accountId: string): string {
+  if (scope.type === "personal") return personalSpaceId(accountId);
+  return scope.type === "team"
+    ? teamSpaceId(scope.orgId, scope.teamId)
+    : organizationSpaceId(scope.orgId);
 }
 
 function withDriveScope(headers: HeadersInit | undefined, scope: DriveScope): Headers {

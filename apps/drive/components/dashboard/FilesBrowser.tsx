@@ -69,9 +69,8 @@ import { useCryptoWorker } from "@/hooks/useCryptoWorker";
 import { getDb } from "@/lib/db/local";
 import {
   deleteLocalObjects,
-  deleteLocalPrefix,
+  deleteLocalSubtree,
   upsertLocalObject,
-  upsertLocalObjects,
 } from "@/lib/db/object-cache";
 import { useLiveQuery } from "dexie-react-hooks";
 import {
@@ -80,7 +79,7 @@ import {
   unwrapDEKWithSpaceKey,
 } from "@/lib/crypto/fileEncryption";
 import { cn } from "@/lib/utils";
-import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { driveScopeSpaceId, useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 import {
   useReactTable,
@@ -97,6 +96,9 @@ import { useWindowVirtualizer } from "@tanstack/react-virtual";
 interface ObjectData {
   id: string;
   key: string;
+  spaceId?: string;
+  folderId?: string | null;
+  ancestorIds?: string[];
   size: number;
   contentType: string;
   createdAt: string;
@@ -600,10 +602,8 @@ export function FilesBrowser() {
 
   const [bucketId, setBucketId] = useState<string | null>(null);
   const [bucket, setBucket] = useState<BucketData | null>(null);
-  const [rootPrefix, setRootPrefix] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
-  const [currentPrefix, setCurrentPrefix] = useState("");
   const [deleteIds, setDeleteIds] = useState<string[]>([]);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
@@ -664,6 +664,12 @@ export function FilesBrowser() {
   const { openPreview, closePreview } = usePreview();
   const { data: session, isPending: sessionPending } = useSession();
   const userId = session?.user?.id || null;
+  // Folders are metadata: the URL names the open folder by id (absent = root).
+  const currentFolderId = searchParams.get("folder") || null;
+  const currentSpaceId = useMemo(
+    () => (userId ? driveScopeSpaceId(workspace.driveScope, userId) : null),
+    [workspace.driveScope, userId],
+  );
 
   const typeFilter = searchParams.get("type") || "all";
 
@@ -692,11 +698,17 @@ export function FilesBrowser() {
     excludeMobileBackup: true,
   });
 
+  // Personal and workspace Spaces share one regional bucket: partition the
+  // local cache by Space, never by bucket or key prefix.
   const localFiles = useLiveQuery(() => {
-    if (!userId || !bucketId) return [];
+    if (!userId || !bucketId || !currentSpaceId) return [];
     const db = getDb(userId);
-    return db.files.where("bucketId").equals(bucketId).toArray();
-  }, [userId, bucketId]);
+    return db.files
+      .where("spaceId")
+      .equals(currentSpaceId)
+      .filter((file) => file.bucketId === bucketId)
+      .toArray();
+  }, [userId, bucketId, currentSpaceId]);
   const localFilesReady = !userId || !bucketId || localFiles !== undefined;
 
   // Temporarily map Dexie models to the expected ObjectData array to minimize disruptions
@@ -755,13 +767,6 @@ export function FilesBrowser() {
 
         if (data.bucket) {
           setBucketId(data.bucket._id);
-          if (data.rootPrefix) {
-            const folderParam = searchParams.get("folder");
-            setCurrentPrefix(
-              folderParam ? data.rootPrefix + folderParam : data.rootPrefix,
-            );
-            setRootPrefix(data.rootPrefix);
-          }
         } else {
           setError("Failed to initialize drive storage");
         }
@@ -776,7 +781,7 @@ export function FilesBrowser() {
     return () => {
       cancelled = true;
     };
-  }, [redirectToLogin, searchParams, workspace]);
+  }, [redirectToLogin, workspace]);
 
   useEffect(() => {
     if ((syncError as FileSyncError | null)?.status === 401) {
@@ -793,10 +798,10 @@ export function FilesBrowser() {
           obj.contentType === "application/x-directory" &&
           obj.isEncrypted &&
           obj.encryptedDisplayName &&
-          !decryptedFolderNameMap[obj.key]
+          !decryptedFolderNameMap[obj.id]
         ) {
           try {
-            newMap[obj.key] = await decryptMetadataString(
+            newMap[obj.id] = await decryptMetadataString(
               obj.encryptedDisplayName,
               activeMetadataKey,
             );
@@ -836,13 +841,6 @@ export function FilesBrowser() {
   }, [objects, activeMetadataKey]);
 
   useEffect(() => {
-    if (!rootPrefix) return;
-    const folderParam = searchParams.get("folder");
-    const expected = folderParam ? `${rootPrefix}${folderParam}` : rootPrefix;
-    if (currentPrefix !== expected) setCurrentPrefix(expected);
-  }, [searchParams, rootPrefix]);
-
-  useEffect(() => {
     const saved = localStorage.getItem("filesViewMode");
     if (saved === "list" || saved === "grid") setViewMode(saved);
   }, []);
@@ -860,12 +858,12 @@ export function FilesBrowser() {
     const count = tasks.filter(
       (t) =>
         t.bucketId === bucketId &&
-        t.prefix === currentPrefix &&
+        (t.folderId ?? null) === currentFolderId &&
         t.status === "completed",
     ).length;
     if (count > prevCompletedCountRef.current) refetch();
     prevCompletedCountRef.current = count;
-  }, [tasks, bucketId, currentPrefix, refetch]);
+  }, [tasks, bucketId, currentFolderId, refetch]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -880,63 +878,35 @@ export function FilesBrowser() {
   // ── Derived view data ──────────────────────────────────────────────────────
 
   const viewObjects = useMemo(() => {
+    // Keys are opaque identities; names exist only after local decryption.
+    const displayName = (object: ObjectData) =>
+      (object.contentType === "application/x-directory"
+        ? decryptedFolderNameMap[object.id]
+        : decryptedFileNameMap[object.id]) || "";
     const folderMap = new Map<string, ObjectData>();
     const files: ObjectData[] = [];
 
     objects.forEach((obj) => {
+      const isFolder = obj.contentType === "application/x-directory";
       if (typeFilter !== "all") {
         if (!matchesFilter(obj, typeFilter)) return;
-        if (obj.contentType === "application/x-directory") {
-          folderMap.set(obj.key, obj);
-        } else {
-          files.push(obj);
-        }
+        if (isFolder) folderMap.set(obj.id, obj);
+        else files.push(obj);
         return;
       }
 
-      if (!obj.key.startsWith(currentPrefix) || obj.key === currentPrefix)
-        return;
-
-      const relKey = obj.key.slice(currentPrefix.length);
-      const parts = relKey.split("/").filter(Boolean);
-
-      // ✅ REAL FOLDERS ONLY
-      if (obj.contentType === "application/x-directory") {
-        const folderKey = obj.key;
-
-        if (!folderMap.has(folderKey)) {
-          folderMap.set(folderKey, obj);
-        }
-
-        return;
-      }
-
-      // ✅ FILES ONLY (no fake folders)
-      if (parts.length === 1) {
-        files.push(obj);
-      }
+      // Direct children of the open folder (null folderId = Space root).
+      if ((obj.folderId ?? null) !== currentFolderId) return;
+      if (isFolder) folderMap.set(obj.id, obj);
+      else files.push(obj);
     });
 
     const applySort = <T extends ObjectData>(arr: T[]): T[] =>
       [...arr].sort((a, b) => {
         let cmp = 0;
         if (sortField === "name") {
-          const nameA =
-            a.contentType === "application/x-directory"
-              ? decryptedFolderNameMap[a.key] ||
-                a.key.split("/").filter(Boolean).pop() ||
-                a.key
-              : decryptedFileNameMap[a.id] ||
-                a.key.split("/").filter(Boolean).pop() ||
-                a.key;
-          const nameB =
-            b.contentType === "application/x-directory"
-              ? decryptedFolderNameMap[b.key] ||
-                b.key.split("/").filter(Boolean).pop() ||
-                b.key
-              : decryptedFileNameMap[b.id] ||
-                b.key.split("/").filter(Boolean).pop() ||
-                b.key;
+          const nameA = displayName(a);
+          const nameB = displayName(b);
           cmp = nameA.localeCompare(nameB, undefined, { sensitivity: "base" });
         } else if (sortField === "size") cmp = a.size - b.size;
         else if (sortField === "type")
@@ -951,15 +921,7 @@ export function FilesBrowser() {
       if (!searchTerm) return arr;
       const q = searchTerm.toLowerCase();
       return arr.filter((o) => {
-        const name =
-          o.contentType === "application/x-directory"
-            ? decryptedFolderNameMap[o.key] ||
-              o.key.split("/").filter(Boolean).pop() ||
-              o.key
-            : decryptedFileNameMap[o.id] ||
-              o.key.split("/").filter(Boolean).pop() ||
-              o.key;
-        return name.toLowerCase().includes(q);
+        return displayName(o).toLowerCase().includes(q);
       });
     };
 
@@ -969,7 +931,7 @@ export function FilesBrowser() {
     };
   }, [
     objects,
-    currentPrefix,
+    currentFolderId,
     sortField,
     sortDir,
     searchTerm,
@@ -1095,7 +1057,7 @@ export function FilesBrowser() {
   });
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const hasBackRow = currentPrefix && currentPrefix !== rootPrefix;
+  const hasBackRow = currentFolderId !== null;
 
   const [scrollMargin, setScrollMargin] = useState(0);
 
@@ -1120,7 +1082,7 @@ export function FilesBrowser() {
       window.removeEventListener("resize", updateMargin);
       window.removeEventListener("scroll", updateMargin);
     };
-  }, [hasBackRow, currentPrefix]);
+  }, [hasBackRow, currentFolderId]);
 
   const rowVirtualizer = useWindowVirtualizer({
     count: table.getRowModel().rows.length,
@@ -1174,7 +1136,7 @@ export function FilesBrowser() {
       window.removeEventListener("resize", updateMargin);
       window.removeEventListener("scroll", updateMargin);
     };
-  }, [currentPrefix]);
+  }, [currentFolderId]);
 
   const gridItems = useMemo<GridItem[]>(() => {
     const rows = table.getRowModel().rows;
@@ -1293,49 +1255,46 @@ export function FilesBrowser() {
   // ── Navigation ─────────────────────────────────────────────────────────────
 
   const handleNavigation = useCallback(
-    (prefix: string) => {
-      const relative = prefix.startsWith(rootPrefix)
-        ? prefix.slice(rootPrefix.length)
-        : prefix;
-      router.push(`?folder=${encodeURIComponent(relative)}`);
-      setCurrentPrefix(prefix);
+    (folderId: string | null) => {
+      router.push(folderId ? `?folder=${encodeURIComponent(folderId)}` : "?");
       setSelectedIds(new Set());
     },
-    [router, rootPrefix],
+    [router],
   );
 
   const navigateToFolder = useCallback(
-    (folderName: string) => handleNavigation(`${currentPrefix}${folderName}/`),
-    [handleNavigation, currentPrefix],
+    (folderId: string) => handleNavigation(folderId),
+    [handleNavigation],
+  );
+
+  const currentFolder = useMemo(
+    () =>
+      currentFolderId
+        ? objects.find((object) => object.id === currentFolderId) ?? null
+        : null,
+    [objects, currentFolderId],
   );
 
   const navigateUp = () => {
-    if (currentPrefix === rootPrefix) return;
-    const parts = currentPrefix.split("/").filter(Boolean);
-    parts.pop();
-    const newPath = parts.length > 0 ? `${parts.join("/")}/` : "";
-    handleNavigation(newPath.length < rootPrefix.length ? rootPrefix : newPath);
+    if (!currentFolderId) return;
+    handleNavigation(currentFolder?.folderId ?? null);
   };
+
+  // Root-to-current chain from the open folder ancestorIds.
+  const breadcrumbs = useMemo(() => {
+    if (!currentFolderId) return [];
+    const chain = [...(currentFolder?.ancestorIds ?? []), currentFolderId];
+    return chain.map((id) => ({
+      id,
+      part: id,
+      display: decryptedFolderNameMap[id] || "Encrypted folder",
+    }));
+  }, [currentFolderId, currentFolder, decryptedFolderNameMap]);
 
   const navigateToBreadcrumb = (index: number) => {
-    const parts = currentPrefix
-      .slice(rootPrefix.length)
-      .split("/")
-      .filter(Boolean);
-    handleNavigation(`${rootPrefix}${parts.slice(0, index + 1).join("/")}/`);
+    const target = breadcrumbs[index];
+    if (target) handleNavigation(target.id);
   };
-
-  const breadcrumbs = useMemo(() => {
-    const parts = currentPrefix
-      .slice(rootPrefix.length)
-      .split("/")
-      .filter(Boolean);
-    let running = rootPrefix;
-    return parts.map((part) => {
-      running += `${part}/`;
-      return { part, display: decryptedFolderNameMap[running] || part };
-    });
-  }, [currentPrefix, rootPrefix, decryptedFolderNameMap]);
 
   // ── Sort ───────────────────────────────────────────────────────────────────
 
@@ -1366,7 +1325,7 @@ export function FilesBrowser() {
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files?.length || !bucketId) return;
-    addTasks(Array.from(files), bucketId, currentPrefix);
+    addTasks(Array.from(files), bucketId, currentFolderId);
     if (fileInputRef.current) fileInputRef.current.value = "";
     setTimeout(refetch, 1000);
   };
@@ -1376,23 +1335,23 @@ export function FilesBrowser() {
     setCreatingFolder(true);
     setError("");
     try {
-      const isEnc = !!privateKey;
-      const folderName = newFolderName.trim();
-      const storageName = isEnc ? crypto.randomUUID() : folderName;
-      let encryptedDisplayName: string | undefined;
-      if (isEnc && activeMetadataKey)
-        encryptedDisplayName = await encryptMetadataString(
-          folderName,
-          activeMetadataKey,
-        );
+      // Folder names exist only as ciphertext; without the metadata key
+      // there is no folder to create.
+      if (!activeMetadataKey) {
+        setModalOpen(true);
+        throw new Error("Vault locked");
+      }
+      const encryptedDisplayName = await encryptMetadataString(
+        newFolderName.trim(),
+        activeMetadataKey,
+      );
       const res = await workspace.scopedFetch("/api/objects/folder", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           bucketId,
-          name: storageName,
           encryptedDisplayName,
-          prefix: currentPrefix,
+          parentFolderId: currentFolderId,
         }),
       });
       if (res.ok) {
@@ -1421,16 +1380,14 @@ export function FilesBrowser() {
       await Promise.all(
         deleteIds.map(async (id) => {
           const folderObj = viewObjects.folders.find((f) => f.id === id);
-          if (id.startsWith("virtual-") || folderObj) {
-            if (folderObj?.key) {
-              const res = await workspace.scopedFetch("/api/objects/folder", {
-                method: "DELETE",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ bucketId, prefix: folderObj.key }),
-              });
-              if (!res.ok) throw new Error("Failed to delete folder");
-              await deleteLocalPrefix(userId, bucketId, folderObj.key);
-            }
+          if (folderObj) {
+            const res = await workspace.scopedFetch("/api/objects/folder", {
+              method: "DELETE",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ folderId: folderObj.id }),
+            });
+            if (!res.ok) throw new Error("Failed to delete folder");
+            await deleteLocalSubtree(userId, folderObj.id);
           } else {
             const res = await workspace.scopedFetch(`/api/objects/${id}`, { method: "DELETE" });
             if (!res.ok) throw new Error("Failed to delete item");
@@ -1481,26 +1438,17 @@ export function FilesBrowser() {
     if (!clipboard || !bucketId) return;
     setProcessingPaste(true);
     try {
+      // Metadata-only move; the full refetch updates folder placement
+      // (including descendants' ancestor chains) in the local cache.
       const res = await workspace.scopedFetch("/api/objects/move", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          bucketId,
-          sourceKeys: clipboard.items.map((i) => i.key),
-          destinationPrefix: currentPrefix,
+          objectIds: clipboard.items.map((item) => item.id),
+          destinationFolderId: currentFolderId,
         }),
       });
       if (res.ok) {
-        const data = await res.json();
-        await Promise.all(
-          clipboard.items.map((item) =>
-            item.contentType === "application/x-directory" ||
-            item.key.endsWith("/")
-              ? deleteLocalPrefix(userId, bucketId, item.key)
-              : deleteLocalObjects(userId, [item.id]),
-          ),
-        );
-        await upsertLocalObjects(userId, data.movedObjects, bucketId);
         setClipboard(null);
         setSelectedIds(new Set());
         fetchBucket();
@@ -1514,7 +1462,7 @@ export function FilesBrowser() {
     } finally {
       setProcessingPaste(false);
     }
-  }, [clipboard, bucketId, currentPrefix, refetch, fetchBucket, userId, workspace]);
+  }, [clipboard, bucketId, currentFolderId, refetch, fetchBucket, workspace]);
 
   const handleAddTag = async () => {
     if (!taggingObj || !newTag.trim()) return;
@@ -1743,11 +1691,11 @@ export function FilesBrowser() {
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
       if (acceptedFiles.length > 0 && bucketId) {
-        addTasks(Array.from(acceptedFiles), bucketId, currentPrefix);
+        addTasks(Array.from(acceptedFiles), bucketId, currentFolderId);
         setTimeout(refetch, 1000);
       }
     },
-    [addTasks, bucketId, currentPrefix, refetch],
+    [addTasks, bucketId, currentFolderId, refetch],
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -1941,7 +1889,7 @@ export function FilesBrowser() {
       {/* Breadcrumbs */}
       <Breadcrumbs
         breadcrumbs={breadcrumbs}
-        onNavigateHome={() => handleNavigation(rootPrefix)}
+        onNavigateHome={() => handleNavigation(null)}
         onNavigateTo={navigateToBreadcrumb}
       />
 
@@ -2050,7 +1998,7 @@ export function FilesBrowser() {
               </TableHeader>
               <TableBody>
                 {/* Back row — colSpan=6 accounts for the checkbox column */}
-                {currentPrefix && currentPrefix !== rootPrefix && (
+                {currentFolderId && (
                   <TableRow
                     className="border-border hover:bg-secondary/50 cursor-pointer h-[53px]"
                     onClick={navigateUp}
@@ -2088,7 +2036,6 @@ export function FilesBrowser() {
                       key={item.id}
                       item={item}
                       viewMode="list"
-                      currentPrefix={currentPrefix}
                       isScrolling={listIsScrolling}
                       onNavigate={isFolder ? navigateToFolder : undefined}
                       onPreview={!isFolder ? handlePreview : undefined}
@@ -2174,7 +2121,6 @@ export function FilesBrowser() {
                         key={item.id}
                         item={item}
                         viewMode="grid"
-                        currentPrefix={currentPrefix}
                         isScrolling={gridIsScrolling}
                         onNavigate={isFolder ? navigateToFolder : undefined}
                         onPreview={!isFolder ? handlePreview : undefined}

@@ -88,8 +88,8 @@ function useStarToggle(item: ObjectData) {
 interface ItemProps {
   item: ObjectData;
   viewMode: "list" | "grid";
-  currentPrefix: string;
-  onNavigate?: (path: string) => void;
+  /** Opens a folder by its record id. */
+  onNavigate?: (folderId: string) => void;
   onPreview?: (item: ObjectData) => void;
   onDownload?: (item: ObjectData) => void;
   onDelete?: (item: ObjectData) => void;
@@ -130,7 +130,6 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
   (
     {
       item,
-      currentPrefix,
       onNavigate,
       onPreview,
       onDownload,
@@ -204,19 +203,9 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
       activeMetadataKey,
     ]);
 
-    let baseName = item.key;
-    if (item.id.startsWith("virtual-")) {
-      baseName = item.id.replace("virtual-", "");
-    } else {
-      baseName =
-        item.key
-          .slice(currentPrefix.length)
-          .replace(/\/$/, "")
-          .split("/")
-          .pop() || item.key;
-    }
-
-    const name = decryptedName || baseName;
+    // Keys are opaque identities; a name exists only after local decryption.
+    const name =
+      decryptedName || (isFolder ? "Encrypted folder" : "Encrypted file");
 
     const defaultActions = (
       <>
@@ -291,7 +280,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
               return;
             }
             if (isFolder && onNavigate) {
-              onNavigate(name);
+              onNavigate(item.id);
             } else if (!isFolder && onPreview) {
               onPreview(item);
             }
@@ -302,14 +291,14 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
             return;
           }
           if (isFolder && onNavigate) {
-            onNavigate(name);
+            onNavigate(item.id);
           } else if (!isFolder && onPreview) {
             onPreview(item);
           }
         }}
         onDoubleClick={(e) => {
           if (isFolder && onNavigate) {
-            onNavigate(name);
+            onNavigate(item.id);
           } else if (!isFolder && onPreview) {
             onPreview(item);
           }
@@ -487,7 +476,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
           {isFolder ? (
             <ContextMenuItem
               className="hover:bg-accent cursor-pointer"
-              onClick={() => onNavigate?.(name)}
+              onClick={() => onNavigate?.(item.id)}
             >
               <Folder className="w-4 h-4 mr-2" /> Open
             </ContextMenuItem>
@@ -544,7 +533,6 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
   (
     {
       item,
-      currentPrefix,
       onNavigate,
       onPreview,
       onDownload,
@@ -618,19 +606,9 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
       activeMetadataKey,
     ]);
 
-    let baseName = item.key;
-    if (item.id.startsWith("virtual-")) {
-      baseName = item.id.replace("virtual-", "");
-    } else {
-      baseName =
-        item.key
-          .slice(currentPrefix.length)
-          .replace(/\/$/, "")
-          .split("/")
-          .pop() || item.key;
-    }
-
-    const name = decryptedName || baseName;
+    // Keys are opaque identities; a name exists only after local decryption.
+    const name =
+      decryptedName || (isFolder ? "Encrypted folder" : "Encrypted file");
 
     const defaultActions = (
       <>
@@ -696,7 +674,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
               return;
             }
             if (isFolder && onNavigate) {
-              onNavigate(name);
+              onNavigate(item.id);
             } else if (!isFolder && onPreview) {
               onPreview(item);
             }
@@ -707,14 +685,14 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
             return;
           }
           if (isFolder && onNavigate) {
-            onNavigate(name);
+            onNavigate(item.id);
           } else if (!isFolder && onPreview) {
             onPreview(item);
           }
         }}
         onDoubleClick={(e) => {
           if (isFolder && onNavigate) {
-            onNavigate(name);
+            onNavigate(item.id);
           } else if (!isFolder && onPreview) {
             onPreview(item);
           }
@@ -904,7 +882,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
           {isFolder ? (
             <ContextMenuItem
               className="hover:bg-accent cursor-pointer"
-              onClick={() => onNavigate?.(name)}
+              onClick={() => onNavigate?.(item.id)}
             >
               <Folder className="w-4 h-4 mr-2" /> Open
             </ContextMenuItem>

@@ -1,6 +1,7 @@
 import type { ClientSession, Types } from "mongoose";
 import { connectDatabase, getDatabase, withTransaction } from "../connection";
 import { DriveUploadSession, Space } from "../models";
+import { resolveNewDriveObjectPlacement } from "./drive-folders";
 
 export class DriveUploadCommitError extends Error {
   constructor(readonly status: number, readonly code: string, message: string, readonly revision?: number) {
@@ -57,6 +58,8 @@ export async function commitDriveUpload(input: {
   bucketId: Types.ObjectId;
   storageObject: Record<string, unknown>;
   verifiedBlobs: VerifiedDriveBlob[];
+  /** Destination folder (null or absent for the Space root). */
+  folderId?: unknown;
 }) {
   const fileId = input.storageObject.key;
   if (typeof fileId !== "string") {
@@ -128,7 +131,8 @@ export async function commitDriveUpload(input: {
       if (reserved.modifiedCount !== 1) {
         throw new DriveUploadCommitError(402, "storage_quota_exceeded", "Storage quota exceeded");
       }
-      const object = { ...input.storageObject, ...identity, __v: 0, createdAt: now, updatedAt: now };
+      const placement = await resolveNewDriveObjectPlacement(input.spaceId, input.storageObject, input.folderId, session);
+      const object = { ...input.storageObject, ...identity, ...placement, __v: 0, createdAt: now, updatedAt: now };
       await objects.insertOne(object, { session });
       const bucket = await database.collection("buckets").updateOne(
         { _id: manifest.bucketId },

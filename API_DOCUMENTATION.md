@@ -39,16 +39,14 @@ Before uploading, the app must request permission and a URL. The server will che
     {
       "bucketId": "65abc123...",
       "fileSize": 1048576,
-      "fileType": "image/jpeg",
-      "fileName": "photo.jpg",
-      "prefix": "users/user_id/folder/" // Optional virtual path
+      "fileType": "image/jpeg"
     }
     ```
 *   **Response (200 OK):**
     ```json
     {
       "uploadUrl": "https://s3.us-west-004.backblazeb2.com/...",
-      "objectKey": "users/user_id/folder/photo.jpg",
+      "objectKey": "users/user_id/0123456789abcdef0123456789abcdef",
       "bucketId": "65abc123..."
     }
     ```
@@ -131,19 +129,25 @@ Buckets are the top-level storage containers.
     *   *Note: Drive uses one shared system bucket; buckets are not deleted through the API. Objects leave storage only through the Bin purge contract.*
 
 ### 3.2 File & Folder Management (Objects)
+Object keys are opaque, server-issued identities and never encode a folder or
+name. Folders are metadata records (`folderId` parent, `ancestorIds` chain);
+moving or renaming never touches a blob.
+
 *   **List Files/Folders**
-    *   `GET /api/objects` (Supports pagination and filtering by bucket/folder)
-*   **Create Virtual Folder**
+    *   `GET /api/objects?bucketId=...&folder=<folderId|root>` (omit `folder` to list the whole Space)
+*   **Create Folder** (Space manage permission)
     *   `POST /api/objects/folder`
-    *   **Body:** `{ "name": "Documents", "parentId": "optional_parent_id", "bucketId": "..." }`
-*   **Move Files/Folders**
+    *   **Body:** `{ "bucketId": "...", "encryptedDisplayName": "<encrypted name>", "parentFolderId": "optional_parent_id" }`
+*   **Move Files/Folders** (Space manage permission; metadata only)
     *   `POST /api/objects/move`
-    *   **Body:** `{ "objectIds": ["id1", "id2"], "destinationFolderId": "new_parent_id" }`
+    *   **Body:** `{ "objectIds": ["id1", "id2"], "destinationFolderId": "new_parent_id or null" }`
+*   **Upload into a folder**
+    *   Pass `"folderId"` to `POST /api/objects/complete-upload`; presign never takes a path.
 *   **Update Metadata (Tags/Position)**
     *   `PATCH /api/objects/[id]`
     *   **Body:** `{ "tags": ["work", "important"], "position": 1 }`
 *   **Delete File/Folder**
-    *   `DELETE /api/objects/[id]` (Also deletes from B2 and frees up quota)
+    *   `DELETE /api/objects/[id]` or `DELETE /api/objects/folder` with `{ "folderId": "..." }` move the item (and a folder's live subtree) to the Bin. Bytes are freed only by the Bin purge contract.
 
 ### 3.3 Sharing & Collaboration
 *   **Create Share Link**

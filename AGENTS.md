@@ -95,8 +95,11 @@ PBKDF2, private-key hashing, server plaintext, or persisted raw product keys.
 - `Space` is the authorization boundary. Every object query and mutation must
   resolve access to the requested `spaceId`.
 - `StorageObject.key` is opaque (`users/{accountId}/{randomHex32}`); never derive
-  it from a filename. `encryptedName`, `encryptedDEK`, IVs, and chunks are
-  ciphertext-only server fields.
+  it from a filename, folder or client input, and never change it after upload.
+  Drive folders are blob-less records placed by `folderId`/`ancestorIds`;
+  structural writes go through `@xenode/database` `drive-folders`
+  (docs/gpt-6-astra-audit/31-drive-folder-model.md). `encryptedName`,
+  `encryptedDEK`, IVs, and chunks are ciphertext-only server fields.
 - Browser clients upload/download directly to Cloudflare R2 using its
   S3-compatible API. Next.js signs URLs and records metadata but never proxies
   file bytes. Do not add provider-specific B2 version APIs or endpoints.

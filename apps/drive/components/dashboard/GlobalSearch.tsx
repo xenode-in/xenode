@@ -43,15 +43,9 @@ export function GlobalSearch() {
   }, [query]);
 
   const getResultUrl = (result: LocalFile) => {
+    // Folders are records: open them by id, never by a key path.
     if (result.contentType === "application/x-directory") {
-      const parts = result.key.split("/");
-      // e.g. ["users", "userid", "my-folder", ""]
-      if (parts.length > 2) {
-        // join everything after users/userid/
-        const relativePath = parts.slice(2).join("/");
-        return `/dashboard/files?folder=${encodeURIComponent(relativePath)}`;
-      }
-      return "/dashboard/files";
+      return `/dashboard/files?folder=${encodeURIComponent(result.id)}`;
     }
     return `/dashboard/files?fileId=${result.id}`;
   };

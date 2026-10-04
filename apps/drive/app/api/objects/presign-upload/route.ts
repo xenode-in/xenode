@@ -12,7 +12,7 @@ import { getS3Client } from "@/lib/b2/client";
 import { activeStorageBucketName } from "@/lib/storage/region-context";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
-import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
+import { spaceStorageRoot } from "@/lib/storage/folders";
 import {
   reserveUploadSession,
   attachToUploadSession,
@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
     const userId = ctx.userId;
 
     const {
-      fileSize, fileType, bucketId, prefix,
+      fileSize, fileType, bucketId,
       sessionId: resumeSessionId, parentSessionId, variant,
     } = await request.json();
 
@@ -63,19 +63,10 @@ export async function POST(request: NextRequest) {
       spaceId: ctx.spaceId, accountId: ctx.accountId, additionalBytes: fileSize,
     });
 
-    const allowedPrefix =
-      ctx.spaceType === "organization"
-        ? orgObjectKeyPrefix(ctx.organizationId!)
-        : ctx.spaceType === "team"
-          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
-        : `users/${userId}/`;
-    const basePrefix = typeof prefix === "string" && prefix ? prefix : allowedPrefix;
-    if (!basePrefix.startsWith(allowedPrefix)) {
-      return NextResponse.json(
-        { error: "Access denied to this folder" },
-        { status: 403 },
-      );
-    }
+    // Physical keys live directly under the Space root; folder placement is
+    // metadata chosen at completion, never part of the key.
+    const allowedPrefix = spaceStorageRoot(ctx);
+    const basePrefix = allowedPrefix;
 
     const existing = parentSessionId || resumeSessionId
       ? await findPendingUploadSession({

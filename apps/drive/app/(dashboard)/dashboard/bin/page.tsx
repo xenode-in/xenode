@@ -42,6 +42,7 @@ const RETENTION_DAYS = 30;
 interface BinObject {
   _id: string;
   key: string;
+  ancestorIds?: string[];
   size: number;
   contentType: string;
   thumbnail?: string;
@@ -165,24 +166,21 @@ export default function BinPage() {
     };
   }, [bucketId, load]);
 
+  // Show what the user binned: hide descendants binned together with a
+  // binned folder (same deletedAt); restoring or purging the folder acts on
+  // them. Items binned separately earlier stay visible on their own.
   const filteredItems = useMemo(() => {
-    const deletedFolderKeys = new Set(
+    const binnedFolders = new Map(
       items
-        .filter((o) => o.contentType === "application/x-directory" || o.key.endsWith("/"))
-        .map((o) => o.key)
+        .filter((o) => o.contentType === "application/x-directory")
+        .map((o) => [o._id, o.deletedAt]),
     );
-
-    return items.filter((item) => {
-      const parts = item.key.split("/");
-      let runningPrefix = "";
-      for (let i = 0; i < parts.length - 1; i++) {
-        runningPrefix += parts[i] + "/";
-        if (deletedFolderKeys.has(runningPrefix) && runningPrefix !== item.key) {
-          return false;
-        }
-      }
-      return true;
-    });
+    return items.filter(
+      (item) =>
+        !(item.ancestorIds ?? []).some(
+          (id) => binnedFolders.has(id) && binnedFolders.get(id) === item.deletedAt,
+        ),
+    );
   }, [items]);
 
   const allSelected = filteredItems.length > 0 && selected.size === filteredItems.length;
@@ -249,12 +247,16 @@ export default function BinPage() {
     setBusy(true);
     setError("");
     try {
-      const res = await binMutationFetch("/api/objects/purge", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ bucketId, all: true }),
-      });
-      if (!res.ok) throw new Error("Empty bin failed");
+      // The server purges one batch per request and reports whether more remain.
+      for (let more = true; more; ) {
+        const res = await binMutationFetch("/api/objects/purge", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ bucketId, all: true }),
+        });
+        if (!res.ok) throw new Error("Empty bin failed");
+        more = (await res.json()).hasMore === true;
+      }
       setItems([]);
       setSelected(new Set());
     } catch (e) {

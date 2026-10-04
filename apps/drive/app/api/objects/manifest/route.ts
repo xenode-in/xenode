@@ -1,5 +1,5 @@
 /**
- * GET /api/objects/manifest?bucketId=...&prefix=...&mediaCategory=...
+ * GET /api/objects/manifest?bucketId=...&folder=<id|root>&mediaCategory=...
  *
  * Returns the complete lightweight display manifest for a bucket slice.
  * Binary data, preview credentials, encrypted file keys, and signed URLs are
@@ -21,12 +21,12 @@ import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
-import { orgObjectKeyPrefix, teamObjectKeyPrefix } from "@/lib/orgs/storage";
+import { parseFolderParam } from "@/lib/storage/folders";
 
 export const dynamic = "force-dynamic";
 
 const MANIFEST_PROJECTION =
-  "key size contentType encryptedContentType thumbnail tags position starred " +
+  "key folderId ancestorIds size contentType encryptedContentType thumbnail tags position starred " +
   "lastAccessedAt uploadSource createdAt updatedAt isEncrypted encryptedName " +
   "encryptedDisplayName mediaCategory aspectRatio syncContentFp";
 
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = request.nextUrl;
     const bucketId = searchParams.get("bucketId");
-    const requestedPrefix = searchParams.get("prefix");
+    const folderId = parseFolderParam(searchParams.get("folder"));
     const mediaCategory = searchParams.get("mediaCategory");
     const contentType = searchParams.get("contentType");
     const excludeMobileBackup =
@@ -73,22 +73,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    const allowedSystemPrefix =
-      ctx.spaceType === "organization"
-        ? orgObjectKeyPrefix(ctx.organizationId!)
-        : ctx.spaceType === "team"
-          ? teamObjectKeyPrefix(ctx.organizationId!, ctx.teamId!)
-          : `users/${ctx.userId}/`;
-    if (
-      requestedPrefix !== null &&
-      bucket.systemKey === "drive" &&
-      !requestedPrefix.startsWith(allowedSystemPrefix)
-    ) {
-      statusCode = 403;
-      errorMessage = "Access denied to this folder";
-      return NextResponse.json({ error: errorMessage }, { status: statusCode });
-    }
-
     const query: Record<string, unknown> = {
       bucketId,
       ...objectOwnershipClause(ctx),
@@ -96,11 +80,9 @@ export async function GET(request: NextRequest) {
       isSidecar: { $ne: true },
     };
 
-    const prefix =
-      requestedPrefix ??
-      (bucket.systemKey === "drive" ? allowedSystemPrefix : null);
-    if (prefix !== null) {
-      query.key = { $regex: `^${escapeRegex(prefix)}` };
+    // A folder's subtree: every descendant lists the folder in ancestorIds.
+    if (folderId) {
+      query.ancestorIds = folderId;
     }
 
     if (mediaCategory) {

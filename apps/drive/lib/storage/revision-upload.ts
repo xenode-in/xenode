@@ -8,7 +8,8 @@ import {
 import { resolveRegionBucketConfig, type StorageRegion } from "@xenode/config/storage";
 import { getS3Client } from "@/lib/b2/client";
 import StorageObject from "@/models/StorageObject";
-import { parentPrefixForKey, publishSyncEvent, toSyncObjectSnapshot } from "@/lib/realtime/publish";
+import { publishSyncEvent, toSyncObjectSnapshot } from "@/lib/realtime/publish";
+import { folderListingId } from "@/lib/storage/folders";
 
 /** Control metadata only; ciphertext never passes through this handler. */
 export async function handleRevisionUpload(request: NextRequest, input: DriveRevisionIdentity & {
@@ -62,10 +63,10 @@ export async function handleRevisionUpload(request: NextRequest, input: DriveRev
     if (object) await publishSyncEvent({
       userId: input.accountId, spaceId: input.spaceId, type: "FILE_UPDATED",
       payload: {
-        objectId: String(object._id), bucketId: String(object.bucketId), key: object.key,
-        parentPrefix: parentPrefixForKey(object.key), object: toSyncObjectSnapshot(object),
+        objectId: String(object._id), bucketId: String(object.bucketId),
+        folderIds: [folderListingId(object.folderId)], object: toSyncObjectSnapshot(object),
       },
-      invalidatePrefixes: [parentPrefixForKey(object.key)], invalidateStorage: true, invalidateRecent: true,
+      invalidateFolders: [object.folderId ?? null], invalidateStorage: true, invalidateRecent: true,
     }).catch((error) => console.error("Revision notification failed:", error));
   }
   return NextResponse.json({ success: true, revision: result.revision });

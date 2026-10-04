@@ -65,6 +65,10 @@ export interface IStorageObject extends Document {
   aspectRatio?: number; // width / height
   isSidecar?: boolean; // True if this file is a sidecar (like subtitle.vtt) to another asset
   parentObjectId?: mongoose.Types.ObjectId; // ID of the primary object this sidecar belongs to
+  /** Parent folder record; null at the Space root. The key never encodes location. */
+  folderId?: mongoose.Types.ObjectId | null;
+  /** Folder chain from the Space root down to `folderId`. */
+  ancestorIds?: mongoose.Types.ObjectId[];
   /**
    * Mobile sync fingerprints — opaque, per-user HMACs the device uploads so
    * it can tell whether a local photo is already backed up WITHOUT comparing
@@ -175,7 +179,10 @@ const StorageObjectSchema = new Schema<IStorageObject>(
     },
     b2FileId: {
       type: String,
-      required: true,
+      // Folders are metadata records with no blob.
+      required(this: { contentType?: string }) {
+        return this.contentType !== "application/x-directory";
+      },
     },
     tags: {
       type: [String],
@@ -340,6 +347,15 @@ const StorageObjectSchema = new Schema<IStorageObject>(
       required: false,
       index: true,
     },
+    folderId: {
+      type: Schema.Types.ObjectId,
+      ref: "StorageObject",
+      default: null,
+    },
+    ancestorIds: {
+      type: [Schema.Types.ObjectId],
+      default: [],
+    },
     syncContentFp: {
       type: String,
       required: false,
@@ -453,6 +469,9 @@ StorageObjectSchema.pre("save", function () {
  * - {tags}:                  single   – enables efficient tag-based filtering
  */
 StorageObjectSchema.index({ bucketId: 1, key: 1 }, { unique: true });
+// Folder listings and subtree operations (folders are metadata, not key paths).
+StorageObjectSchema.index({ spaceId: 1, folderId: 1, deletedAt: 1, createdAt: -1, _id: -1 });
+StorageObjectSchema.index({ spaceId: 1, ancestorIds: 1 });
 StorageObjectSchema.index({ bucketId: 1, createdAt: -1 });
 StorageObjectSchema.index({ spaceId: 1, _id: 1 });
 StorageObjectSchema.index({ spaceId: 1, createdAt: -1 });
