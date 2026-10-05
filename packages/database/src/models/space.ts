@@ -12,6 +12,7 @@ export interface SpaceRecord {
   storageFenceVersion?: number;
   /** Bumped by every product-key grant change; serializes keyring writes. */
   keyringFenceVersion?: number;
+  driveSyncVersion?: number;
   createdByAccountId: string;
   createdAt: Date;
   updatedAt: Date;
@@ -38,6 +39,7 @@ const spaceSchema = new Schema<SpaceRecord>(
     },
     storageFenceVersion: { type: Number, default: 0 },
     keyringFenceVersion: { type: Number, default: 0 },
+    driveSyncVersion: { type: Number, default: 0, min: 0 },
     createdByAccountId: { type: String, required: true },
   },
   { timestamps: true, collection: "spaces" },

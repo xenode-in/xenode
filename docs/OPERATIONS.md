@@ -108,6 +108,14 @@ flows, with no migration/backfill or automatic reset.
 
 ## Release gates
 
+Drive sync uses transactionally ordered Space versions and retained hard-purge
+tombstones. Reset obsolete development objects, Space counters and tombstones
+together; do not backfill versions or drop tombstones independently. IndexedDB
+version 8 clears the old file/metadata cache and starts a scoped snapshot while
+retaining sealed upload journals and encrypted drafts. Test multi-browser
+offline/restore/purge, scope switching and revocation before release. See
+[the sync contract](gpt-6-astra-audit/39-drive-sync-contract.md).
+
 Drive's local upload journal is sealed and scoped to the unlocked account,
 Space and key version. IndexedDB version 7 removes the old plaintext upload
 store; interrupted jobs from that obsolete format must be uploaded again.

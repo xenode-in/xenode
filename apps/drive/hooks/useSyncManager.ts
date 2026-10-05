@@ -1,158 +1,46 @@
-import { useEffect, useCallback, useState, useRef } from "react";
-import { getDb, searchIndex, LocalFile } from "@/lib/db/local";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { getSearchIndex } from "@/lib/db/local";
+import { createSyncRunner } from "@/lib/db/sync-runner";
 import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
 import { useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
+import { useOptionalWorkspace, driveScopeSpaceId } from "@/contexts/WorkspaceContext";
+import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 
-interface SyncFile {
-  _id: unknown;
-  key: string;
-  spaceId?: string;
-  folderId?: unknown;
-  ancestorIds?: unknown[];
-  size: number;
-  createdAt: string | Date;
-  updatedAt: string | Date;
-  bucketId: unknown;
-  deletedAt?: string | Date | null;
-  encryptedName?: string | null;
-  encryptedDisplayName?: string | null;
-  encryptedContentType?: string | null;
-  contentType?: string;
-  isEncrypted?: boolean;
-  tags?: string[];
-  thumbnail?: string;
-  mediaCategory?: string;
-  uploadSource?: LocalFile["uploadSource"];
-  syncContentFp?: string;
-}
-
+const subscribeNone = () => () => {};
+const idle = () => false;
+const noSearch = () => null;
 export function useSyncManager() {
   const { data: session } = useSession();
-  const { metadataKey } = useCrypto();
-  const userId = session?.user?.id;
-  const [isSyncing, setIsSyncing] = useState(false);
-  const syncLock = useRef(false);
-
-  const sync = useCallback(async () => {
-    if (!userId || syncLock.current) return;
-    syncLock.current = true;
-    setIsSyncing(true);
-
-    const db = getDb(userId);
-
-    try {
-      let lastSync = localStorage.getItem("lastSync") || "1970-01-01T00:00:00.000Z";
-      let hasMore = true;
-
-      while (hasMore) {
-        const res = await fetch(`/api/files/sync?lastSync=${lastSync}`);
-        if (!res.ok) break;
-
-        const data = (await res.json()) as { files?: SyncFile[] };
-        const files = data.files;
-        if (!files || files.length === 0) break;
-
-        const toStore: LocalFile[] = [];
-        const toDelete: string[] = [];
-
-        for (const f of files) {
-          if (f.deletedAt) {
-            toDelete.push(String(f._id));
-            continue;
-          }
-
-          const fallbackName = f.key.split("/").pop() || f.key;
-          toStore.push({
-            id: String(f._id),
-            key: f.key,
-            spaceId: f.spaceId,
-            folderId: f.folderId ? String(f.folderId) : null,
-            ancestorIds: (f.ancestorIds ?? []).map(String),
-            encryptedName: f.isEncrypted && f.encryptedName ? f.encryptedName : null,
-            encryptedDisplayName: f.encryptedDisplayName || undefined,
-            encryptedContentType: f.encryptedContentType || undefined,
-            // name is only used in the MiniSearch index; we'll fill it below
-            name: fallbackName,
-            size: f.size,
-            contentType: f.contentType || "application/octet-stream",
-            createdAt: new Date(f.createdAt).toISOString(),
-            updatedAt: new Date(f.updatedAt).toISOString(),
-            isEncrypted: f.isEncrypted || false,
-            tags: f.tags || [],
-            thumbnail: f.thumbnail,
-            bucketId: String(f.bucketId),
-            mediaCategory: f.mediaCategory,
-            uploadSource: f.uploadSource,
-            syncContentFp: f.syncContentFp,
-          });
-        }
-
-        if (toStore.length > 0) {
-          await db.files.bulkPut(toStore);
-        }
-
-        if (toDelete.length > 0) {
-          await db.files.bulkDelete(toDelete);
-        }
-
-        const allModified = [...files];
-        if (allModified.length > 0) {
-          const latestTime = Math.max(...allModified.map((f) => new Date(f.updatedAt).getTime()));
-          lastSync = new Date(latestTime).toISOString();
-          localStorage.setItem("lastSync", lastSync);
-        }
-
-        if (files.length < 1000) hasMore = false;
-      }
-
-      // Rebuild MiniSearch index in-memory with decrypted names
-      // Dexie holds encryptedName; only RAM holds plaintext
-      const allFiles = await db.files.toArray();
-
-      const indexEntries = await Promise.all(
-        allFiles.map(async (f) => {
-          let name = f.name; // fallback (plaintext key basename for unencrypted files)
-          const nameToDecrypt = f.encryptedDisplayName || f.encryptedName;
-          if (f.isEncrypted && nameToDecrypt) {
-            try {
-              name = await decryptMetadataString(nameToDecrypt, metadataKey, { fileId: f.id, purpose: "name" });
-            } catch {
-              name = "Encrypted File";
-            }
-          }
-          return { ...f, name };
-        }),
-      );
-
-      searchIndex.removeAll();
-      searchIndex.addAll(indexEntries);
-    } catch (error) {
-      console.error("[SyncManager] Error syncing:", error);
-    } finally {
-      syncLock.current = false;
-      setIsSyncing(false);
-    }
-  }, [metadataKey, userId]);
-
-  // Always call the freshest `sync` without making it an effect dependency —
-  // `sync` is recreated whenever the (reference-unstable) metadataKey changes,
-  // and depending on it here caused the effect to tear down and re-fire on every
-  // render, hammering /api/files/sync in a tight loop.
-  const syncRef = useRef(sync);
+  const cryptoContext = useCrypto();
+  const workspace = useOptionalWorkspace();
+  const { isWorkspaceEncrypted, current: workspaceCurrent, keyFor } = useWorkspaceSpaceKey();
+  const accountId = session?.user?.id ?? "";
+  const spaceId = accountId ? driveScopeSpaceId(workspace?.driveScope ?? { type: "personal" }, accountId) : "";
+  const unlocked = cryptoContext.isUnlocked;
+  const runner = useMemo(() => {
+    if (!accountId || !spaceId) return null;
+    return createSyncRunner({
+      scope: { accountId, spaceId },
+      canIndex: unlocked && Boolean(isWorkspaceEncrypted ? workspaceCurrent?.metadataKey : cryptoContext.metadataKey),
+      async decrypt(file) {
+        const key = isWorkspaceEncrypted
+          ? (await keyFor(file.spaceKeyVersion))?.metadataKey ?? null : cryptoContext.metadataKey;
+        const encrypted = file.encryptedDisplayName ?? file.encryptedName;
+        const name = encrypted ? await decryptMetadataString(encrypted, key, { fileId: file.id, purpose: "name" }) : "Encrypted File";
+        const tags = await Promise.all(file.tags.map((tag) => decryptMetadataString(tag, key, { fileId: file.id, purpose: "tags" })));
+        return { ...file, name, tags: tags.filter((tag) => tag !== "Encrypted File") };
+      },
+    });
+  }, [accountId, spaceId, unlocked, cryptoContext.metadataKey, isWorkspaceEncrypted, workspaceCurrent, keyFor]);
+  const search = useMemo(() => accountId && spaceId ? getSearchIndex(accountId, spaceId) : null, [accountId, spaceId]);
+  const isSyncing = useSyncExternalStore(runner?.subscribe ?? subscribeNone, runner?.snapshot ?? idle, idle);
+  const searchSnapshot = useSyncExternalStore(search?.subscribe ?? subscribeNone, search?.snapshot ?? noSearch, noSearch);
   useEffect(() => {
-    syncRef.current = sync;
-  }, [sync]);
-
-  // Run once when the user is known, and again only when the metadata key first
-  // becomes available (to decrypt names) — never on every render. Then poll.
-  const hasMetadataKey = Boolean(metadataKey);
-  useEffect(() => {
-    if (!userId) return;
-    void syncRef.current();
-    const interval = setInterval(() => void syncRef.current(), 60000);
-    return () => clearInterval(interval);
-  }, [userId, hasMetadataKey]);
-
-  return { isSyncing, sync };
+    if (!runner) return;
+    void runner.run().catch(() => {});
+    const interval = setInterval(() => void runner.run().catch(() => {}), 60_000);
+    return () => { clearInterval(interval); runner.dispose(); };
+  }, [runner]);
+  return { isSyncing, sync: () => runner?.run(), searchSnapshot, unlocked };
 }

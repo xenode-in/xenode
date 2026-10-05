@@ -1,8 +1,7 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { getDb } from "@/lib/db/local";
 import {
-  mapServerObjectToLocalFile,
   ServerObject,
+  upsertLocalObjects,
 } from "@/lib/db/object-cache";
 import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 
@@ -41,6 +40,7 @@ export function useFileSync({
   return useInfiniteQuery({
     queryKey: [
       "files",
+      userId,
       bucketId,
       workspace?.driveScope,
       sortBy,
@@ -50,7 +50,7 @@ export function useFileSync({
       excludeMobileBackup,
     ],
     initialPageParam: null as string | null,
-    queryFn: async ({ pageParam }) => {
+    queryFn: async ({ pageParam, signal }) => {
       if (!bucketId || !userId)
         return { objects: [], hasNextPage: false, nextCursor: null };
 
@@ -73,19 +73,15 @@ export function useFileSync({
       }
 
       const res = workspace?.scopedFetch
-        ? await workspace.scopedFetch(url, { credentials: "include" })
-        : await fetch(url, { credentials: "include" });
+        ? await workspace.scopedFetch(url, { credentials: "include", signal })
+        : await fetch(url, { credentials: "include", signal });
       if (!res.ok) throw createFileSyncError(res.status);
 
       const data = await res.json();
 
       if (data.objects && data.objects.length > 0) {
-        const db = getDb(userId);
-        const mappedFiles = (data.objects as ServerObject[]).map((o) =>
-          mapServerObjectToLocalFile(o, bucketId),
-        );
-
-        await db.files.bulkPut(mappedFiles);
+        if (signal.aborted) throw new Error("File listing context changed");
+        await upsertLocalObjects(userId, data.objects as ServerObject[], bucketId);
       }
 
       return {

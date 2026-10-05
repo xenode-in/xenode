@@ -1,3 +1,4 @@
+import { stampDriveSyncObjects } from "./drive-sync";
 import { randomUUID, randomBytes } from "node:crypto";
 import type { Types } from "mongoose";
 import { isStorageRegion, resolveRegionBucketConfig } from "@xenode/config/storage";
@@ -51,6 +52,7 @@ export async function restoreDriveVersion(input: VersionIdentity & { accountId: 
     await objects.updateOne({ ...objectFilter(input), revision: input.baseRevision, deletedAt: null }, {
       $set: { ...update, versions: remaining, revision, updatedAt: new Date() }, $inc: { __v: 1 },
     }, { session });
+    await stampDriveSyncObjects(input.spaceId, { _id: input.objectId }, session);
     return { revision };
   });
 }

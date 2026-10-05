@@ -115,6 +115,11 @@ key, never the raw Space key. Browser code reads keys through
 
 - `Space` is the authorization boundary. Every object query and mutation must
   resolve access to the requested `spaceId`.
+- Cache-visible Drive writes allocate/stamp a Space sync version in their
+  transaction; irreversible purge records a durable tombstone before removing
+  metadata. Sync uses a scoped `(syncVersion, objectId)` cursor, never timestamps.
+  Browser data/cursor commits are atomic and search indexes are account/Space
+  scoped (docs/gpt-6-astra-audit/39-drive-sync-contract.md).
 - Upload resume records use the sealed `@xenode/upload-engine` journal, a
   memory-only HKDF journal key, complete Space/version/wrap context and atomic
   IndexedDB checkpoints. Resume RPCs bind the exact account/Space reservation

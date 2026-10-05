@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useMemo } from "react";
 import { Search, Lock, Folder } from "lucide-react";
 import { getFileIcon } from "@/lib/file-icons";
-import { searchIndex, LocalFile } from "@/lib/db/local";
+import { LocalFile } from "@/lib/db/local";
 import { useSyncManager } from "@/hooks/useSyncManager";
 import { usePreview } from "@/contexts/PreviewContext";
 import { Input } from "@/components/ui/input";
@@ -17,31 +17,17 @@ import { formatBytes } from "@/lib/utils";
 
 export function GlobalSearch() {
   const [query, setQuery] = useState("");
-  const [results, setResults] = useState<LocalFile[]>([]);
   const [open, setOpen] = useState(false);
 
   // Initialize sync
-  const { isSyncing } = useSyncManager();
+  const { isSyncing, searchSnapshot, unlocked } = useSyncManager();
   const { openPreview } = usePreview();
 
-  useEffect(() => {
-    if (!query.trim()) {
-      setResults([]);
-      setOpen(false);
-      return;
-    }
-
-    // Search via MiniSearch
-    const searchResults = searchIndex.search(query, {
-      prefix: true,
-      fuzzy: 0.2,
-      boost: { name: 2 },
-    });
-
-    setResults(searchResults.slice(0, 10) as unknown as LocalFile[]); // Top 10 results
-    setOpen(true);
-  }, [query]);
-
+  const results = useMemo(() => {
+    if (!unlocked || !searchSnapshot || !query.trim()) return [];
+    return searchSnapshot.index.search(query, { prefix: true, fuzzy: 0.2, boost: { name: 2 } })
+      .slice(0, 10) as unknown as LocalFile[];
+  }, [query, searchSnapshot, unlocked]);
   const getResultUrl = (result: LocalFile) => {
     // Folders are records: open them by id, never by a key path.
     if (result.contentType === "application/x-directory") {
@@ -61,7 +47,7 @@ export function GlobalSearch() {
                 isSyncing ? "Syncing index..." : "Search files securely..."
               }
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => { setQuery(e.target.value); setOpen(Boolean(e.target.value.trim())); }}
               className="pl-9 bg-accent/50 border-none focus-visible:ring-1 w-full"
             />
           </div>

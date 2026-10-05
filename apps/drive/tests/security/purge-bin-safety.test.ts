@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Space, queueDriveBinPurge, restoreDriveBin, cleanupDriveBinObject, getDatabase, BIN_PURGE_LEASE_MS } from "@xenode/database";
+import { Space, DriveSyncTombstone, queueDriveBinPurge, restoreDriveBin, cleanupDriveBinObject, getDatabase, BIN_PURGE_LEASE_MS } from "@xenode/database";
 const { deleted, ctx } = vi.hoisted(() => ({ deleted: vi.fn(), ctx: vi.fn() }));
 vi.mock("@/lib/b2/objects", () => ({ deleteObjects: deleted }));
 vi.mock("@/lib/b2/cdn", () => ({ getSignedFileUrl: vi.fn(async (_bucket: string, key: string) => `https://cdn.example.test/${key}`) }));
@@ -57,6 +57,7 @@ describe("durable Bin purge and restore", () => {
     expect(await clean(input)).toBe("deleted");
     expect(deleted).toHaveBeenCalledWith(input.bucket.b2BucketId, expect.arrayContaining(["users/bin-owner/main","users/bin-owner/chunk","users/bin-owner/thumb","users/bin-owner/optimized","users/bin-owner/prior"]));
     expect(await lookup(input)).toBeNull();
+    expect(await DriveSyncTombstone.findById(input.objectId)).not.toBeNull();
     expect((await Bucket.findById(input.bucketId))?.toObject()).toMatchObject({ totalSizeBytes: 0, objectCount: 0 });
     expect(team ? (await OrgUsage.findOne({ orgId: "bin-org" }))?.totalStorageBytes : (await Usage.findOne({ userId: owner }))?.totalStorageBytes).toBe(0);
     expect(await clean(input)).toBe("skipped");

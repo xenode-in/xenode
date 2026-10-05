@@ -168,6 +168,9 @@ describe("organization storage support route adoption", () => {
     const body = await response.json();
 
     expect(response.status, JSON.stringify(body)).toBe(200);
-    expect(body.files).toEqual([]);
+    expect(body.changes).toEqual([]);
+    expect(body.spaceId).toBe("space_org_org_1");
+    expect(body.reset).toBe(true);
+    expect(typeof body.cursor).toBe("string");
   });
 });

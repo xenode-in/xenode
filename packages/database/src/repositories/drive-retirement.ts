@@ -1,3 +1,4 @@
+import { stampDriveSyncObjects } from "./drive-sync";
 import { withTransaction, getDatabase, connectDatabase } from "../connection";
 import { SpaceProductKey } from "../models";
 import { queueDriveBinPurge, cleanupDriveBinObject } from "./drive-bin";
@@ -23,6 +24,7 @@ export async function beginTeamRetirement(input: { orgId: string; teamId: string
     await spacesCollection().updateOne({ _id: input.spaceId, status: "active" }, { $set: { status: "deleted", updatedAt: now } }, { session });
     await db.collection("storageobjects").updateMany({ spaceId: input.spaceId, productId: "drive", deletedAt: null, purgeState: { $exists: false } }, { $set: { deletedAt: now, updatedAt: now }, $inc: { __v: 1 } }, { session });
     await db.collection("team").updateOne({ _id: team._id, purgeState: { $exists: false } }, { $set: { purgeState: "pending", updatedAt: now } }, { session });
+    await stampDriveSyncObjects(input.spaceId, { deletedAt: now }, session, true);
   });
 }
 
@@ -55,6 +57,7 @@ export async function beginPersonalRetirement(input: { accountId: string }) {
       { $set: { deletedAt: now, updatedAt: now }, $inc: { __v: 1 } },
       { session },
     );
+    await stampDriveSyncObjects(space._id, { deletedAt: now }, session, true);
     return space._id;
   });
 }
@@ -80,6 +83,7 @@ export async function beginOrganizationRetirement(input: { orgId: string; now?: 
     await db.collection("storageobjects").updateMany({
       spaceId: { $in: spaces.map((space) => space._id) }, productId: "drive", deletedAt: null, purgeState: { $exists: false },
     }, { $set: { deletedAt: now, updatedAt: now }, $inc: { __v: 1 } }, { session });
+    for (const space of spaces) await stampDriveSyncObjects(space._id, { deletedAt: now }, session, true);
     return true;
   });
 }

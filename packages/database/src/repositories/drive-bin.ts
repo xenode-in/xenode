@@ -1,3 +1,4 @@
+import { nextDriveSyncVersion, recordDriveSyncRemoval } from "./drive-sync";
 import { randomUUID } from "node:crypto";
 import { type ClientSession, Types } from "mongoose";
 import { isStorageRegion, resolveRegionBucketConfig } from "@xenode/config/storage";
@@ -53,9 +54,10 @@ export async function restoreDriveBin(input: BinSelection) {
     if (await objects.countDocuments({ ...batch, purgeState: { $exists: true } }, { session, limit: 1 })) {
       throw new DriveUploadCommitError(409, "purge_pending", "Permanent deletion has already started");
     }
+    const syncVersion = await nextDriveSyncVersion(input.spaceId, session);
     const restored = await objects.updateMany(
       { ...batch, purgeState: { $exists: false } },
-      { $unset: { deletedAt: "" }, $inc: { __v: 1 }, $set: { updatedAt: new Date() } },
+      { $unset: { deletedAt: "" }, $inc: { __v: 1 }, $set: { updatedAt: new Date(), syncVersion } },
       { session },
     );
     await rehomeRestoredDriveObjects(input.spaceId, ids, session);
@@ -174,6 +176,7 @@ export async function cleanupDriveBinObject(input: { objectId: Types.ObjectId; n
         { $set: { objectIds: { $filter: { input: { $ifNull: ["$objectIds", []] }, as: "id", cond: { $ne: ["$$id", current._id] } } } } },
         { $set: { coverObjectId: { $cond: [{ $eq: ["$coverObjectId", current._id] }, { $ifNull: [{ $arrayElemAt: ["$objectIds", 0] }, null] }, "$coverObjectId"] } } },
       ], { session });
+      if (current.isSidecar !== true) await recordDriveSyncRemoval(current.spaceId, current._id, session);
       await objects.deleteOne(lease, { session });
       return "deleted" as const;
     });

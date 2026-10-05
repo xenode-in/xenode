@@ -21,7 +21,7 @@ import StorageObject from "@/models/StorageObject";
 import { folderListingId, parseFolderParam } from "@/lib/storage/folders";
 
 const LIST_PROJECTION =
-  "key spaceId folderId ancestorIds size contentType encryptedContentType thumbnail tags position starred lastAccessedAt uploadSource createdAt " +
+  "key spaceId syncVersion folderId ancestorIds size contentType encryptedContentType thumbnail tags position starred lastAccessedAt uploadSource createdAt " +
   "isEncrypted encryptedName encryptedDisplayName mediaCategory wrappedBy spaceKeyVersion spaceKeyWrapIv " +
   "optimizedKey optimizedEncryptedDEK optimizedIV optimizedSpaceKeyWrapIv optimizedSize aspectRatio syncContentFp";
 

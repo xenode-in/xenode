@@ -5,7 +5,7 @@ import { ensureSystemWorkspaceBucketRecord, ensureWorkspaceBucket } from "../lib
 async function seedStorageBuckets() {
   const configs = validateStorageDeployment();
   await connectDatabase();
-  for (const name of ["buckets", "storageobjects", "uploadsessions", "photoUploads", "sharelinks", "directshares"]) {
+  for (const name of ["buckets", "storageobjects", "uploadsessions", "photoUploads", "sharelinks", "directshares", "driveSyncTombstones"]) {
     if (await getDatabase().collection(name).countDocuments({}, { limit: 1 })) {
       throw new Error("Storage seed requires empty development storage collections; reset disposable data first");
     }

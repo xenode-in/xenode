@@ -204,7 +204,7 @@ describe("organization object route adoption", () => {
   });
 
   it("does not reorder personal-space objects under org scope", async () => {
-    // Reorder's bulkWrite is scoped by spaceId, so a caller acting under the org
+    // Reorder is atomic and scoped by spaceId, so a caller acting under the org
     // space cannot move an object that lives in their personal space.
     process.env.ORGS_ENABLED = "true";
     mockSession("user_1");
@@ -239,7 +239,7 @@ describe("organization object route adoption", () => {
       }),
     );
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(404);
     // The personal object's position is untouched by the org-scoped reorder.
     const reloaded = await StorageObject.findById(personalObject._id).lean();
     expect(reloaded?.position).toBe(0);

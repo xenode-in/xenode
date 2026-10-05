@@ -46,7 +46,7 @@ export async function POST(
       ];
     }
 
-    await object.save();
+    await object.save({ timestamps: false });
     const original = object.versions?.find((version) => version.isOriginal);
     return NextResponse.json({
       success: true,

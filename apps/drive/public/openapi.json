@@ -1551,10 +1551,32 @@
     "/api/files/sync": {
       "get": {
         "tags": ["Sync"],
-        "summary": "Get sync state",
-        "description": "Returns current sync state for keeping mobile app caches up to date.",
+        "summary": "Read scoped Drive sync changes",
+        "description": "Commit-ordered (syncVersion, objectId) pagination for the authorized account/Space. No cursor starts a scoped snapshot reset; subsequent pages pin a watermark and later deltas include retained hard-purge tombstones. Timestamp lastSync is refused. Ciphertext-only listing snapshots; no DEKs, history or signed URLs. No-store.",
+        "parameters": [
+          { "name": "cursor", "in": "query", "schema": { "type": "string", "maxLength": 2048 } },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 1000, "default": 500 } },
+          { "name": "x-xenode-space-id", "in": "header", "schema": { "type": "string" } }
+        ],
         "responses": {
-          "200": { "description": "Sync state" }
+          "200": { "description": "Scoped sync page", "content": { "application/json": { "schema": {
+            "type": "object", "required": ["accountId", "spaceId", "cursor", "reset", "hasMore", "changes"],
+            "properties": {
+              "accountId": { "type": "string" }, "spaceId": { "type": "string" }, "cursor": { "type": "string" },
+              "reset": { "type": "boolean" }, "hasMore": { "type": "boolean" },
+              "changes": { "type": "array", "maxItems": 1000, "items": {
+                "type": "object", "required": ["objectId", "syncVersion", "type"],
+                "properties": {
+                  "objectId": { "type": "string" }, "syncVersion": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                  "type": { "type": "string", "enum": ["upsert", "remove"] }, "object": { "type": "object" }
+                }
+              } }
+            }
+          } } } },
+          "400": { "description": "Malformed or foreign cursor, invalid limit, or obsolete timestamp parameter" },
+          "403": { "description": "Space access denied" },
+          "409": { "description": "Unavailable Space or obsolete/inconsistent development sync state" },
+          "503": { "description": "Sync snapshot could not be read" }
         }
       }
     },

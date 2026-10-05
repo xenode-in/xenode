@@ -38,6 +38,7 @@ export async function GET(request: Request) {
       for (const name of ["xenode-keys-drive","xenode-handoff-drive","xenode-keys-drive-sharing-private","xenode-keys-drive-sharing-public","xenode-keys-drive-metadata"]) {
         try { indexedDB.deleteDatabase(name); } catch {}
       }
+      try { indexedDB.deleteDatabase(${JSON.stringify(`XenodeDB-${transaction.accountId}`)}); } catch {}
       try { localStorage.removeItem("lastSync"); } catch {}
     `
     : "";

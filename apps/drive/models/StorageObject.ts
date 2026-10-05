@@ -6,6 +6,7 @@ export interface IStorageObject extends Document {
   /** Product that owns this object. */
   productId: "drive" | "photos";
   spaceId: string;
+  syncVersion: number;
   createdByAccountId: string;
   bucketId: mongoose.Types.ObjectId;
   key: string;
@@ -122,6 +123,7 @@ export interface IStorageObjectVersion {
 const StorageObjectSchema = new Schema<IStorageObject>(
   {
     purgeState: { type: String, enum: ["pending", "blocked"] },
+      syncVersion: { type: Number, default: 0, min: 0 },
     productId: {
       type: String,
       enum: ["drive", "photos"],
@@ -454,6 +456,7 @@ StorageObjectSchema.index({ bucketId: 1, key: 1 }, { unique: true });
 // Folder listings and subtree operations (folders are metadata, not key paths).
 StorageObjectSchema.index({ spaceId: 1, folderId: 1, deletedAt: 1, createdAt: -1, _id: -1 });
 StorageObjectSchema.index({ spaceId: 1, ancestorIds: 1 });
+StorageObjectSchema.index({ spaceId: 1, productId: 1, syncVersion: 1, _id: 1 });
 StorageObjectSchema.index({ bucketId: 1, createdAt: -1 });
 StorageObjectSchema.index({ spaceId: 1, _id: 1 });
 StorageObjectSchema.index({ spaceId: 1, createdAt: -1 });

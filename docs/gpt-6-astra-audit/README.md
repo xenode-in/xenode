@@ -45,6 +45,7 @@ Start with [the executive summary](00-executive-summary.md), then [the migration
 | [36 — Storage pool provisioning](36-storage-pool-provisioning.md) | Explicit enabled pools, verified bucket mappings and immutable selection |
 | [37 — Billing entitlement state](37-billing-entitlement-contract.md) | Canonical transaction writers, scoped refunds, renewal checkpoints and admin overrides |
 | [38 — Upload resume journal](38-upload-resume-journal.md) | Sealed scope-bound checkpoints, atomic IndexedDB updates and exact reservation recovery |
+| [39 — Drive offline sync](39-drive-sync-contract.md) | Commit-ordered scoped cursors, durable purge tombstones and atomic cache checkpoints |
 
 ## Reading the judgments
 

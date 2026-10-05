@@ -16,6 +16,7 @@ export * from "./drive-revisions";
 export * from "./drive-versions";
 export * from "./drive-bin";
 export * from "./drive-folders";
+export * from "./drive-sync";
 export * from "./drive-retirement";
 export * from "./rate-limit";
 

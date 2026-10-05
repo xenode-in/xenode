@@ -1,14 +1,13 @@
+import { reorderDriveObjects, DriveSyncError } from "@xenode/database";
 import { NextRequest, NextResponse } from "next/server";
 import {
   bucketOwnershipClause,
   isAuthzError,
-  objectOwnershipClause,
   requireAccessContext,
   toJsonResponse,
 } from "@/lib/authz";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
-import StorageObject from "@/models/StorageObject";
 
 export async function PATCH(request: NextRequest) {
   try {
@@ -31,24 +30,11 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
 
-    const operations = items.map((item: { id: string; position: number }) => ({
-      updateOne: {
-        filter: {
-          _id: item.id,
-          bucketId: bucket._id,
-          ...objectOwnershipClause(ctx),
-          purgeState: { $exists: false },
-        },
-        update: { $set: { position: item.position } },
-      },
-    }));
-
-    if (operations.length > 0) {
-      await StorageObject.bulkWrite(operations);
-    }
+    await reorderDriveObjects({ spaceId: ctx.spaceId, bucketId: bucket._id, items });
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
+    if (error instanceof DriveSyncError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
     if (isAuthzError(error)) {
       return toJsonResponse(error);
     }

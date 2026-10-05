@@ -24,6 +24,11 @@ export type SyncEventType = (typeof syncEventTypes)[number];
 
 export interface SyncObjectSnapshot {
   _id: string;
+  spaceId?: string;
+  syncVersion?: number;
+  wrappedBy?: "user" | "space";
+  spaceKeyVersion?: number;
+  spaceKeyWrapIv?: string;
   bucketId: string;
   key: string;
   folderId?: string | null;

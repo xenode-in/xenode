@@ -1,3 +1,4 @@
+import { updateDriveObjectMetadata, DriveSyncError } from "@xenode/database";
 import { NextRequest, NextResponse } from "next/server";
 import { requireAccessContext, objectFilter, bucketOwnershipClause, isAuthzError, toJsonResponse } from "@/lib/authz";
 import { logRequest } from "@/lib/logRequest";
@@ -53,6 +54,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     void StorageObject.updateOne(
       { _id: object._id },
       { $set: { lastAccessedAt: new Date() } },
+      { timestamps: false },
     ).catch(() => {});
 
     const bucket = await Bucket.findOne({
@@ -201,6 +203,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
+    if (error instanceof DriveSyncError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
     if (isAuthzError(error)) {
       statusCode = error.status;
       errorMessage = error.message;
@@ -269,19 +272,10 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     await dbConnect();
 
-    const object = await StorageObject.findOne(objectFilter(ctx, id));
-    if (!object) {
-      statusCode = 404;
-      errorMessage = "Object not found";
-      return NextResponse.json({ error: errorMessage }, { status: statusCode });
-    }
-
-    if (tags !== undefined) object.tags = tags;
-    if (position !== undefined) object.position = position;
-    if (starred !== undefined) object.starred = !!starred;
-
-    await object.save();
-
+    const updated = await updateDriveObjectMetadata({ spaceId: ctx.spaceId, objectId: id, tags, position, starred });
+    if (!updated) return NextResponse.json({ error: "Object not found" }, { status: 404 });
+    const object = await StorageObject.findById(updated._id);
+    if (!object) return NextResponse.json({ error: "Object not found" }, { status: 404 });
     const eventType =
       starred === true
         ? "FILE_STARRED"
@@ -304,6 +298,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ object });
   } catch (error: unknown) {
+    if (error instanceof DriveSyncError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
     if (isAuthzError(error)) {
       statusCode = error.status;
       errorMessage = error.message;

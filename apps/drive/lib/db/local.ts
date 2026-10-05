@@ -12,6 +12,9 @@ export type { UploadRecord } from "@xenode/upload-engine";
 
 export interface LocalFile {
   id: string;
+  syncVersion: number;
+  position?: number;
+  starred?: boolean;
   key: string;
   /** Owning Space; personal and workspace objects share one regional bucket. */
   spaceId?: string;
@@ -81,7 +84,8 @@ export interface SpreadsheetV2DraftRecord {
 }
 export class XenodeDatabase extends Dexie {
   files!: Table<LocalFile, string>;
-  metadataCache!: Table<MetadataCache, string>;
+  syncStates!: Table<{ spaceId: string; cursor: string }, string>;
+  syncRemovals!: Table<{ id: string; spaceId: string; syncVersion: number }, [string, string]>;
   uploadJournal!: Table<SealedUploadRecord, string>;
   spreadsheetDrafts!: Table<SpreadsheetDraftRecord, string>;
   spreadsheetRecents!: Table<SpreadsheetRecentRecord, string>;
@@ -129,11 +133,17 @@ export class XenodeDatabase extends Dexie {
       uploads: null,
       uploadJournal: "id,[scope.accountId+scope.spaceId],createdAt",
     });
+    // Cache/cursors from timestamp sync are disposable; no compatibility reader.
+    this.version(8).stores({
+      metadataCache: null,
+      syncStates: "spaceId",
+      syncRemovals: "[spaceId+id],spaceId",
+    }).upgrade((transaction) => transaction.table("files").clear());
   }
 }
 
 // In-memory search index — no sensitive data ever hits disk through this
-export const searchIndex = new MiniSearch<LocalFile>({
+function createSearchIndex() { return new MiniSearch<LocalFile>({
   fields: ["name", "tags", "contentType"],
   storeFields: [
     "id",
@@ -150,7 +160,29 @@ export const searchIndex = new MiniSearch<LocalFile>({
     prefix: true,
     fuzzy: 0.2,
   },
-});
+}); }
+
+export class SearchIndexResource {
+  private value = { version: 0, index: createSearchIndex() };
+  get index() { return this.value.index; }
+  private readonly listeners = new Set<() => void>();
+  readonly subscribe = (listener: () => void) => { this.listeners.add(listener); return () => this.listeners.delete(listener); };
+  readonly snapshot = () => this.value;
+  replace(entries: LocalFile[]) {
+    const index = createSearchIndex();
+    index.addAll(entries);
+    this.value = { version: this.value.version + 1, index };
+    this.listeners.forEach((listener) => listener());
+  }
+  clear() { this.replace([]); }
+}
+const searchIndexes = new Map<string, SearchIndexResource>();
+export function getSearchIndex(accountId: string, spaceId: string): SearchIndexResource {
+  const key = JSON.stringify([accountId, spaceId]);
+  let resource = searchIndexes.get(key);
+  if (!resource) { resource = new SearchIndexResource(); searchIndexes.set(key, resource); }
+  return resource;
+}
 
 let _db: XenodeDatabase | null = null;
 
@@ -167,7 +199,9 @@ export function getDb(userId: string): XenodeDatabase {
 export async function clearLocalDb(userId: string): Promise<void> {
   const database = new XenodeDatabase(userId);
   await database.delete();
-  searchIndex.removeAll();
+  for (const [key, resource] of searchIndexes) {
+    if ((JSON.parse(key) as string[])[0] === userId) { resource.clear(); searchIndexes.delete(key); }
+  }
   if (typeof localStorage !== "undefined") {
     localStorage.removeItem("lastSync");
   }

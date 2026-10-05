@@ -1,40 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  isAuthzError,
-  objectOwnershipClause,
-  requireAccessContext,
-  toJsonResponse,
-} from "@/lib/authz";
-import dbConnect from "@/lib/mongodb";
-import StorageObject from "@/models/StorageObject";
+import { isAuthzError, requireAccessContext, toJsonResponse } from "@/lib/authz";
+import { readDriveSyncPage, DriveSyncError } from "@xenode/database";
 
-export async function GET(req: NextRequest) {
+export const dynamic = "force-dynamic";
+export async function GET(request: NextRequest) {
   try {
-    const ctx = await requireAccessContext(req);
-    const { searchParams } = new URL(req.url);
-    const lastSyncParam = searchParams.get("lastSync");
-    const lastSyncDate = lastSyncParam ? new Date(lastSyncParam) : new Date(0);
-
-    await dbConnect();
-
-    // Query for user's files updated after lastSync (exclude sidecar files)
-    const files = await StorageObject.find({
-      ...objectOwnershipClause(ctx),
-      updatedAt: { $gt: lastSyncDate },
-      isSidecar: { $ne: true },
-    })
-      .select("_id key spaceId folderId ancestorIds size contentType encryptedContentType mediaCategory createdAt updatedAt " +
-              "isEncrypted encryptedName tags thumbnail bucketId encryptedDisplayName deletedAt uploadSource syncContentFp")
-      .sort({ updatedAt: 1 }) // Return oldest first so deltas apply correctly
-      .limit(1000) // Chunk results so we don't blow up memory on first sync
-      .lean();
-
-    return NextResponse.json({ files });
-  } catch (error: any) {
-    if (isAuthzError(error)) {
-      return toJsonResponse(error);
-    }
-    console.error("[Sync API]", error);
-    return NextResponse.json({ error: "Unauthorized or Error" }, { status: 500 });
+    const ctx = await requireAccessContext(request);
+    const query = request.nextUrl.searchParams;
+    if (query.has("lastSync")) return NextResponse.json({ error: "Timestamp sync is no longer supported" }, { status: 400 });
+    const page = await readDriveSyncPage({ accountId: ctx.accountId, spaceId: ctx.spaceId,
+      cursor: query.get("cursor"), limit: Number(query.get("limit") ?? 500) });
+    return NextResponse.json(page, { headers: { "cache-control": "no-store" } });
+  } catch (error) {
+    if (isAuthzError(error)) return toJsonResponse(error);
+    if (error instanceof DriveSyncError) return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+    return NextResponse.json({ error: "Could not read sync state" }, { status: 503 });
   }
 }

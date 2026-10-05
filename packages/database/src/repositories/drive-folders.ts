@@ -1,4 +1,6 @@
+import { nextDriveSyncVersion, stampDriveSyncObjects } from "./drive-sync";
 import { type ClientSession, Types } from "mongoose";
+import { DriveSyncTombstone } from "../models";
 import { connectDatabase, getDatabase, withTransaction } from "../connection";
 import { assertCurrentSpaceKeyVersion, DriveUploadCommitError, loadSpaceUsage } from "./drive-uploads";
 
@@ -151,6 +153,10 @@ export async function createDriveFolder(input: {
     if (!personal) await assertCurrentSpaceKeyVersion(input.spaceId, input.spaceKeyVersion, session);
     const placement = await resolveDriveFolderPlacement(input.spaceId, input.parentFolderId, session);
     const now = new Date();
+    if (await DriveSyncTombstone.exists({ _id }).session(session)) {
+      throw new DriveUploadCommitError(409, "folder_id_conflict", "Folder id was already used");
+    }
+    const syncVersion = await nextDriveSyncVersion(input.spaceId, session);
     const folder = {
       _id,
       productId: "drive",
@@ -175,6 +181,7 @@ export async function createDriveFolder(input: {
       createdAt: now,
       updatedAt: now,
       __v: 0,
+      syncVersion,
     };
     try {
       await getDatabase().collection("storageobjects").insertOne(folder, { session });
@@ -261,6 +268,9 @@ async function placeSubtree(
     { $set: { folderId: placement.folderId, ancestorIds: placement.ancestorIds, updatedAt: now }, $inc: { __v: 1 } },
     { session },
   );
+  await stampDriveSyncObjects(spaceId, { $or: [
+    { _id: object._id }, { ancestorIds: object._id }, { parentObjectId: object._id },
+  ] }, session);
 }
 
 /** Keep only selections not already inside another selected folder. */
@@ -342,6 +352,7 @@ export async function binDriveObjects(input: { spaceId: string; objectIds: unkno
       { $set: { deletedAt: now, updatedAt: now }, $inc: { __v: 1 } },
       { session },
     );
+    await stampDriveSyncObjects(input.spaceId, { _id: { $in: binnedIds } }, session);
     return { binnedIds, primaries };
   });
 }

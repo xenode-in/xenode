@@ -5,6 +5,9 @@ export type ServerObject = {
   id?: string;
   key: string;
   spaceId?: string;
+  syncVersion?: number;
+  position?: number;
+  starred?: boolean;
   folderId?: string | null;
   ancestorIds?: string[];
   size?: number;
@@ -51,12 +54,15 @@ export function mapServerObjectToLocalFile(
   const now = new Date();
   return {
     id: String(object._id || object.id),
+    syncVersion: object.syncVersion ?? 0,
+    position: object.position,
+    starred: object.starred,
     key: object.key,
     spaceId: object.spaceId,
     folderId: object.folderId ? String(object.folderId) : null,
     ancestorIds: (object.ancestorIds ?? []).map(String),
     encryptedName: object.encryptedName || object.encryptedDisplayName || null,
-    name: object.key.split("/").filter(Boolean).pop() || object.key,
+    name: "Encrypted File",
     size: object.size || 0,
     contentType: object.contentType || "application/octet-stream",
     createdAt: toIso(object.createdAt, now),
@@ -96,7 +102,7 @@ export async function upsertLocalObject(
   ) {
     return;
   }
-  await getDb(userId).files.put(mapServerObjectToLocalFile(object, bucketId));
+  await upsertLocalObjects(userId, [object], bucketId);
 }
 
 export async function upsertLocalObjects(
@@ -105,11 +111,19 @@ export async function upsertLocalObjects(
   bucketId: string | null | undefined,
 ) {
   if (!userId || !objects?.length || !bucketId) return;
-  await getDb(userId).files.bulkPut(
-    objects
-      .filter((object) => object.key && (object._id || object.id))
-      .map((object) => mapServerObjectToLocalFile(object, bucketId)),
-  );
+  const db = getDb(userId);
+  await db.transaction("rw", db.files, db.syncRemovals, async () => {
+    for (const object of objects) {
+      if (!object.key || !(object._id || object.id) || !object.spaceId) continue;
+      const row = mapServerObjectToLocalFile(object, bucketId);
+      if (!Number.isSafeInteger(row.syncVersion) || row.syncVersion < 0) continue;
+      const previous = await db.files.get(row.id);
+      const removed = await db.syncRemovals.get([object.spaceId, row.id]);
+      if ((previous && previous.syncVersion > row.syncVersion) || (removed && removed.syncVersion >= row.syncVersion)) continue;
+      await db.files.put(row);
+      if (removed) await db.syncRemovals.delete([object.spaceId, row.id]);
+    }
+  });
 }
 
 export async function deleteLocalObjects(
@@ -117,7 +131,14 @@ export async function deleteLocalObjects(
   ids: string[],
 ) {
   if (!userId || ids.length === 0) return;
-  await getDb(userId).files.bulkDelete(ids);
+  const db = getDb(userId);
+  await db.transaction("rw", db.files, db.syncRemovals, async () => {
+    for (const id of ids) {
+      const row = await db.files.get(id);
+      if (row?.spaceId) await db.syncRemovals.put({ id, spaceId: row.spaceId, syncVersion: row.syncVersion });
+      await db.files.delete(id);
+    }
+  });
 }
 
 /** Remove a folder and every cached descendant (they leave together). */
@@ -131,5 +152,5 @@ export async function deleteLocalSubtree(
     .where("ancestorIds")
     .equals(folderId)
     .primaryKeys();
-  await db.files.bulkDelete([folderId, ...(descendants as string[])]);
+  await deleteLocalObjects(userId, [folderId, ...(descendants as string[])]);
 }

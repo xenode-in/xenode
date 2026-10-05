@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { getDb } from "@/lib/db/local";
 import { useSession } from "@/lib/auth/client";
+import { useWorkspace, driveScopeSpaceId } from "@/contexts/WorkspaceContext";
 import { QuickAccessBar } from "@/components/dashboard/QuickAccessBar";
 import { PreviewSection } from "@/components/dashboard/PreviewSection";
 import { RecentFilesTable } from "@/components/dashboard/RecentFilesTable";
@@ -14,25 +15,32 @@ type RecentObject = any;
 export function DashboardClient() {
   const { data: session } = useSession();
   const userId = session?.user?.id;
+  const workspace = useWorkspace();
+  const { scopedFetch } = workspace;
+  const spaceId = userId ? driveScopeSpaceId(workspace.driveScope, userId) : "";
 
   // "Recent" = recently OPENED, sorted server-side by lastAccessedAt (bumped on
   // every file open, seeded at upload). Fetched from the server so it reflects
   // opens immediately, rather than the Dexie createdAt order (recent uploads).
-  const [recentFiles, setRecentFiles] = useState<RecentObject[] | null>(null);
+  const [loadedRecent, setLoadedRecent] = useState<{ spaceId: string; userId: string; files: RecentObject[] } | null>(null);
+  const recentFiles = loadedRecent?.spaceId === spaceId && loadedRecent.userId === userId ? loadedRecent.files : null;
 
   useEffect(() => {
+    if (!userId || !spaceId) return;
     let cancelled = false;
+    const controller = new AbortController();
     (async () => {
       try {
-        const cfgRes = await fetch("/api/drive/config");
+        const cfgRes = await scopedFetch("/api/drive/config", { signal: controller.signal });
         const cfg = await cfgRes.json();
         const bid = cfg?.bucket?._id;
         if (!bid) {
-          if (!cancelled) setRecentFiles([]);
+          if (!cancelled) setLoadedRecent({ userId, spaceId, files: [] });
           return;
         }
-        const res = await fetch(
+        const res = await scopedFetch(
           `/api/objects?bucketId=${bid}&sortBy=accessed&limit=8`,
+          { signal: controller.signal },
         );
         const data = await res.json();
         const objs = (data.objects ?? []).map((o: RecentObject) => ({
@@ -40,50 +48,51 @@ export function DashboardClient() {
           id: o._id,
           encryptedName: o.encryptedName ?? undefined,
         }));
-        if (!cancelled) setRecentFiles(objs);
+        if (!cancelled) setLoadedRecent({ userId, spaceId, files: objs });
       } catch {
-        if (!cancelled) setRecentFiles([]);
+        if (!cancelled) setLoadedRecent({ userId, spaceId, files: [] });
       }
     })();
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, []);
+  }, [userId, spaceId, scopedFetch]);
 
   const videos = useLiveQuery(
     () =>
       userId
         ? getDb(userId)
-            .files.filter((f) => f.contentType.startsWith("video/"))
+            .files.where("spaceId").equals(spaceId).filter((f) => f.contentType.startsWith("video/"))
             .reverse()
             .limit(1)
             .toArray()
         : [],
-    [userId],
+    [userId, spaceId],
   );
 
   const images = useLiveQuery(
     () =>
       userId
         ? getDb(userId)
-            .files.filter((f) => f.contentType.startsWith("image/"))
+            .files.where("spaceId").equals(spaceId).filter((f) => f.contentType.startsWith("image/"))
             .reverse()
             .limit(4)
             .toArray()
         : [],
-    [userId],
+    [userId, spaceId],
   );
 
   const audios = useLiveQuery(
     () =>
       userId
         ? getDb(userId)
-            .files.filter((f) => f.contentType.startsWith("audio/"))
+            .files.where("spaceId").equals(spaceId).filter((f) => f.contentType.startsWith("audio/"))
             .reverse()
             .limit(1)
             .toArray()
         : [],
-    [userId],
+    [userId, spaceId],
   );
 
   // Still loading Dexie query

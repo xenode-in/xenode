@@ -1,3 +1,4 @@
+import { stampDriveSyncObjects } from "./drive-sync";
 import { randomBytes } from "node:crypto";
 import type { ClientSession, Types } from "mongoose";
 import { connectDatabase, getDatabase, withTransaction } from "../connection";
@@ -154,6 +155,7 @@ export async function commitDriveRevision(input: DriveRevisionIdentity & {
       $inc: { __v: 1 },
     }, { session });
     if (updated.modifiedCount !== 1) throw new DriveUploadCommitError(409, "revision_conflict", "The file changed");
+    await stampDriveSyncObjects(input.spaceId, { _id: input.objectId }, session);
     const bucket = await database.collection("buckets").updateOne({ _id: input.bucketId }, {
       $inc: { totalSizeBytes: input.verifiedSize }, $set: { updatedAt: now },
     }, { session });

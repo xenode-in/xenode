@@ -1,3 +1,5 @@
+import { nextDriveSyncVersion } from "./drive-sync";
+import { DriveSyncTombstone } from "../models";
 import type { ClientSession, Types } from "mongoose";
 import { connectDatabase, getDatabase, withTransaction } from "../connection";
 import { DriveUploadSession, Space } from "../models";
@@ -153,7 +155,11 @@ export async function commitDriveUpload(input: {
         throw new DriveUploadCommitError(402, "storage_quota_exceeded", "Storage quota exceeded");
       }
       const placement = await resolveNewDriveObjectPlacement(input.spaceId, input.storageObject, input.folderId, session);
-      const object = { ...input.storageObject, ...identity, ...placement, __v: 0, createdAt: now, updatedAt: now };
+      const syncVersion = await nextDriveSyncVersion(input.spaceId, session);
+      if (await DriveSyncTombstone.exists({ _id: identity._id }).session(session)) {
+        throw new DriveUploadCommitError(409, "object_identity_conflict", "Object identity was already retired");
+      }
+      const object = { ...input.storageObject, ...identity, ...placement, __v: 0, syncVersion, createdAt: now, updatedAt: now };
       await objects.insertOne(object, { session });
       const bucket = await database.collection("buckets").updateOne(
         { _id: manifest.bucketId },
