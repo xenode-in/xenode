@@ -47,7 +47,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F28 | MED | Addressed | 0ZI: shared protocol module, Engine.IO Origin allowlist, origin- and session-bound tickets, WebSocket-only, fail-fast Redis, session/15-minute deadline, fresh ticket per attempt; see [30](30-realtime-contract.md) | Deployed proxy/Redis and real browsers are release gates |
 | F29 | MED | Partial | 0Z requires R2 endpoints and region `auto` | Shared bucket-name default, unknown bucket → `asia`, no startup validation of complete distinct regions |
 | F30 | HIGH | Addressed | 0ZN: the projection route, `PhotosService.createProjection` with its repository methods, and the ownership-relabel script are removed; PhotoAssets come only from Photos upload completion | — |
-| F31 | MED | Partial | 0ZS: Node 24 in CI, all images and root `engines`; CI builds without secrets | `test:security` is scoped ESLint and fails on pre-existing hook errors; no lint or container checks in CI |
+| F31 | MED | Partial | 0ZS: Node 24 in CI, all images and root `engines`; CI builds without secrets. 0ZW: `test:security` passes with unchanged rules after renderer configuration uses an external-store subscription and admin controls use cancellable async callbacks | Full lint and container checks are not in CI; `test:security` remains scoped ESLint rather than a browser/malicious-file gate |
 
 ## Findings discovered during verification
 

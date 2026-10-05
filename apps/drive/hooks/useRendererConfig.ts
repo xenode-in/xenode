@@ -1,68 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import type { RendererFlags } from "@/lib/file-security/types";
-
-const DISABLED: RendererFlags = {
-  global: false,
-  pdf: false,
-  office: false,
-  svg: false,
-  html: false,
-  image: false,
-  media: false,
-  archive: false,
-  text: false,
-  onlyOfficeV2: false,
-};
-
-interface RendererConfigResponse {
-  version: number;
-  renderers: RendererFlags;
-  expiresAt: string;
-}
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { createRendererConfigSource } from "@/lib/file-security/client-config";
 
 export function useRendererConfig() {
-  const [config, setConfig] = useState<RendererConfigResponse>({
-    version: 0,
-    renderers: DISABLED,
-    expiresAt: new Date(0).toISOString(),
-  });
-
-  const refresh = useCallback(async (): Promise<RendererConfigResponse> => {
-    try {
-      const response = await fetch("/api/file-security/config", {
-        cache: "no-store",
-        credentials: "same-origin",
-      });
-      if (!response.ok) throw new Error("Renderer configuration unavailable");
-      const next = (await response.json()) as RendererConfigResponse;
-      if (!next.renderers?.global) {
-        const disabled = {
-          ...next,
-          renderers: { ...DISABLED, ...next.renderers },
-        };
-        setConfig(disabled);
-        return disabled;
-      }
-      setConfig(next);
-      return next;
-    } catch {
-      const disabled = {
-        version: 0,
-        renderers: DISABLED,
-        expiresAt: new Date().toISOString(),
-      };
-      setConfig(disabled);
-      return disabled;
-    }
-  }, []);
+  const [source] = useState(createRendererConfigSource);
+  const config = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getServerSnapshot);
 
   useEffect(() => {
-    void refresh();
-    const interval = window.setInterval(() => void refresh(), 60_000);
-    return () => window.clearInterval(interval);
-  }, [refresh]);
+    void source.refresh();
+    const interval = window.setInterval(() => void source.refresh(), 60_000);
+    return () => {
+      window.clearInterval(interval);
+      source.cancel();
+    };
+  }, [source]);
 
-  return { ...config, refresh };
+  return { ...config, refresh: source.refresh };
 }

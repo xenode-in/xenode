@@ -6,8 +6,8 @@ approval flag and an operational kill-switch state.
 
 ## Trust boundaries
 
-- `xenode.in` owns sessions, keys, decryption, encryption, and authenticated
-  APIs.
+- The configured Drive origin owns its ProductSession, product keys,
+  decryption, encryption, and authenticated product APIs.
 - Verified raster images, user-initiated audio/video, and escaped text render
   with native browser primitives in the trusted app. PDF uses a pinned PDF.js
   worker and canvas only. None of these formats is placed in an iframe.
@@ -47,6 +47,20 @@ long-term isolation upgrade.
 
 This exception is an explicit product decision. Moving the runtimes to a
 separate registrable domain remains the recommended defense-in-depth upgrade.
+
+## Client configuration lifecycle
+
+Renderer settings start disabled during SSR and the first client render. A
+per-hook external resource fetches the existing no-store configuration endpoint;
+React subscribes through `useSyncExternalStore`. Concurrent refresh calls share
+one in-flight request. Cleanup aborts and invalidates pending work, resets the
+snapshot to disabled and permits a fresh request if the effect mounts again.
+Late responses from cancelled work never publish or authorize a preview.
+Malformed responses and refresh failures disable the resource; only recognized
+boolean renderer flags are retained. The 60-second polling interval and explicit
+refresh before preview inspection remain in place. Admin controls also abort
+their initial fetch on cleanup and ignore its late success/error callbacks.
+Neither path suppresses the React hook lint rules.
 
 ## Emergency response
 

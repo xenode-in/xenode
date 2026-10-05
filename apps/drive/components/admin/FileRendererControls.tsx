@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RENDERER_KEYS, type RendererKey } from "@/lib/file-security/types";
@@ -23,19 +23,19 @@ export function FileRendererControls() {
   const [busy, setBusy] = useState<Key | null>(null);
   const [error, setError] = useState("");
 
-  const load = useCallback(async () => {
-    const response = await fetch("/api/admin/security/file-renderers", {
-      cache: "no-store",
-    });
-    if (!response.ok) throw new Error("Failed to load renderer controls");
-    setState(await response.json());
-  }, []);
-
   useEffect(() => {
-    void load().catch((err: unknown) =>
-      setError(err instanceof Error ? err.message : "Failed to load"),
-    );
-  }, [load]);
+    const controller = new AbortController();
+    void fetch("/api/admin/security/file-renderers", {
+      cache: "no-store", signal: controller.signal,
+    }).then(async (response) => {
+      if (!response.ok) throw new Error("Failed to load renderer controls");
+      const next = await response.json() as State;
+      if (!controller.signal.aborted) setState(next);
+    }).catch((err: unknown) => {
+      if (!controller.signal.aborted) setError(err instanceof Error ? err.message : "Failed to load");
+    });
+    return () => controller.abort();
+  }, []);
 
   async function setKilled(renderer: Key, killed: boolean) {
     if (reason.trim().length < 8) {
