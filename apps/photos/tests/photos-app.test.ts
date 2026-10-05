@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import nextConfig from "../next.config";
 import { getTimelineWindow } from "../lib/virtual-timeline";
 import {
@@ -44,6 +44,29 @@ describe("Photos app isolation", () => {
       .map((path) => readFileSync(path, "utf8"))
       .join("\n");
     expect(source).not.toContain("SharedArrayBuffer");
+  });
+
+  it("allows exactly the configured storage and realtime origins", async () => {
+    vi.stubEnv("ACCOUNTS_ORIGIN", "https://accounts.example.test");
+    vi.stubEnv("NEXT_PUBLIC_REALTIME_ORIGIN", "https://drive.example.test");
+    vi.stubEnv("S3_ENDPOINT", "https://asia-acct.r2.cloudflarestorage.com");
+    vi.stubEnv("S3_US_ENDPOINT", "");
+    vi.stubEnv("S3_EU_ENDPOINT", "https://eu-acct.eu.r2.cloudflarestorage.com/");
+    try {
+      const rules = await nextConfig.headers?.();
+      const csp = rules?.[0]?.headers.find((header) => header.key === "Content-Security-Policy");
+      const connectSrc = /connect-src ([^;]+)/u.exec(csp?.value ?? "")?.[1].split(" ");
+      expect(connectSrc).toEqual([
+        "'self'",
+        "https://accounts.example.test",
+        "wss://drive.example.test",
+        "https://asia-acct.r2.cloudflarestorage.com",
+        "https://eu-acct.eu.r2.cloudflarestorage.com",
+      ]);
+      expect(csp?.value).not.toMatch(/\*/u);
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("does not import Drive internals", () => {

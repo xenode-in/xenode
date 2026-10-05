@@ -135,6 +135,10 @@ services:
         APP: photos
         <<: *public-origins
         NEXT_PUBLIC_REALTIME_ORIGIN: ${DRIVE_ORIGIN:?}
+        # Its CSP allows exactly these storage origins.
+        S3_ENDPOINT: ${S3_ENDPOINT:?}
+        S3_US_ENDPOINT: ${S3_US_ENDPOINT:-}
+        S3_EU_ENDPOINT: ${S3_EU_ENDPOINT:-}
     restart: always
     ports:
       - "3002:3002"

@@ -4,7 +4,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "env": ["ACCOUNTS_ORIGIN", "DRIVE_ORIGIN", "PHOTOS_ORIGIN"],
+      "env": ["ACCOUNTS_ORIGIN", "DRIVE_ORIGIN", "PHOTOS_ORIGIN", "S3_ENDPOINT", "S3_US_ENDPOINT", "S3_EU_ENDPOINT"],
       "outputs": [".next/**", "!.next/cache/**", "dist/**"]
     },
     "dev": {

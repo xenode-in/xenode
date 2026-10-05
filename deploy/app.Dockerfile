@@ -35,10 +35,14 @@ RUN --mount=type=cache,target=/root/.npm,sharing=locked npm ci --ignore-scripts
 COPY . .
 ARG APP
 # `next build` inlines NEXT_PUBLIC_* values and freezes next.config headers
-# (which read the product origins), so these are build args. None is a secret.
+# (which read the product origins and, for Photos, the R2 endpoints), so these
+# are build args. None is a secret.
 ARG ACCOUNTS_ORIGIN
 ARG DRIVE_ORIGIN
 ARG PHOTOS_ORIGIN
+ARG S3_ENDPOINT
+ARG S3_US_ENDPOINT
+ARG S3_EU_ENDPOINT
 ARG NEXT_PUBLIC_ACCOUNTS_ORIGIN
 ARG NEXT_PUBLIC_DRIVE_ORIGIN
 ARG NEXT_PUBLIC_PHOTOS_ORIGIN

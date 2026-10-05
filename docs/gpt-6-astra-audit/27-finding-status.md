@@ -30,7 +30,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F11 | HIGH | Partial | 0Q, 0S, 0T, 0V, 0ZH: verified bytes and transactional finalize/revision/purge accounting; usage reads are read-only from the Space owner; non-transactional writers removed. 0ZQ: admin account deletion retires the personal Space through the purge pipeline instead of deleting rows and Usage | No OrgUsage reconciliation report |
 | F12 | HIGH | Addressed | 0M, 0N, 0P `4e04408`: exact manifests, transactional completion | — |
 | F13 | HIGH | Addressed | 0M–0O, 0ZB `cffd54b`: manifest-owned cleanup honoring PUT expiry | — |
-| F14 | HIGH | Partial | R2 endpoint validation (0Z) makes uploads/previews match the CSP wildcard. 0ZS: header origins are build inputs, so deployed CSPs carry the configured origins, and Drive's `frame-src` names the configured editor origin | Photos `connect-src` uses `*.r2.cloudflarestorage.com` instead of configured origins and omits the realtime origin; Drive's main app only sends a report-only CSP |
+| F14 | HIGH | Addressed | 0ZT: Photos' `connect-src` is exactly `'self'`, Accounts, the realtime socket and each configured R2 endpoint origin (no wildcard); endpoints and origins are build inputs. Browser check: socket allowed, unlisted R2 host refused | Uploads, previews and revocation against live R2 and a running socket server are a browser release gate |
 | F15 | HIGH | Addressed | 0ZO: the editor takes a plain title and seals it as a crypto-core `album-name` envelope under the Photos HKDF metadata key (`deriveMetadataKey`, derived at unlock); the albums route accepts only an envelope bound to the route Space and the creating account; list, search and detail decrypt locally | — |
 | F16 | MED | Open | Timeline mounts every tile; share/settings/help unwired; no trash API | Product completion (Phase 5) |
 | F17 | MED | Open | `UploadRecord` stores plaintext names and no Space/wrap context; resume uses bare `fetch`; checkpoints are read-modify-write | Encrypted versioned journal bound to job scope |
@@ -60,6 +60,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F36 | MED | Addressed | 0ZR: the scheduler writes the bearer header to a root-only file read by `curl -H @file`, unsets the secret before `crond`, and logs only schedules and URLs; verified in a container (secret absent from logs, crontab, process list and crond's environment; header sent) | — |
 | F37 | MED | Addressed | 0ZH: both routes and their orphaned non-transactional helpers removed | — |
 | F38 | HIGH | Addressed | 0ZS: Drive's startup validation required `BETTER_AUTH_SECRET`, so product containers held Accounts' identity secret (with database access, enough to decrypt the OIDC signing key); PostHog IDs used it as a salt; product cookie secrets fell back to one shared value. Only Accounts receives it now and no fallback remains | — |
+| F39 | MED | Open | [06](06-e2ee-security-audit.md) renderer section: Drive's broad CSP is report-only, while PDF.js runs in the application realm | Enforce a Drive CSP after inventorying third parties (Razorpay checkout frames, PostHog) and checking them in a browser |
 
 ## Release gates not verified by tests
 
