@@ -24,7 +24,9 @@ see [the Admin session contract](gpt-6-astra-audit/26-admin-session-contract.md)
 - `expire-plans`: subscription/grace lifecycle reconciliation.
 - `purge-bin`: removes expired encrypted blobs before deleting object rows.
 - `cleanup-orphans`: reconciles failed/incomplete object uploads.
-- `purge-orgs`: removes organizations after their restoration window.
+- `purge-orgs`: removes organizations after their restoration window, and
+  finishes admin account deletions: purges each closed personal Space's files,
+  then its quota record and Space.
 
 All cron endpoints require `Authorization: Bearer ${CRON_SECRET}`.
 

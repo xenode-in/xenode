@@ -295,15 +295,6 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
         );
       }
 
-      await mongoose.connection.collection("session").updateMany(
-        { userId: memberUserId, activeOrganizationId: orgId },
-        {
-          $unset: { activeOrganizationId: "", activeTeamId: "" },
-          $set: { updatedAt: now },
-        },
-        { session: mongoSession },
-      );
-
       await ProductSession.updateMany(
         {
           accountId: memberUserId,

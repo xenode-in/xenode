@@ -5,6 +5,7 @@ import { deleteObjects } from "@/lib/b2/objects";
 import {
   beginOrganizationRetirement,
   finishOrganizationRetirement,
+  finishPersonalRetirement,
   finishTeamRetirement,
   processRetiringSpace,
 } from "@xenode/database/repositories";
@@ -76,8 +77,20 @@ export async function GET(req: NextRequest) {
       else await organizations.updateOne({ id: orgId, purgeState: "pending" }, { $set: { purgeSweepAt: now } });
     }
 
+    // Deleted accounts: purge each closed personal Space, then its quota record.
+    let purgedAccounts = 0;
+    const personalSpaces = await db.collection<{ _id: string }>("spaces").find({ type: "personal", status: "deleted" })
+      .sort({ updatedAt: 1, _id: 1 }).limit(Math.max(0, MAX_SPACE_STEPS_PER_RUN - spaceSteps)).project({ _id: 1 }).toArray();
+    for (const space of personalSpaces) {
+      const step = await processRetiringSpace({ spaceId: space._id, now, deleteBlobs: deleteObjects });
+      spaceSteps++;
+      purgedObjects += step.deleted;
+      failedObjects += step.failed;
+      if (step.complete && await finishPersonalRetirement({ spaceId: space._id })) purgedAccounts++;
+    }
+
     return NextResponse.json({
-      success: failedObjects === 0, purgedOrgs, purgedTeams, purgedObjects, failedObjects,
+      success: failedObjects === 0, purgedOrgs, purgedTeams, purgedAccounts, purgedObjects, failedObjects,
       processedAt: now.toISOString(),
     }, { status: failedObjects ? 500 : 200 });
   } catch (error) {

@@ -6,6 +6,7 @@ import Bucket from "@/models/Bucket";
 import { createTestProductKey, SpaceProductKey } from "@/tests/helpers/spaceProductKeys";
 import { organizationSpaceId } from "@xenode/spaces/ids";
 import { ensureOrganizationSpace } from "@xenode/spaces/repository";
+import { ProductSession } from "@xenode/database";
 
 const mockedGetServerSession = vi.mocked(getServerSession);
 
@@ -56,15 +57,18 @@ async function addMember(userId: string, role = "member") {
   });
 }
 
+/** The Drive product session where the active organization actually lives. */
 async function addSession(userId: string) {
-  await Bucket.db.collection("session").insertOne({
-    id: `session-${userId}`,
-    userId,
-    activeOrganizationId: "org_1",
-    activeTeamId: "team_1",
-    createdAt: new Date(),
-    updatedAt: new Date(),
+  await ProductSession.create({
+    sessionId: `session-${userId}`,
+    accountId: userId,
+    productId: "drive",
+    issuerSessionId: `issuer-${userId}`,
+    clientId: "drive",
+    authenticatedAt: new Date(),
+    sessionVersion: 1,
     expiresAt: new Date(Date.now() + 60_000),
+    activeOrganizationId: "org_1",
   });
 }
 
@@ -206,11 +210,9 @@ describe("organization member removal", () => {
       userId: "user_1",
     })).toBe(0);
     expect(await Bucket.db.collection("teamMember").countDocuments()).toBe(0);
-    const removedSession = await Bucket.db.collection("session").findOne({
-      id: "session-user_1",
-    });
-    expect(removedSession?.activeOrganizationId).toBeUndefined();
-    expect(removedSession?.activeTeamId).toBeUndefined();
+    // Removal ends the member's product sessions outright.
+    const removedSession = await ProductSession.findOne({ sessionId: "session-user_1" }).lean();
+    expect(removedSession?.revokedAt).toBeInstanceOf(Date);
     expect(await SpaceProductKey.countDocuments({
       spaceId: organizationSpaceId("org_1"),
       memberAccountId: "user_1",

@@ -2,11 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/admin/session";
 import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
-import StorageObject from "@/models/StorageObject";
-import { personalSpaceId } from "@xenode/spaces/ids";
 import ShareLink from "@/models/ShareLink";
+import DirectShare from "@/models/DirectShare";
 import ApiKey from "@/models/ApiKey";
 import mongoose from "mongoose";
+import {
+  beginPersonalRetirement,
+  deleteAccountIdentity,
+  DriveUploadCommitError,
+} from "@xenode/database";
 
 type RouteContext = { params: Promise<{ userId: string }> };
 
@@ -148,8 +152,12 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
 }
 
 /**
- * DELETE /api/admin/users/[userId] — permanently remove user and all their data.
- * Super admin only.
+ * DELETE /api/admin/users/[userId] — delete an account. Super admin only.
+ *
+ * Access and identity end now; Drive files go through the purge pipeline
+ * (ciphertext deleted, bytes released) and the quota record and Space follow
+ * once storage is empty (cron `purge-orgs`). Refused while the account
+ * belongs to an organization or another product still stores its data.
  */
 export async function DELETE(_req: NextRequest, { params }: RouteContext) {
   const session = await getAdminSession();
@@ -159,25 +167,20 @@ export async function DELETE(_req: NextRequest, { params }: RouteContext) {
   const { userId } = await params;
   await dbConnect();
 
-  const db = mongoose.connection.db;
-  if (!db)
-    return NextResponse.json({ error: "DB not connected" }, { status: 500 });
-
+  try {
+    await beginPersonalRetirement({ accountId: userId });
+  } catch (error) {
+    if (error instanceof DriveUploadCommitError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+    }
+    throw error;
+  }
+  await deleteAccountIdentity(userId);
   await Promise.all([
-    db.collection("user").deleteOne({
-      $or: [
-        { id: userId },
-        ...(mongoose.Types.ObjectId.isValid(userId)
-          ? [{ _id: new mongoose.Types.ObjectId(userId) }]
-          : []),
-      ],
-    }),
-    db.collection("session").deleteMany({ userId }),
-    StorageObject.deleteMany({ spaceId: personalSpaceId(userId) }),
     ShareLink.deleteMany({ createdBy: userId }),
+    DirectShare.deleteMany({ createdBy: userId }),
     ApiKey.deleteMany({ userId }),
-    Usage.deleteOne({ userId }),
   ]);
 
-  return NextResponse.json({ success: true });
+  return NextResponse.json({ success: true, status: "retiring" }, { status: 202 });
 }

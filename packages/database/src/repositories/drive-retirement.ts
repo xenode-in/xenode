@@ -3,7 +3,7 @@ import { SpaceProductKey } from "../models";
 import { queueDriveBinPurge, cleanupDriveBinObject } from "./drive-bin";
 import { DriveUploadCommitError } from "./drive-uploads";
 
-interface RetiringSpace { _id: string; type: string; organizationId: string; teamId?: string; status: string }
+interface RetiringSpace { _id: string; type: string; organizationId: string; teamId?: string; ownerAccountId?: string; status: string }
 const spacesCollection = () => getDatabase().collection<RetiringSpace>("spaces");
 
 /** Stop all Space access and share-file access before retiring child ciphertext. */
@@ -23,6 +23,39 @@ export async function beginTeamRetirement(input: { orgId: string; teamId: string
     await spacesCollection().updateOne({ _id: input.spaceId, status: "active" }, { $set: { status: "deleted", updatedAt: now } }, { session });
     await db.collection("storageobjects").updateMany({ spaceId: input.spaceId, productId: "drive", deletedAt: null, purgeState: { $exists: false } }, { $set: { deletedAt: now, updatedAt: now }, $inc: { __v: 1 } }, { session });
     await db.collection("team").updateOne({ _id: team._id, purgeState: { $exists: false } }, { $set: { purgeState: "pending", updatedAt: now } }, { session });
+  });
+}
+
+/**
+ * Account deletion: close the personal Space and bin its Drive files so the
+ * purge pipeline deletes their ciphertext and releases their bytes; the quota
+ * record and Space go once storage is empty (`finishPersonalRetirement`).
+ * Refused while the account belongs to an organization or another product
+ * still stores data in the Space. Returns the Space id, or null if none.
+ */
+export async function beginPersonalRetirement(input: { accountId: string }) {
+  return withTransaction(async (session) => {
+    const db = getDatabase();
+    const space = await spacesCollection().findOne(
+      { type: "personal", ownerAccountId: input.accountId },
+      { session },
+    );
+    if (!space) return null;
+    if (space.status === "deleted") return space._id;
+    if (await db.collection("member").countDocuments({ userId: input.accountId }, { session })) {
+      throw new DriveUploadCommitError(409, "organization_membership", "Remove the account from its organizations first");
+    }
+    if (await db.collection("storageobjects").countDocuments({ spaceId: space._id, productId: { $ne: "drive" } }, { session })) {
+      throw new DriveUploadCommitError(409, "foreign_product_storage", "Another product still stores this account's data");
+    }
+    const now = new Date();
+    await spacesCollection().updateOne({ _id: space._id, status: space.status }, { $set: { status: "deleted", updatedAt: now } }, { session });
+    await db.collection("storageobjects").updateMany(
+      { spaceId: space._id, productId: "drive", deletedAt: null, purgeState: { $exists: false } },
+      { $set: { deletedAt: now, updatedAt: now }, $inc: { __v: 1 } },
+      { session },
+    );
+    return space._id;
   });
 }
 
@@ -114,6 +147,27 @@ export async function processRetiringSpace(input: {
   const complete = await db.collection("storageobjects").countDocuments({ spaceId: input.spaceId }) === 0 &&
     await uploadsRemain(input.spaceId) === 0;
   return { scanned: candidates.length, deleted, waiting, failed, complete };
+}
+
+/** Remove a retired personal Space and its quota record once storage is empty. */
+export async function finishPersonalRetirement(input: { spaceId: string }) {
+  return withTransaction(async (session) => {
+    const db = getDatabase();
+    const space = await spacesCollection().findOne({ _id: input.spaceId, type: "personal", status: "deleted" }, { session });
+    if (!space?.ownerAccountId) return false;
+    if (await db.collection("storageobjects").countDocuments({ spaceId: input.spaceId }, { session }) ||
+      await db.collection("uploadsessions").countDocuments({ spaceId: input.spaceId, $or: [
+        { status: { $in: ["pending", "completing", "cleaning", "blocked"] } }, { status: "completed", cleanupState: { $ne: "done" } },
+      ] }, { session })) return false;
+    const albums = await db.collection("photoalbums").find({ spaceId: input.spaceId }, { session }).project({ _id: 1 }).toArray();
+    await db.collection("albumsharelinks").deleteMany({ albumId: { $in: albums.map((album) => album._id) } }, { session });
+    await db.collection("photoalbums").deleteMany({ spaceId: input.spaceId }, { session });
+    await db.collection("uploadsessions").deleteMany({ spaceId: input.spaceId, status: "completed", cleanupState: "done" }, { session });
+    await SpaceProductKey.deleteMany({ spaceId: input.spaceId }, { session });
+    await db.collection("usages").deleteOne({ userId: space.ownerAccountId }, { session });
+    await spacesCollection().deleteOne({ _id: input.spaceId, status: "deleted" }, { session });
+    return true;
+  });
 }
 
 export async function finishTeamRetirement(input: { orgId: string; teamId: string; spaceId: string }) {
