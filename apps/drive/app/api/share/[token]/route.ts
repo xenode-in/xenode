@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  assertCanShareObjects,
   isAuthzError,
-  ownerClause,
   requireAccessContext,
   toJsonResponse,
 } from "@/lib/authz";
+import { enforceOrganizationSharePolicy } from "@/lib/orgs/sharePolicy";
 import dbConnect from "@/lib/mongodb";
 import ShareLink from "@/models/ShareLink";
 import StorageObject from "@/models/StorageObject";
@@ -130,21 +131,25 @@ export async function GET(_: NextRequest, { params }: Params) {
   return NextResponse.json(response);
 }
 
-/** DELETE /api/share/[token] — Revoke a share link (owner only) */
+/**
+ * DELETE /api/share/[token] — revoke a share link. The creator may always
+ * revoke; so may anyone who can share every file in it (Space owners/admins),
+ * e.g. to close a link left behind by a departed member.
+ */
 export async function DELETE(request: NextRequest, { params }: Params) {
   try {
     const resolvedParams = await params;
     const ctx = await requireAccessContext(request);
-    ownerClause(ctx);
     await dbConnect();
 
-    const link = await ShareLink.findOneAndUpdate(
-      { token: resolvedParams.token, createdBy: ctx.userId },
-      { isRevoked: true },
-      { new: true },
-    );
-
+    const link = await ShareLink.findOne({ token: resolvedParams.token, isRevoked: false })
+      .select("_id createdBy objectId bundleItems")
+      .lean();
     if (!link) return NextResponse.json({ error: "Not found or not authorised" }, { status: 404 });
+    if (link.createdBy !== ctx.userId) {
+      await assertCanShareObjects(ctx.accountId, linkObjectIds(link));
+    }
+    await ShareLink.updateOne({ _id: link._id }, { $set: { isRevoked: true } });
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
@@ -157,11 +162,15 @@ export async function DELETE(request: NextRequest, { params }: Params) {
   }
 }
 
+/** Every file a link exposes: its primary object and any bundle items. */
+function linkObjectIds(link: { objectId: unknown; bundleItems?: Array<{ objectId: unknown }> | null }) {
+  return [link.objectId, ...(link.bundleItems ?? []).map((item) => item.objectId)];
+}
+
 export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     const resolvedParams = await params;
     const ctx = await requireAccessContext(request);
-    ownerClause(ctx);
     const body = await request.json();
     await dbConnect();
 
@@ -178,6 +187,22 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         { error: "Not found or not authorised" },
         { status: 404 },
       );
+    }
+
+    // Creating the link once is not a standing licence: the creator must still
+    // be allowed to share every file, and organization link policy applies to
+    // the edited link as it would to a new one.
+    const { organizationIds } = await assertCanShareObjects(
+      ctx.accountId,
+      linkObjectIds(existingLink),
+    );
+    for (const orgId of organizationIds) {
+      const policyResponse = await enforceOrganizationSharePolicy({
+        orgId,
+        hasPassword: Boolean(existingLink.passwordHash),
+        hasExpiry: "expiresAt" in body ? Boolean(body.expiresAt) : Boolean(existingLink.expiresAt),
+      });
+      if (policyResponse) return policyResponse;
     }
 
     if ("expiresAt" in body) {

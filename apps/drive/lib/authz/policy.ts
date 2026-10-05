@@ -1,3 +1,9 @@
+import {
+  assertSpaceAction,
+  resolveSpaceAccess,
+  SpaceAuthorizationError,
+} from "@xenode/spaces";
+import type { SpaceId } from "@xenode/contracts";
 import dbConnect from "@/lib/mongodb";
 import StorageObject, { type IStorageObject } from "@/models/StorageObject";
 import Bucket, { type IBucket } from "@/models/Bucket";
@@ -114,6 +120,49 @@ export async function assertObjectAccess(
     throw new AuthzError(404, "object_not_found", "Object not found");
   }
   return object;
+}
+
+/**
+ * Share edits, approvals and admin revocations can arrive from any request
+ * scope (a creator manages links from their own account), so they recheck, in
+ * each live object's own Space, that the caller may still share it. Returns
+ * the organizations of those Spaces for policy checks.
+ */
+export async function assertCanShareObjects(
+  accountId: string,
+  objectIds: unknown[],
+): Promise<{ organizationIds: string[] }> {
+  await dbConnect();
+  const ids = [...new Set(objectIds.map(String))];
+  const objects = await StorageObject.find({
+    _id: { $in: ids },
+    productId: { $ne: "photos" },
+    deletedAt: null,
+    purgeState: { $exists: false },
+  })
+    .select("spaceId")
+    .lean<Array<{ spaceId: string }>>();
+  if (!ids.length || objects.length !== ids.length) {
+    throw new AuthzError(409, "share_source_changed", "A shared file is no longer available");
+  }
+  const organizationIds = new Set<string>();
+  for (const spaceId of new Set(objects.map((object) => object.spaceId))) {
+    try {
+      const access = await resolveSpaceAccess({
+        accountId,
+        spaceId: spaceId as SpaceId,
+        productId: "drive",
+      });
+      assertSpaceAction(access, "share");
+      if (access.space.organizationId) organizationIds.add(access.space.organizationId);
+    } catch (error) {
+      if (error instanceof SpaceAuthorizationError) {
+        throw new AuthzError(error.status, error.code, error.message);
+      }
+      throw error;
+    }
+  }
+  return { organizationIds: [...organizationIds] };
 }
 
 /**

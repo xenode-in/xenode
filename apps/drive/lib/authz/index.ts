@@ -12,5 +12,6 @@ export {
   bucketFilter,
   assertObjectAccess,
   assertBucketAccess,
+  assertCanShareObjects,
 } from "./policy";
 export { AuthzError, isAuthzError, toJsonResponse, UNAUTHORIZED } from "./errors";

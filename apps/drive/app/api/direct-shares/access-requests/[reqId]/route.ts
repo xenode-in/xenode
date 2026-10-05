@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { NextRequest, NextResponse } from "next/server";
 import {
+  assertCanShareObjects,
   isAuthzError,
   requireAccessContext,
   toJsonResponse,
@@ -61,6 +62,15 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     }
 
     if (decision === "approve") {
+      // Approval widens access, so the decider must still be allowed to share
+      // the file in its own Space (a demoted owner or removed admin cannot).
+      const share = await DirectShare.findOne({ _id: req.directShareId, isRevoked: false })
+        .select("objectId")
+        .lean();
+      if (!share) {
+        return NextResponse.json({ error: "Share is no longer active" }, { status: 409 });
+      }
+      await assertCanShareObjects(ctx.accountId, [share.objectId]);
       // Flip the recipient's role in place — the share key is already theirs.
       await DirectShare.updateOne(
         { _id: req.directShareId, isRevoked: false },

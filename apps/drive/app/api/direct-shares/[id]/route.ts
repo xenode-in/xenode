@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  assertCanShareObjects,
   isAuthzError,
   requireAccessContext,
   toJsonResponse,
@@ -72,21 +73,26 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 }
 
+/**
+ * DELETE — revoke. The creator may always revoke; so may anyone who can share
+ * the file (Space owners/admins), e.g. after the creator left.
+ */
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     const ctx = await requireAccessContext(request);
     const { id } = await params;
     await dbConnect();
 
-    const share = await DirectShare.findOneAndUpdate(
-      { _id: id, createdBy: ctx.userId },
-      { isRevoked: true },
-      { new: true },
-    );
-
+    const share = await DirectShare.findOne({ _id: id, isRevoked: false })
+      .select("_id createdBy objectId")
+      .lean();
     if (!share) {
       return NextResponse.json({ error: "Share not found" }, { status: 404 });
     }
+    if (share.createdBy !== ctx.userId) {
+      await assertCanShareObjects(ctx.accountId, [share.objectId]);
+    }
+    await DirectShare.updateOne({ _id: share._id }, { $set: { isRevoked: true } });
 
     return NextResponse.json({ success: true });
   } catch (error: unknown) {
@@ -104,6 +110,15 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
     const body = await request.json();
     await dbConnect();
+
+    const existing = await DirectShare.findOne({ _id: id, createdBy: ctx.userId, isRevoked: false })
+      .select("objectId")
+      .lean();
+    if (!existing) {
+      return NextResponse.json({ error: "Share not found" }, { status: 404 });
+    }
+    // Recipients and keys change only while the creator may still share the file.
+    await assertCanShareObjects(ctx.accountId, [existing.objectId]);
 
     const update: Record<string, unknown> = {};
 
