@@ -6,9 +6,11 @@ import type { AlbumSummary } from "./AlbumsList";
 
 export function AlbumView({
   album,
+  name,
   onBack,
 }: {
   album: AlbumSummary;
+  name?: string;
   onBack(): void;
 }) {
   return (
@@ -27,7 +29,7 @@ export function AlbumView({
         <div>
           <div className="flex items-center gap-2">
             <h2 className="text-2xl font-semibold tracking-tight">
-              Encrypted album
+              {name ?? "Encrypted album"}
             </h2>
             <LockKeyhole className="size-4 text-muted-foreground" />
           </div>

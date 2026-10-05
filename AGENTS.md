@@ -87,8 +87,9 @@ Product keys stay in browser memory and are cleared on lock/logout.
 
 Files use per-file AES-256-GCM DEKs. Drive keeps RSA-OAEP only for subordinate
 sharing/grant compatibility. Metadata purpose keys come from
-`@xenode/crypto-core` HKDF and must be Space-bound. Never reintroduce Vault v1,
-PBKDF2, private-key hashing, server plaintext, or persisted raw product keys.
+`@xenode/crypto-core` `deriveMetadataKey` (HKDF, product- and Space-bound).
+Never reintroduce Vault v1, PBKDF2, private-key hashing, server plaintext, or
+persisted raw product keys.
 
 Organization and team Space keys are versioned keyrings (`SpaceProductKey`
 grants, one per member and version). Grants are create-only; every new keyholder

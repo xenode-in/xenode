@@ -1,6 +1,6 @@
 import { spaceIdSchema } from "@xenode/contracts";
 import { PhotoAlbumV2 } from "@xenode/database";
-import { PhotosService } from "@xenode/photos";
+import { isSealedAlbumName, PhotosService } from "@xenode/photos";
 import { assertSpaceAction, resolveSpaceAccess, SpaceAuthorizationError, type SpaceAction } from "@xenode/spaces";
 import { MongoPhotosRepository } from "@/lib/photos-repository";
 import { getPhotosProductSession } from "@/lib/session";
@@ -55,8 +55,7 @@ export async function POST(request: Request) {
     | null;
   if (
     !body ||
-    typeof body.encryptedName !== "string" ||
-    body.encryptedName.length < 16 ||
+    !isSealedAlbumName(body.encryptedName, context.spaceId, context.session.accountId) ||
     !Array.isArray(body.photoAssetIds) ||
     body.photoAssetIds.length > 10_000 ||
     !body.photoAssetIds.every((id) => typeof id === "string") ||
@@ -70,7 +69,7 @@ export async function POST(request: Request) {
     const album = await service.createAlbum({
       id: crypto.randomUUID(),
       spaceId: context.spaceId,
-      encryptedName: body.encryptedName,
+      encryptedName: body.encryptedName as string,
       photoAssetIds: body.photoAssetIds as string[],
       coverPhotoAssetId:
         typeof body.coverPhotoAssetId === "string"

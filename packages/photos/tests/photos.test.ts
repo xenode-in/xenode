@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isSealedAlbumName,
   PhotosService,
   PhotosUploadPolicy,
   photoQueryKey,
@@ -55,6 +56,23 @@ const asset = (id: string, spaceId = "space_1"): PhotoAsset => ({
 });
 
 describe("Photos domain", () => {
+  it("accepts only album names sealed for this Space and account", () => {
+    const envelope = {
+      accountId: "acct_1", spaceId: "space_1", productId: "photos", keyId: "photos-metadata",
+      keyVersion: 1, type: "album-name", formatVersion: 2, algorithm: "AES-256-GCM",
+      ciphertext: "q".repeat(32), iv: "i".repeat(16), aadVersion: 1, createdAt: "2026-10-05T00:00:00.000Z",
+      status: "active",
+    };
+    const sealed = (patch: Record<string, unknown> = {}) => JSON.stringify({ ...envelope, ...patch });
+    expect(isSealedAlbumName(sealed(), "space_1", "acct_1")).toBe(true);
+    expect(isSealedAlbumName("Summer holiday in Lisbon 2026", "space_1", "acct_1")).toBe(false);
+    expect(isSealedAlbumName(sealed(), "space_2", "acct_1")).toBe(false);
+    expect(isSealedAlbumName(sealed(), "space_1", "acct_2")).toBe(false);
+    expect(isSealedAlbumName(sealed({ type: "file-dek" }), "space_1", "acct_1")).toBe(false);
+    expect(isSealedAlbumName(sealed({ productId: "drive" }), "space_1", "acct_1")).toBe(false);
+    expect(isSealedAlbumName(sealed({ ciphertext: "short" }), "space_1", "acct_1")).toBe(false);
+  });
+
   it("rejects cross-Space album assets", async () => {
     const repository = new MemoryPhotos();
     repository.assets.push(asset("1", "space_2"));

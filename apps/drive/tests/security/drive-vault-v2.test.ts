@@ -5,7 +5,7 @@ import {
   encryptFile,
   encryptMetadataString,
 } from "@/lib/crypto/fileEncryption";
-import { deriveDriveMetadataKey } from "@/lib/crypto/productKeys";
+import { deriveMetadataKey } from "@xenode/crypto-core";
 
 describe("Drive Vault v2 crypto", () => {
   it("round-trips file content and HKDF-derived metadata without an ARK", async () => {
@@ -20,8 +20,9 @@ describe("Drive Vault v2 crypto", () => {
       ["encrypt", "decrypt"],
     )) as CryptoKeyPair;
     const productSpaceKey = crypto.getRandomValues(new Uint8Array(32));
-    const metadataKey = await deriveDriveMetadataKey(
+    const metadataKey = await deriveMetadataKey(
       productSpaceKey,
+      "drive",
       "personal:account_1",
     );
     const plaintext = new TextEncoder().encode("Drive Vault v2 round-trip");
@@ -48,8 +49,8 @@ describe("Drive Vault v2 crypto", () => {
 
   it("binds metadata derivation to the Space", async () => {
     const productSpaceKey = crypto.getRandomValues(new Uint8Array(32));
-    const first = await deriveDriveMetadataKey(productSpaceKey, "personal:a");
-    const wrongSpace = await deriveDriveMetadataKey(productSpaceKey, "personal:b");
+    const first = await deriveMetadataKey(productSpaceKey, "drive", "personal:a");
+    const wrongSpace = await deriveMetadataKey(productSpaceKey, "drive", "personal:b");
     const ciphertext = await encryptMetadataString("space-bound", first);
     expect(await decryptMetadataString(ciphertext, wrongSpace)).toBe(
       "Encrypted File",

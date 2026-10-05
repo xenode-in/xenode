@@ -12,25 +12,36 @@ import {
   DialogTitle,
   Input,
 } from "@xenode/ui";
+import { sealAlbumName } from "@/lib/album-name";
+import { usePhotosMetadataKey } from "./PhotosKeyAccess";
 
 export function AlbumEditor({
   spaceId,
+  accountId,
   selectedIds,
   onCreated,
 }: {
   spaceId: string;
+  accountId: string;
   selectedIds: string[];
   onCreated(): void;
 }) {
+  const metadataKey = usePhotosMetadataKey(spaceId);
   const [open, setOpen] = useState(false);
-  const [encryptedName, setEncryptedName] = useState("");
+  const [name, setName] = useState("");
   const [status, setStatus] = useState("");
   const [saving, setSaving] = useState(false);
 
   async function create() {
+    if (!metadataKey) {
+      setStatus("Unlock Photos to create an album.");
+      return;
+    }
     setSaving(true);
     setStatus("");
     try {
+      // Only the sealed envelope leaves the browser, never the title.
+      const encryptedName = await sealAlbumName(name.trim(), metadataKey, accountId, spaceId);
       const response = await fetch(
         `/api/photos/albums?spaceId=${encodeURIComponent(spaceId)}`,
         {
@@ -49,7 +60,7 @@ export function AlbumEditor({
         response.ok ? "Album created." : payload.error ?? "Album failed.",
       );
       if (response.ok) {
-        setEncryptedName("");
+        setName("");
         setOpen(false);
         onCreated();
       }
@@ -80,10 +91,11 @@ export function AlbumEditor({
             </DialogDescription>
           </DialogHeader>
           <Input
-            aria-label="Encrypted album name envelope"
-            placeholder="Encrypted name envelope"
-            value={encryptedName}
-            onChange={(event) => setEncryptedName(event.target.value)}
+            aria-label="Album name"
+            placeholder="Album name"
+            maxLength={200}
+            value={name}
+            onChange={(event) => setName(event.target.value)}
           />
           {status ? (
             <p role="status" className="text-xs text-muted-foreground">
@@ -97,7 +109,7 @@ export function AlbumEditor({
             <Button
               type="button"
               disabled={
-                saving || encryptedName.length < 16 || selectedIds.length === 0
+                saving || !name.trim() || !metadataKey || selectedIds.length === 0
               }
               onClick={() => void create()}
             >

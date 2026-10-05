@@ -1,12 +1,15 @@
 "use client";
 
 import {
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useRef,
   useState,
   type ReactNode,
 } from "react";
+import { deriveMetadataKey } from "@xenode/crypto-core";
 import { ProductCryptoProvider, useProductCrypto } from "@xenode/crypto-react";
 import { SecureUnlockOverlay } from "@xenode/ui";
 import {
@@ -31,9 +34,20 @@ type UnlockPayload = {
   sealed: SealedHandoff;
 };
 
+// Metadata purpose keys (HKDF of each unlocked product Space key), in memory only.
+const MetadataKeys = createContext<Map<string, CryptoKey> | null>(null);
+
+/** The Photos metadata key of an unlocked Space; null once its key is locked. */
+export function usePhotosMetadataKey(spaceId: string): CryptoKey | null {
+  const keys = useContext(MetadataKeys);
+  const productCrypto = useProductCrypto();
+  return spaceId && productCrypto.isUnlocked(spaceId) ? (keys?.get(spaceId) ?? null) : null;
+}
+
 export function PhotosKeyAccess({ children }: { children: ReactNode }) {
   const pending = useRef(new Map<string, PendingHandoff>());
   const localReplayStore = useRef(createOneTimeHandoffStore());
+  const [metadataKeys] = useState(() => new Map<string, CryptoKey>());
   const unwrapHandoff = useCallback(
     async (productId: string, spaceId: string, value: unknown) => {
       const payload = value as Partial<UnlockPayload>;
@@ -55,19 +69,32 @@ export function PhotosKeyAccess({ children }: { children: ReactNode }) {
       ) {
         throw new Error("Destination key fingerprint mismatch.");
       }
-      return consumeProductSpaceKey(
+      const productSpaceKey = await consumeProductSpaceKey(
         sealed,
         request.destinationKeyPair.privateKey,
         request.binding,
         localReplayStore.current,
       );
+      // The provider imports and zeroes the raw key: derive metadata first.
+      try {
+        metadataKeys.set(
+          spaceId,
+          await deriveMetadataKey(productSpaceKey, productId, spaceId),
+        );
+      } catch (error) {
+        productSpaceKey.fill(0);
+        throw error;
+      }
+      return productSpaceKey;
     },
-    [],
+    [metadataKeys],
   );
 
   return (
     <ProductCryptoProvider productId="photos" unwrapHandoff={unwrapHandoff}>
-      <UnlockControl pending={pending}>{children}</UnlockControl>
+      <MetadataKeys.Provider value={metadataKeys}>
+        <UnlockControl pending={pending}>{children}</UnlockControl>
+      </MetadataKeys.Provider>
     </ProductCryptoProvider>
   );
 }

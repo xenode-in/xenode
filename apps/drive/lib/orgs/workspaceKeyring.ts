@@ -1,6 +1,6 @@
 "use client";
 
-import { deriveDriveMetadataKey } from "@/lib/crypto/productKeys";
+import { deriveMetadataKey } from "@xenode/crypto-core";
 import { organizationSpaceId, teamSpaceId } from "@xenode/spaces/ids";
 import { unwrapSpaceKeyring } from "./spaceKeyClient";
 
@@ -102,7 +102,7 @@ async function fetchKeyring(
     keyring.map(async (entry) => ({
       keyVersion: entry.keyVersion,
       rawKey: entry.rawSpaceKey,
-      metadataKey: await deriveDriveMetadataKey(entry.rawSpaceKey, spaceId),
+      metadataKey: await deriveMetadataKey(entry.rawSpaceKey, "drive", spaceId),
     })),
   );
   return { spaceId, current: versions[0], versions };

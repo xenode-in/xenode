@@ -12,16 +12,19 @@ export type AlbumSummary = {
 
 export function AlbumsList({
   albums,
+  names,
   query,
   onOpen,
 }: {
   albums: AlbumSummary[];
+  /** Decrypted titles by albumId; locked or foreign envelopes are absent. */
+  names: Record<string, string>;
   query: string;
   onOpen(album: AlbumSummary): void;
 }) {
   const filtered = query.trim()
     ? albums.filter((album) =>
-        album.albumId.toLowerCase().includes(query.trim().toLowerCase()),
+        (names[album.albumId] ?? "").toLowerCase().includes(query.trim().toLowerCase()),
       )
     : albums;
 
@@ -68,7 +71,9 @@ export function AlbumsList({
           </div>
           <div className="flex items-center gap-3 p-4">
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold">Encrypted album</p>
+              <p className="truncate text-sm font-semibold">
+                {names[album.albumId] ?? "Encrypted album"}
+              </p>
               <p className="mt-0.5 truncate text-xs text-muted-foreground">
                 Private collection {index + 1}
               </p>

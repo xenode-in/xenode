@@ -15,6 +15,7 @@ import {
   clearPersistedKeys,
   clearPendingHandoff,
 } from "@xenode/crypto-react";
+import { deriveMetadataKey } from "@xenode/crypto-core";
 import { SecureUnlockOverlay } from "@xenode/ui";
 import {
   consumeProductKeyBundle,
@@ -27,7 +28,6 @@ import {
 import { personalSpaceId } from "@xenode/spaces/ids";
 import { clearLocalDb } from "@/lib/db/local";
 import { clearThumbnailMemoryCache } from "@/lib/thumbnails/memoryCache";
-import { deriveDriveMetadataKey } from "@/lib/crypto/productKeys";
 import { SessionRevocationGuard } from "@/components/auth/SessionRevocationGuard";
 
 interface CryptoContextType {
@@ -111,7 +111,7 @@ async function importAndVerifySharingKeys(
     throw new Error("Sharing keypair verification failed.");
   }
   try {
-    const metadataKey = await deriveDriveMetadataKey(productSpaceKey, spaceId);
+    const metadataKey = await deriveMetadataKey(productSpaceKey, "drive", spaceId);
     return { privateKey, publicKey, metadataKey };
   } finally {
     challenge.fill(0);

@@ -45,6 +45,44 @@ export interface PhotoRepository {
   createAlbum(album: PhotoAlbum): Promise<PhotoAlbum>;
 }
 
+/**
+ * An album name is a crypto-core envelope sealed by the creating account
+ * under this Space's Photos metadata key; anything else (a typed title,
+ * another Space's or purpose's envelope) is refused. The server can check
+ * the shape and bindings, never the plaintext.
+ */
+export function isSealedAlbumName(
+  value: unknown,
+  spaceId: string,
+  accountId: string,
+): value is string {
+  if (typeof value !== "string" || value.length > 4096) return false;
+  let envelope: Record<string, unknown>;
+  try {
+    envelope = JSON.parse(value) as Record<string, unknown>;
+  } catch {
+    return false;
+  }
+  return (
+    typeof envelope === "object" &&
+    envelope !== null &&
+    envelope.formatVersion === 2 &&
+    envelope.algorithm === "AES-256-GCM" &&
+    envelope.aadVersion === 1 &&
+    envelope.status === "active" &&
+    envelope.type === "album-name" &&
+    envelope.productId === "photos" &&
+    envelope.keyId === "photos-metadata" &&
+    envelope.keyVersion === 1 &&
+    envelope.spaceId === spaceId &&
+    envelope.accountId === accountId &&
+    typeof envelope.iv === "string" &&
+    /^[A-Za-z0-9_-]{16}$/u.test(envelope.iv) &&
+    typeof envelope.ciphertext === "string" &&
+    /^[A-Za-z0-9_-]{22,}$/u.test(envelope.ciphertext)
+  );
+}
+
 export function encodeTimelineCursor(cursor: TimelineCursor): string {
   return btoa(JSON.stringify(cursor))
     .replaceAll("+", "-")

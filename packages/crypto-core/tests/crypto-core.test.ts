@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  deriveMetadataKey,
   derivePurposeKey,
   encodeBase64Url,
   generateAccountRootKey,
@@ -53,6 +54,27 @@ describe("Vault v2 envelopes", () => {
     expect(drive).toEqual(driveAgain);
     expect(drive).not.toEqual(photos);
     expect(drive).not.toEqual(ark);
+  });
+
+  it("binds metadata keys to the product and the Space", async () => {
+    const productKey = generateAccountRootKey();
+    const sealed = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: new Uint8Array(12) },
+      await deriveMetadataKey(productKey, "photos", "space_1"),
+      new TextEncoder().encode("Summer 2026"),
+    );
+    const opens = async (productId: string, spaceId: string) =>
+      crypto.subtle
+        .decrypt(
+          { name: "AES-GCM", iv: new Uint8Array(12) },
+          await deriveMetadataKey(productKey, productId, spaceId),
+          sealed,
+        )
+        .then(() => true, () => false);
+
+    expect(await opens("photos", "space_1")).toBe(true);
+    expect(await opens("drive", "space_1")).toBe(false);
+    expect(await opens("photos", "space_2")).toBe(false);
   });
   it("unwraps RSA organization product keys with the Vault sharing key", async () => {
     const sharingPair = (await crypto.subtle.generateKey(

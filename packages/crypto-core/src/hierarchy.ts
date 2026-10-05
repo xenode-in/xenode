@@ -56,6 +56,35 @@ export async function derivePurposeKey(
   return new Uint8Array(bits);
 }
 
+/**
+ * The metadata purpose key of one product Space: HKDF over the product space
+ * key with a Space-bound salt. Metadata never uses the product key itself.
+ */
+export async function deriveMetadataKey(
+  productSpaceKey: Uint8Array,
+  productId: string,
+  spaceId: string,
+): Promise<CryptoKey> {
+  const salt = new Uint8Array(
+    await crypto.subtle.digest(
+      "SHA-256",
+      utf8(`xenode/${productId}/${spaceId}/metadata-salt/v1`) as BufferSource,
+    ),
+  );
+  const metadataBytes = await derivePurposeKey(productSpaceKey, productId, "metadata", salt);
+  try {
+    return await crypto.subtle.importKey(
+      "raw",
+      metadataBytes as BufferSource,
+      { name: "AES-GCM", length: 256 },
+      false,
+      ["encrypt", "decrypt"],
+    );
+  } finally {
+    metadataBytes.fill(0);
+  }
+}
+
 export async function wrapKey(
   keyMaterial: Uint8Array,
   wrappingKey: Uint8Array,

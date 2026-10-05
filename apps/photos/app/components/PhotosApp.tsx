@@ -11,6 +11,8 @@ import { ShareDialog } from "./ShareDialog";
 import { Timeline, type TimelineAsset } from "./Timeline";
 import { UploadController } from "./UploadController";
 import { getClientPhotosSession } from "@/lib/client-session";
+import { openAlbumName } from "@/lib/album-name";
+import { usePhotosMetadataKey } from "./PhotosKeyAccess";
 
 export function PhotosApp() {
   return (
@@ -23,6 +25,9 @@ export function PhotosApp() {
 function PhotosAppInner() {
   const selection = usePhotoSelection();
   const [spaceId, setSpaceId] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const metadataKey = usePhotosMetadataKey(spaceId);
+  const [albumNames, setAlbumNames] = useState<Record<string, string>>({});
   const [view, setView] = useState<"timeline" | "albums">("timeline");
   const [search, setSearch] = useState("");
   const [lightbox, setLightbox] = useState<TimelineAsset | null>(null);
@@ -46,12 +51,32 @@ function PhotosAppInner() {
       .then((session) => {
         if (!session.spaceId) return;
         setSpaceId(session.spaceId);
+        setAccountId(session.accountId);
         void loadAlbums(session.spaceId);
       })
       .catch(() => {
         // PhotosKeyAccess owns the sign-in status and recovery action.
       });
   }, [loadAlbums]);
+
+  // Album titles exist only as envelopes; decrypt them for display and search.
+  useEffect(() => {
+    if (!metadataKey || !albums.length) return;
+    let active = true;
+    void Promise.all(
+      albums.map(async (entry) =>
+        [entry.albumId, await openAlbumName(entry.encryptedName, metadataKey, spaceId)] as const,
+      ),
+    ).then((pairs) => {
+      if (!active) return;
+      setAlbumNames(
+        Object.fromEntries(pairs.filter((pair): pair is readonly [string, string] => pair[1] !== null)),
+      );
+    });
+    return () => {
+      active = false;
+    };
+  }, [albums, metadataKey, spaceId]);
 
   const selectedIds = [...selection.selected];
   return (
@@ -77,6 +102,7 @@ function PhotosAppInner() {
             <>
               <AlbumEditor
                 spaceId={spaceId}
+                accountId={accountId}
                 selectedIds={selectedIds}
                 onCreated={() => {
                   selection.clear();
@@ -104,11 +130,14 @@ function PhotosAppInner() {
       {spaceId && view === "albums" && !album ? (
         <AlbumsList
           albums={albums}
+          names={albumNames}
           query={search}
           onOpen={setAlbum}
         />
       ) : null}
-      {album ? <AlbumView album={album} onBack={() => setAlbum(null)} /> : null}
+      {album ? (
+        <AlbumView album={album} name={albumNames[album.albumId]} onBack={() => setAlbum(null)} />
+      ) : null}
       <Lightbox
         asset={lightbox}
         assets={previewAssets}

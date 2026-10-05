@@ -8,7 +8,8 @@ export type EnvelopeType =
   | "sharing-private-key"
   | "product-space-key"
   | "file-dek"
-  | "metadata-key";
+  | "metadata-key"
+  | "album-name";
 
 export interface EnvelopeContext {
   accountId: string;
