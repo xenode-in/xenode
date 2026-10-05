@@ -21,6 +21,7 @@ import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 import {
   decryptMetadataString,
   encryptWithShareKey,
+  wrapShareFileKey,
 } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
 import { encryptShareKeyForOwner } from "@/lib/crypto/shareKey";
@@ -63,7 +64,8 @@ interface ShareDialogProps {
   onOpenChange: (o: boolean) => void;
   file: ShareableFile | null;
   files?: ShareableFile[];
-  getDEKBytes?: (fileId: string) => Promise<Uint8Array>;
+  /** The file's key, extractable so it can be re-wrapped under the share key. */
+  getFileKey?: (fileId: string) => Promise<CryptoKey>;
 }
 
 interface RecipientLookup {
@@ -102,7 +104,7 @@ export function ShareDialog({
   onOpenChange,
   file,
   files,
-  getDEKBytes,
+  getFileKey,
 }: ShareDialogProps) {
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [directShareSummary, setDirectShareSummary] = useState<string | null>(
@@ -254,7 +256,7 @@ export function ShareDialog({
 
       const hasEncryptedFiles = shareFiles.some((item) => item.isEncrypted);
       if (hasEncryptedFiles) {
-        if (!getDEKBytes) {
+        if (!getFileKey) {
           throw new Error("Encrypted file sharing is not available");
         }
         if (!publicKey) {
@@ -288,28 +290,15 @@ export function ShareDialog({
         if (!targetFile.isEncrypted) {
           return { objectId: targetFile.id };
         }
-        if (!shareKeyObj || !getDEKBytes) {
+        if (!shareKeyObj || !getFileKey) {
           throw new Error("Missing encrypted share key package");
         }
 
-        const dekBytes = await getDEKBytes(targetFile.id);
-        const dekKey = await crypto.subtle.importKey(
-          "raw",
-          dekBytes.buffer.slice(
-            dekBytes.byteOffset,
-            dekBytes.byteOffset + dekBytes.byteLength,
-          ) as ArrayBuffer,
-          { name: "AES-GCM" },
-          true,
-          ["encrypt", "decrypt"],
-        );
-
-        const iv = crypto.getRandomValues(new Uint8Array(12));
-        const wrapped = await crypto.subtle.wrapKey(
-          "raw",
-          dekKey,
+        // The share key wraps each file's key bound to that file.
+        const wrapped = await wrapShareFileKey(
+          await getFileKey(targetFile.id),
           shareKeyObj,
-          { name: "AES-GCM", iv },
+          targetFile.id,
         );
 
         let itemShareEncryptedName: string | undefined;
@@ -430,8 +419,8 @@ export function ShareDialog({
 
         return {
           objectId: targetFile.id,
-          shareEncryptedDEK: bytesToB64(wrapped),
-          shareKeyIv: bytesToB64(iv),
+          shareEncryptedDEK: wrapped.shareEncryptedDEK,
+          shareKeyIv: wrapped.shareKeyIv,
           shareEncryptedName: itemShareEncryptedName,
           shareEncryptedContentType: itemShareEncryptedContentType,
           shareEncryptedThumbnail: itemShareEncryptedThumbnail,

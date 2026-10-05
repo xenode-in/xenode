@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  decryptFile,
+  decryptFileContent,
   decryptMetadataString,
-  encryptFile,
+  encryptFileBlob,
   encryptMetadataString,
+  unwrapUserFileKey,
 } from "@/lib/crypto/fileEncryption";
 import { deriveMetadataKey } from "@xenode/crypto-core";
 
@@ -26,15 +27,18 @@ describe("Drive Vault v2 crypto", () => {
       "personal:account_1",
     );
     const plaintext = new TextEncoder().encode("Drive Vault v2 round-trip");
-    const encrypted = await encryptFile(
+    const fileId = "65f000000000000000000001";
+    const encrypted = await encryptFileBlob(
       new File([plaintext], "private.txt", { type: "text/plain" }),
-      sharingKeys.publicKey,
+      fileId,
+      { wrappedBy: "user", publicKey: sharingKeys.publicKey },
     );
-    const opened = await decryptFile(
+    const fileKey = await unwrapUserFileKey(encrypted.encryptedDEK, sharingKeys.privateKey, fileId);
+    const opened = await decryptFileContent(
       await encrypted.ciphertext.arrayBuffer(),
-      encrypted.encryptedDEK,
-      encrypted.iv!,
-      sharingKeys.privateKey,
+      fileKey,
+      { iv: encrypted.iv },
+      fileId,
       "text/plain",
     );
     expect(new Uint8Array(await opened.arrayBuffer())).toEqual(plaintext);

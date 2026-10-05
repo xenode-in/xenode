@@ -1,355 +1,246 @@
 /**
  * lib/crypto/fileEncryption.ts
+ *
+ * Drive file content uses the authenticated `xenode-file/1` format from
+ * `@xenode/crypto-core`: every sealed chunk and every wrap of a file key is
+ * bound to the object's stable id, so a server cannot move, reorder or drop
+ * them. A single-blob object is chunk 0 of 1; a multipart object stores one
+ * sealed chunk per part.
  */
 
+import {
+  decryptFileChunk,
+  decryptFileChunks,
+  encryptFileChunks,
+  generateFileKey,
+  sealFileChunk,
+  unwrapFileKey,
+  unwrapFileKeyForShare,
+  unwrapFileKeyForUser,
+  wrapFileKey,
+  wrapFileKeyForShare,
+  wrapFileKeyForUser,
+} from "@xenode/crypto-core";
 import { toB64, fromB64 } from "./utils";
 
-export interface EncryptedFileResult {
-  ciphertext: Blob;
+/** Where a new file key is wrapped: the account key (personal) or a Space key version. */
+export type FileKeyTarget =
+  | { wrappedBy: "user"; publicKey: CryptoKey }
+  | { wrappedBy: "space"; rawSpaceKey: Uint8Array; spaceId: string; spaceKeyVersion: number };
+
+export interface WrappedFileKey {
   encryptedDEK: string;
-  iv: string;
   spaceKeyWrapIv?: string;
 }
 
-export async function encryptFile(
-  file: File,
-  publicKey: CryptoKey,
-): Promise<EncryptedFileResult> {
-  const dek = await crypto.subtle.generateKey(
-    { name: "AES-GCM", length: 256 },
-    true,
-    ["encrypt", "decrypt"],
-  );
-
-  const iv = crypto.getRandomValues(
-    new Uint8Array(12),
-  ) as Uint8Array<ArrayBuffer>;
-  const plaintext = await file.arrayBuffer();
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    dek,
-    plaintext,
-  );
-
-  const rawDEK = await crypto.subtle.exportKey("raw", dek);
-  const wrappedDEK = await crypto.subtle.encrypt(
-    { name: "RSA-OAEP" },
-    publicKey,
-    rawDEK,
-  );
-
-  return {
-    ciphertext: new Blob([ciphertext], { type: "application/octet-stream" }),
-    encryptedDEK: toB64(wrappedDEK),
-    iv: toB64(iv),
-  };
+/** How a stored object lays out its sealed content. */
+export interface FileContentLayout {
+  iv?: string | null;
+  chunkIvs?: string | string[] | null;
+  chunkSize?: number | null;
 }
 
-async function importRawSpaceKey(
-  rawSpaceKey: Uint8Array,
-  usages: KeyUsage[],
-): Promise<CryptoKey> {
+function importSpaceKey(rawSpaceKey: Uint8Array, usage: "wrapKey" | "unwrapKey"): Promise<CryptoKey> {
   return crypto.subtle.importKey(
     "raw",
-    rawSpaceKey.buffer.slice(
-      rawSpaceKey.byteOffset,
-      rawSpaceKey.byteOffset + rawSpaceKey.byteLength,
-    ) as ArrayBuffer,
+    rawSpaceKey.slice() as Uint8Array<ArrayBuffer>,
     { name: "AES-GCM", length: 256 },
     false,
-    usages,
+    [usage],
   );
 }
 
-async function wrapFileKeyWithSpaceKey(
+async function wrapNewFileKey(
   fileKey: CryptoKey,
-  rawSpaceKey: Uint8Array,
-): Promise<{ encryptedDEK: string; spaceKeyWrapIv: string }> {
-  const spaceKey = await importRawSpaceKey(rawSpaceKey, ["wrapKey"]);
-  const spaceKeyWrapIv = crypto.getRandomValues(new Uint8Array(12));
-  const wrappedFileKey = await crypto.subtle.wrapKey(
-    "raw",
-    fileKey,
-    spaceKey,
-    { name: "AES-GCM", iv: spaceKeyWrapIv },
-  );
+  target: FileKeyTarget,
+  fileId: string,
+): Promise<WrappedFileKey> {
+  if (target.wrappedBy === "user") {
+    return { encryptedDEK: toB64(await wrapFileKeyForUser(fileKey, target.publicKey, { fileId })) };
+  }
+  const wrapped = await wrapFileKey(fileKey, await importSpaceKey(target.rawSpaceKey, "wrapKey"), {
+    fileId,
+    spaceId: target.spaceId,
+    spaceKeyVersion: target.spaceKeyVersion,
+  });
+  return { encryptedDEK: toB64(wrapped.wrappedKey), spaceKeyWrapIv: toB64(wrapped.iv) };
+}
+
+/** Seals a whole file as one blob (chunk 0 of 1) under a new file key. */
+export async function encryptFileBlob(
+  file: Blob,
+  fileId: string,
+  target: FileKeyTarget,
+): Promise<WrappedFileKey & { ciphertext: Blob; iv: string }> {
+  const fileKey = await generateFileKey();
+  const sealed = await sealFileChunk(await file.arrayBuffer(), fileKey, { fileId }, 0, 1);
   return {
-    encryptedDEK: toB64(wrappedFileKey),
-    spaceKeyWrapIv: toB64(spaceKeyWrapIv),
+    ciphertext: new Blob([sealed.ciphertext], { type: "application/octet-stream" }),
+    iv: toB64(sealed.iv),
+    ...(await wrapNewFileKey(fileKey, target, fileId)),
   };
 }
 
-export async function unwrapDEKWithSpaceKey(
+/** Seals a file as one chunk per multipart part under a new file key. */
+export async function encryptFileParts(
+  file: Blob,
+  fileId: string,
+  chunkSize: number,
+  target: FileKeyTarget,
+): Promise<WrappedFileKey & { parts: ArrayBuffer[]; chunkIvs: string[] }> {
+  const fileKey = await generateFileKey();
+  const sealed = await encryptFileChunks(await file.arrayBuffer(), fileKey, { fileId }, chunkSize);
+  return {
+    parts: sealed.chunks,
+    chunkIvs: sealed.ivs.map(toB64),
+    ...(await wrapNewFileKey(fileKey, target, fileId)),
+  };
+}
+
+/** Seals a new revision of a file under its existing key (fresh IV). */
+export async function encryptFileRevision(
+  plaintext: ArrayBuffer,
+  fileKey: CryptoKey,
+  fileId: string,
+): Promise<{ ciphertext: ArrayBuffer; iv: string }> {
+  const sealed = await sealFileChunk(plaintext, fileKey, { fileId }, 0, 1);
+  return { ciphertext: sealed.ciphertext, iv: toB64(sealed.iv) };
+}
+
+/** `extractable` only for callers that re-wrap the key for a share. */
+export function unwrapUserFileKey(
+  encryptedDEK: string,
+  privateKey: CryptoKey,
+  fileId: string,
+  extractable = false,
+): Promise<CryptoKey> {
+  return unwrapFileKeyForUser(fromB64(encryptedDEK), privateKey, { fileId }, extractable);
+}
+
+export async function unwrapSpaceFileKey(
   encryptedDEK: string,
   spaceKeyWrapIv: string,
   rawSpaceKey: Uint8Array,
+  context: { fileId: string; spaceId: string; spaceKeyVersion: number },
+  extractable = false,
 ): Promise<CryptoKey> {
-  const spaceKey = await importRawSpaceKey(rawSpaceKey, ["unwrapKey"]);
-  return crypto.subtle.unwrapKey(
-    "raw",
+  return unwrapFileKey(
     fromB64(encryptedDEK),
-    spaceKey,
-    { name: "AES-GCM", iv: fromB64(spaceKeyWrapIv) },
-    { name: "AES-GCM", length: 256 },
-    true,
-    ["decrypt"],
+    fromB64(spaceKeyWrapIv),
+    await importSpaceKey(rawSpaceKey, "unwrapKey"),
+    context,
+    extractable,
   );
 }
 
-export async function encryptFileForSpace(
-  file: File,
-  rawSpaceKey: Uint8Array,
-): Promise<EncryptedFileResult> {
-  const dek = await crypto.subtle.generateKey(
-    { name: "AES-GCM", length: 256 },
-    true,
-    ["encrypt", "decrypt"],
-  );
-
-  const iv = crypto.getRandomValues(
-    new Uint8Array(12),
-  ) as Uint8Array<ArrayBuffer>;
-  const plaintext = await file.arrayBuffer();
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    dek,
-    plaintext,
-  );
-  const wrapped = await wrapFileKeyWithSpaceKey(dek, rawSpaceKey);
-
-  return {
-    ciphertext: new Blob([ciphertext], { type: "application/octet-stream" }),
-    encryptedDEK: wrapped.encryptedDEK,
-    iv: toB64(iv),
-    spaceKeyWrapIv: wrapped.spaceKeyWrapIv,
-  };
+/** A stored object's file key wrap, as `/api/objects/[id]` returns it. */
+export interface StoredFileKey {
+  encryptedDEK?: string | null;
+  wrappedBy?: "user" | "space" | null;
+  spaceKeyWrapIv?: string | null;
+  spaceKeyVersion?: number | null;
+  spaceId?: string | null;
 }
 
-export async function decryptFile(
+/**
+ * Unwraps an object's file key from whichever key wraps it: the account key
+ * (personal) or the Space key version the record was created with.
+ */
+export async function unwrapStoredFileKey(
+  record: StoredFileKey,
+  fileId: string,
+  keys: {
+    privateKey?: CryptoKey | null;
+    rawSpaceKeyFor?: (version: number | null | undefined) => Promise<Uint8Array | null>;
+  },
+  extractable = false,
+): Promise<CryptoKey> {
+  if (!record.encryptedDEK) throw new Error("No encrypted key found for this file");
+  if (record.wrappedBy === "space") {
+    const rawKey = await keys.rawSpaceKeyFor?.(record.spaceKeyVersion);
+    if (!rawKey || !record.spaceKeyWrapIv || !record.spaceKeyVersion || !record.spaceId) {
+      throw new Error("Workspace key unavailable");
+    }
+    return unwrapSpaceFileKey(
+      record.encryptedDEK,
+      record.spaceKeyWrapIv,
+      rawKey,
+      { fileId, spaceId: String(record.spaceId), spaceKeyVersion: record.spaceKeyVersion },
+      extractable,
+    );
+  }
+  if (!keys.privateKey) throw new Error("Vault locked");
+  return unwrapUserFileKey(record.encryptedDEK, keys.privateKey, fileId, extractable);
+}
+
+/** A share key wraps each shared file's key bound to that file. */
+export async function wrapShareFileKey(
+  fileKey: CryptoKey,
+  shareKey: CryptoKey,
+  fileId: string,
+): Promise<{ shareEncryptedDEK: string; shareKeyIv: string }> {
+  const wrapped = await wrapFileKeyForShare(fileKey, shareKey, { fileId });
+  return { shareEncryptedDEK: toB64(wrapped.wrappedKey), shareKeyIv: toB64(wrapped.iv) };
+}
+
+export function unwrapShareFileKey(
+  shareEncryptedDEK: string,
+  shareKeyIv: string,
+  shareKey: CryptoKey,
+  fileId: string,
+  extractable = false,
+): Promise<CryptoKey> {
+  return unwrapFileKeyForShare(
+    fromB64(shareEncryptedDEK),
+    fromB64(shareKeyIv),
+    shareKey,
+    { fileId },
+    extractable,
+  );
+}
+
+export function parseChunkIvs(chunkIvs: string | string[]): string[] {
+  const ivs: unknown = typeof chunkIvs === "string" ? JSON.parse(chunkIvs) : chunkIvs;
+  if (!Array.isArray(ivs) || !ivs.every((iv) => typeof iv === "string")) {
+    throw new Error("Invalid file chunk IVs");
+  }
+  return ivs;
+}
+
+/** Decrypts a stored object's whole content (one blob, or its parts concatenated). */
+export async function decryptFileContent(
   ciphertext: ArrayBuffer,
-  encryptedDEK: string,
-  iv: string,
-  privateKey: CryptoKey,
+  fileKey: CryptoKey,
+  layout: FileContentLayout,
+  fileId: string,
   contentType: string,
 ): Promise<Blob> {
-  const wrappedDEKBytes = fromB64(encryptedDEK);
-  const rawDEK = await crypto.subtle.decrypt(
-    { name: "RSA-OAEP" },
-    privateKey,
-    wrappedDEKBytes,
-  );
-
-  const dek = await crypto.subtle.importKey(
-    "raw",
-    rawDEK,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["decrypt"],
-  );
-
-  return decryptFileWithDEK(ciphertext, dek, iv, contentType);
-}
-
-export async function decryptFileWithDEK(
-  ciphertext: ArrayBuffer,
-  dek: CryptoKey,
-  iv: string,
-  contentType: string,
-): Promise<Blob> {
-  const ivBytes = fromB64(iv);
-  const plaintext = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: ivBytes },
-    dek,
-    ciphertext,
-  );
+  if (layout.chunkIvs) {
+    if (!layout.chunkSize) throw new Error("Chunked file has no chunk size");
+    const plaintext = await decryptFileChunks(
+      ciphertext,
+      fileKey,
+      parseChunkIvs(layout.chunkIvs).map(fromB64),
+      { fileId },
+      layout.chunkSize,
+    );
+    return new Blob(plaintext, { type: contentType });
+  }
+  if (!layout.iv) throw new Error("File has no IV");
+  const plaintext = await decryptFileChunk(ciphertext, fileKey, fromB64(layout.iv), { fileId }, 0, 1);
   return new Blob([plaintext], { type: contentType });
 }
 
-export async function encryptFileWithDEK(
-  plaintext: ArrayBuffer,
-  dek: CryptoKey,
-  iv: Uint8Array,
-): Promise<ArrayBuffer> {
-  return await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: iv as any },
-    dek,
-    plaintext,
-  );
-}
-
-export async function decryptFileChunkedCombined(
-  ciphertext: ArrayBuffer,
-  encryptedDEK: string | null,
-  chunkIvsStr: string | string[],
-  chunkSize: number,
-  chunkCount: number,
-  privateKeyOrDEK: CryptoKey,
-  contentType: string,
-): Promise<Blob> {
-  let dek: CryptoKey;
-
-  if (encryptedDEK && privateKeyOrDEK.type === "private") {
-    const wrappedDEKBytes = fromB64(encryptedDEK);
-    const rawDEK = await crypto.subtle.decrypt(
-      { name: "RSA-OAEP" },
-      privateKeyOrDEK,
-      wrappedDEKBytes,
-    );
-
-    dek = await crypto.subtle.importKey(
-      "raw",
-      rawDEK,
-      { name: "AES-GCM", length: 256 },
-      false,
-      ["decrypt"],
-    );
-  } else {
-    // If encryptedDEK is null, the caller already passed the DEK
-    dek = privateKeyOrDEK;
-  }
-
-  const chunkIvs: string[] =
-    typeof chunkIvsStr === "string" ? JSON.parse(chunkIvsStr) : chunkIvsStr;
-  const decryptedChunks: ArrayBuffer[] = [];
-
-  for (let i = 0; i < chunkCount; i++) {
-    const cipherChunkSize = chunkSize + 16;
-    const start = i * cipherChunkSize;
-    const end = Math.min(start + cipherChunkSize, ciphertext.byteLength);
-    const slice = ciphertext.slice(start, end);
-    decryptedChunks.push(await decryptChunk(slice, dek, chunkIvs[i]));
-  }
-
-  return new Blob(decryptedChunks, { type: contentType });
-}
-
-export interface EncryptedFileChunkedResult {
-  ciphertext: Blob;
-  encryptedDEK: string;
-  spaceKeyWrapIv?: string;
-  chunkSize: number;
-  chunkCount: number;
-  chunkIvs: string[];
-}
-
-export async function encryptFileChunked(
-  file: File,
-  publicKey: CryptoKey,
-  chunkSize = 1_048_576,
-): Promise<EncryptedFileChunkedResult> {
-  const dek = await crypto.subtle.generateKey(
-    { name: "AES-GCM", length: 256 },
-    true,
-    ["encrypt", "decrypt"],
-  );
-
-  const plaintext = await file.arrayBuffer();
-  const chunkCount = Math.ceil(plaintext.byteLength / chunkSize);
-
-  const chunkIvs: string[] = new Array(chunkCount);
-  const encryptedChunks: ArrayBuffer[] = new Array(chunkCount);
-
-  const concurrency = 4;
-  let currentIndex = 0;
-
-  const encryptWorker = async () => {
-    while (currentIndex < chunkCount) {
-      const i = currentIndex++;
-      const start = i * chunkSize;
-      const end = Math.min(start + chunkSize, plaintext.byteLength);
-      const slice = plaintext.slice(start, end);
-      const iv = crypto.getRandomValues(new Uint8Array(12));
-      const cipherChunk = await crypto.subtle.encrypt(
-        { name: "AES-GCM", iv },
-        dek,
-        slice,
-      );
-      chunkIvs[i] = toB64(iv);
-      encryptedChunks[i] = cipherChunk;
-    }
-  };
-
-  const workers = Array.from(
-    { length: Math.min(concurrency, chunkCount) },
-    () => encryptWorker(),
-  );
-  await Promise.all(workers);
-
-  const rawDEK = await crypto.subtle.exportKey("raw", dek);
-  const wrappedDEK = await crypto.subtle.encrypt(
-    { name: "RSA-OAEP" },
-    publicKey,
-    rawDEK,
-  );
-
-  return {
-    ciphertext: new Blob(encryptedChunks, { type: "application/octet-stream" }),
-    encryptedDEK: toB64(wrappedDEK),
-    chunkSize,
-    chunkCount,
-    chunkIvs,
-  };
-}
-
-export async function encryptFileChunkedForSpace(
-  file: File,
-  rawSpaceKey: Uint8Array,
-  chunkSize = 1_048_576,
-): Promise<EncryptedFileChunkedResult> {
-  const dek = await crypto.subtle.generateKey(
-    { name: "AES-GCM", length: 256 },
-    true,
-    ["encrypt", "decrypt"],
-  );
-
-  const plaintext = await file.arrayBuffer();
-  const chunkCount = Math.ceil(plaintext.byteLength / chunkSize);
-  const chunkIvs: string[] = new Array(chunkCount);
-  const encryptedChunks: ArrayBuffer[] = new Array(chunkCount);
-  const concurrency = 4;
-  let currentIndex = 0;
-
-  const encryptWorker = async () => {
-    while (currentIndex < chunkCount) {
-      const i = currentIndex++;
-      const start = i * chunkSize;
-      const end = Math.min(start + chunkSize, plaintext.byteLength);
-      const slice = plaintext.slice(start, end);
-      const iv = crypto.getRandomValues(new Uint8Array(12));
-      const cipherChunk = await crypto.subtle.encrypt(
-        { name: "AES-GCM", iv },
-        dek,
-        slice,
-      );
-      chunkIvs[i] = toB64(iv);
-      encryptedChunks[i] = cipherChunk;
-    }
-  };
-
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, chunkCount) }, () =>
-      encryptWorker(),
-    ),
-  );
-  const wrapped = await wrapFileKeyWithSpaceKey(dek, rawSpaceKey);
-
-  return {
-    ciphertext: new Blob(encryptedChunks, { type: "application/octet-stream" }),
-    encryptedDEK: wrapped.encryptedDEK,
-    spaceKeyWrapIv: wrapped.spaceKeyWrapIv,
-    chunkSize,
-    chunkCount,
-    chunkIvs,
-  };
-}
-
-export async function decryptChunk(
-  cipherChunk: ArrayBuffer,
-  dek: CryptoKey,
+/** Decrypts one part of a multipart object (`count` = the object's chunk count). */
+export function decryptFilePart(
+  sealedPart: ArrayBuffer,
+  fileKey: CryptoKey,
   ivB64: string,
+  fileId: string,
+  index: number,
+  count: number,
 ): Promise<ArrayBuffer> {
-  const iv = fromB64(ivB64) as Uint8Array<ArrayBuffer>;
-  return crypto.subtle.decrypt({ name: "AES-GCM", iv }, dek, cipherChunk);
+  return decryptFileChunk(sealedPart, fileKey, fromB64(ivB64), { fileId }, index, count);
 }
 
 /**

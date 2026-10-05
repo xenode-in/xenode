@@ -10,7 +10,10 @@ import {
 import { getFileIcon } from "@/lib/file-icons";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { useCrypto } from "@/contexts/CryptoContext";
-import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
+import {
+  decryptMetadataString,
+  unwrapStoredFileKey,
+} from "@/lib/crypto/fileEncryption";
 import { useState, useEffect } from "react";
 import { usePreview } from "@/contexts/PreviewContext";
 import { useDownload } from "@/contexts/DownloadContext";
@@ -53,7 +56,8 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
   const { startDownload } = useDownload();
   const [shareFile, setShareFile] = useState<ShareableFile | null>(null);
 
-  async function getDEKBytes(fileId: string): Promise<Uint8Array> {
+  /** Personal files only; extractable so the share dialog can re-wrap it. */
+  async function getFileKey(fileId: string): Promise<CryptoKey> {
     if (!privateKey) {
       setModalOpen(true);
       throw new Error("Vault locked");
@@ -61,17 +65,7 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
     const res = await fetch(`/api/objects/${fileId}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Failed to get file metadata");
-    if (!data.encryptedDEK)
-      throw new Error("No encrypted key found for this file");
-    const wrappedDEK = Uint8Array.from(atob(data.encryptedDEK), (c) =>
-      c.charCodeAt(0),
-    );
-    const dekBytes = await crypto.subtle.decrypt(
-      { name: "RSA-OAEP" },
-      privateKey,
-      wrappedDEK,
-    );
-    return new Uint8Array(dekBytes);
+    return unwrapStoredFileKey(data, fileId, { privateKey }, true);
   }
 
   useEffect(() => {
@@ -223,7 +217,7 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
           file={shareFile}
           open={!!shareFile}
           onOpenChange={(isOpen) => !isOpen && setShareFile(null)}
-          getDEKBytes={getDEKBytes}
+          getFileKey={getFileKey}
         />
       )}
     </div>

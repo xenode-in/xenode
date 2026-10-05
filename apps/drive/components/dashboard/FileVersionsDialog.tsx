@@ -21,11 +21,10 @@ import {
 import { toast } from "sonner";
 import { useOptionalCrypto } from "@/contexts/CryptoContext";
 import {
-  decryptFileWithDEK,
-  decryptFileChunkedCombined,
-  unwrapDEKWithSpaceKey,
+  decryptFileContent,
+  unwrapSpaceFileKey,
+  unwrapUserFileKey,
 } from "@/lib/crypto/fileEncryption";
-import { fromB64 } from "@/lib/crypto/utils";
 import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 import { REVISION_HEADER } from "@/lib/storage/revisions";
@@ -89,7 +88,12 @@ export function FileVersionsDialog({
         const body = await res.json().catch(() => ({}));
         throw new Error(body.error || "Failed to load versions");
       }
-      return await res.json() as { versions: VersionEntry[]; maxVersions: number; revision: number };
+      return await res.json() as {
+        versions: VersionEntry[];
+        maxVersions: number;
+        revision: number;
+        spaceId: string;
+      };
     },
   });
   const versions = data?.versions ?? [];
@@ -167,51 +171,30 @@ export function FileVersionsDialog({
       const cipher = await res.arrayBuffer();
       const type = v.contentType || "application/octet-stream";
 
-      let blob: Blob;
-      if (v.isEncrypted) {
-        if (!privateKey) throw new Error("Unlock your vault to download this version");
-        if (!v.encryptedDEK) throw new Error("Missing decryption key for version");
-        let dek: CryptoKey;
-        if (v.wrappedBy === "space") {
-          const rawKey = await workspaceSpaceKey.rawKeyFor(v.spaceKeyVersion);
-          if (!rawKey || !v.spaceKeyWrapIv) {
-            throw new Error("Unlock the organization workspace key first");
-          }
-          dek = await unwrapDEKWithSpaceKey(
-            v.encryptedDEK,
-            v.spaceKeyWrapIv,
-            rawKey,
-          );
-        } else {
-          const rawDEK = await window.crypto.subtle.decrypt(
-            { name: "RSA-OAEP" },
-            privateKey,
-            fromB64(v.encryptedDEK),
-          );
-          dek = await window.crypto.subtle.importKey(
-            "raw",
-            rawDEK,
-            { name: "AES-GCM", length: 256 },
-            false,
-            ["decrypt"],
-          );
+      // Every version of a file is bound to the same object id.
+      if (!v.encryptedDEK || !data) throw new Error("Missing decryption key for version");
+      let dek: CryptoKey;
+      if (v.wrappedBy === "space") {
+        const rawKey = await workspaceSpaceKey.rawKeyFor(v.spaceKeyVersion);
+        if (!rawKey || !v.spaceKeyWrapIv || !v.spaceKeyVersion) {
+          throw new Error("Unlock the organization workspace key first");
         }
-        if (v.chunkIvs && v.chunkSize && v.chunkCount) {
-          blob = await decryptFileChunkedCombined(
-            cipher,
-            null,
-            v.chunkIvs,
-            v.chunkSize,
-            v.chunkCount,
-            dek,
-            type,
-          );
-        } else {
-          blob = await decryptFileWithDEK(cipher, dek, v.iv ?? "", type);
-        }
+        dek = await unwrapSpaceFileKey(v.encryptedDEK, v.spaceKeyWrapIv, rawKey, {
+          fileId,
+          spaceId: data.spaceId,
+          spaceKeyVersion: v.spaceKeyVersion,
+        });
       } else {
-        blob = new Blob([cipher], { type });
+        if (!privateKey) throw new Error("Unlock your vault to download this version");
+        dek = await unwrapUserFileKey(v.encryptedDEK, privateKey, fileId);
       }
+      const blob = await decryptFileContent(
+        cipher,
+        dek,
+        v.chunkIvs ? { chunkIvs: v.chunkIvs, chunkSize: v.chunkSize } : { iv: v.iv },
+        fileId,
+        type,
+      );
 
       const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");

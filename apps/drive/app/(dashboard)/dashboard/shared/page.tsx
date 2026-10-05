@@ -49,6 +49,8 @@ import { normalizeShareRole, type ShareRole } from "@/lib/orgs/shareRoles";
 import {
   decryptMetadataString,
   encryptWithShareKey,
+  unwrapStoredFileKey,
+  wrapShareFileKey,
 } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
 import {
@@ -281,7 +283,7 @@ export default function SharedPage() {
     run();
   }, [rows, isUnlocked, metadataKey]);
 
-  async function getOwnerDekBytes(fileId: string) {
+  async function getOwnerFileKey(fileId: string) {
     if (!privateKey) {
       setModalOpen(true);
       throw new Error("Unlock your vault to update encrypted sharing");
@@ -290,24 +292,18 @@ export default function SharedPage() {
     const res = await fetch(`/api/objects/${fileId}`);
     const data = (await res.json()) as ObjectKeyPackage;
     if (!res.ok) throw new Error(data.error || "Failed to load file keys");
-    if (!data.encryptedDEK) throw new Error("Missing file encryption key");
-
-    const raw = await crypto.subtle.decrypt(
-      { name: "RSA-OAEP" },
-      privateKey,
-      fromB64(data.encryptedDEK),
-    );
 
     return {
-      dekBytes: new Uint8Array(raw),
+      // Personal files only; extractable so it can be re-wrapped for the share.
+      fileKey: await unwrapStoredFileKey(data, fileId, { privateKey }, true),
       encryptedName: data.encryptedName,
       encryptedContentType: data.encryptedContentType,
     };
   }
 
   async function buildShareKeyPackage(row: ShareRow) {
-    const { dekBytes, encryptedName, encryptedContentType } =
-      await getOwnerDekBytes(row.objectId._id);
+    const { fileKey, encryptedName, encryptedContentType } =
+      await getOwnerFileKey(row.objectId._id);
     const shareKeyRaw = crypto.getRandomValues(new Uint8Array(32));
     const shareKeyObj = await crypto.subtle.importKey(
       "raw",
@@ -319,26 +315,8 @@ export default function SharedPage() {
       false,
       ["wrapKey", "encrypt", "decrypt"],
     );
-    const dekKey = await crypto.subtle.importKey(
-      "raw",
-      dekBytes.buffer.slice(
-        dekBytes.byteOffset,
-        dekBytes.byteOffset + dekBytes.byteLength,
-      ) as ArrayBuffer,
-      { name: "AES-GCM" },
-      true,
-      ["encrypt", "decrypt"],
-    );
-
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const wrapped = await crypto.subtle.wrapKey("raw", dekKey, shareKeyObj, {
-      name: "AES-GCM",
-      iv,
-    });
-
     const packageData: Record<string, string> = {
-      shareEncryptedDEK: bytesToB64(wrapped),
-      shareKeyIv: bytesToB64(iv),
+      ...(await wrapShareFileKey(fileKey, shareKeyObj, row.objectId._id)),
     };
 
     if (publicKey) {

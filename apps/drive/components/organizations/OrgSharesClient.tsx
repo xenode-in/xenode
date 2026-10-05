@@ -215,8 +215,8 @@ function SharedWithMe({ orgId }: { orgId: string }) {
       const resolved = names[row.id];
       const blob = await fetchShareBlob({
         shareId: row.id,
+        fileId: row.object.id,
         mode: "download",
-        isEncrypted: row.object.isEncrypted,
         wrappedShareKey: row.wrappedShareKey ?? undefined,
         shareEncryptedDEK: row.shareEncryptedDEK ?? undefined,
         shareKeyIv: row.shareKeyIv ?? undefined,

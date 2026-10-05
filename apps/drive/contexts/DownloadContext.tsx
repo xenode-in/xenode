@@ -1,6 +1,5 @@
 "use client";
 "use client";
-import { downloadFromUrl } from "@/lib/downloads/client-download";
 import React, {
   createContext,
   useContext,
@@ -9,11 +8,10 @@ import React, {
   useEffect,
 } from "react";
 import {
-  decryptFile,
-  decryptFileChunkedCombined,
+  decryptFileContent,
   decryptMetadataString,
-  decryptFileWithDEK,
-  unwrapDEKWithSpaceKey,
+  unwrapSpaceFileKey,
+  unwrapUserFileKey,
 } from "@/lib/crypto/fileEncryption";
 import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
@@ -183,35 +181,21 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Failed to get metadata");
 
-        if (!isEncrypted) {
-          if (data.chunkUrls && data.chunkUrls.length > 0) {
-            // If non-encrypted but chunked, we have to stitch it... but xenode only chunks encrypted files.
-            throw new Error(
-              "Plaintext chunked files are not supported for download directly yet.",
-            );
-          } else if (data.url) {
-            await downloadFromUrl(data.url, name);
-          }
-          updateTask(obj.id, { status: "completed", progress: 100 });
-          abortControllers.delete(obj.id);
-          return;
-        }
-
-        if (!privateKey && data.wrappedBy !== "space") {
-          throw new Error("Vault locked. Please unlock first.");
-        }
-
-        let workspaceDEK: CryptoKey | null = null;
+        // Drive content is always encrypted; the file key is wrapped bound to this object.
+        let fileKey: CryptoKey;
         if (data.wrappedBy === "space") {
           const rawKey = await workspaceSpaceKey.rawKeyFor(data.spaceKeyVersion);
           if (!rawKey || !data.spaceKeyWrapIv) {
             throw new Error("Workspace key unavailable. Please unlock first.");
           }
-          workspaceDEK = await unwrapDEKWithSpaceKey(
-            data.encryptedDEK,
-            data.spaceKeyWrapIv,
-            rawKey,
-          );
+          fileKey = await unwrapSpaceFileKey(data.encryptedDEK, data.spaceKeyWrapIv, rawKey, {
+            fileId: obj.id,
+            spaceId: String(data.spaceId),
+            spaceKeyVersion: data.spaceKeyVersion,
+          });
+        } else {
+          if (!privateKey) throw new Error("Vault locked. Please unlock first.");
+          fileKey = await unwrapUserFileKey(data.encryptedDEK, privateKey, obj.id);
         }
 
         const isChunked = !!(
@@ -402,33 +386,13 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
           } catch (e) {}
         }
 
-        let decryptedBlob: Blob;
-        if (isChunked) {
-          decryptedBlob = await decryptFileChunkedCombined(
-            cachedBytes.buffer as ArrayBuffer,
-            workspaceDEK ? null : data.encryptedDEK,
-            data.chunkIvs,
-            data.chunkSize,
-            data.chunkCount,
-            workspaceDEK ?? privateKey!,
-            finalContentType,
-          );
-        } else if (workspaceDEK) {
-          decryptedBlob = await decryptFileWithDEK(
-            cachedBytes.buffer as ArrayBuffer,
-            workspaceDEK,
-            data.iv,
-            finalContentType,
-          );
-        } else {
-          decryptedBlob = await decryptFile(
-            cachedBytes.buffer as ArrayBuffer,
-            data.encryptedDEK,
-            data.iv,
-            privateKey!,
-            finalContentType,
-          );
-        }
+        const decryptedBlob = await decryptFileContent(
+          cachedBytes.buffer as ArrayBuffer,
+          fileKey,
+          isChunked ? { chunkIvs: data.chunkIvs, chunkSize: data.chunkSize } : { iv: data.iv },
+          obj.id,
+          finalContentType,
+        );
 
         await clearCache(obj.id);
 

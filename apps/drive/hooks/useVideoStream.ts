@@ -10,13 +10,15 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { decryptChunk } from "@/lib/crypto/fileEncryption";
+import { decryptFilePart } from "@/lib/crypto/fileEncryption";
 
 export interface VideoStreamOptions {
+  /** The object id every chunk is bound to. */
+  fileId: string;
   urls: string[];
-  dek: CryptoKey | null;
+  dek: CryptoKey;
   chunkSize: number;
-  chunkCount: number;
+  /** One IV per chunk; its length is the authenticated chunk count. */
   chunkIvs: string[];
   contentType: string;
 }
@@ -63,7 +65,8 @@ export function useVideoStream(
       setProgress(0);
     }, 0);
 
-    const { urls, dek, chunkCount, chunkIvs, contentType } = opts;
+    const { fileId, urls, dek, chunkIvs, contentType } = opts;
+    const chunkCount = chunkIvs.length;
 
     // ── Determine MSE codec ────────────────────────────────────────────────
     const mimeCodec = MIME_CODEC_MAP[contentType] ?? contentType;
@@ -118,7 +121,7 @@ export function useVideoStream(
         const res = await fetch(urls[i], { signal: abort.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const cipher = await res.arrayBuffer();
-        return dek ? await decryptChunk(cipher, dek, chunkIvs[i]) : cipher;
+        return decryptFilePart(cipher, dek, chunkIvs[i], fileId, i, chunkCount);
       };
 
       // Warm up pipeline
@@ -193,7 +196,8 @@ async function fullDecryptFallback(
   signal: AbortSignal,
   onProgress?: (pct: number) => void,
 ): Promise<string> {
-  const { urls, dek, chunkCount, chunkIvs, contentType } = opts;
+  const { fileId, urls, dek, chunkIvs, contentType } = opts;
+  const chunkCount = chunkIvs.length;
 
   const plaintextChunks: ArrayBuffer[] = new Array(chunkCount);
   let nextIndex = 0;
@@ -207,9 +211,7 @@ async function fullDecryptFallback(
       const res = await fetch(urls[i], { signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const cipher = await res.arrayBuffer();
-      plaintextChunks[i] = dek
-        ? await decryptChunk(cipher, dek, chunkIvs[i])
-        : cipher;
+      plaintextChunks[i] = await decryptFilePart(cipher, dek, chunkIvs[i], fileId, i, chunkCount);
       if (onProgress) onProgress(Math.round(((i + 1) / chunkCount) * 100));
     }
   };

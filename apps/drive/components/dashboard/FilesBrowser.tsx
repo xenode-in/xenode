@@ -65,7 +65,6 @@ import { SkeletonCard } from "@/components/dashboard/SkeletonCard";
 import { formatBytes, formatDate } from "@/lib/utils";
 import { useSession } from "@/lib/auth/client";
 import { useFileSync, type FileSyncError } from "@/hooks/useFileSync";
-import { useCryptoWorker } from "@/hooks/useCryptoWorker";
 import { getDb } from "@/lib/db/local";
 import {
   deleteLocalObjects,
@@ -76,7 +75,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import {
   encryptMetadataString,
   decryptMetadataString,
-  unwrapDEKWithSpaceKey,
+  unwrapStoredFileKey,
 } from "@/lib/crypto/fileEncryption";
 import { cn } from "@/lib/utils";
 import { driveScopeSpaceId, useWorkspace } from "@/contexts/WorkspaceContext";
@@ -590,8 +589,6 @@ function EmptyState({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export function FilesBrowser() {
-  useCryptoWorker(); // Bootstrap the background decryptor
-
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -1668,7 +1665,8 @@ export function FilesBrowser() {
     }
   };
 
-  async function getDEKBytes(fileId: string): Promise<Uint8Array> {
+  /** Extractable so the share dialog can re-wrap it under a share key. */
+  async function getFileKey(fileId: string): Promise<CryptoKey> {
     if (!privateKey) {
       setModalOpen(true);
       throw new Error("Vault locked");
@@ -1676,30 +1674,12 @@ export function FilesBrowser() {
     const res = await workspace.scopedFetch(`/api/objects/${fileId}`);
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Failed to get file metadata");
-    if (!data.encryptedDEK)
-      throw new Error("No encrypted key found for this file");
-    if (data.wrappedBy === "space") {
-      const rawKey = await workspaceSpaceKey.rawKeyFor(data.spaceKeyVersion);
-      if (!rawKey || !data.spaceKeyWrapIv) {
-        throw new Error("Workspace key unavailable");
-      }
-      const dek = await unwrapDEKWithSpaceKey(
-        data.encryptedDEK,
-        data.spaceKeyWrapIv,
-        rawKey,
-      );
-      return new Uint8Array(await crypto.subtle.exportKey("raw", dek));
-    }
-
-    const wrappedDEK = Uint8Array.from(atob(data.encryptedDEK), (c) =>
-      c.charCodeAt(0),
+    return unwrapStoredFileKey(
+      data,
+      fileId,
+      { privateKey, rawSpaceKeyFor: workspaceSpaceKey.rawKeyFor },
+      true,
     );
-    const dekBytes = await crypto.subtle.decrypt(
-      { name: "RSA-OAEP" },
-      privateKey,
-      wrappedDEK,
-    );
-    return new Uint8Array(dekBytes);
   }
 
   // ── Dropzone ───────────────────────────────────────────────────────────────
@@ -2308,7 +2288,7 @@ export function FilesBrowser() {
         }}
         file={shareFile}
         files={shareFiles.length > 1 ? shareFiles : undefined}
-        getDEKBytes={getDEKBytes}
+        getFileKey={getFileKey}
       />
     </div>
   );

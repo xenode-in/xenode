@@ -9,13 +9,12 @@
 
 import { buildDek, buildShareKey } from "@/lib/crypto/directShare";
 import {
-  decryptFileWithDEK,
+  decryptFileContent,
   decryptWithShareKey,
-  encryptFileWithDEK,
+  encryptFileRevision,
 } from "@/lib/crypto/fileEncryption";
 import { canEdit, normalizeShareRole } from "@/lib/orgs/shareRoles";
 import { RevisionUploadError, uploadRevisionCiphertext } from "@xenode/upload-engine";
-import { toB64 } from "@/lib/crypto/utils";
 import {
   isSupportedSpreadsheet,
   spreadsheetExtension,
@@ -98,10 +97,8 @@ export class DirectShareBinaryPersistenceAdapter
     }
 
     const role = normalizeShareRole(meta.role ?? meta.recipient?.accessType);
-    const dek = await buildDek(shareKey, meta.shareEncryptedDEK, meta.shareKeyIv, [
-      "encrypt",
-      "decrypt",
-    ]);
+    const objectId = String(object._id);
+    const dek = await buildDek(shareKey, meta.shareEncryptedDEK, meta.shareKeyIv, objectId);
 
     const streamResponse = await this.fetchImpl(
       `/api/direct-shares/${shareId}/stream`,
@@ -114,12 +111,12 @@ export class DirectShareBinaryPersistenceAdapter
     const ciphertextResponse = await (this.options.storageFetch ?? fetch)(stream.streamUrl, { signal });
     if (!ciphertextResponse.ok) throw new Error("spreadsheet_download_failed");
     const ciphertext = await ciphertextResponse.arrayBuffer();
-    const plaintextBlob = await decryptFileWithDEK(ciphertext, dek, object.iv, contentType);
+    const plaintextBlob = await decryptFileContent(ciphertext, dek, { iv: object.iv }, objectId, contentType);
     const bytes = new Uint8Array(await plaintextBlob.arrayBuffer());
     assertWorkbookSize(bytes.byteLength);
 
     return {
-      objectId: String(object._id),
+      objectId,
       name,
       contentType,
       extension: spreadsheetExtension(name) || "xlsx",
@@ -135,14 +132,16 @@ export class DirectShareBinaryPersistenceAdapter
 
   async saveBinary(input: SaveBinaryInput): Promise<SaveBinaryResult> {
     if (input.loaded.readOnly) throw new Error("spreadsheet_read_only");
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const plaintext = input.bytes.slice().buffer;
-    const ciphertext = await encryptFileWithDEK(plaintext, input.loaded.dek, iv);
+    const { ciphertext, iv } = await encryptFileRevision(
+      input.bytes.slice().buffer,
+      input.loaded.dek,
+      input.loaded.objectId,
+    );
     let result;
     try {
       result = await uploadRevisionCiphertext({
         endpoint: `/api/direct-shares/${this.options.shareId}/update-content`, baseRevision: input.loaded.revision,
-        iv: toB64(iv), ciphertext, apiFetch: this.fetchImpl,
+        iv, ciphertext, apiFetch: this.fetchImpl,
         storageFetch: this.options.storageFetch ?? fetch, signal: input.signal,
       });
     } catch (error) {

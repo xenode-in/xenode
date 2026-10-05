@@ -18,6 +18,7 @@ const MAX_CIPHER_BYTES = 20 * 1024 * 1024 * 1024;
 const IDLE_TTL_MS = 15 * 60 * 1000;
 const ABSOLUTE_TTL_MS = 2 * 60 * 60 * 1000;
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const FILE_ID_PATTERN = /^[a-f0-9]{24}$/;
 const MEDIA_PATH_PATTERN = /^\/__xenode_media__\/([A-Za-z0-9_-]{43})$/;
 
 const MEDIA_TYPES = new Set([
@@ -43,6 +44,16 @@ function reply(port, message) {
   } finally {
     port?.close();
   }
+}
+
+/**
+ * AAD of chunk `index` of `count` in the `xenode-file/1` format; it must stay
+ * byte-identical to `fileChunkAdditionalData` in @xenode/crypto-core.
+ */
+function chunkAdditionalData(fileId, index, count) {
+  return new TextEncoder().encode(
+    ["xenode-file/1", "chunk", fileId, String(index), String(count)].join("\u001f"),
+  );
 }
 
 function decodeBase64(value) {
@@ -84,6 +95,8 @@ function validateRegistration(data, clientId) {
     typeof clientId !== "string" ||
     clientId.length === 0 ||
     !TOKEN_PATTERN.test(data.token) ||
+    typeof data.fileId !== "string" ||
+    !FILE_ID_PATTERN.test(data.fileId) ||
     !(data.rawDEK instanceof ArrayBuffer) ||
     data.rawDEK.byteLength !== 32 ||
     !Number.isSafeInteger(data.chunkSize) ||
@@ -198,6 +211,7 @@ self.addEventListener("message", (event) => {
         const session = {
           token: data.token,
           clientId,
+          fileId: data.fileId,
           dek,
           urls: [...data.urls],
           chunkSize: data.chunkSize,
@@ -213,7 +227,11 @@ self.addEventListener("message", (event) => {
           const firstIv = decodeBase64(data.chunkIvs[0]);
           if (!firstIv) throw new Error("Seeded media chunk has an invalid IV");
           const firstPlaintext = await crypto.subtle.decrypt(
-            { name: "AES-GCM", iv: firstIv },
+            {
+              name: "AES-GCM",
+              iv: firstIv,
+              additionalData: chunkAdditionalData(data.fileId, 0, data.chunkCount),
+            },
             dek,
             data.initialCiphertext,
           );
@@ -274,7 +292,11 @@ function getOrFetchChunk(session, index) {
       }
 
       const plaintext = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv },
+        {
+          name: "AES-GCM",
+          iv,
+          additionalData: chunkAdditionalData(session.fileId, index, session.chunkCount),
+        },
         session.dek,
         ciphertext,
       );

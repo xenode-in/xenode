@@ -1,4 +1,9 @@
-import { decryptChunk } from "@/lib/crypto/fileEncryption";
+import {
+  decryptFileContent,
+  decryptFilePart,
+  parseChunkIvs,
+  unwrapShareFileKey,
+} from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
 
 /**
@@ -7,7 +12,7 @@ import { fromB64 } from "@/lib/crypto/utils";
  * the E2EE unwrap path lives in one place.
  *
  * Chain: RSA-unwrap the recipient's `wrappedShareKey` with their private key →
- * AES share key → unwrap the file DEK → decrypt content.
+ * AES share key → unwrap the file DEK (bound to the file) → decrypt content.
  */
 
 /** RSA-OAEP unwrap the per-recipient wrapped share key into an AES-GCM CryptoKey. */
@@ -29,29 +34,20 @@ export async function buildShareKey(
   );
 }
 
-/** Unwrap the file DEK (wrapped with the share key) into an AES-GCM CryptoKey. */
-export async function buildDek(
+/** Unwrap a shared file's key, which the share key wraps bound to that file. */
+export function buildDek(
   shareKey: CryptoKey,
   shareEncryptedDEK: string,
   shareKeyIv: string,
-  usages: KeyUsage[] = ["decrypt"],
+  fileId: string,
 ): Promise<CryptoKey> {
-  return crypto.subtle.unwrapKey(
-    "raw",
-    fromB64(shareEncryptedDEK).buffer as ArrayBuffer,
-    shareKey,
-    { name: "AES-GCM", iv: fromB64(shareKeyIv).buffer as ArrayBuffer },
-    { name: "AES-GCM" },
-    false,
-    usages,
-  );
+  return unwrapShareFileKey(shareEncryptedDEK, shareKeyIv, shareKey, fileId);
 }
 
 export interface ShareBlobResponse {
   streamUrl?: string;
   downloadUrl?: string;
   chunkUrls?: string[];
-  isEncrypted: boolean;
   iv?: string;
   contentType: string;
   chunkIvs?: string;
@@ -60,12 +56,12 @@ export interface ShareBlobResponse {
 
 /**
  * Fetch and decrypt a DirectShare's bytes. `mode` selects the stream vs download
- * endpoint. Returns a decrypted Blob (or the raw blob for non-encrypted shares).
+ * endpoint. Drive content is always encrypted, so there is no plaintext path.
  */
 export async function fetchShareBlob(args: {
   shareId: string;
+  fileId: string;
   mode: "stream" | "download";
-  isEncrypted?: boolean;
   wrappedShareKey?: string;
   shareEncryptedDEK?: string;
   shareKeyIv?: string;
@@ -80,13 +76,6 @@ export async function fetchShareBlob(args: {
 
   const outType = args.contentType || data.contentType;
 
-  if (!data.isEncrypted) {
-    const sourceUrl = data.streamUrl || data.downloadUrl;
-    if (!sourceUrl) throw new Error("Missing file URL");
-    const blob = await fetch(sourceUrl).then((r) => r.blob());
-    return new Blob([blob], { type: outType });
-  }
-
   if (
     !args.privateKey ||
     !args.wrappedShareKey ||
@@ -97,16 +86,18 @@ export async function fetchShareBlob(args: {
   }
 
   const shareKey = await buildShareKey(args.wrappedShareKey, args.privateKey);
-  const dek = await buildDek(shareKey, args.shareEncryptedDEK, args.shareKeyIv);
+  const dek = await buildDek(shareKey, args.shareEncryptedDEK, args.shareKeyIv, args.fileId);
 
   if (data.chunkUrls?.length) {
-    const chunkIvs = JSON.parse(data.chunkIvs || "[]");
+    // The authenticated chunk count comes from the IVs; every part must be present.
+    const chunkIvs = parseChunkIvs(data.chunkIvs || "[]");
+    if (chunkIvs.length !== data.chunkUrls.length) throw new Error("Incomplete shared file");
     const plaintextChunks: BlobPart[] = [];
-    for (let i = 0; i < data.chunkUrls.length; i += 1) {
-      const chunkBuffer = await fetch(data.chunkUrls[i]).then((r) =>
-        r.arrayBuffer(),
+    for (let i = 0; i < chunkIvs.length; i += 1) {
+      const chunkBuffer = await fetch(data.chunkUrls[i]).then((r) => r.arrayBuffer());
+      plaintextChunks.push(
+        await decryptFilePart(chunkBuffer, dek, chunkIvs[i], args.fileId, i, chunkIvs.length),
       );
-      plaintextChunks.push(await decryptChunk(chunkBuffer, dek, chunkIvs[i]));
     }
     return new Blob(plaintextChunks, { type: outType });
   }
@@ -115,10 +106,5 @@ export async function fetchShareBlob(args: {
   if (!sourceUrl || !data.iv) throw new Error("Missing encrypted file URL");
 
   const cipherBuffer = await fetch(sourceUrl).then((r) => r.arrayBuffer());
-  const plainBuffer = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: fromB64(data.iv).buffer as ArrayBuffer },
-    dek,
-    cipherBuffer,
-  );
-  return new Blob([plainBuffer], { type: outType });
+  return decryptFileContent(cipherBuffer, dek, { iv: data.iv }, args.fileId, outType);
 }

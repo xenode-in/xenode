@@ -152,8 +152,8 @@ export default function SharedWithMeDetailPage() {
     if (!share) throw new Error("Share is not loaded");
     return fetchShareBlob({
       shareId,
+      fileId: share.objectId._id,
       mode,
-      isEncrypted: share.objectId.isEncrypted,
       wrappedShareKey: share.recipient?.wrappedShareKey,
       shareEncryptedDEK: share.shareEncryptedDEK,
       shareKeyIv: share.shareKeyIv,

@@ -41,6 +41,7 @@ Start with [the executive summary](00-executive-summary.md), then [the migration
 | [32 — Workspace keyring](32-workspace-keyring.md) | Versioned workspace key grants, rotation and new keyholders |
 | [33 — Product origins](33-product-origin-contract.md) | Exact configured web origins, OAuth allowlists and build inputs |
 | [34 — Storage usage reconciliation](34-storage-usage-reconciliation.md) | Read-only snapshot reports for organization and personal counters |
+| [35 — File content format](35-file-content-format.md) | AAD-bound chunks and file-key wraps keyed to the object id |
 
 ## Reading the judgments
 

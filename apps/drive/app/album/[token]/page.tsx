@@ -11,11 +11,12 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { FilePreviewDialog } from "@/components/dashboard/FilePreviewDialog";
 import {
+  decryptFileContent,
+  decryptFilePart,
   decryptWithShareKey,
-  decryptChunk,
-  decryptFileWithDEK,
+  parseChunkIvs,
+  unwrapShareFileKey,
 } from "@/lib/crypto/fileEncryption";
-import { fromB64 } from "@/lib/crypto/utils";
 
 interface ManifestItem {
   objectId: string;
@@ -305,41 +306,36 @@ export default function SharedAlbumPage() {
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "stream failed");
 
+          // Shared content is always encrypted and bound to its object id.
+          const dek = await unwrapShareFileKey(
+            data.shareEncryptedDEK,
+            data.shareKeyIv,
+            shareKey,
+            it.objectId,
+          );
           let blob: Blob;
-          if (data.isEncrypted) {
-            const dek = await crypto.subtle.unwrapKey(
-              "raw",
-              fromB64(data.shareEncryptedDEK).buffer as ArrayBuffer,
-              shareKey,
-              {
-                name: "AES-GCM",
-                iv: fromB64(data.shareKeyIv).buffer as ArrayBuffer,
-              },
-              { name: "AES-GCM" },
-              false,
-              ["decrypt"],
-            );
-            if (data.chunkUrls && data.chunkUrls.length > 0) {
-              const ivs: string[] = JSON.parse(data.chunkIvs);
-              const parts: ArrayBuffer[] = [];
-              for (let c = 0; c < data.chunkUrls.length; c++) {
-                parts.push(
-                  await decryptChunk(
-                    await (await fetch(data.chunkUrls[c])).arrayBuffer(),
-                    dek,
-                    ivs[c],
-                  ),
-                );
-              }
-              blob = new Blob(parts, { type: it.contentType });
-            } else {
-              const cipher = await (
-                await fetch(data.url || data.streamUrl)
-              ).arrayBuffer();
-              blob = await decryptFileWithDEK(cipher, dek, data.iv, it.contentType);
+          if (data.chunkUrls && data.chunkUrls.length > 0) {
+            const ivs = parseChunkIvs(data.chunkIvs ?? "[]");
+            if (ivs.length !== data.chunkUrls.length) throw new Error("Incomplete shared file");
+            const parts: ArrayBuffer[] = [];
+            for (let c = 0; c < ivs.length; c++) {
+              parts.push(
+                await decryptFilePart(
+                  await (await fetch(data.chunkUrls[c])).arrayBuffer(),
+                  dek,
+                  ivs[c],
+                  it.objectId,
+                  c,
+                  ivs.length,
+                ),
+              );
             }
+            blob = new Blob(parts, { type: it.contentType });
           } else {
-            blob = await (await fetch(data.url || data.streamUrl)).blob();
+            const cipher = await (
+              await fetch(data.url || data.streamUrl)
+            ).arrayBuffer();
+            blob = await decryptFileContent(cipher, dek, { iv: data.iv }, it.objectId, it.contentType);
           }
           zip.file(uniqueName(it.name), blob);
         } catch (e) {

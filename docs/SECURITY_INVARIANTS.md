@@ -26,8 +26,10 @@ These are release-blocking rules.
 - Product/Space keys are handed off only through one-time, expiring,
   destination-bound ECDH + HKDF + AES-GCM transactions.
 - Product keys and Drive sharing private keys remain in browser memory.
-- Each file has an independent AES-256-GCM DEK. Metadata purpose keys are
-  derived with HKDF and bound to the Space.
+- Each file has an independent AES-256-GCM DEK. Content chunks and every wrap
+  of the DEK are bound to the object id (`xenode-file/1`), so ciphertext,
+  chunks and wrapped keys cannot be reordered, truncated or moved between
+  files. Metadata purpose keys are derived with HKDF and bound to the Space.
 - Workspace key grants are create-only per member and version, every new
   keyholder receives every issued version, and rotation never retires the
   remaining members' older versions.

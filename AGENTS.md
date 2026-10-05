@@ -89,8 +89,12 @@ Drive and Photos receive only their ProductSpaceKey through
 client, origin, Space, transaction, and destination public-key fingerprint.
 Product keys stay in browser memory and are cleared on lock/logout.
 
-Files use per-file AES-256-GCM DEKs. Drive keeps RSA-OAEP only for subordinate
-sharing/grant compatibility. Metadata purpose keys come from
+Files use per-file AES-256-GCM DEKs in the `xenode-file/1` format from
+`@xenode/crypto-core`: every chunk and every wrap of a file key is bound to the
+object's stable `_id` (see
+[35](docs/gpt-6-astra-audit/35-file-content-format.md)). Never add an unbound
+decrypt or wrap, or a plaintext path for Drive content. Drive keeps RSA-OAEP
+only for subordinate sharing/grant compatibility. Metadata purpose keys come from
 `@xenode/crypto-core` `deriveMetadataKey` (HKDF, product- and Space-bound).
 Never reintroduce Vault v1, PBKDF2, private-key hashing, server plaintext, or
 persisted raw product keys.

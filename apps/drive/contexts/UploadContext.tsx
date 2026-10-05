@@ -17,14 +17,14 @@ import {
 import { useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
 import {
-  encryptFile,
-  encryptFileForSpace,
-  encryptFileChunked,
-  encryptFileChunkedForSpace,
+  encryptFileBlob,
+  encryptFileParts,
   encryptMetadataString,
   encryptMetadataObject,
   encryptThumbnail,
+  type FileKeyTarget,
 } from "@/lib/crypto/fileEncryption";
+import { fileChunkCount, fileCiphertextBytes } from "@xenode/crypto-core";
 import { failClosedOnEncryptionError } from "@/lib/crypto/encryptionPolicy";
 import type { FileMetadata } from "@/lib/metadata/types";
 import { extractFileMetadata } from "@/lib/metadata/metadataClient";
@@ -482,12 +482,29 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       : cryptoMetadataKeyRef.current;
   }
 
-  function currentSpaceFields() {
-    return isWorkspaceEncryptedRef.current
-      ? {
-          wrappedBy: "space",
-          spaceKeyVersion: workspaceSpaceKeyVersionRef.current ?? undefined,
-        }
+  /**
+   * Where this upload's file key is wrapped. Captured once per upload so the
+   * wrap and the completion request name the same Space key version.
+   */
+  function fileKeyTarget(spaceId: string): FileKeyTarget {
+    if (isWorkspaceEncryptedRef.current) {
+      const rawSpaceKey = workspaceRawSpaceKeyRef.current;
+      const spaceKeyVersion = workspaceSpaceKeyVersionRef.current;
+      if (!rawSpaceKey || !spaceKeyVersion) {
+        throw new Error("Upload blocked: unlock the workspace encryption keys first.");
+      }
+      return { wrappedBy: "space", rawSpaceKey, spaceId, spaceKeyVersion };
+    }
+    const publicKey = cryptoPublicKeyRef.current;
+    if (!publicKey) {
+      throw new Error("Upload blocked: unlock your Xenode encryption vault first.");
+    }
+    return { wrappedBy: "user", publicKey };
+  }
+
+  function spaceFieldsFor(target: FileKeyTarget) {
+    return target.wrappedBy === "space"
+      ? { wrappedBy: "space", spaceKeyVersion: target.spaceKeyVersion }
       : {};
   }
 
@@ -590,13 +607,15 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           uploadFile.size,
           uploadFile.type,
         );
-        let cipherChunkSize = chunkSize;
-        let uploadBody: File | Blob = uploadFile;
-        let uploadContentType = uploadFile.type || "application/octet-stream";
+        // Sealed sizes are known before encryption, so the upload is reserved
+        // first and every chunk is bound to the reservation's object id.
+        const cipherChunkSize = chunkSize + 16;
+        const chunkCount = fileChunkCount(uploadFile.size, chunkSize);
+        const totalSize = fileCiphertextBytes(uploadFile.size, chunkSize);
+        const uploadContentType = "application/octet-stream";
         let encryptedDEK: string | undefined;
         let spaceKeyWrapIv: string | undefined;
         let encryptedName: string | undefined;
-        let chunkCount = Math.ceil(uploadFile.size / chunkSize);
         let chunkIvs: string | undefined;
 
         let encryptedMetadata: string | undefined;
@@ -818,30 +837,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               currentMetadataKey()!,
             );
 
-            setTasks((prev) =>
-              prev.map((t) =>
-                t.id === task.id ? { ...t, statusText: "Encrypting file…" } : t,
-              ),
-            );
-
-            const enc = isWorkspaceEncryptedRef.current
-              ? await encryptFileChunkedForSpace(
-                  uploadFile,
-                  workspaceRawSpaceKeyRef.current!,
-                  chunkSize,
-                )
-              : await encryptFileChunked(
-                  uploadFile,
-                  cryptoPublicKeyRef.current!,
-                  chunkSize,
-                );
-            uploadBody = enc.ciphertext;
-            uploadContentType = "application/octet-stream";
-            encryptedDEK = enc.encryptedDEK;
-            spaceKeyWrapIv = enc.spaceKeyWrapIv;
-            chunkCount = enc.chunkCount;
-            chunkIvs = JSON.stringify(enc.chunkIvs);
-            cipherChunkSize = chunkSize + 16;
           } catch (err) {
             failClosedOnEncryptionError(err);
           }
@@ -861,7 +856,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
-                fileSize: uploadBody.size,
+                fileSize: totalSize,
                 fileType: uploadContentType,
                 bucketId: task.bucketId,
                 chunkCount,
@@ -883,6 +878,29 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         const returnedBucketId: string = presign.bucketId;
         const serverChunkSize: number = presign.chunkSize;
         sessionId = presign.sessionId;
+        if (!sessionId || serverChunkSize !== chunkSize) {
+          throw new Error("Upload reservation does not match the encrypted layout");
+        }
+
+        const keyTarget = fileKeyTarget(String(presign.spaceId));
+        setTasks((prev) =>
+          prev.map((t) =>
+            t.id === task.id ? { ...t, statusText: "Encrypting file…" } : t,
+          ),
+        );
+        let uploadBody: Blob;
+        try {
+          const enc = await encryptFileParts(uploadFile, sessionId, chunkSize, keyTarget);
+          uploadBody = new Blob(enc.parts, { type: uploadContentType });
+          encryptedDEK = enc.encryptedDEK;
+          spaceKeyWrapIv = enc.spaceKeyWrapIv;
+          chunkIvs = JSON.stringify(enc.chunkIvs);
+        } catch (err) {
+          failClosedOnEncryptionError(err);
+        }
+        if (uploadBody.size !== totalSize) {
+          throw new Error("Encrypted size does not match the reservation");
+        }
 
         // Handle thumbnail upload to B2
         let thumbnailKey: string | undefined;
@@ -895,7 +913,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           );
         }
 
-        const totalSize = uploadBody.size;
         const userId = sessionRef.current?.user?.id;
         const encryptedContentTypeVal =
           shouldEncryptNow() && currentMetadataKey()
@@ -1021,7 +1038,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             isEncrypted: !!encryptedDEK,
             encryptedDEK,
             spaceKeyWrapIv,
-            ...currentSpaceFields(),
+            ...spaceFieldsFor(keyTarget),
             encryptedName,
             chunkSize: serverChunkSize,
             chunkCount,
@@ -1145,10 +1162,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            fileSize: task.file.size,
-            fileType: shouldEncryptNow()
-              ? "application/octet-stream"
-              : task.file.type,
+            // One sealed chunk: the plaintext plus a 16-byte tag.
+            fileSize: fileCiphertextBytes(task.file.size, Math.max(task.file.size, 1)),
+            fileType: "application/octet-stream",
             bucketId: task.bucketId,
             sessionId: mainSessionId,
           }),
@@ -1165,29 +1181,23 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       const returnedBucketId: string = mainPresign.bucketId;
       let uploadUrl: string = mainPresign.uploadUrl;
       mainSessionId = mainPresign.sessionId;
+      if (!mainSessionId) throw new Error("Upload reservation is missing");
+      const keyTarget = fileKeyTarget(String(mainPresign.spaceId));
 
       let aspectRatio: number | undefined;
 
-      // Step 3: Encrypt the original file bytes before upload
-      let uploadBody: File | Blob = task.file;
-      let uploadContentType = task.file.type || "application/octet-stream";
+      // Step 3: Seal the file as one blob bound to the reserved object id
+      let uploadBody: Blob = task.file;
+      const uploadContentType = "application/octet-stream";
       let encryptedDEK: string | undefined;
       let encryptedIV: string | undefined;
       let spaceKeyWrapIv: string | undefined;
       let encryptedName: string | undefined;
-      // Chunked encryption fields (video/audio only)
-      let chunkSize: number | undefined;
-      let chunkCount: number | undefined;
-      let chunkIvs: string | undefined; // JSON string
 
       let encryptedMetadata: string | undefined;
 
       if (shouldEncryptNow()) {
         try {
-          const isStreamable =
-            task.file.type.startsWith("video/") ||
-            task.file.type.startsWith("audio/");
-
           // Metadata + preview extraction off the main thread (hardened worker).
           const extracted = await extractFileMetadata(task.file);
           const metadata = extracted.metadata;
@@ -1201,41 +1211,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             ).catch(() => undefined);
           }
 
-          if (isStreamable) {
-            const enc = isWorkspaceEncryptedRef.current
-              ? await encryptFileChunkedForSpace(
-                  task.file,
-                  workspaceRawSpaceKeyRef.current!,
-                )
-              : await encryptFileChunked(
-                  task.file,
-                  cryptoPublicKeyRef.current!,
-                );
-            uploadBody = enc.ciphertext;
-            uploadContentType = "application/octet-stream";
-            encryptedDEK = enc.encryptedDEK;
-            spaceKeyWrapIv = enc.spaceKeyWrapIv;
-            chunkSize = enc.chunkSize;
-            chunkCount = enc.chunkCount;
-            chunkIvs = JSON.stringify(enc.chunkIvs);
-
-            // Update metadata with chunk info
-            metadata.chunkSize = chunkSize;
-            metadata.chunkCount = chunkCount;
-            metadata.chunkIvs = enc.chunkIvs;
-          } else {
-            const enc = isWorkspaceEncryptedRef.current
-              ? await encryptFileForSpace(
-                  task.file,
-                  workspaceRawSpaceKeyRef.current!,
-                )
-              : await encryptFile(task.file, cryptoPublicKeyRef.current!);
-            uploadBody = enc.ciphertext;
-            uploadContentType = "application/octet-stream";
-            encryptedDEK = enc.encryptedDEK;
-            encryptedIV = enc.iv;
-            spaceKeyWrapIv = enc.spaceKeyWrapIv;
-          }
+          const enc = await encryptFileBlob(task.file, mainSessionId, keyTarget);
+          uploadBody = enc.ciphertext;
+          encryptedDEK = enc.encryptedDEK;
+          encryptedIV = enc.iv;
+          spaceKeyWrapIv = enc.spaceKeyWrapIv;
 
           // Encrypt standardized metadata object
           encryptedMetadata = await encryptMetadataObject(
@@ -1268,8 +1248,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       }
 
       const userId = sessionRef.current?.user?.id;
-      const mainSize =
-        uploadBody instanceof Blob ? uploadBody.size : task.file.size;
+      const mainSize = uploadBody.size;
       const withinCap = mainSize <= RESUME_BYTE_CAP;
       const encryptedContentTypeVal =
         shouldEncryptNow() && currentMetadataKey()
@@ -1341,10 +1320,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           bucketId: returnedBucketId,
           sessionId: mainSessionId,
           folderId: task.folderId,
-          size: uploadBody instanceof Blob ? uploadBody.size : task.file.size,
-          contentType: shouldEncryptNow()
-            ? "application/octet-stream"
-            : task.file.type,
+          size: uploadBody.size,
+          contentType: uploadContentType,
           originalContentType: task.file.type,
           mediaCategory: getMediaCategory(task.file.type),
           encryptedContentType: encryptedContentTypeVal,
@@ -1353,11 +1330,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           encryptedDEK,
           iv: encryptedIV,
           spaceKeyWrapIv,
-          ...currentSpaceFields(),
+          ...spaceFieldsFor(keyTarget),
           encryptedName,
-          chunkSize,
-          chunkCount,
-          chunkIvs,
           encryptedMetadata,
           aspectRatio,
         }),

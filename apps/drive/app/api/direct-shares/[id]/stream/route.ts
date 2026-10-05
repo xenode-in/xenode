@@ -63,6 +63,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     );
 
     return NextResponse.json({
+      // Content and file-key wraps are bound to this id.
+      objectId: String(object._id),
       streamUrl: streamUrl || undefined,
       chunkUrls,
       isEncrypted: object.isEncrypted,

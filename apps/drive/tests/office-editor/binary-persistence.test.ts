@@ -4,6 +4,7 @@ import { XenodeBinaryPersistenceAdapter } from "@/lib/office-editor/persistence"
 import { BinaryConflictError } from "@/lib/office-editor/types";
 import { encryptMetadataString } from "@/lib/crypto/fileEncryption";
 import { toB64 } from "@/lib/crypto/utils";
+import { decryptFileChunk, sealFileChunk, wrapFileKeyForUser } from "@xenode/crypto-core";
 
 // Node's WebCrypto satisfies the SubtleCrypto surface the adapter uses.
 const subtle = (webcrypto as unknown as Crypto).subtle;
@@ -40,16 +41,14 @@ async function buildFixture() {
     "decrypt",
   ]);
 
-  const rawDEK = await subtle.exportKey("raw", dek);
-  const encryptedDEK = toB64(
-    await subtle.encrypt({ name: "RSA-OAEP" }, rsa.publicKey, rawDEK),
-  );
-
-  const iv = webcrypto.getRandomValues(new Uint8Array(12));
-  const ciphertext = await subtle.encrypt(
-    { name: "AES-GCM", iv },
-    dek,
+  // The stored wrap and content are bound to the object, as uploads write them.
+  const encryptedDEK = toB64(await wrapFileKeyForUser(dek, rsa.publicKey, { fileId: OBJECT_ID }));
+  const { ciphertext, iv } = await sealFileChunk(
     PLAINTEXT.slice().buffer,
+    dek,
+    { fileId: OBJECT_ID },
+    0,
+    1,
   );
 
   const meta = {
@@ -149,8 +148,12 @@ describe("v2 binary persistence — ciphertext only", () => {
     const ivParam = recorded.find((r) => r.control?.operation === "presign")!.control!.iv!;
     const ivBytes = Uint8Array.from(atob(ivParam), (c) => c.charCodeAt(0));
     const roundTrip = new Uint8Array(
-      await subtle.decrypt({ name: "AES-GCM", iv: ivBytes }, dek, save!.body!),
+      await decryptFileChunk(save!.body!, dek, ivBytes, { fileId: OBJECT_ID }, 0, 1),
     );
+    // The revision is bound to this object: it does not open as another file.
+    await expect(
+      decryptFileChunk(save!.body!, dek, ivBytes, { fileId: "1123456789abcdef01234567" }, 0, 1),
+    ).rejects.toThrow();
     expect(Array.from(roundTrip)).toEqual(Array.from(edited));
 
     // No request body anywhere in the session equals the plaintext.

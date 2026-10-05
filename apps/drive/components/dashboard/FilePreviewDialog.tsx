@@ -30,12 +30,15 @@ import { cn } from "@/lib/utils";
 import { useOptionalDownload } from "@/contexts/DownloadContext";
 import { useOptionalCrypto } from "@/contexts/CryptoContext";
 import {
-  decryptFileWithDEK,
-  decryptFileChunkedCombined,
+  decryptFileContent,
+  decryptFilePart,
   decryptMetadataString,
   decryptWithShareKey,
-  decryptChunk,
-  unwrapDEKWithSpaceKey,
+  parseChunkIvs,
+  unwrapShareFileKey,
+  unwrapSpaceFileKey,
+  unwrapStoredFileKey,
+  unwrapUserFileKey,
 } from "@/lib/crypto/fileEncryption";
 import { fromB64 } from "@/lib/crypto/utils";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
@@ -1186,6 +1189,9 @@ export function FilePreviewDialog({
           throw new Error(errData.error || "Failed to get metadata");
         }
         const data = await res.json();
+        // Content and file-key wraps are bound to the object id (share routes
+        // report it; a single-file link's preview stub carries the token).
+        const fileId: string = data.objectId ?? file.id;
         if (!cancelled) setFetchedData(data);
         if (
           !data?.url &&
@@ -1320,44 +1326,19 @@ export function FilePreviewDialog({
 
         setIsEncrypted(true);
 
-        // --- DEK Derivation ---
-        let rawDEK: ArrayBuffer;
-        let directShareDEK: CryptoKey | null = null;
-        if (directShareId && shareKeyObj) {
+        // --- File key (extractable: the media service worker needs its bytes) ---
+        let fileKey: CryptoKey;
+        if ((directShareId || sharedToken) && shareKeyObj) {
           if (!data.shareEncryptedDEK || !data.shareKeyIv) {
-            throw new Error("Missing direct share decryption metadata.");
+            throw new Error("Missing shared file decryption metadata.");
           }
-
-          directShareDEK = await crypto.subtle.unwrapKey(
-            "raw",
-            fromB64(data.shareEncryptedDEK).buffer as ArrayBuffer,
+          fileKey = await unwrapShareFileKey(
+            data.shareEncryptedDEK,
+            data.shareKeyIv,
             shareKeyObj,
-            {
-              name: "AES-GCM",
-              iv: fromB64(data.shareKeyIv).buffer as ArrayBuffer,
-            },
-            { name: "AES-GCM" },
+            fileId,
             true,
-            ["decrypt"],
           );
-          rawDEK = await crypto.subtle.exportKey("raw", directShareDEK);
-        } else if (sharedToken && shareKey && shareKeyObj) {
-          const encryptedDekBytes = fromB64(
-            data.shareEncryptedDEK || data.encryptedDEK,
-          );
-          const ivBytes = fromB64(data.shareKeyIv);
-
-          rawDEK = await crypto.subtle
-            .unwrapKey(
-              "raw",
-              encryptedDekBytes,
-              shareKeyObj,
-              { name: "AES-GCM", iv: ivBytes },
-              { name: "AES-GCM" },
-              true,
-              ["decrypt"],
-            )
-            .then((key) => crypto.subtle.exportKey("raw", key));
         } else if (data.wrappedBy === "space") {
           if (!data.spaceKeyWrapIv) {
             throw new Error("Workspace key unavailable. Please unlock first.");
@@ -1383,18 +1364,15 @@ export function FilePreviewDialog({
           }
           const rawKey = await workspaceSpaceKey.rawKeyFor(data.spaceKeyVersion);
           if (!rawKey) throw new Error("Workspace key version unavailable.");
-          const dek = await unwrapDEKWithSpaceKey(
+          fileKey = await unwrapSpaceFileKey(
             data.encryptedDEK,
             data.spaceKeyWrapIv,
             rawKey,
+            { fileId, spaceId: String(data.spaceId), spaceKeyVersion: data.spaceKeyVersion },
+            true,
           );
-          rawDEK = await crypto.subtle.exportKey("raw", dek);
         } else if (privateKey) {
-          rawDEK = await crypto.subtle.decrypt(
-            { name: "RSA-OAEP" },
-            privateKey,
-            fromB64(data.encryptedDEK),
-          );
+          fileKey = await unwrapUserFileKey(data.encryptedDEK, privateKey, fileId, true);
         } else if (sharedToken) {
           // If we are in shared mode but lack a key, just wait for it (it might be coming from a hash sync)
           if (!shareKey) return;
@@ -1406,24 +1384,15 @@ export function FilePreviewDialog({
           );
         }
 
+        const rawDEK = await crypto.subtle.exportKey("raw", fileKey);
+        const dek = fileKey;
+
         // --- Path B: inspected chunked media streaming ---
         if (data.chunkUrls && data.chunkUrls.length > 0) {
           setLoadingMessage("Inspecting decrypted media header...");
-          const dek = await crypto.subtle.importKey(
-            "raw",
-            rawDEK,
-            { name: "AES-GCM", length: 256 },
-            false,
-            ["decrypt"],
-          );
-          const chunkIvs: string[] =
-            typeof data.chunkIvs === "string"
-              ? JSON.parse(data.chunkIvs)
-              : data.chunkIvs;
-          if (
-            !Array.isArray(chunkIvs) ||
-            chunkIvs.length !== data.chunkUrls.length
-          ) {
+          // The IV list is the authenticated chunk count.
+          const chunkIvs = parseChunkIvs(data.chunkIvs ?? "[]");
+          if (chunkIvs.length !== data.chunkUrls.length) {
             throw new Error("Invalid encrypted chunk metadata");
           }
 
@@ -1438,10 +1407,13 @@ export function FilePreviewDialog({
                 );
               }
               const ciphertext = await response.arrayBuffer();
-              const plaintext = await decryptChunk(
+              const plaintext = await decryptFilePart(
                 ciphertext,
                 dek,
                 chunkIvs[0],
+                fileId,
+                0,
+                chunkIvs.length,
               );
               return { ciphertext, plaintext };
             })();
@@ -1474,10 +1446,11 @@ export function FilePreviewDialog({
           try {
             setLoadingMessage("Starting encrypted range stream...");
             const mediaSession = await createServiceWorkerMediaSession({
+              fileId,
               urls: data.chunkUrls,
               rawDEK,
               chunkSize: data.chunkSize || 2 * 1024 * 1024,
-              chunkCount: data.chunkCount || data.chunkUrls.length,
+              chunkCount: chunkIvs.length,
               chunkIvs,
               contentType: approved.detectedMime,
               cipherSize: file.size,
@@ -1506,10 +1479,10 @@ export function FilePreviewDialog({
 
           setStreamDek(dek);
           setStreamOpts({
+            fileId,
             urls: data.chunkUrls,
             dek,
             chunkSize: data.chunkSize || 2 * 1024 * 1024,
-            chunkCount: data.chunkCount || data.chunkUrls.length,
             chunkIvs,
             contentType: approved.detectedMime,
           });
@@ -1526,8 +1499,9 @@ export function FilePreviewDialog({
           (pct) => {
             if (!cancelled) setProgress(pct);
           },
+          // The IV changes with every revision, so a stale copy is never reused.
           directShareId
-            ? `direct-share-${directShareId}-${file.id}`
+            ? `direct-share-${directShareId}-${fileId}-${data.iv || ""}`
             : `${file.id}-${data.iv || ""}`,
           file.size,
         );
@@ -1537,35 +1511,13 @@ export function FilePreviewDialog({
           setLoadingMessage("Decrypting file...");
         }
 
-        let decryptedBlob: Blob;
-        const dek =
-          directShareDEK ||
-          (await crypto.subtle.importKey(
-            "raw",
-            rawDEK,
-            { name: "AES-GCM", length: 256 },
-            false,
-            ["decrypt"],
-          ));
-
-        if (data.chunkIvs && data.chunkSize && data.chunkCount) {
-          decryptedBlob = await decryptFileChunkedCombined(
-            ciphertextBuf,
-            null, // specify null so it uses the dek we pass below
-            data.chunkIvs,
-            data.chunkSize,
-            data.chunkCount,
-            dek,
-            type,
-          );
-        } else {
-          decryptedBlob = await decryptFileWithDEK(
-            ciphertextBuf,
-            dek,
-            data.iv,
-            type,
-          );
-        }
+        const decryptedBlob = await decryptFileContent(
+          ciphertextBuf,
+          dek,
+          data.chunkIvs ? { chunkIvs: data.chunkIvs, chunkSize: data.chunkSize } : { iv: data.iv },
+          fileId,
+          type,
+        );
 
         const previewName =
           decryptedName || file.name || fileNameFromKey(file.key);
@@ -1712,40 +1664,16 @@ export function FilePreviewDialog({
         if (!data.isEncrypted) {
           throw new Error("Unencrypted originals are not previewed");
         }
-        let rawDEK: ArrayBuffer;
-        if (data.wrappedBy === "space") {
-          if (!data.spaceKeyWrapIv) {
-            throw new Error("Workspace key unavailable");
-          }
-          if (!workspaceSpaceKey.current) {
-            // Keyring still resolving — allow a retry once it lands rather
-            // than tearing down the HD load permanently.
-            hdRequestedRef.current = false;
-            return;
-          }
-          const rawKey = await workspaceSpaceKey.rawKeyFor(data.spaceKeyVersion);
-          if (!rawKey) throw new Error("Workspace key version unavailable");
-          const unwrapped = await unwrapDEKWithSpaceKey(
-            data.encryptedDEK,
-            data.spaceKeyWrapIv,
-            rawKey,
-          );
-          rawDEK = await crypto.subtle.exportKey("raw", unwrapped);
-        } else {
-          if (!privateKey) throw new Error("Vault locked");
-          rawDEK = await crypto.subtle.decrypt(
-            { name: "RSA-OAEP" },
-            privateKey,
-            fromB64(data.encryptedDEK),
-          );
+        if (data.wrappedBy === "space" && !workspaceSpaceKey.current) {
+          // Keyring still resolving — allow a retry once it lands rather
+          // than tearing down the HD load permanently.
+          hdRequestedRef.current = false;
+          return;
         }
-        const dek = await crypto.subtle.importKey(
-          "raw",
-          rawDEK,
-          { name: "AES-GCM", length: 256 },
-          false,
-          ["decrypt"],
-        );
+        const dek = await unwrapStoredFileKey(data, file.id, {
+          privateKey,
+          rawSpaceKeyFor: workspaceSpaceKey.rawKeyFor,
+        });
         let buf: ArrayBuffer;
         if (Array.isArray(data.chunkUrls) && data.chunkUrls.length > 0) {
           const ciphertextChunks: ArrayBuffer[] = [];
@@ -1777,20 +1705,13 @@ export function FilePreviewDialog({
             file.size,
           );
         }
-        let blob: Blob;
-        if (data.chunkIvs && data.chunkSize && data.chunkCount) {
-          blob = await decryptFileChunkedCombined(
-            buf,
-            null,
-            data.chunkIvs,
-            data.chunkSize,
-            data.chunkCount,
-            dek,
-            type,
-          );
-        } else {
-          blob = await decryptFileWithDEK(buf, dek, data.iv, type);
-        }
+        const blob = await decryptFileContent(
+          buf,
+          dek,
+          data.chunkIvs ? { chunkIvs: data.chunkIvs, chunkSize: data.chunkSize } : { iv: data.iv },
+          file.id,
+          type,
+        );
         const inspectionBytes = new Uint8Array(
           await blob.slice(0, 1024 * 1024).arrayBuffer(),
         );
@@ -1873,59 +1794,50 @@ export function FilePreviewDialog({
         const dlName = decryptedName || file.name || fileNameFromKey(file.key);
         const dlType =
           decryptedContentType || data.contentType || file.contentType;
+        // Shared content is always encrypted and bound to its object id.
+        if (!shareKey || !data.shareEncryptedDEK || !data.shareKeyIv) {
+          throw new Error("Missing decryption key");
+        }
+        const fileId: string = data.objectId ?? file.id;
+        const skBytes = fromB64(
+          shareKey
+            .replace(/-/g, "+")
+            .replace(/_/g, "/")
+            .padEnd(shareKey.length + ((4 - (shareKey.length % 4)) % 4), "="),
+        );
+        const shareKeyObj = await crypto.subtle.importKey(
+          "raw",
+          skBytes,
+          { name: "AES-GCM" },
+          false,
+          ["unwrapKey"],
+        );
+        const dek = await unwrapShareFileKey(
+          data.shareEncryptedDEK,
+          data.shareKeyIv,
+          shareKeyObj,
+          fileId,
+        );
+
         let blob: Blob;
-
-        if (data.isEncrypted) {
-          if (!shareKey || !data.shareEncryptedDEK) {
-            throw new Error("Missing decryption key");
+        if (data.chunkUrls && data.chunkUrls.length > 0) {
+          const chunkIvs = parseChunkIvs(data.chunkIvs ?? "[]");
+          if (chunkIvs.length !== data.chunkUrls.length) {
+            throw new Error("Invalid encrypted chunk metadata");
           }
-          const skBytes = fromB64(
-            shareKey
-              .replace(/-/g, "+")
-              .replace(/_/g, "/")
-              .padEnd(shareKey.length + ((4 - (shareKey.length % 4)) % 4), "="),
-          );
-          const shareKeyObj = await crypto.subtle.importKey(
-            "raw",
-            skBytes,
-            { name: "AES-GCM" },
-            false,
-            ["unwrapKey"],
-          );
-          const dek = await crypto.subtle.unwrapKey(
-            "raw",
-            fromB64(data.shareEncryptedDEK).buffer as ArrayBuffer,
-            shareKeyObj,
-            {
-              name: "AES-GCM",
-              iv: fromB64(data.shareKeyIv).buffer as ArrayBuffer,
-            },
-            { name: "AES-GCM" },
-            false,
-            ["decrypt"],
-          );
-
-          if (data.chunkUrls && data.chunkUrls.length > 0) {
-            const chunkIvs: string[] = JSON.parse(data.chunkIvs);
-            const parts: ArrayBuffer[] = [];
-            for (let i = 0; i < data.chunkUrls.length; i++) {
-              const cr = await fetch(data.chunkUrls[i]);
-              parts.push(
-                await decryptChunk(await cr.arrayBuffer(), dek, chunkIvs[i]),
-              );
-            }
-            blob = new Blob(parts, { type: dlType });
-          } else {
-            const cipher = await (
-              await fetch(data.url || data.streamUrl)
-            ).arrayBuffer();
-            blob = await decryptFileWithDEK(cipher, dek, data.iv, dlType);
+          const parts: ArrayBuffer[] = [];
+          for (let i = 0; i < chunkIvs.length; i++) {
+            const cr = await fetch(data.chunkUrls[i]);
+            parts.push(
+              await decryptFilePart(await cr.arrayBuffer(), dek, chunkIvs[i], fileId, i, chunkIvs.length),
+            );
           }
+          blob = new Blob(parts, { type: dlType });
         } else {
-          const raw = await (
+          const cipher = await (
             await fetch(data.url || data.streamUrl)
           ).arrayBuffer();
-          blob = new Blob([raw], { type: dlType });
+          blob = await decryptFileContent(cipher, dek, { iv: data.iv }, fileId, dlType);
         }
 
         const objectUrl = URL.createObjectURL(blob);

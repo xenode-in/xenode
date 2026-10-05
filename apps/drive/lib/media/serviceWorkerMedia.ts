@@ -1,4 +1,6 @@
 export interface ServiceWorkerMediaSessionOptions {
+  /** The object id every chunk is bound to. */
+  fileId: string;
   urls: string[];
   rawDEK: ArrayBuffer;
   chunkSize: number;
@@ -156,6 +158,7 @@ export async function createServiceWorkerMediaSession(
       {
         type: "REGISTER_MEDIA_SESSION",
         token,
+        fileId: options.fileId,
         rawDEK: options.rawDEK.slice(0),
         urls: options.urls,
         chunkSize: options.chunkSize,

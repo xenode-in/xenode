@@ -14,8 +14,12 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { decryptFileChunkedCombined, unwrapDEKWithSpaceKey } from "@/lib/crypto/fileEncryption";
-import { fromB64 } from "@/lib/crypto/utils";
+import {
+  decryptFilePart,
+  parseChunkIvs,
+  unwrapSpaceFileKey,
+  unwrapUserFileKey,
+} from "@/lib/crypto/fileEncryption";
 import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 
@@ -170,89 +174,38 @@ export function useAudioTrackSyncer({
         const chunkUrls: string[] =
           info.chunkUrls ?? (info.url ? [info.url] : []);
         
-        let chunkIvs: string[] = [];
-        try {
-          chunkIvs = JSON.parse(info.chunkIvs ?? "[]");
-        } catch (e) {
-          console.warn("[AudioTrackSyncer] Failed to parse chunkIvs, using single iv fallback");
+        const fileId = track.objectId;
+        // Single-blob sidecars are chunk 0 of 1; the IV list is the authenticated count.
+        const chunkIvs = info.chunkIvs ? parseChunkIvs(info.chunkIvs) : info.iv ? [info.iv] : [];
+        if (!chunkIvs.length || chunkIvs.length !== chunkUrls.length) {
+          throw new Error("Incomplete audio track");
         }
 
-        // If no chunk Ivs but a single IV exists, use it for the first chunk
-        if (chunkIvs.length === 0 && info.iv) {
-          chunkIvs = [info.iv];
-        }
-
-        console.log(`[AudioTrackSyncer] Info: isEncrypted=${info.isEncrypted}, chunks=${chunkUrls.length}, ivs=${chunkIvs.length}`);
-
-        // 2. Derive the correct DEK for this specific sidecar
-        // Default to null for encrypted sidecars to avoid accidentally sharing parent DEK
-        let sidecarDek: CryptoKey | null = info.isEncrypted ? null : dek;
-
-        if (info.isEncrypted) {
-          if (info.wrappedBy === "space") {
-            const rawKey = await workspaceSpaceKey.rawKeyFor(info.spaceKeyVersion);
-            if (!info.encryptedDEK || !info.spaceKeyWrapIv || !rawKey) {
-              throw new Error("Missing organization audio track key");
-            }
-            sidecarDek = await unwrapDEKWithSpaceKey(
-              info.encryptedDEK,
-              info.spaceKeyWrapIv,
-              rawKey,
-            );
-          } else if (info.encryptedDEK && privateKey) {
-            try {
-              console.log("[AudioTrackSyncer] Unwrapping sidecar DEK via RSA-OAEP...");
-              const rawSidecarDek = await crypto.subtle.decrypt(
-                { name: "RSA-OAEP" },
-                privateKey,
-                fromB64(info.encryptedDEK),
-              );
-              sidecarDek = await crypto.subtle.importKey(
-                "raw",
-                rawSidecarDek,
-                { name: "AES-GCM", length: 256 },
-                false,
-                ["decrypt"],
-              );
-              console.log("[AudioTrackSyncer] Sidecar DEK unwrapped successfully.");
-            } catch (dekError) {
-              console.error("[AudioTrackSyncer] RSA Decryption of sidecar DEK failed:", dekError);
-              throw new Error("Failed to decrypt audio track key (RSA error)");
-            }
-          } else if (info.shareEncryptedDEK) {
-            console.warn("[AudioTrackSyncer] Shared sidecars not yet supported in this hook.");
+        // 2. Unwrap this sidecar's own key (bound to the sidecar object).
+        let sidecarDek: CryptoKey;
+        if (info.wrappedBy === "space") {
+          const rawKey = await workspaceSpaceKey.rawKeyFor(info.spaceKeyVersion);
+          if (!info.encryptedDEK || !info.spaceKeyWrapIv || !rawKey) {
+            throw new Error("Missing organization audio track key");
           }
+          sidecarDek = await unwrapSpaceFileKey(info.encryptedDEK, info.spaceKeyWrapIv, rawKey, {
+            fileId,
+            spaceId: String(info.spaceId),
+            spaceKeyVersion: info.spaceKeyVersion,
+          });
+        } else {
+          if (!info.encryptedDEK || !privateKey) {
+            throw new Error("Missing decryption key for audio track");
+          }
+          sidecarDek = await unwrapUserFileKey(info.encryptedDEK, privateKey, fileId);
         }
 
-        if (info.isEncrypted && !sidecarDek) {
-          throw new Error("Missing decryption key for audio track");
-        }
-
-        // 3. Fetch and Decrypt all chunks
+        // 3. Fetch and decrypt all chunks
         const chunks = await Promise.all(
           chunkUrls.map(async (url, i) => {
             const res = await fetch(url);
             if (!res.ok) throw new Error(`Chunk ${i} fetch failed`);
-            const cipher = await res.arrayBuffer();
-
-            if (!info.isEncrypted || !sidecarDek) return cipher;
-
-            // Decrypt inline
-            const ivB64 = chunkIvs[i];
-            if (!ivB64) {
-              throw new Error(`Missing IV for chunk ${i}`);
-            }
-
-            const { decryptChunk } = await import(
-              "@/lib/crypto/fileEncryption"
-            );
-            
-            try {
-              return await decryptChunk(cipher, sidecarDek, ivB64);
-            } catch (chunkDecError) {
-              console.error(`[AudioTrackSyncer] AES-GCM decryption failed for chunk ${i}:`, chunkDecError);
-              throw chunkDecError; // Rethrow to trigger the main catch block
-            }
+            return decryptFilePart(await res.arrayBuffer(), sidecarDek, chunkIvs[i], fileId, i, chunkIvs.length);
           }),
         );
 

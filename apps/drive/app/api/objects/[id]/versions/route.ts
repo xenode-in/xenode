@@ -31,6 +31,8 @@ export async function GET(
     return NextResponse.json({
       maxVersions: MAX_VERSIONS_PER_OBJECT,
       revision: object.revision,
+      // Workspace file keys are wrapped bound to the Space.
+      spaceId: String(object.spaceId),
       versions: versions.filter((v) => !v.pendingDeletion).map((v) => ({
         versionId: v.versionId,
         isOriginal: !!v.isOriginal,

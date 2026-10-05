@@ -52,15 +52,12 @@ export function FileCommentsDialog({
       setModalOpen(true);
       return;
     }
-    if (!privateKey || !wrappedShareKey || !shareEncryptedDEK || !shareKeyIv) return;
+    if (!objectId || !privateKey || !wrappedShareKey || !shareEncryptedDEK || !shareKeyIv) return;
     let active = true;
     (async () => {
       try {
         const shareKey = await buildShareKey(wrappedShareKey, privateKey);
-        const fileDek = await buildDek(shareKey, shareEncryptedDEK, shareKeyIv, [
-          "encrypt",
-          "decrypt",
-        ]);
+        const fileDek = await buildDek(shareKey, shareEncryptedDEK, shareKeyIv, objectId);
         if (active) setDek(fileDek);
       } catch {
         if (active) setDek(null);
@@ -69,7 +66,7 @@ export function FileCommentsDialog({
     return () => {
       active = false;
     };
-  }, [open, isUnlocked, privateKey, wrappedShareKey, shareEncryptedDEK, shareKeyIv, setModalOpen]);
+  }, [open, isUnlocked, objectId, privateKey, wrappedShareKey, shareEncryptedDEK, shareKeyIv, setModalOpen]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

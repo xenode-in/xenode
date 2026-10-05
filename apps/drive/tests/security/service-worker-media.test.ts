@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createContext, runInContext } from "node:vm";
 import { describe, expect, it } from "vitest";
+import { fileChunkAdditionalData } from "@xenode/crypto-core";
 
 const read = (path: string) => readFileSync(join(process.cwd(), path), "utf8");
 
@@ -18,6 +19,7 @@ function loadWorkerFunction<T>(name: string): T {
     URL,
     ArrayBuffer,
     Uint8Array,
+    TextEncoder,
     atob,
   });
   runInContext(read("public/sw.js"), context);
@@ -62,6 +64,7 @@ describe("hardened E2EE media service worker", () => {
     const data = {
       type: "REGISTER_MEDIA_SESSION",
       token: "a".repeat(43),
+      fileId: "65f0aaaaaaaaaaaaaaaaaaaa",
       rawDEK: new ArrayBuffer(32),
       chunkSize: 1024,
       chunkCount: 2,
@@ -82,6 +85,23 @@ describe("hardened E2EE media service worker", () => {
       validate({ ...data, initialCiphertext: new ArrayBuffer(1) }, "client-1"),
     ).toThrow("Seeded media chunk has an invalid size");
     expect(() => validate(data, "")).toThrow("Invalid encrypted media session");
+    for (const fileId of [undefined, "", "65F0AAAAAAAAAAAAAAAAAAAA", "x\u001fy"]) {
+      expect(() => validate({ ...data, fileId }, "client-1")).toThrow(
+        "Invalid encrypted media session",
+      );
+    }
+  });
+
+  it("binds each chunk exactly as the shared file format does", () => {
+    const chunkAdditionalData = loadWorkerFunction<
+      (fileId: string, index: number, count: number) => Uint8Array
+    >("chunkAdditionalData");
+    const fileId = "65f0aaaaaaaaaaaaaaaaaaaa";
+    for (const [index, count] of [[0, 1], [3, 10]]) {
+      expect(Array.from(chunkAdditionalData(fileId, index, count))).toEqual(
+        Array.from(fileChunkAdditionalData({ fileId }, index, count)),
+      );
+    }
   });
 
   it("keeps plaintext ephemeral, bounded, and bound to the registering tab", () => {

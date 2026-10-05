@@ -15,7 +15,13 @@ import {
 } from "lucide-react";
 import { getFileIcon } from "@/lib/file-icons";
 import { getCachedResponse, storeCachedStream } from "@/lib/cache/previewCache";
-import { decryptWithShareKey } from "@/lib/crypto/fileEncryption";
+import {
+  decryptFileContent,
+  decryptFilePart,
+  decryptWithShareKey,
+  parseChunkIvs,
+  unwrapShareFileKey,
+} from "@/lib/crypto/fileEncryption";
 import { useThumbnail } from "@/hooks/useThumbnail";
 import { Navbar } from "@/components/Navbar";
 import { LandingFooter } from "@/components/landing/LandingFooter";
@@ -274,70 +280,38 @@ async function fetchSharedFileBlob({
   const resolvedFileName =
     fileName || data.fileName || target.fileName || target.name || "download";
   const shareEncryptedDEK = data.shareEncryptedDEK || target.shareEncryptedDEK;
-
-  if (data.isEncrypted && (!shareKey || !shareEncryptedDEK)) {
+  const shareKeyIv = data.shareKeyIv || target.shareKeyIv;
+  // Shared content is always encrypted, and bound to its object id.
+  const fileId: string | undefined = data.objectId;
+  if (!shareKey || !shareEncryptedDEK || !shareKeyIv || !fileId) {
     throw new Error("Missing decryption key.");
   }
 
+  onProgress?.(0);
+  const shareKeyObj = await crypto.subtle.importKey(
+    "raw",
+    bytesToArrayBuffer(b64urlToBytes(shareKey)),
+    { name: "AES-GCM" },
+    false,
+    ["unwrapKey"],
+  );
+  const dek = await unwrapShareFileKey(shareEncryptedDEK, shareKeyIv, shareKeyObj, fileId);
+
   let blob: Blob;
-  if (data.isEncrypted && shareKey && shareEncryptedDEK) {
-    onProgress?.(0);
-    const skBytes = b64urlToBytes(shareKey);
-    const shareKeyObj = await crypto.subtle.importKey(
-      "raw",
-      bytesToArrayBuffer(skBytes),
-      { name: "AES-GCM" },
-      false,
-      ["unwrapKey"],
-    );
-    const encryptedDekBytes = b64ToBytes(shareEncryptedDEK);
-    const shareKeyIv = data.shareKeyIv || target.shareKeyIv;
-    if (!shareKeyIv) throw new Error("Missing file key metadata.");
-    const shareKeyIvBytes = b64ToBytes(shareKeyIv);
-
-    const dek = await crypto.subtle.unwrapKey(
-      "raw",
-      bytesToArrayBuffer(encryptedDekBytes),
-      shareKeyObj,
-      { name: "AES-GCM", iv: bytesToArrayBuffer(shareKeyIvBytes) },
-      { name: "AES-GCM" },
-      false,
-      ["decrypt"],
-    );
-
-    if (data.chunkUrls) {
-      const { decryptChunk } = await import("@/lib/crypto/fileEncryption");
-      const chunkIvsArr =
-        typeof data.chunkIvs === "string" ? JSON.parse(data.chunkIvs) : data.chunkIvs;
-      if (!Array.isArray(chunkIvsArr)) {
-        throw new Error("Missing chunk metadata.");
-      }
-      const plaintextChunks: ArrayBuffer[] = [];
-      for (let i = 0; i < data.chunkUrls.length; i++) {
-        const cr = await fetch(data.chunkUrls[i]);
-        if (!cr.ok) throw new Error("Failed to fetch file chunk");
-        const cb = await cr.arrayBuffer();
-        plaintextChunks.push(await decryptChunk(cb, dek, chunkIvsArr[i]));
-        onProgress?.(Math.round(((i + 1) / data.chunkUrls.length) * 100));
-      }
-      blob = new Blob(plaintextChunks, { type: resolvedContentType });
-    } else {
-      const fileUrl = data.downloadUrl || data.streamUrl;
-      if (!fileUrl) throw new Error("No download URL returned");
-      const raw = await fetchWithProgress(
-        fileUrl,
-        onProgress || (() => {}),
-        undefined,
-        target.size,
-      );
-      const ivBytes = b64ToBytes(data.iv);
-      const decrypted = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv: bytesToArrayBuffer(ivBytes) },
-        dek,
-        raw,
-      );
-      blob = new Blob([decrypted], { type: resolvedContentType });
+  if (data.chunkUrls) {
+    const chunkIvs = parseChunkIvs(data.chunkIvs ?? "[]");
+    if (chunkIvs.length !== data.chunkUrls.length) {
+      throw new Error("Missing chunk metadata.");
     }
+    const plaintextChunks: ArrayBuffer[] = [];
+    for (let i = 0; i < chunkIvs.length; i++) {
+      const cr = await fetch(data.chunkUrls[i]);
+      if (!cr.ok) throw new Error("Failed to fetch file chunk");
+      const cb = await cr.arrayBuffer();
+      plaintextChunks.push(await decryptFilePart(cb, dek, chunkIvs[i], fileId, i, chunkIvs.length));
+      onProgress?.(Math.round(((i + 1) / chunkIvs.length) * 100));
+    }
+    blob = new Blob(plaintextChunks, { type: resolvedContentType });
   } else {
     const fileUrl = data.downloadUrl || data.streamUrl;
     if (!fileUrl) throw new Error("No download URL returned");
@@ -347,7 +321,7 @@ async function fetchSharedFileBlob({
       undefined,
       target.size,
     );
-    blob = new Blob([raw], { type: resolvedContentType });
+    blob = await decryptFileContent(raw, dek, { iv: data.iv }, fileId, resolvedContentType);
   }
 
   return { blob, fileName: resolvedFileName, contentType: resolvedContentType };
