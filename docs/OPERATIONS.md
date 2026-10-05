@@ -50,6 +50,17 @@ editor serves `/onlyoffice/<version>/` from `npm run onlyoffice:build-client`
 output and otherwise only its fail-closed page; product images never contain
 Office artifacts.
 
+## Storage counter reconciliation
+
+Authenticated Drive admins can read
+`GET /api/admin/storage-reconciliation?orgId=<id>` to compare an organization's
+OrgUsage counters with all of its organization/team Spaces in one snapshot.
+The report is read-only, includes retained and binned bytes, and returns no
+encrypted metadata or plan fields. Differences require investigation; the
+endpoint never repairs counters. Invalid data and scans over 100,000 objects
+return an explicit incomplete/invalid status rather than a partial comparison.
+See [the reconciliation contract](gpt-6-astra-audit/34-storage-usage-reconciliation.md).
+
 ## Scheduled jobs
 
 - `expire-plans`: subscription/grace lifecycle reconciliation.

@@ -43,6 +43,21 @@
     { "cookieAuth": [] }
   ],
   "paths": {
+    "/api/admin/storage-reconciliation": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Compare organization storage counters with retained object metadata",
+        "description": "Read-only snapshot across the organization's organization and team Spaces, including suspended/deleted Spaces, Bin objects, derivatives and retained versions. Uncommitted uploads are not charged. Returns only counters and differences (computed minus recorded); never repairs usage or plan state and never reads R2 bytes. A malformed source or scan over 100,000 objects produces no computed totals or repair delta. Requires a current Admin session; user ProductSessions and API keys do not authorize this endpoint.",
+        "security": [{ "adminCookieAuth": [] }],
+        "parameters": [{ "name": "orgId", "in": "query", "required": true, "schema": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$", "maxLength": 128 } }],
+        "responses": {
+          "200": { "description": "Snapshot report (including drift, missing usage or incomplete/invalid data)", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StorageUsageReconciliation" } } } },
+          "400": { "description": "Missing or invalid organization ID" },
+          "401": { "description": "No current Admin session" },
+          "503": { "description": "The snapshot could not be read" }
+        }
+      }
+    },
 
     "/api/orgs/{orgId}": {
       "delete": {
@@ -2101,6 +2116,10 @@
 
   "components": {
     "securitySchemes": {
+      "adminCookieAuth": {
+        "type": "apiKey", "in": "cookie", "name": "__Host-Xenode_admin_session",
+        "description": "Drive Admin JWT cookie, validated against the current Admin record and session version. Development uses Xenode_admin_session. This is separate from user authentication."
+      },
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
@@ -2119,6 +2138,32 @@
       }
     },
     "schemas": {
+      "StorageUsageTotals": {
+        "type": "object", "required": ["totalStorageBytes", "totalObjects"],
+        "properties": {
+          "totalStorageBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+          "totalObjects": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+        }
+      },
+      "StorageUsageDifference": {
+        "type": "object", "required": ["totalStorageBytes", "totalObjects"],
+        "properties": { "totalStorageBytes": { "type": "integer" }, "totalObjects": { "type": "integer" } }
+      },
+      "StorageUsageReconciliation": {
+        "type": "object",
+        "required": ["owner", "checkedAt", "spaceCount", "status", "recorded", "computed", "difference", "invalidObjects", "invalidUsage"],
+        "properties": {
+          "owner": { "type": "object", "required": ["type", "id"], "properties": { "type": { "type": "string", "enum": ["personal", "organization"] }, "id": { "type": "string" } } },
+          "checkedAt": { "type": "string", "format": "date-time" },
+          "spaceCount": { "type": "integer", "minimum": 0 },
+          "status": { "type": "string", "enum": ["matched", "drift", "missing_usage", "invalid_data", "scan_limit"] },
+          "recorded": { "oneOf": [{ "$ref": "#/components/schemas/StorageUsageTotals" }, { "type": "null" }] },
+          "computed": { "oneOf": [{ "$ref": "#/components/schemas/StorageUsageTotals" }, { "type": "null" }] },
+          "difference": { "oneOf": [{ "$ref": "#/components/schemas/StorageUsageDifference" }, { "type": "null" }] },
+          "invalidObjects": { "type": "integer", "minimum": 0 },
+          "invalidUsage": { "type": "boolean" }
+        }
+      },
       "Bucket": {
         "type": "object",
         "properties": {

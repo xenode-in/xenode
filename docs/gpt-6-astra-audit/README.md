@@ -40,6 +40,7 @@ Start with [the executive summary](00-executive-summary.md), then [the migration
 | [31 — Drive folder model](31-drive-folder-model.md) | Immutable physical keys, metadata folders, move, Bin batches |
 | [32 — Workspace keyring](32-workspace-keyring.md) | Versioned workspace key grants, rotation and new keyholders |
 | [33 — Product origins](33-product-origin-contract.md) | Exact configured web origins, OAuth allowlists and build inputs |
+| [34 — Storage usage reconciliation](34-storage-usage-reconciliation.md) | Read-only snapshot reports for organization and personal counters |
 
 ## Reading the judgments
 

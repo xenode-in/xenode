@@ -1,6 +1,4 @@
-import dbConnect from "@/lib/mongodb";
-import StorageObject from "@/models/StorageObject";
-import { personalSpaceId } from "@xenode/spaces/ids";
+import { getStorageUsageReconciliation } from "@xenode/database";
 
 /**
  * Usage byte counters are written only by the shared storage transactions in
@@ -10,7 +8,7 @@ import { personalSpaceId } from "@xenode/spaces/ids";
  */
 
 /**
- * Recompute a personal Space's physical bytes from its objects, using the same
+ * Recompute a personal Space's retained ciphertext bytes from its metadata, using the same
  * definition as finalization and purge: current content plus derivatives, plus
  * retained versions that do not share current content, across both products.
  * Read-only — a reconciliation report must never overwrite the counters that
@@ -20,61 +18,9 @@ export async function computePersonalUsageTotals(userId: string): Promise<{
   totalStorageBytes: number;
   totalObjects: number;
 }> {
-  await dbConnect();
-  const spaceId = personalSpaceId(userId);
-  const [storageAgg, totalObjects] = await Promise.all([
-    StorageObject.aggregate([
-      { $match: { spaceId } },
-      {
-        $group: {
-          _id: null,
-          // Current content bytes.
-          currentSize: { $sum: { $add: [
-            { $ifNull: ["$size", 0] },
-            { $ifNull: ["$thumbnailSize", 0] },
-            { $ifNull: ["$optimizedSize", 0] },
-          ] } },
-          // Retained version bytes — chunk blobs when chunked, else the entry
-          // size. Skip originals sharing current content so they count once.
-          versionSize: {
-            $sum: {
-              $reduce: {
-                input: { $ifNull: ["$versions", []] },
-                initialValue: 0,
-                in: {
-                  $add: [
-                    "$$value",
-                    {
-                      $cond: [
-                        { $eq: ["$$this.sharesCurrentContent", true] },
-                        0,
-                        {
-                          $cond: [
-                            { $gt: [{ $size: { $ifNull: ["$$this.chunks", []] } }, 0] },
-                            { $sum: "$$this.chunks.size" },
-                            { $ifNull: ["$$this.size", 0] },
-                          ],
-                        },
-                      ],
-                    },
-                  ],
-                },
-              },
-            },
-          },
-        },
-      },
-    ]),
-    StorageObject.countDocuments({
-      spaceId,
-      productId: { $in: ["drive", "photos"] },
-    }),
-  ]);
-  return {
-    totalStorageBytes:
-      (storageAgg[0]?.currentSize || 0) + (storageAgg[0]?.versionSize || 0),
-    totalObjects,
-  };
+  const report = await getStorageUsageReconciliation({ type: "personal", id: userId });
+  if (!report.computed) throw new Error("Storage usage cannot be computed from invalid or incomplete data");
+  return report.computed;
 }
 
 export function formatBytes(bytes: number, decimals: number = 2): string {

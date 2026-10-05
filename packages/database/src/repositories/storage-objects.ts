@@ -1,11 +1,11 @@
 import { mongo } from "mongoose";
 import { getDatabase } from "../connection";
 
-interface StorageByteSummary {
+export interface StorageByteSummary {
   size?: number;
-  thumbnailSize?: number;
-  optimizedSize?: number;
-  versions?: Array<{ size?: number; sharesCurrentContent?: boolean; chunks?: Array<{ size?: number }> }>;
+  thumbnailSize?: number | null;
+  optimizedSize?: number | null;
+  versions?: Array<{ size?: number; sharesCurrentContent?: boolean | null; chunks?: Array<{ size?: number }> | null }> | null;
 }
 
 /** Sanitized byte accounting; excludes version entries sharing current content. */
