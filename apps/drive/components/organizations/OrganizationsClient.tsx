@@ -28,7 +28,7 @@ import {
   X,
 } from "lucide-react";
 import { toast } from "sonner";
-import { getPublicProductRegistry } from "@xenode/config/client";
+import { getPublicProductOrigin } from "@xenode/config/client";
 import {
   STORAGE_REGION_LABELS,
   type StorageRegion,
@@ -233,9 +233,7 @@ async function compressImageToLimit(
 export function OrganizationsClient({ user }: { user: SessionUser }) {
   const accountsOrganizationsUrl = new URL(
     "/organizations",
-    getPublicProductRegistry({
-      NEXT_PUBLIC_ACCOUNTS_ORIGIN: process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN,
-    }).accounts.origin,
+    getPublicProductOrigin("accounts"),
   ).toString();
   const router = useRouter();
   const { data: session } = useSession();

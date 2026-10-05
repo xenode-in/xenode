@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { toNextJsHandler } from "better-auth/next-js";
 import { getAccountsAuth } from "@/lib/auth";
 import { authorizationInteraction } from "@/lib/second-factor-policy";
@@ -72,7 +73,7 @@ export async function POST(request: Request) {
     try {
       requireSameOrigin(
         request,
-        new URL(process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in")
+        new URL(getServerProductOrigin("accounts"))
           .origin,
       );
     } catch (response) {

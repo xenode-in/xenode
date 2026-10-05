@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { Suspense } from "react";
 import Link from "next/link";
 import { Metadata } from "next";
@@ -6,7 +7,7 @@ import PricingComparison from "@/components/PricingComparison";
 import { Button } from "@/components/ui/button";
 import { ThemeGradientBackground } from "@/components/ThemeGradientBackground";
 
-const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+const BASE_URL = getServerProductOrigin("drive");
 
 export const metadata: Metadata = {
   title: "Pricing",

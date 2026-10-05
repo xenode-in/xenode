@@ -1,9 +1,10 @@
 import type { ProductRegistration, ProductSlug } from "@xenode/contracts";
+import { resolveProductOrigin } from "./origins";
 
 const defaultOrigins: Record<ProductSlug, string> = {
-  accounts: "https://accounts.xenode.in",
-  drive: "https://xenode.in",
-  photos: "https://photos.xenode.in",
+  accounts: "http://localhost:3001",
+  drive: "http://localhost:3000",
+  photos: "http://localhost:3002",
   mobile: "xenode://app",
   "office-editor": "https://edit.xenode.in",
 };
@@ -26,7 +27,11 @@ export function createProductRegistry(
         Object.freeze({
           id,
           displayName: displayNames[id],
-          origin: new URL(overrides[id] ?? defaultOrigins[id]),
+          origin: new URL(
+            id === "accounts" || id === "drive" || id === "photos"
+              ? resolveProductOrigin(id, overrides[id])
+              : overrides[id] ?? defaultOrigins[id],
+          ),
         }),
       ]),
     ) as Record<ProductSlug, ProductRegistration>,

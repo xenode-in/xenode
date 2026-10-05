@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import {
   connectDatabase,
   getDatabase,
@@ -26,7 +27,7 @@ const TOTP_CODE = /^\d{6}$/u;
 const BACKUP_CODE = /^[A-Za-z0-9]{5}-[A-Za-z0-9]{5}$/u;
 
 function accountsOrigin() {
-  return new URL(process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in")
+  return new URL(getServerProductOrigin("accounts"))
     .origin;
 }
 

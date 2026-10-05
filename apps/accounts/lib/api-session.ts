@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { connectDatabase, consumeRateLimit } from "@xenode/database";
 import { requireSameOrigin } from "@/lib/logout-coordinator";
 import { getAccountsSession } from "@/lib/session";
@@ -11,7 +12,7 @@ import {
 import { applyTrustedSecondFactor } from "@/lib/trusted-second-factor";
 
 function accountsOrigin() {
-  return new URL(process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in")
+  return new URL(getServerProductOrigin("accounts"))
     .origin;
 }
 

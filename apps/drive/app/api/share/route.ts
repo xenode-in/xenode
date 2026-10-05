@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { NextRequest, NextResponse } from "next/server";
 import {
   AuthzError,
@@ -175,7 +176,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       token: link.token,
-      shareUrl: `${process.env.NEXT_PUBLIC_APP_URL}/shared/${link.token}`,
+      shareUrl: `${getServerProductOrigin("drive")}/shared/${link.token}`,
       expiresAt: link.expiresAt,
       isPasswordProtected: link.isPasswordProtected,
     });

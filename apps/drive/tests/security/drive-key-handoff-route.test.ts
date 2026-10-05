@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveSpaceAccess } from "@xenode/spaces";
 import { getServerSession } from "@/lib/auth/session";
 import { POST } from "@/app/api/key-handoffs/[transactionId]/consume/route";
@@ -19,13 +19,13 @@ const binding = {
   clientId: "xenode-drive-web",
   productId: "drive",
   spaceId: "personal:account_1",
-  destinationOrigin: "https://drive.xenode.in",
+  destinationOrigin: "https://configured-drive.test",
   state: "state-value-long-enough",
   nonce: "nonce-value-long-enough",
 };
 
 function request(body: unknown) {
-  return new NextRequest("https://drive.xenode.in/api/key-handoffs/tx/consume", {
+  return new NextRequest("https://configured-drive.test/api/key-handoffs/tx/consume", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
@@ -33,7 +33,10 @@ function request(body: unknown) {
 }
 
 describe("Drive key handoff proxy", () => {
+  afterEach(() => vi.unstubAllEnvs());
   beforeEach(() => {
+    vi.stubEnv("DRIVE_ORIGIN", binding.destinationOrigin);
+    vi.stubEnv("ACCOUNTS_ORIGIN", "https://configured-accounts.test");
     vi.restoreAllMocks();
     mockedGetServerSession.mockResolvedValue({
       user: {
@@ -73,7 +76,7 @@ describe("Drive key handoff proxy", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ciphertext: "sealed-only" });
     expect(fetch).toHaveBeenCalledWith(
-      new URL("https://accounts.xenode.in/api/key-handoffs/tx_1/consume"),
+      new URL("https://configured-accounts.test/api/key-handoffs/tx_1/consume"),
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({
@@ -98,6 +101,15 @@ describe("Drive key handoff proxy", () => {
       { params: Promise.resolve({ transactionId: "tx_2" }) },
     );
     expect(wrongSpace.status).toBe(404);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects the unconfigured old Drive destination before contacting Accounts", async () => {
+    const response = await POST(
+      request({ ...binding, destinationOrigin: "https://drive.xenode.in" }),
+      { params: Promise.resolve({ transactionId: "tx_old" }) },
+    );
+    expect(response.status).toBe(400);
     expect(fetch).not.toHaveBeenCalled();
   });
 });

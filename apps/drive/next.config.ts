@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import type { NextConfig } from "next";
 import { loadEnvConfig } from "@next/env";
 import { resolve } from "node:path";
@@ -36,10 +37,7 @@ const nextConfig: NextConfig = {
 
   async headers() {
     const accountsOrigin =
-      process.env.ACCOUNTS_ORIGIN ??
-      (process.env.NODE_ENV === "production"
-        ? "https://accounts.xenode.in"
-        : "http://localhost:3001");
+      getServerProductOrigin("accounts");
     const editorOrigin = new URL(
       process.env.NEXT_PUBLIC_ONLYOFFICE_EDITOR_ORIGIN ?? "https://edit.xenode.in",
     ).origin;
@@ -107,7 +105,7 @@ const nextConfig: NextConfig = {
           {
             key: "Content-Security-Policy",
             value:
-              "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self' https://xenode.in; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:",
+              `default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self' ${getServerProductOrigin("drive")}; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:`,
           },
           {
             key: "Cache-Control",

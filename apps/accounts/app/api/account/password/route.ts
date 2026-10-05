@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { ACCOUNTS_RATE_LIMITS } from "@/lib/sensitive-actions";
 import {
@@ -10,7 +11,7 @@ import { requireSameOrigin } from "@/lib/logout-coordinator";
 
 function accountsOrigin() {
   return new URL(
-    process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in",
+    getServerProductOrigin("accounts"),
   ).origin;
 }
 

@@ -107,12 +107,15 @@ function shareBody(objectId: string) {
 
 describe("organization share-link route adoption", () => {
   afterEach(() => {
+    vi.unstubAllEnvs();
     delete process.env.ORGS_ENABLED;
     delete process.env.NEXT_PUBLIC_ORGS_ENABLED;
     mockedGetServerSession.mockReset();
   });
 
   it("creates share links for personally owned objects", async () => {
+    vi.stubEnv("DRIVE_ORIGIN", "https://configured.test");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://obsolete.test");
     mockSession("user_1");
     const object = await createObject("user_1");
 
@@ -121,6 +124,7 @@ describe("organization share-link route adoption", () => {
 
     expect(response.status).toBe(200);
     expect(body.token).toBe(`token-${object._id}`);
+    expect(body.shareUrl).toBe(`https://configured.test/shared/token-${object._id}`);
     expect(await ShareLink.countDocuments({ createdBy: "user_1" })).toBe(1);
   });
 

@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { MetadataRoute } from "next";
 import { getAllPosts } from "@/lib/blog";
 import { getAllChangelogEntries as getChangelogSlugs } from "@/lib/changelog";
@@ -6,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const baseUrl = getServerProductOrigin("drive");
 
   const [blogPosts, changelogEntries] = await Promise.all([
     getAllPosts(),

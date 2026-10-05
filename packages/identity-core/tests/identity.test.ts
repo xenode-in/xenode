@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   FIRST_PARTY_CLIENTS,
   buildOidcAuthorizationUrl,
@@ -14,6 +14,8 @@ import {
   validateIdTokenClaims,
   validateUsername,
 } from "../src";
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("identity authority contracts", () => {
   it("normalizes usernames and rejects reserved or malformed names", () => {
@@ -34,12 +36,13 @@ describe("identity authority contracts", () => {
       codeChallenge: await pkceS256(verifier),
       codeChallengeMethod: "S256" as const,
     };
-    expect(validateAuthorizationRequest(valid).productId).toBe("photos");
+    const clients = resolveFirstPartyClients({ photos: "https://photos.xenode.in" });
+    expect(validateAuthorizationRequest(valid, clients).productId).toBe("photos");
     expect(() =>
       validateAuthorizationRequest({
         ...valid,
         redirectUri: "https://evil.example/callback",
-      }),
+      }, clients),
     ).toThrow("Invalid");
     expect(FIRST_PARTY_CLIENTS).toHaveLength(3);
   });
@@ -109,32 +112,30 @@ describe("identity authority contracts", () => {
     ).not.toThrow();
   });
 
-  it("extends web-client redirect allowlists with deployment origins only", async () => {
+  it("replaces web-client allowlists with the exact deployment origins", () => {
     const resolved = resolveFirstPartyClients({
       drive: "http://localhost:3000",
-      photos: "https://staging-photos.xenode.in/some/path",
+      photos: "https://staging-photos.xenode.in/",
     });
     const drive = resolved.find((c) => c.clientId === "xenode-drive-web")!;
     const photos = resolved.find((c) => c.clientId === "xenode-photos-web")!;
     const mobile = resolved.find((c) => c.clientId === "xenode-mobile")!;
 
-    // Static production URIs stay; the env origin's callback is appended.
     expect(drive.redirectUris).toEqual([
-      "https://drive.xenode.in/auth/callback",
       "http://localhost:3000/auth/callback",
     ]);
-    // Origins are normalized — path segments never widen the allowlist.
     expect(photos.redirectUris).toEqual([
-      "https://photos.xenode.in/auth/callback",
       "https://staging-photos.xenode.in/auth/callback",
     ]);
+    expect(drive.postLogoutRedirectUris).toEqual(["http://localhost:3000/"]);
+    expect(photos.postLogoutRedirectUris).toEqual(["https://staging-photos.xenode.in/"]);
     // Products without a supplied origin are untouched.
     expect(mobile.redirectUris).toEqual(["in.xenode.app://auth/callback"]);
 
-    // Re-declaring the production origin dedupes instead of duplicating.
+    // Even an existing registry with unrelated callbacks is replaced.
     const deduped = resolveFirstPartyClients({
       drive: "https://drive.xenode.in",
-    });
+    }, [{ ...drive, redirectUris: ["https://obsolete.example/auth/callback"] }]);
     expect(
       deduped.find((c) => c.clientId === "xenode-drive-web")!.redirectUris,
     ).toEqual(["https://drive.xenode.in/auth/callback"]);
@@ -143,15 +144,35 @@ describe("identity authority contracts", () => {
     expect(
       FIRST_PARTY_CLIENTS.find((c) => c.clientId === "xenode-drive-web")!
         .redirectUris,
-    ).toEqual(["https://drive.xenode.in/auth/callback"]);
+    ).toEqual([]);
 
     // Non-URL and non-http(s) origins fail loudly.
     expect(() => resolveFirstPartyClients({ drive: "not a url" })).toThrow(
-      /Invalid OIDC origin/u,
+      /exact http\(s\) origin/u,
     );
     expect(() =>
       resolveFirstPartyClients({ drive: "javascript:alert(1)" }),
-    ).toThrow(/Invalid OIDC origin/u);
+    ).toThrow(/exact http\(s\) origin/u);
+    expect(() => resolveFirstPartyClients({ drive: "https://drive.test/path" }))
+      .toThrow(/exact http\(s\) origin/u);
+  });
+
+  it("requires every web origin in production and rejects unconfigured callbacks", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    expect(() => resolveFirstPartyClients()).toThrow("DRIVE_ORIGIN is required");
+    expect(() => resolveFirstPartyClients({ drive: "https://drive.test" }))
+      .toThrow("PHOTOS_ORIGIN is required");
+    const clients = resolveFirstPartyClients({ drive: "https://drive.test", photos: "https://photos.test" });
+    const request = {
+      clientId: "xenode-drive-web",
+      redirectUri: "https://drive.test/auth/callback",
+      state: "s".repeat(16), nonce: "n".repeat(16),
+      codeChallenge: await pkceS256("v".repeat(48)),
+      codeChallengeMethod: "S256" as const,
+    };
+    expect(validateAuthorizationRequest(request, clients).productId).toBe("drive");
+    expect(() => validateAuthorizationRequest({ ...request, redirectUri: "https://drive.xenode.in/auth/callback" }, clients))
+      .toThrow("Invalid OIDC");
   });
 
   it("preserves only same-origin return paths and never requests offline access", async () => {

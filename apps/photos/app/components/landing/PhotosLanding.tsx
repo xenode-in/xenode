@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import {
   ArrowRight,
   Check,
@@ -73,10 +74,7 @@ function Brand() {
 export function PhotosLanding({ signedIn }: { signedIn: boolean }) {
   const primaryHref = signedIn ? "/library" : "/auth/login?next=/library";
   const driveOrigin =
-    process.env.DRIVE_ORIGIN ??
-    (process.env.NODE_ENV === "production"
-      ? "https://xenode.in"
-      : "http://localhost:3000");
+    getServerProductOrigin("drive");
   return (
     <div className="photos-landing min-h-dvh overflow-hidden bg-[#f7f8f5] text-[#111714] dark:bg-[#080b0a] dark:text-[#f4f7f3]">
       <div className="photos-grid fixed inset-0 pointer-events-none" />

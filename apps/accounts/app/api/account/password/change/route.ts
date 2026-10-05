@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { ACCOUNTS_RATE_LIMITS } from "@/lib/sensitive-actions";
 import { AuditEvent, TrustedSecondFactor, UserVault } from "@xenode/database";
@@ -15,7 +16,7 @@ export async function POST(request: Request) {
   try {
     requireSameOrigin(
       request,
-      new URL(process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in")
+      new URL(getServerProductOrigin("accounts"))
         .origin,
     );
   } catch (response) {

@@ -1,5 +1,7 @@
 "use client";
 
+import { getPublicProductOrigin } from "@xenode/config/client";
+
 import { useState } from "react";
 import { LogOut } from "lucide-react";
 import {
@@ -30,8 +32,7 @@ export function SignOutDialog({
   async function handleSignOut() {
     setLoading(true);
     const accountsOrigin = new URL(
-      process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ??
-        "https://accounts.xenode.in",
+      getPublicProductOrigin("accounts"),
     ).origin;
     let logoutUrl = `${accountsOrigin}/logout`;
     try {

@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { NextResponse } from "next/server";
 import {
   ProductSession,
@@ -7,10 +8,7 @@ import { getPhotosProductSession } from "@/lib/session";
 
 export async function POST(request: Request) {
   const photosOrigin =
-    process.env.PHOTOS_ORIGIN ??
-    (process.env.NODE_ENV === "production"
-      ? "https://photos.xenode.in"
-      : "http://localhost:3002");
+    getServerProductOrigin("photos");
   if (request.headers.get("origin") !== new URL(photosOrigin).origin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -23,11 +21,7 @@ export async function POST(request: Request) {
     { $set: { revokedAt: new Date() }, $inc: { sessionVersion: 1 } },
   );
   const accountsOrigin =
-    process.env.ACCOUNTS_ORIGIN ??
-    process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ??
-    (process.env.NODE_ENV === "production"
-      ? "https://accounts.xenode.in"
-      : "http://localhost:3001");
+    getServerProductOrigin("accounts");
   const transaction = await createBrowserLogoutTransaction({
     accountId: session.accountId,
     issuerSessionId: session.issuerSessionId,

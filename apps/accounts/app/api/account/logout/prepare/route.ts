@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import {
   BROWSER_LOGOUT_PRODUCTS,
   deriveBrowserLogoutCleanupToken,
@@ -11,7 +12,7 @@ import {
 
 export async function POST(request: Request) {
   const accountsOrigin =
-    process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
+    getServerProductOrigin("accounts");
   try {
     requireSameOrigin(request, new URL(accountsOrigin).origin);
   } catch (response) {
@@ -47,15 +48,9 @@ export async function POST(request: Request) {
 
   const origins = {
     drive:
-      process.env.DRIVE_ORIGIN ??
-      (process.env.NODE_ENV === "production"
-        ? "https://drive.xenode.in"
-        : "http://localhost:3000"),
+      getServerProductOrigin("drive"),
     photos:
-      process.env.PHOTOS_ORIGIN ??
-      (process.env.NODE_ENV === "production"
-        ? "https://photos.xenode.in"
-        : "http://localhost:3002"),
+      getServerProductOrigin("photos"),
   };
   return Response.json({
     cleanupUrls: BROWSER_LOGOUT_PRODUCTS.map((productId) => ({

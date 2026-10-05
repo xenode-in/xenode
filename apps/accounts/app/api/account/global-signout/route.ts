@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { getAccountsSession } from "@/lib/session";
 import {
   requireSameOrigin,
@@ -16,7 +17,7 @@ import {
  */
 export async function POST(request: Request) {
   const origin =
-    process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
+    getServerProductOrigin("accounts");
   try {
     requireSameOrigin(request, new URL(origin).origin);
   } catch (response) {

@@ -1,3 +1,5 @@
+import { getServerProductOrigin } from "@xenode/config";
+import { getPublicRealtimeOrigin } from "@xenode/config/client";
 import type { NextConfig } from "next";
 import { loadEnvConfig } from "@next/env";
 import { resolve } from "node:path";
@@ -14,15 +16,12 @@ loadEnvConfig(
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   async headers() {
-    const production = process.env.NODE_ENV === "production";
     const accountsOrigin = new URL(
-      process.env.ACCOUNTS_ORIGIN ??
-        (production ? "https://accounts.xenode.in" : "http://localhost:3001"),
+      getServerProductOrigin("accounts"),
     ).origin;
     // Drive's server hosts the realtime socket (WebSocket-only).
     const realtime = new URL(
-      process.env.NEXT_PUBLIC_REALTIME_ORIGIN ??
-        (production ? "https://xenode.in" : "http://localhost:3000"),
+      getPublicRealtimeOrigin(),
     );
     const socketOrigin = `${realtime.protocol === "https:" ? "wss" : "ws"}://${realtime.host}`;
     // Presigned R2 URLs are path-style, so each configured endpoint is exactly

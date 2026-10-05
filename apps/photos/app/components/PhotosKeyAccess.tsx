@@ -1,5 +1,7 @@
 "use client";
 
+import { getPublicProductOrigin } from "@xenode/config/client";
+
 import {
   createContext,
   useCallback,
@@ -117,7 +119,7 @@ function UnlockControl({
   const handoffInFlight = useRef(false);
   const bootstrappedSession = useRef<string | null>(null);
   const accountsOrigin = new URL(
-    process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in",
+    getPublicProductOrigin("accounts"),
   ).origin;
 
   const consumeRequest = useCallback(

@@ -48,6 +48,7 @@ describe("key-handoff broker framing policy", () => {
   it.each([
     ["redirect transport", { mode: "redirect" }],
     ["spoofed origin", { destinationOrigin: "https://attacker.example" }],
+    ["unconfigured old Drive origin", { destinationOrigin: "https://drive.xenode.in" }],
     ["mismatched product", { productId: "photos" }],
     ["mismatched client", { clientId: "xenode-photos-web" }],
   ])("denies framing for %s", (_label, overrides) => {

@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { createHmac } from "crypto";
 
 function signingSecret(): string {
@@ -88,8 +89,7 @@ export function getSignedFileUrl(
   const base =
     baseUrl ||
     process.env.AZURE_CDN_URL ||
-    process.env.NEXT_PUBLIC_APP_URL ||
-    "http://localhost:3000";
+    getServerProductOrigin("drive");
   
   let url = `${base.replace(/\/$/, "")}/api/files/${bucketName}/${key}?exp=${exp}&sig=${sig}`;
   if (version) {

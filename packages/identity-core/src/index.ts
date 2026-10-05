@@ -1,3 +1,5 @@
+import { resolveProductOrigin } from "@xenode/config";
+
 const DEFAULT_RESERVED_USERNAMES = new Set([
   "admin",
   "administrator",
@@ -41,15 +43,15 @@ export const FIRST_PARTY_CLIENTS: readonly FirstPartyClient[] = [
   {
     clientId: "xenode-drive-web",
     productId: "drive",
-    redirectUris: ["https://drive.xenode.in/auth/callback"],
-    postLogoutRedirectUris: ["https://drive.xenode.in/"],
+    redirectUris: [],
+    postLogoutRedirectUris: [],
     publicClient: true,
   },
   {
     clientId: "xenode-photos-web",
     productId: "photos",
-    redirectUris: ["https://photos.xenode.in/auth/callback"],
-    postLogoutRedirectUris: ["https://photos.xenode.in/"],
+    redirectUris: [],
+    postLogoutRedirectUris: [],
     publicClient: true,
   },
   {
@@ -63,45 +65,23 @@ export const FIRST_PARTY_CLIENTS: readonly FirstPartyClient[] = [
 /**
  * Resolve the first-party client registry with deployment-supplied origins.
  *
- * Each web product's redirect allowlist stays a static, explicit list — this
- * only appends `${origin}/auth/callback` for origins the DEPLOYMENT declares
- * via env (e.g. `DRIVE_ORIGIN=http://localhost:3000` for local dev, or a
- * staging origin). Origins are validated as absolute http(s) URLs and
- * normalized to their origin; anything else throws rather than silently
- * widening the allowlist. Products without a supplied origin (e.g. mobile's
- * custom scheme) are returned unchanged, and production URIs dedupe.
+ * Each web product has exactly one deployment-supplied callback and logout
+ * URI. Missing production origins fail closed; development uses localhost.
+ * Native clients retain their explicit custom-scheme allowlist.
  */
 export function resolveFirstPartyClients(
   origins: Partial<Record<string, string>> = {},
   clients = FIRST_PARTY_CLIENTS,
 ): FirstPartyClient[] {
   return clients.map((client) => {
-    const supplied = origins[client.productId];
-    if (!supplied) return client;
-    let origin: string;
-    try {
-      const url = new URL(supplied);
-      if (url.protocol !== "https:" && url.protocol !== "http:") {
-        throw new Error("unsupported protocol");
-      }
-      origin = url.origin;
-    } catch {
-      throw new Error(
-        `Invalid OIDC origin for product "${client.productId}": ${supplied}`,
-      );
-    }
+    if (client.productId !== "drive" && client.productId !== "photos") return client;
+    const origin = resolveProductOrigin(client.productId, origins[client.productId]);
     const redirect = `${origin}/auth/callback`;
     const postLogoutRedirect = `${origin}/`;
     return {
       ...client,
-      redirectUris: client.redirectUris.includes(redirect)
-        ? client.redirectUris
-        : [...client.redirectUris, redirect],
-      postLogoutRedirectUris: client.postLogoutRedirectUris?.includes(
-        postLogoutRedirect,
-      )
-        ? client.postLogoutRedirectUris
-        : [...(client.postLogoutRedirectUris ?? []), postLogoutRedirect],
+      redirectUris: [redirect],
+      postLogoutRedirectUris: [postLogoutRedirect],
     };
   });
 }
@@ -293,7 +273,10 @@ export interface AuthorizationRequest {
 
 export function validateAuthorizationRequest(
   request: AuthorizationRequest,
-  clients = FIRST_PARTY_CLIENTS,
+  clients = resolveFirstPartyClients({
+    drive: process.env.DRIVE_ORIGIN,
+    photos: process.env.PHOTOS_ORIGIN,
+  }),
 ): FirstPartyClient {
   const client = clients.find((candidate) => candidate.clientId === request.clientId);
   if (

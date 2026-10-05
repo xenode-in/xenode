@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { Resend } from "resend";
 
 /**
@@ -23,4 +24,4 @@ export const ADMIN_NOTIFY_EMAIL =
   process.env.ADMIN_NOTIFY_EMAIL || "support@xenode.in";
 
 export const APP_URL =
-  process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  getServerProductOrigin("drive");

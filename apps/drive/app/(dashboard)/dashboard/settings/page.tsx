@@ -1,10 +1,11 @@
+import { getPublicProductOrigin } from "@xenode/config/client";
 import { requireAuth } from "@/lib/auth/session";
 import { Shield, User, Mail, Calendar, Palette, HardDrive, ExternalLink } from "lucide-react";
 import { ThemeSelector } from "@/components/settings/theme-selector";
 import { PreviewCacheSection } from "@/components/settings/PreviewCacheSection";
 
 const ACCOUNTS_ORIGIN =
-  process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
+  getPublicProductOrigin("accounts");
 
 export default async function SettingsPage() {
   const session = await requireAuth();

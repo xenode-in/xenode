@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { cookies } from "next/headers";
 import {
   buildOidcAuthorizationUrl,
@@ -9,11 +10,9 @@ import {
  * as the `xenode-drive-web` client. Mirrors apps/photos/app/auth/login.
  */
 export async function GET(request: Request) {
-  const issuer = process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
+  const issuer = getServerProductOrigin("accounts");
   const origin =
-    process.env.DRIVE_ORIGIN ??
-    process.env.NEXT_PUBLIC_APP_URL ??
-    "https://drive.xenode.in";
+    getServerProductOrigin("drive");
   const flow = await createOidcFlow(
     new URL(request.url).searchParams.get("next"),
     "/dashboard",

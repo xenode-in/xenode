@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { TrustedSecondFactor, connectDatabase } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
@@ -6,7 +7,7 @@ import { TRUSTED_SECOND_FACTOR_COOKIE } from "@/lib/trusted-second-factor";
 
 function accountsOrigin() {
   return new URL(
-    process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in",
+    getServerProductOrigin("accounts"),
   ).origin;
 }
 

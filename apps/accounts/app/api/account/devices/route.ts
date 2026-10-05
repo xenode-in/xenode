@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { AuditEvent } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
@@ -11,7 +12,7 @@ export async function DELETE(request: Request) {
   const denied = await authorizeAccountsApiRequest(request);
   if (denied) return denied;
   const accountsOrigin =
-    process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
+    getServerProductOrigin("accounts");
   try {
     requireSameOrigin(request, new URL(accountsOrigin).origin);
   } catch (response) {

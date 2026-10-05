@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getAccountsSession: vi.fn(),
@@ -64,7 +64,7 @@ import { POST as unlockVaultPasskeyVerify } from "../app/api/vault/passkeys/unlo
 import { PUT as separateVaultPassword } from "../app/api/vault/separate-password/route";
 import { POST as confirmVaultUnlock } from "../app/api/vault/unlock/route";
 
-const origin = "https://accounts.xenode.in";
+const origin = "https://configured-accounts.test";
 const pendingSession = {
   user: { id: "account-1", twoFactorEnabled: true },
   session: { id: "session-1", authMethod: "oauth", twoFactorVerifiedAt: null },
@@ -81,10 +81,12 @@ function request(path: string, method: string, suppliedOrigin = origin) {
 }
 
 beforeEach(() => {
+  vi.stubEnv("ACCOUNTS_ORIGIN", origin);
   vi.resetAllMocks();
   mocks.getAccountsSession.mockResolvedValue(pendingSession);
   mocks.applyTrustedSecondFactor.mockResolvedValue(false);
 });
+afterEach(() => vi.unstubAllEnvs());
 
 describe("Accounts API session step-up", () => {
   it.each([

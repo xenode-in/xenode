@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { cookies } from "next/headers";
 import {
   buildOidcAuthorizationUrl,
@@ -5,8 +6,8 @@ import {
 } from "@xenode/identity-core";
 
 export async function GET(request: Request) {
-  const issuer = process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
-  const origin = process.env.PHOTOS_ORIGIN ?? "https://photos.xenode.in";
+  const issuer = getServerProductOrigin("accounts");
+  const origin = getServerProductOrigin("photos");
   const flow = await createOidcFlow(
     new URL(request.url).searchParams.get("next"),
     "/library",

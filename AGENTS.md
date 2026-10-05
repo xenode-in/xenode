@@ -166,6 +166,11 @@ data-loss/orphaning hazard.
 - `next build` and image builds need no secret or database: create
   secret-bearing clients on first use, and read request-time data only after
   `headers()`/`connection()`. Origins read by `next.config` are build inputs.
+- Production web origins must be explicit and validated by `@xenode/config`;
+  server trust checks use `*_ORIGIN`, browser code uses matching
+  `NEXT_PUBLIC_*_ORIGIN`. First-party OAuth/handoff allowlists contain only the
+  configured web origins. Localhost defaults apply only in development/test
+  (docs/gpt-6-astra-audit/33-product-origin-contract.md).
 - User dashboard components live under `apps/drive`; Accounts profile/security
   presentation belongs in `apps/accounts`; Photos must not import Drive.
 - A PhotoAsset is created only by Photos upload completion with its

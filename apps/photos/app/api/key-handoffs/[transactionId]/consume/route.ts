@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { resolveSpaceAccess } from "@xenode/spaces";
 import { getPhotosProductSession } from "@/lib/session";
 
@@ -13,7 +14,7 @@ export async function POST(
     | Record<string, unknown>
     | null;
   const photosOrigin = new URL(
-    process.env.PHOTOS_ORIGIN ?? "https://photos.xenode.in",
+    getServerProductOrigin("photos"),
   ).origin;
   if (
     !body ||
@@ -39,7 +40,7 @@ export async function POST(
 
   const { transactionId } = await params;
   const accountsOrigin =
-    process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
+    getServerProductOrigin("accounts");
   const upstream = await fetch(
     new URL(
       `/api/key-handoffs/${encodeURIComponent(transactionId)}/consume`,

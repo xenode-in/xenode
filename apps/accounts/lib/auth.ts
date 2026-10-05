@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { betterAuth } from "better-auth";
 import { mongodbAdapter } from "better-auth/adapters/mongodb";
 import { symmetricEncrypt } from "better-auth/crypto";
@@ -175,7 +176,7 @@ async function createAccountsAuth() {
     .collection("rateLimit")
     .createIndex({ key: 1 }, { unique: true, name: "rate_limit_key_unique" });
   const accountsOrigin =
-    process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
+    getServerProductOrigin("accounts");
   const firstPartyClients = await ensureFirstPartyOAuthClients();
   const resend = new Resend(process.env.RESEND_API_KEY || "fallback");
   return betterAuth({

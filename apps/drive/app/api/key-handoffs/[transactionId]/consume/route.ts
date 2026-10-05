@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { type NextRequest } from "next/server";
 import { resolveSpaceAccess } from "@xenode/spaces";
 import { getServerSession } from "@/lib/auth/session";
@@ -14,7 +15,7 @@ export async function POST(
     | Record<string, unknown>
     | null;
   const driveOrigin = new URL(
-    process.env.DRIVE_ORIGIN ?? "https://drive.xenode.in",
+    getServerProductOrigin("drive"),
   ).origin;
   if (
     !body ||
@@ -40,7 +41,7 @@ export async function POST(
 
   const { transactionId } = await params;
   const accountsOrigin =
-    process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
+    getServerProductOrigin("accounts");
   const upstream = await fetch(
     new URL(
       `/api/key-handoffs/${encodeURIComponent(transactionId)}/consume`,

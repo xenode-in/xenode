@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { createRemoteJWKSet, jwtVerify } from "jose";
@@ -17,11 +18,9 @@ function failure(message: string) {
  * host-only Drive ProductSession cookie. Mirrors apps/photos/app/auth/callback.
  */
 export async function GET(request: Request) {
-  const issuer = process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
+  const issuer = getServerProductOrigin("accounts");
   const origin =
-    process.env.DRIVE_ORIGIN ??
-    process.env.NEXT_PUBLIC_APP_URL ??
-    "https://drive.xenode.in";
+    getServerProductOrigin("drive");
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const returnedState = url.searchParams.get("state");

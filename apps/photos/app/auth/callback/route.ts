@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { createRemoteJWKSet, jwtVerify } from "jose";
@@ -10,8 +11,8 @@ function failure(message: string) {
 }
 
 export async function GET(request: Request) {
-  const issuer = process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
-  const origin = process.env.PHOTOS_ORIGIN ?? "https://photos.xenode.in";
+  const issuer = getServerProductOrigin("accounts");
+  const origin = getServerProductOrigin("photos");
   const url = new URL(request.url);
   const code = url.searchParams.get("code");
   const returnedState = url.searchParams.get("state");

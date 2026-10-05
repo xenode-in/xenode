@@ -1,5 +1,7 @@
 "use client";
 
+import { getPublicProductOrigin } from "@xenode/config/client";
+
 import { useState, useSyncExternalStore, type ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -45,15 +47,9 @@ const links = [
 ] as const;
 
 const driveOrigin =
-  process.env.NEXT_PUBLIC_DRIVE_ORIGIN ??
-  (process.env.NODE_ENV === "production"
-    ? "https://xenode.in"
-    : "http://localhost:3000");
+  getPublicProductOrigin("drive");
 const photosOrigin =
-  process.env.NEXT_PUBLIC_PHOTOS_ORIGIN ??
-  (process.env.NODE_ENV === "production"
-    ? "https://photos.xenode.in"
-    : "http://localhost:3002");
+  getPublicProductOrigin("photos");
 
 function ThemeToggle() {
   const { resolvedTheme, setTheme } = useTheme();

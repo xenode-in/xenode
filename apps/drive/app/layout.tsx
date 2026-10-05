@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import localFont from "next/font/local";
@@ -23,7 +24,7 @@ const libreBaskerville = Libre_Baskerville({
   display: "swap",
 });
 
-const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+const BASE_URL = getServerProductOrigin("drive");
 
 export const metadata: Metadata = {
   metadataBase: new URL(BASE_URL),

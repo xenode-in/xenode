@@ -1,5 +1,7 @@
 "use client";
 
+import { getPublicProductOrigin } from "@xenode/config/client";
+
 import type { ReactNode } from "react";
 import {
   Album,
@@ -16,9 +18,9 @@ import { Button, cn } from "@xenode/ui";
 import { startPhotosLogout } from "@/lib/logout-client";
 
 const ACCOUNTS_ORIGIN =
-  process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
+  getPublicProductOrigin("accounts");
 const DRIVE_ORIGIN =
-  process.env.NEXT_PUBLIC_DRIVE_ORIGIN ?? "https://drive.xenode.in";
+  getPublicProductOrigin("drive");
 
 export function PhotosShell({
   view,

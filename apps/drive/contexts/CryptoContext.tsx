@@ -1,5 +1,7 @@
 "use client";
 
+import { getPublicProductOrigin } from "@xenode/config/client";
+
 import React, {
   createContext,
   useCallback,
@@ -245,7 +247,7 @@ function DriveKeyAccess({
   const handoffInFlight = useRef(false);
   const [isModalOpen, setModalOpen] = useState(false);
   const accountsOrigin = new URL(
-    process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in",
+    getPublicProductOrigin("accounts"),
   ).origin;
   const isUnlocked =
     Boolean(spaceId && sharingKeys) && productCrypto.isUnlocked(spaceId);

@@ -1,5 +1,6 @@
+import { getServerProductOrigin } from "@xenode/config";
 export function getAccountsWebAuthnConfig() {
-  const origin = process.env.ACCOUNTS_ORIGIN ?? "http://localhost:3001";
+  const origin = getServerProductOrigin("accounts");
   const parsed = new URL(origin);
   return {
     origin: parsed.origin,

@@ -1,5 +1,7 @@
 "use client";
 
+import { getPublicProductOrigin } from "@xenode/config/client";
+
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "next-themes";
@@ -12,7 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 
 const ACCOUNTS_ORIGIN =
-  process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in";
+  getPublicProductOrigin("accounts");
 
 export function OnboardingForm() {
   const router = useRouter();

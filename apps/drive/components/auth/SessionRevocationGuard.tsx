@@ -1,5 +1,7 @@
 "use client";
 
+import { getPublicRealtimeOrigin } from "@xenode/config/client";
+
 import { useEffect } from "react";
 import { io } from "socket.io-client";
 import { realtimeTicketAuth } from "@xenode/realtime";
@@ -52,10 +54,7 @@ export function SessionRevocationGuard({
     document.addEventListener("visibilitychange", onVisibility);
 
     const realtimeOrigin =
-      process.env.NEXT_PUBLIC_REALTIME_ORIGIN ??
-      (process.env.NODE_ENV === "production"
-        ? "https://drive.xenode.in"
-        : "http://localhost:3000");
+      getPublicRealtimeOrigin();
     // Each connection attempt, including reconnects, spends a fresh one-use
     // ticket; tickets authenticate the socket, so no cookies are sent.
     const socket = io(realtimeOrigin, {

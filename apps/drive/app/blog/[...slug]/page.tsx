@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { notFound } from "next/navigation";
 import { Metadata } from "next";
 import Link from "next/link";
@@ -18,7 +19,7 @@ import {
 } from "lucide-react";
 import remarkGfm from "remark-gfm";
 
-const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+const BASE_URL = getServerProductOrigin("drive");
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;

@@ -17,6 +17,11 @@ Generate distinct values for `BETTER_AUTH_SECRET`, `ADMIN_JWT_SECRET`,
 holds `BETTER_AUTH_SECRET`; where a shared development env provides it, reusing it
 for realtime/CDN signing is rejected by configuration validation.
 Set exact `REALTIME_ALLOWED_ORIGIN` values and exact product origins.
+Production requires `ACCOUNTS_ORIGIN`, `DRIVE_ORIGIN`, `PHOTOS_ORIGIN` and the
+corresponding `NEXT_PUBLIC_*_ORIGIN` build values; no production hostname is
+assumed. Configure server and browser values identically and rebuild when
+changing them. Only the configured web origins enter OAuth callback/logout and
+handoff allowlists; see [the product origin contract](gpt-6-astra-audit/33-product-origin-contract.md).
 `ADMIN_JWT_SECRET` must contain at least 32 characters in development as well as
 production. Admin JWTs are bound to current database role/status/session version;
 see [the Admin session contract](gpt-6-astra-audit/26-admin-session-contract.md).

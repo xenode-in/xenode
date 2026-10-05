@@ -1,10 +1,11 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { Metadata } from "next";
 import Link from "next/link";
 import { Navbar } from "@/components/Navbar";
 import { ThemeGradientBackground } from "@/components/ThemeGradientBackground";
 import { LandingFooter } from "@/components/landing/LandingFooter";
 
-const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+const BASE_URL = getServerProductOrigin("drive");
 
 export const metadata: Metadata = {
   title: "Privacy Policy",

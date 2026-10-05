@@ -19,9 +19,9 @@ describe("shared config", () => {
     expect(cookieNames.driveSession).not.toBe(cookieNames.photosSession);
   });
 
-  it("exposes canonical product origins", () => {
+  it("uses localhost product origins for development", () => {
     expect(createProductRegistry().accounts.origin.href).toBe(
-      "https://accounts.xenode.in/",
+      "http://localhost:3001/",
     );
   });
 

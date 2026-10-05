@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import type { NextConfig } from "next";
 import { loadEnvConfig } from "@next/env";
 import { resolve } from "node:path";
@@ -17,15 +18,9 @@ const nextConfig: NextConfig = {
   typedRoutes: false,
   async headers() {
     const driveOrigin =
-      process.env.DRIVE_ORIGIN ??
-      (process.env.NODE_ENV === "production"
-        ? "https://drive.xenode.in"
-        : "http://localhost:3000");
+      getServerProductOrigin("drive");
     const photosOrigin =
-      process.env.PHOTOS_ORIGIN ??
-      (process.env.NODE_ENV === "production"
-        ? "https://photos.xenode.in"
-        : "http://localhost:3002");
+      getServerProductOrigin("photos");
     return [
       {
         source: "/logout",

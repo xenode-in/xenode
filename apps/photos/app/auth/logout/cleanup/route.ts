@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { randomBytes } from "node:crypto";
 import { NextResponse } from "next/server";
 import {
@@ -27,10 +28,7 @@ export async function GET(request: Request) {
     (session.accountId === transaction.accountId &&
       session.issuerSessionId === transaction.issuerSessionId);
   const accountsOrigin =
-    process.env.ACCOUNTS_ORIGIN ??
-    (process.env.NODE_ENV === "production"
-      ? "https://accounts.xenode.in"
-      : "http://localhost:3001");
+    getServerProductOrigin("accounts");
   const nonce = randomBytes(18).toString("base64url");
   const script = shouldClear
     ? `

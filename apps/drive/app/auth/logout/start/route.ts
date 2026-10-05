@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { NextRequest, NextResponse } from "next/server";
 import {
   ProductSession,
@@ -8,11 +9,7 @@ import dbConnect from "@/lib/mongodb";
 
 export async function POST(request: NextRequest) {
   const driveOrigin =
-    process.env.DRIVE_ORIGIN ??
-    process.env.NEXT_PUBLIC_APP_URL ??
-    (process.env.NODE_ENV === "production"
-      ? "https://drive.xenode.in"
-      : "http://localhost:3000");
+    getServerProductOrigin("drive");
   if (request.headers.get("origin") !== new URL(driveOrigin).origin) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -31,11 +28,7 @@ export async function POST(request: NextRequest) {
   );
 
   const accountsOrigin =
-    process.env.ACCOUNTS_ORIGIN ??
-    process.env.NEXT_PUBLIC_ACCOUNTS_ORIGIN ??
-    (process.env.NODE_ENV === "production"
-      ? "https://accounts.xenode.in"
-      : "http://localhost:3001");
+    getServerProductOrigin("accounts");
   const transaction = await createBrowserLogoutTransaction({
     accountId: session.user.id,
     issuerSessionId: session.session.issuerSessionId,

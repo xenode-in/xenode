@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 /**
  * Next.js Proxy configuration (replaces deprecated middleware file convention)
  *
@@ -99,20 +100,6 @@ export function proxy(req: NextRequest) {
   const hostnameWithoutPort = hostname.split(":")[0];
   const { pathname } = req.nextUrl;
 
-  const legacyDrivePage = [
-    "/dashboard",
-    "/organizations",
-    "/onboarding",
-    "/invite",
-  ].some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
-  if (hostnameWithoutPort === "xenode.in" && legacyDrivePage) {
-    const canonical = new URL(
-      `${pathname}${req.nextUrl.search}`,
-      "https://drive.xenode.in",
-    );
-    return NextResponse.redirect(canonical, 308);
-  }
-
   if (RETIRED_HOSTNAMES.includes(hostnameWithoutPort)) {
     return new NextResponse("Not Found", { status: 404 });
   }
@@ -172,9 +159,7 @@ export function proxy(req: NextRequest) {
 
   // Same-site renderer subdomains are not trusted application callers.
   const appOrigin =
-    process.env.NEXT_PUBLIC_APP_URL ||
-    (process.env.NODE_ENV === "production"
-      ? "https://drive.xenode.in" : "http://localhost:3000");
+    getServerProductOrigin("drive");
   if (pathname.startsWith("/api/")) {
     const origin = req.headers.get("origin");
     const fetchSite = req.headers.get("sec-fetch-site");

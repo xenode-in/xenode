@@ -1,3 +1,4 @@
+import { getServerProductOrigin } from "@xenode/config";
 import { jwtVerify, SignJWT } from "jose";
 
 export const VAULT_UNLOCK_COOKIE = "xenode_vault_unlocked";
@@ -10,7 +11,7 @@ const AUDIENCE = "xenode-accounts";
 
 function accountsOrigin() {
   return new URL(
-    process.env.ACCOUNTS_ORIGIN ?? "https://accounts.xenode.in",
+    getServerProductOrigin("accounts"),
   ).origin;
 }
 
