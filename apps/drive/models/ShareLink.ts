@@ -8,7 +8,8 @@ export interface IShareLink extends Document {
   bucketId: mongoose.Types.ObjectId;
   createdBy: string;
   isBundle?: boolean;
-  bundleName?: string;
+  /** Sealed under the share key, bound to the link token. */
+  shareEncryptedBundleName?: string;
   bundleItems?: IShareBundleItem[];
   expiresAt?: Date;
   maxDownloads?: number;
@@ -63,7 +64,7 @@ const ShareLinkSchema = new Schema<IShareLink>(
     },
     createdBy: { type: String, required: true, index: true },
     isBundle: { type: Boolean, default: false, index: true },
-    bundleName: { type: String, required: false },
+    shareEncryptedBundleName: { type: String, required: false, maxlength: 1024 },
     bundleItems: {
       type: [
         new Schema<IShareBundleItem>(

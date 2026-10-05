@@ -64,11 +64,9 @@ export async function GET(_: NextRequest, { params }: Params) {
   const response = {
     id: obj?._id,
     isBundle,
-    bundleName: isBundle
-      ? link.isPasswordProtected
-        ? "Locked Folder"
-        : link.bundleName || `${bundleItems.length} shared files`
-      : undefined,
+    // Sealed under the share key for the link token; the page opens it.
+    shareEncryptedBundleName:
+      isBundle && !link.isPasswordProtected ? link.shareEncryptedBundleName : undefined,
     items: isBundle
       ? bundleItems
           .map((item) => {
@@ -226,9 +224,12 @@ export async function PATCH(request: NextRequest, { params }: Params) {
         : [];
     }
 
-    if ("bundleName" in body && existingLink.isBundle) {
-      const nextName = String(body.bundleName || "").trim();
-      if (nextName) update.bundleName = nextName.slice(0, 120);
+    if ("shareEncryptedBundleName" in body && existingLink.isBundle) {
+      const sealed = body.shareEncryptedBundleName;
+      if (!(typeof sealed === "string" && sealed.length > 0 && sealed.length <= 1024)) {
+        return NextResponse.json({ error: "Invalid bundle name" }, { status: 400 });
+      }
+      update.shareEncryptedBundleName = sealed;
     }
 
     if ("bundleItemIds" in body && existingLink.isBundle) {

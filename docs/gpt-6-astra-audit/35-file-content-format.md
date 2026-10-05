@@ -79,10 +79,25 @@ name, type or thumbnail on another. Readers show the `Encrypted File` sentinel
 be a `data:image/` URL. No metadata is ever stored or rendered in plaintext:
 tags require the key, and server-supplied thumbnails or retired formats are
 refused. An album share's name, which belongs to no file, binds to the share
-token.
+token, and so does a link bundle's name (`shareEncryptedBundleName`).
+
+## Observable metadata
+
+The server sees, by design: opaque ids and storage keys, ciphertext sizes,
+timestamps, Space and folder placement, revisions and versions, share structure
+(item counts, expiry, download limits, password and role flags), the coarse
+`mediaCategory`, the exact MIME `contentType` and `aspectRatio`, and
+organization administration data (organization and team names, membership,
+organization access-request notes). The MIME type stays observable because
+listings filter and sort by its prefix on the server; filtering by
+`mediaCategory` and keeping only `encryptedContentType` would remove it.
+
+Everything else a user writes about a file is sealed and bound as above. The
+former plaintext fields are gone: object descriptions, Google Photos links and
+capture dates (the unused `update-metadata` route), share bundle names, and
+share access-request notes.
 
 ## Not covered
 
 Data written before this format does not open; Xenode has no production data,
-so there is no reader for it. Descriptions, links, share bundle names and
-access-request notes are still plaintext fields (F25).
+so there is no reader for it.

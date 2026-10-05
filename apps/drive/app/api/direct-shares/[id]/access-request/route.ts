@@ -41,7 +41,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const body = await request.json().catch(() => ({}));
     const requestedRole =
       body.requestedRole === "editor" ? "editor" : body.requestedRole === "commenter" ? "commenter" : null;
-    const note = typeof body.note === "string" ? body.note.trim().slice(0, 500) : null;
     if (!requestedRole) {
       return NextResponse.json(
         { error: "requestedRole must be 'commenter' or 'editor'" },
@@ -111,7 +110,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       orgId,
       currentRole,
       requestedRole,
-      note,
     });
 
     // Notify the owner + (for org files) org admins.

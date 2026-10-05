@@ -12,7 +12,6 @@ interface AccessRequestRow {
   requesterEmail: string | null;
   currentRole: string;
   requestedRole: string;
-  note: string | null;
   status: string;
   createdAt: string;
 }
@@ -98,9 +97,6 @@ export function ShareAccessRequestsInbox({
               <span className="text-muted-foreground">
                 requests <span className="capitalize">{r.requestedRole}</span> access
               </span>
-              {r.note && (
-                <p className="truncate text-xs text-muted-foreground">“{r.note}”</p>
-              )}
             </div>
             <div className="flex gap-2">
               <Button

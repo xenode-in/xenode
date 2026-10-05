@@ -53,7 +53,6 @@ interface ShareRow {
   objectId: string;
   type: "link" | "direct";
   isBundle?: boolean;
-  bundleName?: string | null;
   itemCount?: number | null;
   token?: string | null;
   createdBy: string | null;
@@ -561,7 +560,7 @@ function SharedOut({ orgId }: { orgId: string }) {
             <TableBody>
               {shares.map((s) => {
                 const displayName = s.isBundle
-                  ? s.bundleName || `${s.itemCount || 0} shared files`
+                  ? `${s.itemCount || 0} shared files`
                   : names[s.id] || "Encrypted file";
                 return (
                   <TableRow key={s.id}>

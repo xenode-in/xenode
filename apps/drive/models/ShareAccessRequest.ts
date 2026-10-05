@@ -23,7 +23,6 @@ export interface IShareAccessRequest extends Document {
   orgId?: string | null;
   currentRole: string;
   requestedRole: ShareRequestRole;
-  note?: string | null;
   status: "pending" | "approved" | "denied";
   decidedBy?: string | null;
   decidedAt?: Date | null;
@@ -54,7 +53,6 @@ const ShareAccessRequestSchema = new Schema<IShareAccessRequest>(
       enum: ["commenter", "editor"],
       required: true,
     },
-    note: { type: String, default: null },
     status: {
       type: String,
       enum: ["pending", "approved", "denied"],

@@ -247,11 +247,6 @@ export function ShareDialog({
         ...(usePass && pass && { password: pass }),
       };
 
-      if (isBundle) {
-        body.bundleName =
-          bundleName.trim() || `${shareFiles.length} shared files`;
-      }
-
       const hasEncryptedFiles = shareFiles.some((item) => item.isEncrypted);
       if (hasEncryptedFiles) {
         if (!getFileKey) {
@@ -282,6 +277,14 @@ export function ShareDialog({
         );
         (body as { token?: string }).token = token;
         body.ownerEncryptedShareKey = ownerEncryptedShareKey;
+        // A bundle has no file id: its name is sealed for the link token.
+        if (isBundle) {
+          body.shareEncryptedBundleName = await encryptWithShareKey(
+            bundleName.trim() || `${shareFiles.length} shared files`,
+            shareKeyObj,
+            { fileId: token, purpose: "name" },
+          );
+        }
       }
 
       async function buildShareItem(targetFile: ShareableFile) {

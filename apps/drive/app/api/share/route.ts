@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     userId = ctx.userId;
 
     const {
-      token, objectId, items, bundleName, expiresIn, maxDownloads, password,
+      token, objectId, items, shareEncryptedBundleName, expiresIn, maxDownloads, password,
       accessType = "download", shareEncryptedDEK, shareKeyIv,
       shareEncryptedName, shareEncryptedContentType, shareEncryptedThumbnail,
       ownerEncryptedShareKey,
@@ -125,10 +125,10 @@ export async function POST(req: NextRequest) {
     };
 
     if (isBundle) {
-      shareData.bundleName =
-        typeof bundleName === "string" && bundleName.trim()
-          ? bundleName.trim().slice(0, 120)
-          : `${objects.length} shared files`;
+      // The name is sealed under the share key; the server never sees it.
+      if (typeof shareEncryptedBundleName === "string" && shareEncryptedBundleName.length > 0 && shareEncryptedBundleName.length <= 1024) {
+        shareData.shareEncryptedBundleName = shareEncryptedBundleName;
+      }
       shareData.bundleItems = bundleItems;
     }
     if (password) shareData.passwordHash = await bcrypt.hash(password, 12);

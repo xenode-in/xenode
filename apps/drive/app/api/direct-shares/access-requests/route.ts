@@ -58,7 +58,6 @@ export async function GET(request: NextRequest) {
         requesterEmail: r.requesterEmail ?? null,
         currentRole: r.currentRole,
         requestedRole: r.requestedRole,
-        note: r.note ?? null,
         status: r.status,
         orgId: r.orgId ?? null,
         createdAt: r.createdAt,

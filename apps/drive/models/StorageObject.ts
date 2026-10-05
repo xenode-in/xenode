@@ -50,10 +50,6 @@ export interface IStorageObject extends Document {
     key: string;
     size: number;
   }[]; // Metadata for individual chunks
-  /** Google Photos Migration Metadata */
-  takenAt?: Date;
-  description?: string;
-  googlePhotosUrl?: string;
   encryptedMetadata?: string; // Standardized metadata object (v0x03)
   /** Optimized image fields */
   optimizedKey?: string; // B2 key for the optimized version
@@ -289,20 +285,6 @@ const StorageObjectSchema = new Schema<IStorageObject>(
     },
     deletedAt: {
       type: Date,
-    },
-    takenAt: {
-      type: Date,
-      required: false,
-    },
-    description: {
-      type: String,
-      required: false,
-      trim: true,
-    },
-    googlePhotosUrl: {
-      type: String,
-      required: false,
-      trim: true,
     },
     encryptedMetadata: {
       type: String,

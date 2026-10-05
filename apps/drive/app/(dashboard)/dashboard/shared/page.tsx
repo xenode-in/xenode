@@ -48,6 +48,7 @@ import { ShareAccessRequestsInbox } from "@/components/ShareAccessRequestsInbox"
 import { normalizeShareRole, type ShareRole } from "@/lib/orgs/shareRoles";
 import {
   decryptMetadataString,
+  decryptWithShareKey,
   encryptWithShareKey,
   unwrapStoredFileKey,
   wrapShareFileKey,
@@ -57,6 +58,7 @@ import {
   bytesToBase64Url,
   decryptOwnerShareKey,
   encryptShareKeyForOwner,
+  importShareKey,
 } from "@/lib/crypto/shareKey";
 
 interface SharedObject {
@@ -70,12 +72,21 @@ interface SharedObject {
   mediaCategory?: string;
 }
 
+/** A bundle's share key, recovered from the copy wrapped to the owner. */
+async function bundleShareKey(row: { ownerEncryptedShareKey?: string }, privateKey: CryptoKey) {
+  if (!row.ownerEncryptedShareKey) throw new Error("This bundle link is missing its stored key");
+  return importShareKey(await decryptOwnerShareKey(row.ownerEncryptedShareKey, privateKey), [
+    "encrypt",
+    "decrypt",
+  ]);
+}
+
 interface PublicShare {
   _id: string;
   token: string;
   objectId: SharedObject;
   isBundle?: boolean;
-  bundleName?: string;
+  shareEncryptedBundleName?: string;
   bundleItems?: { objectId?: SharedObject }[];
   expiresAt?: string;
   downloadCount: number;
@@ -111,7 +122,7 @@ type ShareRow = {
   type: "public" | "direct";
   objectId: SharedObject;
   isBundle?: boolean;
-  bundleName?: string;
+  shareEncryptedBundleName?: string;
   bundleItems?: BundleShareItem[];
   bundleItemCount?: number;
   bundleSize?: number;
@@ -199,7 +210,7 @@ export default function SharedPage() {
           type: "public",
           objectId: link.objectId,
           isBundle: !!link.isBundle,
-          bundleName: link.bundleName,
+          shareEncryptedBundleName: link.shareEncryptedBundleName,
           bundleItems: link.bundleItems || [],
           bundleItemCount: link.bundleItems?.length || 0,
           bundleSize: (link.bundleItems || []).reduce(
@@ -266,6 +277,17 @@ export default function SharedPage() {
     const run = async () => {
       const nextNames: Record<string, string> = {};
       for (const row of rows) {
+        if (row.isBundle && row.shareEncryptedBundleName && row.token && privateKey) {
+          try {
+            nextNames[row.id] = await decryptWithShareKey(
+              row.shareEncryptedBundleName,
+              await bundleShareKey(row, privateKey),
+              { fileId: row.token, purpose: "name" },
+            );
+          } catch {
+            /* the item-count label stays */
+          }
+        }
         if (!row.isBundle && row.objectId.isEncrypted && row.objectId.encryptedName) {
           try {
             nextNames[row.id] = await decryptMetadataString(
@@ -282,7 +304,7 @@ export default function SharedPage() {
     };
 
     run();
-  }, [rows, isUnlocked, metadataKey]);
+  }, [rows, isUnlocked, metadataKey, privateKey]);
 
   async function getOwnerFileKey(fileId: string) {
     if (!privateKey) {
@@ -501,7 +523,7 @@ export default function SharedPage() {
 
   const openBundle = (row: ShareRow) => {
     setBundleRow(row);
-    setBundleNameInput(row.bundleName || `${row.bundleItemCount || 0} shared files`);
+    setBundleNameInput(decryptedNames[row.id] || `${row.bundleItemCount || 0} shared files`);
     setBundleItemIds(
       new Set(
         (row.bundleItems || [])
@@ -520,11 +542,21 @@ export default function SharedPage() {
 
     setSaving(true);
     try {
+      if (!privateKey) {
+        setModalOpen(true);
+        throw new Error("Unlock your vault to rename this bundle");
+      }
+      // The name is sealed for the link token under the bundle's share key.
+      const shareEncryptedBundleName = await encryptWithShareKey(
+        bundleNameInput.trim() || `${bundleItemIds.size} shared files`,
+        await bundleShareKey(bundleRow, privateKey),
+        { fileId: bundleRow.token, purpose: "name" },
+      );
       const res = await fetch(`/api/share/${bundleRow.token}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          bundleName: bundleNameInput,
+          shareEncryptedBundleName,
           bundleItemIds: Array.from(bundleItemIds),
         }),
       });
@@ -702,7 +734,7 @@ export default function SharedPage() {
                   row.expiresAt && new Date(row.expiresAt) < new Date();
                 const displayName =
                   row.isBundle
-                    ? row.bundleName || `${row.bundleItemCount || 0} shared files`
+                    ? decryptedNames[row.id] || `${row.bundleItemCount || 0} shared files`
                     : decryptedNames[row.id] ||
                       row.objectId.key.split("/").pop() ||
                       row.objectId.key;

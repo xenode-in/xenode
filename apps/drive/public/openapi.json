@@ -870,37 +870,6 @@
     },
 
 
-    "/api/objects/update-metadata": {
-      "post": {
-        "tags": ["Objects"],
-        "summary": "Update object metadata (migration)",
-        "description": "Updates metadata for a storage object, typically after a Google Photos migration upload. Accepts `takenAt`, `createdAt`, `description`, `googlePhotosUrl`.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["objectKey"],
-                "properties": {
-                  "objectKey": { "type": "string" },
-                  "bucketId": { "type": "string" },
-                  "takenAt": { "type": "number", "description": "Unix timestamp (seconds)" },
-                  "createdAt": { "type": "number", "description": "Unix timestamp (seconds)" },
-                  "description": { "type": "string" },
-                  "googlePhotosUrl": { "type": "string" }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": { "description": "Metadata updated" },
-          "404": { "description": "Object not found" }
-        }
-      }
-    },
-
     "/api/objects/thumbnail": {
       "get": {
         "tags": ["Thumbnails"],
@@ -2207,9 +2176,6 @@
           "optimizedSize": { "type": "integer" },
           "aspectRatio": { "type": "number" },
           "b2FileId": { "type": "string" },
-          "takenAt": { "type": "string", "format": "date-time" },
-          "description": { "type": "string" },
-          "googlePhotosUrl": { "type": "string" },
           "createdAt": { "type": "string", "format": "date-time" },
           "updatedAt": { "type": "string", "format": "date-time" }
         }

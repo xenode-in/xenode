@@ -45,7 +45,7 @@ interface ShareMeta {
   shareEncryptedThumbnail?: string;
   mediaCategory?: string;
   isBundle?: boolean;
-  bundleName?: string;
+  shareEncryptedBundleName?: string;
   items?: ShareMetaItem[];
 }
 
@@ -457,7 +457,7 @@ export default function SharedFilePage() {
 
   const displayName =
     decryptedName ||
-    (meta?.isBundle && meta.bundleName ? meta.bundleName : null) ||
+    (meta?.isBundle ? `${meta.items?.length ?? 0} shared files` : null) ||
     (meta?.fileName ? meta.fileName.split("/").pop() : "File") ||
     "File";
 
@@ -536,6 +536,15 @@ export default function SharedFilePage() {
                 ["decrypt", "unwrapKey"],
               );
               setShareKeyObj(shareKeyObj);
+              if (d.isBundle && d.shareEncryptedBundleName) {
+                // A bundle's name is sealed for the link token.
+                setDecryptedName(
+                  await decryptWithShareKey(d.shareEncryptedBundleName, shareKeyObj, {
+                    fileId: token,
+                    purpose: "name",
+                  }),
+                );
+              }
               if (d.shareEncryptedName) {
                 const name = await decryptWithShareKey(
                   d.shareEncryptedName,
