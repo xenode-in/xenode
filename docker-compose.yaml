@@ -115,32 +115,17 @@ services:
       NEXT_PUBLIC_POSTHOG_HOST: ${NEXT_PUBLIC_POSTHOG_HOST:-https://us.i.posthog.com}
       POSTHOG_KEY: ${POSTHOG_KEY:-}
 
-  # ── Cron sidecar ────────────────────────────────────────────────────────────
-  # Tiny alpine container (no build) that fires HTTP cron jobs on a schedule.
-  # Docker Compose expands ${CRON_SECRET} into the command at startup, so the
-  # actual secret value is written directly into the crontab (crond never
-  # sees the variable name — just the value).
+  # ── Scheduler ───────────────────────────────────────────────────────────────
+  # Runs every product's vercel.json crons against that product's origin; the
+  # secret stays out of the crontab, command lines and logs (Dockerfile.cron).
   cron:
-    image: alpine:3.19
+    build:
+      context: .
+      dockerfile: Dockerfile.cron
     restart: unless-stopped
     depends_on:
       - drive
     environment:
+      DRIVE_URL: http://drive:3000
+      PHOTOS_URL: ${PHOTOS_URL}
       CRON_SECRET: ${CRON_SECRET}
-    entrypoint:
-      - sh
-      - -c
-      - |
-        apk add --no-cache curl --quiet
-        printf '%s\n' \
-          '# ── Test ping (every minute) — remove once cron is confirmed working ──' \
-          '*  *  * * *  curl -sf -X GET  http://drive:3000/api/cron/ping                    -H "Authorization: Bearer '"${CRON_SECRET}"'" | head -c 200' \
-          '# ── Production jobs ───────────────────────────────────────────────────' \
-          '0  0  * * *  curl -sf -X GET  http://drive:3000/api/cron/expire-plans           -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
-          '0  3  * * *  curl -sf -X GET  http://drive:3000/api/cron/purge-bin              -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
-          '0  */6 * * * curl -sf -X GET  http://drive:3000/api/cron/cleanup-orphans        -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
-          '30 9  * * *  curl -sf -X POST http://drive:3000/api/payment/payu/charge-recurring -H "Authorization: Bearer '"${CRON_SECRET}"'"' \
-          > /etc/crontabs/root
-        echo "=== Cron sidecar ready. Jobs ==="
-        cat /etc/crontabs/root
-        crond -f -l 6

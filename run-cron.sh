@@ -1,44 +1,20 @@
 #!/bin/bash
+# Trigger one Drive cron job against a local dev server: ./run-cron.sh <job>
+# Jobs are the paths in vercel.json, e.g. ./run-cron.sh purge-bin
 
-# Simple helper script to trigger Xenode's cron jobs locally
-# Usage: ./run-cron.sh <job>
-
-PORT=3000
-HOST="http://localhost:$PORT"
-
-# The secret must match CRON_SECRET in your .env.local file
+HOST="http://localhost:${PORT:-3000}"
 SECRET="${CRON_SECRET:-$(grep '^CRON_SECRET=' .env.local 2>/dev/null | cut -d'=' -f2-)}"
 
 if [ -z "$SECRET" ]; then
-    echo "❌  CRON_SECRET is not set. Add it to .env.local or export it."
+    echo "CRON_SECRET is not set. Add it to .env.local or export it."
     exit 1
 fi
 
 if [ -z "$1" ]; then
     echo "Usage: ./run-cron.sh <job>"
-    echo "Available jobs:"
-    echo "  expire-plans      - Sweeps the database to downgrade expired plans and grant grace periods"
-    echo "  charge-recurring  - Triggers PayU auto-renewals for active mandates"
+    jq -r '.crons[].path | sub("^/api/cron/"; "  ")' vercel.json
     exit 1
 fi
 
-JOB=$1
-
-echo "Triggering cron job: $JOB at $HOST/api/cron/$JOB"
-echo "---"
-
-if [ "$JOB" == "expire-plans" ]; then
-    curl -s -X GET "$HOST/api/cron/expire-plans" \
-         -H "Authorization: Bearer $SECRET" \
-         | jq . || echo "Failed to reach server. Is Next.js running on port $PORT?"
-elif [ "$JOB" == "charge-recurring" ]; then
-    curl -s -X POST "$HOST/api/payment/payu/charge-recurring" \
-         -H "Authorization: Bearer $SECRET" \
-         | jq . || echo "Failed to reach server. Is Next.js running on port $PORT?"
-else
-    echo "Unknown job: $JOB"
-    exit 1
-fi
-
-echo -e "\n---"
-echo "Done!"
+curl --fail --silent --show-error "$HOST/api/cron/$1" \
+    -H @<(printf 'Authorization: Bearer %s\n' "$SECRET") | jq .

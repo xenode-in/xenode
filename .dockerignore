@@ -14,3 +14,7 @@ security-corpus
 Dockerfile*
 .dockerignore
 docker-compose*.yaml
+# Never send local secrets into an image build context.
+**/.env*
+!**/.env.example
+tmp

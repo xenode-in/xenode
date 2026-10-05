@@ -38,7 +38,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F19 | MED | Partial | 0T removed the editor byte proxy | Downloads, version content and shares still stream through Next with `max-age=3600` regardless of token lifetime |
 | F20 | MED | Open | `updatedAt > lastSync`, time-only sort, global `localStorage` cursor, no tombstones | Tuple cursor per account/Space with tombstones |
 | F21 | MED | Partial | Presign no longer writes plans (0S); 0ZH removed metering's expired-plan downgrades and usage upserts | Onboarding plan reset, expire-plans cron, refund/campaign handlers, admin plan routes and OrgUsage creation on billing reads bypass the canonical service |
-| F22 | HIGH | Open | Dockerfile copies 3 of 18 manifests and omits `server-events.mjs`; Compose lacks Accounts/Photos and calls removed PayU route; editor nginx invalid | Reproducible all-product deployment; see F36 |
+| F22 | HIGH | Partial | 0ZR: one scheduler contract (each product's `vercel.json`, baked into `Dockerfile.cron`; the removed PayU job is gone), `.dockerignore` excludes `.env*`, shell scripts are LF via `.gitattributes` | Product images (Drive's installs 3 of the workspace manifests and ships symlinked packages without sources), Compose lacks Accounts/Photos, editor nginx invalid |
 | F23 | HIGH | Partial | 0ZF: non-force upgrades (Next 16.3.8, pdfjs-dist 6.3.289, Better Auth family 1.7.7, socket.io-parser 4.2.7, engine.io 6.6.11, sharp 0.35.5, axios 1.20.0, vitest 4.1.11); `npm audit` 24 → 0; CI now gates on `npm audit` | 2026-10-05: GHSA-vfj7-8cjw-p6xm (`braces` ≤ 3.0.3, glob-pattern DoS) has no patched release; it reaches only dev/build tooling (`shadcn` CSS/CLI, `eslint-config-next`, `ts-morph`), whose patterns are developer-controlled. The CI audit gate stays red until upstream ships a fix; npm's suggested fixes are breaking downgrades. Renderer corpus re-run is a release gate |
 | F24 | HIGH | Addressed | No Vault v1/PBKDF2 code remains; 0ZM: the self-keyed name format is no longer read by `decryptMetadataString`, the crypto worker or the deleted `decryptFileName` | — |
 | F25 | MED | Open | `update-metadata` writes plaintext description/link; share `bundleName` and access-request notes are plaintext; tag/folder plaintext fallbacks | Encrypt user text or remove the fields; define observable metadata |
@@ -57,7 +57,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F33 | HIGH | Addressed | 0ZE: deny-by-default pending sessions plus the provider's `postLogin` gate; reproduced code leak via `Location` on password sign-in with `oauth_query`, now prevented (negative control confirmed) | Real social-provider journey is a release gate |
 | F34 | MED | Addressed | 0ZE: native GETs from pending sessions are allowlisted (session listings return 403) | — |
 | F35 | HIGH | Addressed | 0ZJ: move is a metadata-only transaction (no copy, no delete); version snapshots, chunks and signed URLs keep their keys; contract in [31](31-drive-folder-model.md) | — |
-| F36 | MED | Open | Compose cron runs `cat /etc/crontabs/root`, printing the expanded `CRON_SECRET` to logs | Remove secret echo; one scheduler contract |
+| F36 | MED | Addressed | 0ZR: the scheduler writes the bearer header to a root-only file read by `curl -H @file`, unsets the secret before `crond`, and logs only schedules and URLs; verified in a container (secret absent from logs, crontab, process list and crond's environment; header sent) | — |
 | F37 | MED | Addressed | 0ZH: both routes and their orphaned non-transactional helpers removed | — |
 
 ## Release gates not verified by tests

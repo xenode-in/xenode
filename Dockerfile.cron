@@ -1,9 +1,13 @@
+# Scheduler for every product's cron routes (see cron-entrypoint.sh).
+# Build context: the repository root.
 FROM alpine:3.20
 
-RUN apk add --no-cache curl
+RUN apk add --no-cache curl jq
 
+COPY vercel.json /etc/xenode/drive.json
+COPY apps/photos/vercel.json /etc/xenode/photos.json
+COPY cron-job.sh /usr/local/bin/xenode-cron-job
 COPY cron-entrypoint.sh /usr/local/bin/cron-entrypoint
-RUN chmod +x /usr/local/bin/cron-entrypoint
+RUN chmod 0755 /usr/local/bin/xenode-cron-job /usr/local/bin/cron-entrypoint
 
 ENTRYPOINT ["/usr/local/bin/cron-entrypoint"]
-
