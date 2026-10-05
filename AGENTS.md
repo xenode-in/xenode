@@ -115,6 +115,11 @@ key, never the raw Space key. Browser code reads keys through
 
 - `Space` is the authorization boundary. Every object query and mutation must
   resolve access to the requested `spaceId`.
+- Upload resume records use the sealed `@xenode/upload-engine` journal, a
+  memory-only HKDF journal key, complete Space/version/wrap context and atomic
+  IndexedDB checkpoints. Resume RPCs bind the exact account/Space reservation
+  and never infer completion from local hints or persist filenames/raw keys
+  (docs/gpt-6-astra-audit/38-upload-resume-journal.md).
 - `StorageObject.key` is opaque (`users/{accountId}/{randomHex32}`); never derive
   it from a filename, folder or client input, and never change it after upload.
   Drive folders are blob-less records placed by `folderId`/`ancestorIds`;

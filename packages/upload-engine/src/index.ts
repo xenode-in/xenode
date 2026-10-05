@@ -1,3 +1,6 @@
+import { NonRetryableUploadError } from "./errors";
+export { NonRetryableUploadError } from "./errors";
+
 export type UploadStatus =
   | "queued"
   | "running"
@@ -8,13 +11,9 @@ export type UploadStatus =
 
 export * from "./revision";
 export * from "./s3";
-
-export class NonRetryableUploadError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "NonRetryableUploadError";
-  }
-}
+export * from "./journal";
+export * from "./resume";
+export * from "./scope";
 
 export interface UploadInput {
   id: string;

@@ -108,6 +108,16 @@ flows, with no migration/backfill or automatic reset.
 
 ## Release gates
 
+Drive's local upload journal is sealed and scoped to the unlocked account,
+Space and key version. IndexedDB version 7 removes the old plaintext upload
+store; interrupted jobs from that obsolete format must be uploaded again.
+Clearing the local journal never removes R2 objects: pending reservations keep
+their signed-URL grace and server cleanup ledger. Recovery uses
+`GET /api/objects/upload-status` with the exact bucket/reservation identity,
+not a key prefix. Test real browser reload/offline/lock/account switching and
+regional create-only uploads before release. See
+[the resume contract](gpt-6-astra-audit/38-upload-resume-journal.md).
+
 ```powershell
 npm ci
 npm run typecheck

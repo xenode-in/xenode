@@ -1,5 +1,6 @@
 import Dexie, { Table } from "dexie";
 import MiniSearch from "minisearch";
+import type { SealedUploadRecord } from "@xenode/upload-engine";
 
 export interface MetadataCache {
   id: string; // The raw base64 encrypted string acts as the ID
@@ -7,71 +8,7 @@ export interface MetadataCache {
 }
 
 
-/**
- * A durable snapshot of an in-flight upload, so it can resume after a page
- * reload. We persist the ENCRYPTED bytes (never plaintext) plus every field
- * `complete-upload` needs, so resume re-PUTs byte-identical data with no
- * re-encryption — matching any chunks already in B2. `bytes`/`optimizedBytes`
- * are only stored when the total is within the resume cap (see UploadContext);
- * otherwise `bytesPersisted` is false and the row exists only to surface the
- * interrupted upload and drive server-side orphan cleanup.
- */
-export interface UploadRecord {
-  id: string; // matches UploadTask.id
-  userId: string;
-  status: "uploading" | "paused" | "failed";
-  createdAt: number;
-
-  // identity / display
-  fileName: string; // real filename (also used to reconstruct the presign fileName on resume)
-  size: number; // plaintext size
-  type: string; // mime
-  mediaCategory: string;
-  bucketId: string;
-  /** Destination folder record id (null = Space root). */
-  folderId: string | null;
-  aspectRatio?: number;
-
-  // routing / crypto
-  isChunked: boolean;
-  isEncrypted: boolean;
-
-  // main object
-  fileId: string; // logical/main B2 key (== objectKey), stable across resume
-  sessionId?: string;
-  uploadContentType: string; // Content-Type used for the PUT
-  encryptedDEK?: string;
-  iv?: string; // single-PUT only
-
-  // chunk fields (chunked path)
-  chunkSize?: number;
-  cipherChunkSize?: number;
-  chunkCount?: number;
-  chunkIvs?: string; // JSON string of base64 IVs
-  chunks?: { index: number; key: string; size: number }[];
-  completedChunks: number[];
-
-  // encrypted metadata for complete-upload
-  encryptedName?: string;
-  encryptedContentType?: string;
-  encryptedMetadata?: string;
-
-  // thumbnail (already-encrypted `enc:` string or plaintext data URL) → `${fileId}-thumb`
-  thumbnail?: string;
-  thumbnailKey?: string;
-
-  // optimized preview (single-PUT image path only)
-  optimizedKey?: string;
-  optimizedIV?: string;
-  optimizedEncryptedDEK?: string;
-  optimizedSize?: number;
-  optimizedContentType?: string;
-
-  // persisted ciphertext (only when within the resume byte cap)
-  bytesPersisted: boolean;
-  mainBytes?: Blob; // ciphertext for the main object / whole chunked ciphertext
-  optimizedBytes?: Blob; // ciphertext of the optimized preview
-}
+export type { UploadRecord } from "@xenode/upload-engine";
 
 export interface LocalFile {
   id: string;
@@ -145,13 +82,13 @@ export interface SpreadsheetV2DraftRecord {
 export class XenodeDatabase extends Dexie {
   files!: Table<LocalFile, string>;
   metadataCache!: Table<MetadataCache, string>;
-  uploads!: Table<UploadRecord, string>;
+  uploadJournal!: Table<SealedUploadRecord, string>;
   spreadsheetDrafts!: Table<SpreadsheetDraftRecord, string>;
   spreadsheetRecents!: Table<SpreadsheetRecentRecord, string>;
   spreadsheetV2Drafts!: Table<SpreadsheetV2DraftRecord, string>;
 
-  constructor(userId: string) {
-    super(`XenodeDB-${userId}`); // scoped per user
+  constructor(readonly accountId: string) {
+    super(`XenodeDB-${accountId}`); // scoped per user
     this.version(1).stores({
       files:
         "id, key, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName, mediaCategory, optimizedKey, uploadSource, syncContentFp",
@@ -187,6 +124,11 @@ export class XenodeDatabase extends Dexie {
           "id, key, spaceId, folderId, *ancestorIds, encryptedName, size, contentType, createdAt, updatedAt, isEncrypted, *tags, bucketId, encryptedContentType, encryptedDisplayName, mediaCategory, optimizedKey, uploadSource, syncContentFp",
       })
       .upgrade((transaction) => transaction.table("files").clear());
+    // Drop the obsolete plaintext journal; only sealed checkpoints are retained.
+    this.version(7).stores({
+      uploads: null,
+      uploadJournal: "id,[scope.accountId+scope.spaceId],createdAt",
+    });
   }
 }
 
@@ -213,9 +155,8 @@ export const searchIndex = new MiniSearch<LocalFile>({
 let _db: XenodeDatabase | null = null;
 
 export function getDb(userId: string): XenodeDatabase {
-  if (!_db || (_db as any)._userId !== userId) {
+  if (!_db || _db.accountId !== userId) {
     _db = new XenodeDatabase(userId);
-    (_db as any)._userId = userId;
   }
   return _db;
 }

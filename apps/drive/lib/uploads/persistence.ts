@@ -1,78 +1,67 @@
-import { getDb, type UploadRecord } from "@/lib/db/local";
+import { getDb } from "@/lib/db/local";
+import { UploadJournal, sameUploadScope, type UploadRecord, type SealedUploadRecord,
+  type UploadJournalScope, type UploadJournalStorage } from "@xenode/upload-engine";
 
-/**
- * Client-side persistence for resumable uploads. Thin wrappers over the Dexie
- * `uploads` table (per-user DB). All calls are best-effort — a persistence
- * failure must never abort the actual upload, so callers catch/ignore.
- */
-
-export async function saveUploadRecord(
-  userId: string,
-  record: UploadRecord,
-): Promise<void> {
-  await getDb(userId).uploads.put(record);
+export interface UploadJournalContext {
+  scope: UploadJournalScope;
+  key: CryptoKey;
+  isActive: () => boolean;
 }
 
-export async function patchUploadRecord(
-  userId: string,
-  id: string,
-  patch: Partial<UploadRecord>,
-): Promise<void> {
-  await getDb(userId).uploads.update(id, patch);
+export function journalStorage(accountId: string, isActive: () => boolean = () => true): UploadJournalStorage {
+  const db = getDb(accountId);
+  return {
+    get: (id) => db.uploadJournal.get(id),
+    async list(scope) {
+      const rows = await db.uploadJournal.where("[scope.accountId+scope.spaceId]").equals([accountId, scope.spaceId]).toArray();
+      return rows.filter((row) => sameUploadScope(row.scope, scope));
+    },
+    async insert(row) {
+      await db.transaction("rw", db.uploadJournal, async () => {
+        if (!isActive()) throw new Error("Upload context was locked");
+        await db.uploadJournal.add(row);
+      });
+    },
+    async compareAndSwap(previous, next) {
+      return db.transaction("rw", db.uploadJournal, async () => {
+        const current = await db.uploadJournal.get(previous.id);
+        if (!current || current.revision !== previous.revision ||
+          current.envelope.ciphertext !== previous.envelope.ciphertext || !sameUploadScope(current.scope, previous.scope)) return false;
+        if (!isActive()) throw new Error("Upload context was locked");
+        await db.uploadJournal.put(next);
+        return true;
+      });
+    },
+    async remove(id, scope) {
+      await db.transaction("rw", db.uploadJournal, async () => {
+        const current = await db.uploadJournal.get(id);
+        if (current && sameUploadScope(current.scope, scope)) await db.uploadJournal.delete(id);
+      });
+    },
+  };
 }
-
-/** Mark a chunk index complete (idempotent) and persist the growing set. */
-export async function markChunkComplete(
-  userId: string,
-  id: string,
-  index: number,
-): Promise<void> {
-  const db = getDb(userId);
-  const rec = await db.uploads.get(id);
-  if (!rec) return;
-  if (!rec.completedChunks.includes(index)) {
-    rec.completedChunks = [...rec.completedChunks, index].sort((a, b) => a - b);
-    await db.uploads.put(rec);
-  }
+export function uploadJournal(context: UploadJournalContext): UploadJournal {
+  return new UploadJournal(journalStorage(context.scope.accountId, context.isActive), context.scope, context.key, context.isActive);
 }
-
-export async function getUploadRecord(
-  userId: string,
-  id: string,
-): Promise<UploadRecord | undefined> {
-  return getDb(userId).uploads.get(id);
+export async function saveUploadRecord(context: UploadJournalContext, record: UploadRecord): Promise<void> {
+  await uploadJournal(context).save(record);
 }
-
-/** All journaled uploads for this user, oldest first — used to rehydrate on load. */
-export async function listUploadRecords(
-  userId: string,
-): Promise<UploadRecord[]> {
-  return getDb(userId).uploads.orderBy("createdAt").toArray();
+export async function markChunkComplete(context: UploadJournalContext, id: string, index: number): Promise<void> {
+  await uploadJournal(context).markChunkComplete(id, index);
 }
-
-export async function deleteUploadRecord(
-  userId: string,
-  id: string,
-): Promise<void> {
-  await getDb(userId).uploads.delete(id);
+export async function getUploadRecord(context: UploadJournalContext, id: string): Promise<UploadRecord | undefined> {
+  return uploadJournal(context).load(id);
 }
-
-/**
- * Ask the browser to keep our IndexedDB from being evicted under storage
- * pressure (important on iOS where uploads-in-progress could otherwise be
- * purged). Safe to call repeatedly; no-op where unsupported.
- */
+/** Headers reveal only opaque scope/job identities. Payloads remain sealed until unlock. */
+export async function listSealedUploadRecords(accountId: string, spaceId: string): Promise<SealedUploadRecord[]> {
+  return getDb(accountId).uploadJournal.where("[scope.accountId+scope.spaceId]").equals([accountId, spaceId]).sortBy("createdAt");
+}
+export async function deleteUploadRecord(scope: UploadJournalScope, id: string): Promise<void> {
+  await journalStorage(scope.accountId).remove(id, scope);
+}
 export async function requestPersistentStorage(): Promise<void> {
   try {
-    if (
-      typeof navigator !== "undefined" &&
-      navigator.storage?.persist &&
-      navigator.storage.persisted
-    ) {
-      const already = await navigator.storage.persisted();
-      if (!already) await navigator.storage.persist();
-    }
-  } catch {
-    /* best-effort */
-  }
+    if (typeof navigator !== "undefined" && navigator.storage?.persist && navigator.storage.persisted &&
+      !await navigator.storage.persisted()) await navigator.storage.persist();
+  } catch { /* Optional durability; the server cleanup ledger remains authoritative. */ }
 }

@@ -9,7 +9,8 @@ export type EnvelopeType =
   | "product-space-key"
   | "file-dek"
   | "metadata-key"
-  | "album-name";
+  | "album-name"
+  | "upload-journal";
 
 export interface EnvelopeContext {
   accountId: string;

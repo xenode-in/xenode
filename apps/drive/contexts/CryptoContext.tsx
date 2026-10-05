@@ -17,7 +17,7 @@ import {
   clearPersistedKeys,
   clearPendingHandoff,
 } from "@xenode/crypto-react";
-import { deriveMetadataKey } from "@xenode/crypto-core";
+import { deriveMetadataKey, deriveUploadJournalKey } from "@xenode/crypto-core";
 import { SecureUnlockOverlay } from "@xenode/ui";
 import {
   consumeProductKeyBundle,
@@ -39,6 +39,7 @@ interface CryptoContextType {
   privateKey: CryptoKey | null;
   publicKey: CryptoKey | null;
   metadataKey: CryptoKey | null;
+  uploadJournalKey: CryptoKey | null;
   privateKeyBuf: ArrayBuffer | null;
   lock: () => Promise<void>;
   logout: () => Promise<void>;
@@ -55,6 +56,7 @@ type ImportedSharingKeys = {
   privateKey: CryptoKey;
   publicKey: CryptoKey;
   metadataKey: CryptoKey;
+  uploadJournalKey: CryptoKey;
 };
 
 // Previous releases persisted these keys. They are deletion targets only;
@@ -114,7 +116,8 @@ async function importAndVerifySharingKeys(
   }
   try {
     const metadataKey = await deriveMetadataKey(productSpaceKey, "drive", spaceId);
-    return { privateKey, publicKey, metadataKey };
+    const uploadJournalKey = await deriveUploadJournalKey(productSpaceKey, "drive", spaceId);
+    return { privateKey, publicKey, metadataKey, uploadJournalKey };
   } finally {
     challenge.fill(0);
     opened.fill(0);
@@ -481,6 +484,7 @@ function DriveKeyAccess({
     privateKey: sharingKeys?.privateKey ?? null,
     publicKey: sharingKeys?.publicKey ?? null,
     metadataKey: sharingKeys?.metadataKey ?? null,
+    uploadJournalKey: sharingKeys?.uploadJournalKey ?? null,
     privateKeyBuf: null,
     lock,
     logout,

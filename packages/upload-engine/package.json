@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": { ".": "./src/index.ts" },
+  "dependencies": { "@xenode/crypto-core": "*" },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

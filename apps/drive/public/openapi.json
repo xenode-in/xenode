@@ -1574,6 +1574,36 @@
       }
     },
 
+    "/api/objects/upload-status": {
+      "get": {
+        "tags": ["Objects"], "summary": "Read exact upload reservation status",
+        "description": "Requires Space write access. Resolves the account/Space/bucket-bound create reservation and HEADs at most 128 claimed keys with four concurrent requests. A provider 404 means absent; other provider failures return 502. Completed active objects return completed=true without HEAD. No caller-controlled key prefix or fileId fallback.",
+        "parameters": [
+          { "name": "bucketId", "in": "query", "required": true, "schema": { "type": "string", "pattern": "^[a-fA-F0-9]{24}$" } },
+          { "name": "sessionId", "in": "query", "required": true, "schema": { "type": "string", "pattern": "^[a-fA-F0-9]{24}$" } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "minimum": 0, "maximum": 4099, "default": 0 } },
+          { "name": "x-xenode-space-id", "in": "header", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "Reservation status", "content": { "application/json": { "schema": {
+            "type": "object", "required": ["sessionId", "bucketId", "spaceId", "fileId", "completed", "objects", "nextOffset"],
+            "properties": {
+              "sessionId": { "type": "string" }, "bucketId": { "type": "string" }, "spaceId": { "type": "string" },
+              "fileId": { "type": "string" }, "completed": { "type": "boolean" },
+              "objects": { "type": "array", "maxItems": 128, "items": { "type": "object",
+                "properties": { "key": { "type": "string" }, "size": { "type": "integer", "minimum": 1 } } } },
+              "nextOffset": { "type": "integer", "nullable": true }
+            }
+          } } } },
+          "400": { "description": "Invalid identities or offset" },
+          "403": { "description": "Space write permission denied" },
+          "404": { "description": "Inaccessible bucket or create reservation" },
+          "409": { "description": "Reservation is expired, cleaning/blocked, invalid or no longer available" },
+          "502": { "description": "Physical ciphertext status could not be verified" }
+        }
+      }
+    },
+
     "/api/onboarding/complete": {
       "post": {
         "tags": ["Onboarding"],

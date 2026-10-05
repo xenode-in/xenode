@@ -44,6 +44,7 @@ Start with [the executive summary](00-executive-summary.md), then [the migration
 | [35 — File format](35-file-content-format.md) | AAD-bound chunks, file-key wraps and metadata keyed to the object id |
 | [36 — Storage pool provisioning](36-storage-pool-provisioning.md) | Explicit enabled pools, verified bucket mappings and immutable selection |
 | [37 — Billing entitlement state](37-billing-entitlement-contract.md) | Canonical transaction writers, scoped refunds, renewal checkpoints and admin overrides |
+| [38 — Upload resume journal](38-upload-resume-journal.md) | Sealed scope-bound checkpoints, atomic IndexedDB updates and exact reservation recovery |
 
 ## Reading the judgments
 

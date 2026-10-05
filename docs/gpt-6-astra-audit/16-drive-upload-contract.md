@@ -103,5 +103,7 @@ hourly cleanup; this is configuration, not proof of an active deployment.
 
 Bin purge still needs durable transactional metadata/accounting after confirmed
 B2 deletion. Revision routes are not covered by this upload transaction.
-Browser journal Space/crypto completeness, opaque folder-free keys and B2 PUT
-replay protection remain pending audit work.
+Later contracts supersede those initial gaps: [23](23-r2-write-once-upload.md)
+defines create-only PUTs, [31](31-drive-folder-model.md) defines opaque keys and
+folder placement, and [38](38-upload-resume-journal.md) defines the sealed,
+scope-bound browser journal and exact-reservation status endpoint.

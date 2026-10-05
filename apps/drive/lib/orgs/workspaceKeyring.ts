@@ -1,6 +1,6 @@
 "use client";
 
-import { deriveMetadataKey } from "@xenode/crypto-core";
+import { deriveMetadataKey, deriveUploadJournalKey } from "@xenode/crypto-core";
 import { organizationSpaceId, teamSpaceId } from "@xenode/spaces/ids";
 import { unwrapSpaceKeyring } from "./spaceKeyClient";
 
@@ -14,6 +14,7 @@ export interface WorkspaceKeyVersion {
   rawKey: Uint8Array;
   /** HKDF purpose key: the raw Space key never encrypts metadata itself. */
   metadataKey: CryptoKey;
+  uploadJournalKey: CryptoKey;
 }
 
 export interface WorkspaceKeyring {
@@ -103,6 +104,7 @@ async function fetchKeyring(
       keyVersion: entry.keyVersion,
       rawKey: entry.rawSpaceKey,
       metadataKey: await deriveMetadataKey(entry.rawSpaceKey, "drive", spaceId),
+      uploadJournalKey: await deriveUploadJournalKey(entry.rawSpaceKey, "drive", spaceId),
     })),
   );
   return { spaceId, current: versions[0], versions };

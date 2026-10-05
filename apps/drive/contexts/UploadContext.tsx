@@ -7,12 +7,20 @@ import React, {
   useCallback,
   useEffect,
   useRef,
+  useMemo,
 } from "react";
 import {
   UploadEngine,
   acceptAllUploadPolicy,
   createMemoryCheckpointStore,
   WRITE_ONCE_PUT_HEADERS,
+  resumeUploadRecord,
+  validateUploadReservation,
+  createScopedUploadRequest,
+  RESUME_BYTE_CAP,
+  NonRetryableUploadError,
+  type UploadRecord,
+  type UploadJournalScope,
 } from "@xenode/upload-engine";
 import { useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
@@ -30,19 +38,21 @@ import type { FileMetadata } from "@/lib/metadata/types";
 import { extractFileMetadata } from "@/lib/metadata/metadataClient";
 import { optimizeVideoForStreaming } from "@/lib/video/faststart";
 import { upsertLocalObject } from "@/lib/db/object-cache";
-import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { useWorkspace, driveScopeSpaceId } from "@/contexts/WorkspaceContext";
 import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
-import type { UploadRecord } from "@/lib/db/local";
 import {
   saveUploadRecord,
   markChunkComplete,
-  listUploadRecords,
+  listSealedUploadRecords,
+  getUploadRecord,
   deleteUploadRecord,
   requestPersistentStorage,
+  type UploadJournalContext,
 } from "@/lib/uploads/persistence";
 
 export interface UploadTask {
   id: string;
+  scope: UploadJournalScope;
   file: File;
   bucketId: string;
   /** Destination folder record id (null = Space root); never part of the key. */
@@ -68,6 +78,21 @@ interface UploadContextType {
   retryTask: (id: string) => void;
 }
 
+interface UploadSnapshot {
+  scope: UploadJournalScope;
+  metadataKey: CryptoKey;
+  target: FileKeyTarget;
+  currentVersion: number | null;
+  journal: UploadJournalContext;
+  isActive(): boolean;
+  checkActive(): void;
+  abort(): void;
+  dispose(): void;
+  signal: AbortSignal;
+  waitWhilePaused(): Promise<void>;
+  request(path: string, init?: RequestInit): Promise<Response>;
+}
+
 const UploadContext = createContext<UploadContextType | undefined>(undefined);
 
 const MAX_CONCURRENT_UPLOADS = 5;
@@ -76,7 +101,6 @@ const MAX_CONCURRENT_UPLOADS = 5;
 // files stay resumable while the tab is open (pause/resume) but are not written
 // to IndexedDB — storing e.g. a 1 GB video risks blowing the (tight, on iOS)
 // origin storage quota and triggering eviction.
-const RESUME_BYTE_CAP = 250 * 1024 * 1024;
 
 // Per-chunk (and single-PUT) network retry policy.
 const MAX_PUT_ATTEMPTS = 5;
@@ -300,6 +324,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   sessionRef.current = session;
 
   const [tasks, setTasks] = useState<UploadTask[]>([]);
+  const tasksRef = useRef(tasks);
+  tasksRef.current = tasks;
+  const taskEpochsRef = useRef(new Map<string, object>());
   const engineRef = useRef<UploadEngine | null>(null);
   const [isPaused, setIsPaused] = useState(false);
   const uploadingIds = useRef(new Set<string>());
@@ -316,9 +343,18 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const resumeWaitersRef = useRef<Array<() => void>>([]);
   const cancelledIds = useRef(new Set<string>());
 
-  const waitWhilePaused = useCallback((): Promise<void> => {
+  const waitWhilePaused = useCallback((signal?: AbortSignal): Promise<void> => {
     if (!pausedRef.current) return Promise.resolve();
-    return new Promise<void>((resolve) => resumeWaitersRef.current.push(resolve));
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        resumeWaitersRef.current = resumeWaitersRef.current.filter((waiter) => waiter !== done);
+        signal?.removeEventListener("abort", done);
+        resolve();
+      };
+      if (signal?.aborted) { done(); return; }
+      resumeWaitersRef.current.push(done);
+      signal?.addEventListener("abort", done, { once: true });
+    });
   }, []);
 
   const xhrSetFor = useCallback((taskId: string): Set<XMLHttpRequest> => {
@@ -376,51 +412,97 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     );
   }, []);
 
-  const { publicKey: cryptoPublicKey, metadataKey: cryptoMetadataKey } =
-    useCrypto();
+  const cryptoContext = useCrypto();
   const workspace = useWorkspace();
-  // New records are created with the newest workspace key version; its raw
-  // key, HKDF metadata key and version always travel together.
-  const {
-    current: workspaceKey,
-    isWorkspaceEncrypted,
-    reload: reloadWorkspaceKeyring,
-  } = useWorkspaceSpaceKey();
+  const { current: workspaceKey, isWorkspaceEncrypted, keyFor, reload: reloadWorkspaceKeyring } = useWorkspaceSpaceKey();
   const reloadWorkspaceKeyringRef = useRef(reloadWorkspaceKeyring);
   reloadWorkspaceKeyringRef.current = reloadWorkspaceKeyring;
-  const rawSpaceKey = workspaceKey?.rawKey ?? null;
-  const workspaceMetadataKey = workspaceKey?.metadataKey ?? null;
-  const workspaceSpaceKeyVersion = workspaceKey?.keyVersion ?? null;
-  // Keep a ref so the useCallback below always reads the latest key
-  // without needing to be re-created (avoids stale closure)
-  const cryptoPublicKeyRef = useRef<CryptoKey | null>(null);
-  cryptoPublicKeyRef.current = cryptoPublicKey;
-  const cryptoMetadataKeyRef = useRef<CryptoKey | null>(null);
-  cryptoMetadataKeyRef.current = cryptoMetadataKey;
-  const workspaceRawSpaceKeyRef = useRef<Uint8Array | null>(null);
-  workspaceRawSpaceKeyRef.current = rawSpaceKey;
-  const workspaceMetadataKeyRef = useRef<CryptoKey | null>(null);
-  workspaceMetadataKeyRef.current = workspaceMetadataKey;
-  const workspaceSpaceKeyVersionRef = useRef<number | null>(null);
-  workspaceSpaceKeyVersionRef.current = workspaceSpaceKeyVersion;
-  const isWorkspaceEncryptedRef = useRef(false);
-  isWorkspaceEncryptedRef.current = isWorkspaceEncrypted;
-  const scopedFetchRef = useRef(workspace.scopedFetch);
-  scopedFetchRef.current = workspace.scopedFetch;
+  const keyForRef = useRef(keyFor);
+  keyForRef.current = keyFor;
+  const accountId = session?.user?.id ?? "";
+  const spaceId = accountId ? driveScopeSpaceId(workspace.driveScope, accountId) : "";
+  const access = useMemo(() => ({
+    accountId, spaceId, unlocked: cryptoContext.isUnlocked,
+    wrappedBy: isWorkspaceEncrypted ? "space" as const : "user" as const,
+    version: isWorkspaceEncrypted ? workspaceKey?.keyVersion ?? null : null,
+    publicKey: cryptoContext.publicKey,
+    metadataKey: isWorkspaceEncrypted ? workspaceKey?.metadataKey ?? null : cryptoContext.metadataKey,
+    journalKey: isWorkspaceEncrypted ? workspaceKey?.uploadJournalKey ?? null : cryptoContext.uploadJournalKey,
+    rawKey: isWorkspaceEncrypted ? workspaceKey?.rawKey ?? null : null,
+  }), [accountId, spaceId, cryptoContext.isUnlocked, cryptoContext.publicKey, cryptoContext.metadataKey,
+    cryptoContext.uploadJournalKey, isWorkspaceEncrypted, workspaceKey]);
+  const accessRef = useRef(access);
+  accessRef.current = access;
+  const snapshotsRef = useRef(new Map<string, UploadSnapshot>());
+  const resumeRecordsRef = useRef(new Map<string, UploadRecord>());
 
+  const captureUploadContext = useCallback((task: Pick<UploadTask, "id" | "scope">,
+    journalKey?: CryptoKey): UploadSnapshot => {
+    const current = accessRef.current;
+    if (!current.unlocked || !current.metadataKey || !current.journalKey ||
+      task.scope.accountId !== current.accountId || task.scope.spaceId !== current.spaceId ||
+      task.scope.wrappedBy !== current.wrappedBy || task.scope.productId !== "drive") throw new Error("Unlock this workspace to resume uploads");
+    if (!journalKey && task.scope.spaceKeyVersion !== current.version) throw new Error("Workspace keys changed; retry this upload");
+    if (current.wrappedBy === "space" && (!current.rawKey || !current.version)) throw new Error("Workspace keys are unavailable");
+    if (current.wrappedBy === "user" && !current.publicKey) throw new Error("Vault keys are unavailable");
+    const controller = new AbortController();
+    const isActive = () => accessRef.current === current && !controller.signal.aborted;
+    const checkActive = () => { if (!isActive()) throw new Error("Upload encryption context changed"); };
+    const target: FileKeyTarget = current.wrappedBy === "space"
+      ? { wrappedBy: "space", rawSpaceKey: current.rawKey!.slice(), spaceId: current.spaceId, spaceKeyVersion: current.version! }
+      : { wrappedBy: "user", publicKey: current.publicKey! };
+    const snapshot: UploadSnapshot = {
+      scope: task.scope, metadataKey: current.metadataKey, target, currentVersion: current.version,
+      signal: controller.signal, waitWhilePaused: () => waitWhilePaused(controller.signal),
+      isActive, checkActive, abort: () => controller.abort(),
+      journal: { scope: task.scope, key: journalKey ?? current.journalKey, isActive },
+      request: createScopedUploadRequest({ scope: task.scope, signal: controller.signal, isActive,
+        waitWhilePaused: () => waitWhilePaused(controller.signal) }),
+      dispose() {
+        controller.abort();
+        abortTaskXhrs(task.id);
+        if (target.wrappedBy === "space") target.rawSpaceKey.fill(0);
+        if (snapshotsRef.current.get(task.id) === snapshot) snapshotsRef.current.delete(task.id);
+      },
+    };
+    snapshotsRef.current.set(task.id, snapshot);
+    return snapshot;
+  }, [abortTaskXhrs, waitWhilePaused]);
+
+  // A lock, account/Space change or key rotation invalidates every outstanding job.
+  // Cleanup aborts work; render filters prevent stale filenames from being shown.
+  useEffect(() => () => {
+    for (const [id, epoch] of taskEpochsRef.current) {
+      if (epoch !== access) continue;
+      engineRef.current?.cancel(id);
+      abortTaskXhrs(id);
+      taskEpochsRef.current.delete(id);
+    }
+    for (const [id, snapshot] of snapshotsRef.current) {
+      snapshot.abort();
+      engineRef.current?.cancel(id);
+      abortTaskXhrs(id);
+      snapshot.dispose();
+    }
+    resumeRecordsRef.current.clear();
+    const waiters = resumeWaitersRef.current;
+    resumeWaitersRef.current = [];
+    waiters.forEach((resolve) => resolve());
+  }, [access, abortTaskXhrs]);
   const uploadEncryptedThumbnail = useCallback(
     async (
       encryptedDataUrl: string,
       bucketId: string,
       fileStorageKey: string,
-      parentSessionId?: string,
+      parentSessionId: string,
+      context: UploadSnapshot,
     ): Promise<string | undefined> => {
       try {
         // Convert encrypted string to bytes for upload
         const bytes = new TextEncoder().encode(encryptedDataUrl);
         const blob = new Blob([bytes], { type: "application/octet-stream" });
 
-        const presign = await scopedFetchRef.current("/api/objects/presign-upload", {
+        const presign = await context.request("/api/objects/presign-upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -435,14 +517,18 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         });
         if (!presign.ok) throw new Error("Thumbnail upload reservation expired");
         const { uploadUrl, objectKey } = await presign.json();
+        context.checkActive();
+        if (objectKey !== `${fileStorageKey}-thumb`) throw new Error("Thumbnail reservation identity changed");
 
         const uploaded = await fetch(uploadUrl, {
           method: "PUT",
           headers: { "Content-Type": "application/octet-stream", ...WRITE_ONCE_PUT_HEADERS },
           credentials: "omit",
+          signal: context.signal,
           body: blob,
         });
         if (!uploaded.ok) throw new Error(`Thumbnail upload failed (${uploaded.status})`);
+        context.checkActive();
 
         return objectKey;
       } catch (err) {
@@ -453,67 +539,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     [],
   );
 
-  /**
-   * Determine whether we should encrypt this upload.
-   * Requires BOTH:
-   *  1. Vault is unlocked (publicKey in memory), AND
-   *  2. User has opted in via User Model preference (session.user.encryptByDefault)
-   */
-  function shouldEncryptNow(): true {
-    if (isWorkspaceEncryptedRef.current) {
-      if (!workspaceRawSpaceKeyRef.current || !workspaceMetadataKeyRef.current) {
-        throw new Error(
-          "Upload blocked: unlock the workspace encryption keys first.",
-        );
-      }
-      return true;
-    }
-    if (!cryptoPublicKeyRef.current || !cryptoMetadataKeyRef.current) {
-      throw new Error(
-        "Upload blocked: unlock your Xenode encryption vault first.",
-      );
-    }
-    return true;
-  }
-
-  function currentMetadataKey(): CryptoKey | null {
-    return isWorkspaceEncryptedRef.current
-      ? workspaceMetadataKeyRef.current
-      : cryptoMetadataKeyRef.current;
-  }
-
-  /**
-   * Where this upload's file key is wrapped. Captured once per upload so the
-   * wrap and the completion request name the same Space key version.
-   */
-  function fileKeyTarget(spaceId: string): FileKeyTarget {
-    if (isWorkspaceEncryptedRef.current) {
-      const rawSpaceKey = workspaceRawSpaceKeyRef.current;
-      const spaceKeyVersion = workspaceSpaceKeyVersionRef.current;
-      if (!rawSpaceKey || !spaceKeyVersion) {
-        throw new Error("Upload blocked: unlock the workspace encryption keys first.");
-      }
-      return { wrappedBy: "space", rawSpaceKey, spaceId, spaceKeyVersion };
-    }
-    const publicKey = cryptoPublicKeyRef.current;
-    if (!publicKey) {
-      throw new Error("Upload blocked: unlock your Xenode encryption vault first.");
-    }
-    return { wrappedBy: "user", publicKey };
-  }
-
-  /**
-   * Seals an upload's name, content type, metadata object and thumbnail under
-   * the current metadata key, bound to the reserved object id. A thumbnail is
-   * best effort; everything else fails the upload.
-   */
   async function sealUploadMetadata(
     fileId: string,
     file: File,
     metadata: FileMetadata | null,
     rawThumbnail: string | undefined,
+    metadataKey: CryptoKey,
   ) {
-    const metadataKey = currentMetadataKey();
     if (!metadataKey || !metadata) throw new Error("Metadata key unavailable");
     return {
       thumbnail: rawThumbnail
@@ -605,7 +637,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         ),
       );
 
+      let context: UploadSnapshot | undefined;
       try {
+        context = captureUploadContext(task);
         let uploadFile = task.file;
         let rawThumbnail: string | undefined;
         let aspectRatio: number | undefined;
@@ -648,7 +682,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         let encryptedMetadata: string | undefined;
         let metadata: FileMetadata | null = null;
 
-        if (shouldEncryptNow()) {
+        context.checkActive(); {
           try {
             setTasks((prev) =>
               prev.map((t) =>
@@ -858,8 +892,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         );
 
         let sessionId: string | undefined = undefined;
+        const reservedIdentity: { fileId?: string } = {};
         const presignMultipart = async () => {
-          const res = await scopedFetchRef.current(
+          const res = await context!.request(
             "/api/objects/presign-upload-multipart",
             {
               method: "POST",
@@ -878,11 +913,16 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             const error = await res.json().catch(() => ({}));
             throw new Error(error.error || "Failed to get multipart upload URLs");
           }
-          return res.json();
+          const data = await res.json();
+          context!.checkActive();
+          validateUploadReservation(data, { spaceId: task.scope.spaceId, bucketId: task.bucketId,
+            sessionId, fileId: reservedIdentity.fileId });
+          return data;
         };
 
         let presign = await presignMultipart();
         const fileId: string = presign.fileId;
+        reservedIdentity.fileId = fileId;
         let urls: { index: number; key: string; url: string }[] = presign.urls;
         const returnedBucketId: string = presign.bucketId;
         const serverChunkSize: number = presign.chunkSize;
@@ -891,7 +931,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           throw new Error("Upload reservation does not match the encrypted layout");
         }
 
-        const keyTarget = fileKeyTarget(String(presign.spaceId));
+        const keyTarget = context.target;
         setTasks((prev) =>
           prev.map((t) =>
             t.id === task.id ? { ...t, statusText: "Encrypting file…" } : t,
@@ -911,7 +951,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           throw new Error("Encrypted size does not match the reservation");
         }
         try {
-          const sealed = await sealUploadMetadata(sessionId, uploadFile, metadata, rawThumbnail);
+          const sealed = await sealUploadMetadata(sessionId, uploadFile, metadata, rawThumbnail, context.metadataKey);
           thumbnail = sealed.thumbnail;
           encryptedMetadata = sealed.encryptedMetadata;
           encryptedName = sealed.encryptedName;
@@ -928,10 +968,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             returnedBucketId,
             fileId,
             sessionId,
+            context,
           );
         }
 
-        const userId = sessionRef.current?.user?.id;
+        const userId = context.scope.accountId;
 
         // Deterministic per-chunk metadata (ciphertext slice sizes) — matches
         // what we PUT and is resume-safe (independent of upload order).
@@ -943,9 +984,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
         // Journal the upload so a reload can resume it (bytes only under the cap).
         if (userId) {
-          await saveUploadRecord(userId, {
+          await saveUploadRecord(context.journal, {
             id: task.id,
             userId,
+            spaceId: context.scope.spaceId,
+            wrappedBy: context.scope.wrappedBy,
+            spaceKeyVersion: context.scope.spaceKeyVersion ?? undefined,
+            spaceKeyWrapIv,
             status: "uploading",
             createdAt: Date.now(),
             fileName: task.file.name,
@@ -956,20 +1001,20 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             folderId: task.folderId,
             aspectRatio,
             isChunked: true,
-            isEncrypted: !!encryptedDEK,
+            isEncrypted: true,
             fileId,
             sessionId,
             uploadContentType,
-            encryptedDEK,
+            encryptedDEK: encryptedDEK!,
             chunkSize: serverChunkSize,
             cipherChunkSize,
             chunkCount,
             chunkIvs,
             completedChunks: [],
-            encryptedName,
+            encryptedName: encryptedName!,
             encryptedContentType: encryptedContentTypeVal,
             encryptedMetadata,
-            thumbnail: thumbnailKey || thumbnail,
+            thumbnail,
             thumbnailKey,
             bytesPersisted: totalSize <= RESUME_BYTE_CAP,
             mainBytes: totalSize <= RESUME_BYTE_CAP ? uploadBody : undefined,
@@ -1014,14 +1059,14 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 updateProgress();
               },
               xhrSet,
-              isCancelled: () => cancelledIds.current.has(task.id),
-              waitWhilePaused,
+              isCancelled: () => cancelledIds.current.has(task.id) || !context!.isActive(),
+              waitWhilePaused: context!.waitWhilePaused,
               refreshUrl: refreshUrls,
             });
 
             loaded[i] = chunkBlob.size;
             completed.add(i);
-            if (userId) markChunkComplete(userId, task.id, i).catch(() => {});
+            if (userId) await markChunkComplete(context!.journal, task.id, i).catch(() => {});
             updateProgress();
           }
         };
@@ -1032,7 +1077,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         );
         await Promise.all(workers);
 
-        const completeResponse = await scopedFetchRef.current("/api/objects/complete-upload", {
+        const completeResponse = await context!.request("/api/objects/complete-upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1046,11 +1091,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             mediaCategory: getMediaCategory(uploadFile.type),
             encryptedContentType: encryptedContentTypeVal,
             thumbnail: thumbnailKey,
-            isEncrypted: !!encryptedDEK,
-            encryptedDEK,
+            isEncrypted: true,
+            encryptedDEK: encryptedDEK!,
             spaceKeyWrapIv,
             ...spaceFieldsFor(keyTarget),
-            encryptedName,
+            encryptedName: encryptedName!,
             chunkSize: serverChunkSize,
             chunkCount,
             chunkIvs,
@@ -1072,11 +1117,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
         const completeData = await completeResponse.json();
         await upsertLocalObject(
-          sessionRef.current?.user?.id,
+          context.scope.accountId,
           completeData.object,
           returnedBucketId,
         );
-        if (userId) await deleteUploadRecord(userId, task.id).catch(() => {});
+        if (userId) await deleteUploadRecord(context.scope, task.id).catch(() => {});
 
         /*
         // Patch sidecar objects (audio and subtitles) with parentObjectId now that we have the main object's ID
@@ -1110,8 +1155,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       } catch (error) {
         const cancelled = cancelledIds.current.has(task.id);
         if (cancelled) {
-          const uid = sessionRef.current?.user?.id;
-          if (uid) await deleteUploadRecord(uid, task.id).catch(() => {});
+          const uid = context?.scope.accountId;
+          if (uid && context) await deleteUploadRecord(context.scope, task.id).catch(() => {});
         } else {
           console.error("Upload error:", error);
         }
@@ -1132,12 +1177,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           ),
         );
       } finally {
+        context?.dispose();
         uploadingIds.current.delete(task.id);
         xhrsByTask.current.delete(task.id);
         cancelledIds.current.delete(task.id);
       }
     },
-    [uploadEncryptedThumbnail, waitWhilePaused, xhrSetFor],
+    [uploadEncryptedThumbnail, xhrSetFor, captureUploadContext],
   );
 
   const uploadFileDirectly = useCallback(async (task: UploadTask) => {
@@ -1162,14 +1208,17 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       ),
     );
 
+    let context: UploadSnapshot | undefined;
     try {
+      context = captureUploadContext(task);
       let rawThumbnail: string | undefined;
       let thumbnail: string | undefined;
 
       // The server creates the opaque key; refreshes use the reservation ID.
       let mainSessionId: string | undefined = undefined;
+      const reservedIdentity: { fileId?: string } = {};
       const presignMain = async () => {
-        const res = await scopedFetchRef.current("/api/objects/presign-upload", {
+        const res = await context!.request("/api/objects/presign-upload", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1177,23 +1226,28 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             fileSize: fileCiphertextBytes(task.file.size, Math.max(task.file.size, 1)),
             fileType: "application/octet-stream",
             bucketId: task.bucketId,
-            sessionId: mainSessionId,
+            sessionId: mainSessionId!,
           }),
         });
         if (!res.ok) {
           const error = await res.json().catch(() => ({}));
           throw new Error(error.error || "Failed to get upload URL");
         }
-        return res.json();
+        const data = await res.json();
+        context!.checkActive();
+        validateUploadReservation(data, { spaceId: task.scope.spaceId, bucketId: task.bucketId,
+          sessionId: mainSessionId, fileId: reservedIdentity.fileId });
+        return data;
       };
 
       const mainPresign = await presignMain();
       const objectKey: string = mainPresign.objectKey;
+      reservedIdentity.fileId = objectKey;
       const returnedBucketId: string = mainPresign.bucketId;
       let uploadUrl: string = mainPresign.uploadUrl;
       mainSessionId = mainPresign.sessionId;
       if (!mainSessionId) throw new Error("Upload reservation is missing");
-      const keyTarget = fileKeyTarget(String(mainPresign.spaceId));
+      const keyTarget = context.target;
 
       let aspectRatio: number | undefined;
 
@@ -1208,7 +1262,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
       let encryptedMetadata: string | undefined;
 
-      if (shouldEncryptNow()) {
+      context.checkActive(); {
         try {
           // Metadata + preview extraction off the main thread (hardened worker).
           const extracted = await extractFileMetadata(task.file);
@@ -1227,6 +1281,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             task.file,
             { ...extracted.metadata, aspectRatio: aspectRatio ?? null },
             rawThumbnail,
+            context.metadataKey,
           );
           thumbnail = sealed.thumbnail;
           encryptedMetadata = sealed.encryptedMetadata;
@@ -1245,18 +1300,23 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           returnedBucketId,
           objectKey,
           mainSessionId,
+          context,
         );
       }
 
-      const userId = sessionRef.current?.user?.id;
+      const userId = context.scope.accountId;
       const mainSize = uploadBody.size;
       const withinCap = mainSize <= RESUME_BYTE_CAP;
 
       // Journal for reload-resume (persist bytes only under the cap).
       if (userId) {
-        await saveUploadRecord(userId, {
+        await saveUploadRecord(context.journal, {
           id: task.id,
           userId,
+          spaceId: context.scope.spaceId,
+          wrappedBy: context.scope.wrappedBy,
+          spaceKeyVersion: context.scope.spaceKeyVersion ?? undefined,
+          spaceKeyWrapIv,
           status: "uploading",
           createdAt: Date.now(),
           fileName: task.file.name,
@@ -1267,17 +1327,17 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           folderId: task.folderId,
           aspectRatio,
           isChunked: false,
-          isEncrypted: !!encryptedDEK,
+          isEncrypted: true,
           fileId: objectKey,
-          sessionId: mainSessionId,
+          sessionId: mainSessionId!,
           uploadContentType,
-          encryptedDEK,
+          encryptedDEK: encryptedDEK!,
           iv: encryptedIV,
           completedChunks: [],
-          encryptedName,
+          encryptedName: encryptedName!,
           encryptedContentType: encryptedContentTypeVal,
           encryptedMetadata,
-          thumbnail: thumbnailKey || thumbnail,
+          thumbnail,
           thumbnailKey,
           bytesPersisted: withinCap,
           mainBytes: withinCap ? (uploadBody as Blob) : undefined,
@@ -1285,7 +1345,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       }
 
       const xhrSet = xhrSetFor(task.id);
-      const isCancelled = () => cancelledIds.current.has(task.id);
+      const isCancelled = () => cancelledIds.current.has(task.id) || !context!.isActive();
 
       // Step 6: Upload the main file (retryable, pause-aware, progress-tracked).
       await putWithRetry(uploadBody as Blob, uploadContentType, {
@@ -1298,7 +1358,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         },
         xhrSet,
         isCancelled,
-        waitWhilePaused,
+        waitWhilePaused: context.waitWhilePaused,
         refreshUrl: async () => {
           const p = await presignMain();
           uploadUrl = p.uploadUrl;
@@ -1306,13 +1366,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       });
 
       // Step 4: Notify server of completion
-      const completeResponse = await scopedFetchRef.current("/api/objects/complete-upload", {
+      const completeResponse = await context!.request("/api/objects/complete-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           objectKey,
           bucketId: returnedBucketId,
-          sessionId: mainSessionId,
+          sessionId: mainSessionId!,
           folderId: task.folderId,
           size: uploadBody.size,
           contentType: uploadContentType,
@@ -1320,12 +1380,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           mediaCategory: getMediaCategory(task.file.type),
           encryptedContentType: encryptedContentTypeVal,
           thumbnail: thumbnailKey,
-          isEncrypted: !!encryptedDEK,
-          encryptedDEK,
+          isEncrypted: true,
+          encryptedDEK: encryptedDEK!,
           iv: encryptedIV,
           spaceKeyWrapIv,
           ...spaceFieldsFor(keyTarget),
-          encryptedName,
+          encryptedName: encryptedName!,
           encryptedMetadata,
           aspectRatio,
         }),
@@ -1342,11 +1402,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
       const completeData = await completeResponse.json();
       await upsertLocalObject(
-        sessionRef.current?.user?.id,
+        context.scope.accountId,
         completeData.object,
         returnedBucketId,
       );
-      if (userId) await deleteUploadRecord(userId, task.id).catch(() => {});
+      if (userId) await deleteUploadRecord(context.scope, task.id).catch(() => {});
 
       // Mark as completed
       setTasks((prev) =>
@@ -1357,8 +1417,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     } catch (error) {
       const wasCancelled = cancelledIds.current.has(task.id);
       if (wasCancelled) {
-        const uid = sessionRef.current?.user?.id;
-        if (uid) await deleteUploadRecord(uid, task.id).catch(() => {});
+        const uid = context?.scope.accountId;
+        if (uid && context) await deleteUploadRecord(context.scope, task.id).catch(() => {});
       } else {
         console.error("Upload error:", error);
       }
@@ -1378,6 +1438,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         ),
       );
     } finally {
+      context?.dispose();
       uploadingIds.current.delete(task.id);
       xhrsByTask.current.delete(task.id);
       cancelledIds.current.delete(task.id);
@@ -1385,482 +1446,187 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   }, [
     uploadChunkedMediaDirectly,
     uploadEncryptedThumbnail,
-    waitWhilePaused,
     xhrSetFor,
+    captureUploadContext,
   ]);
 
+  const resumeRecord = useCallback(async (record: UploadRecord) => {
+    if (uploadingIds.current.has(record.id)) return;
+    const current = accessRef.current;
+    if (!current.unlocked || current.accountId !== record.userId || current.spaceId !== record.spaceId) return;
+    uploadingIds.current.add(record.id);
+    let snapshot: UploadSnapshot | undefined;
+    const setTask = (patch: Partial<UploadTask>) => setTasks((previous) =>
+      previous.map((task) => task.id === record.id ? { ...task, ...patch } : task));
+    try {
+      const versionKey = record.wrappedBy === "space" ? await keyForRef.current(record.spaceKeyVersion) : null;
+      if (accessRef.current !== current) throw new Error("Upload workspace changed");
+      const key = record.wrappedBy === "space" ? versionKey?.uploadJournalKey : current.journalKey;
+      if (!key) throw new NonRetryableUploadError("Unlock this workspace to resume uploads");
+      const scope: UploadJournalScope = { accountId: record.userId, productId: "drive", spaceId: record.spaceId,
+        wrappedBy: record.wrappedBy, spaceKeyVersion: record.spaceKeyVersion ?? null };
+      snapshot = captureUploadContext({ id: record.id, scope }, key);
+      const active = snapshot;
+      setTask({ status: pausedRef.current ? "paused" : "uploading", statusText: "Resuming…", error: undefined });
+      const object = await resumeUploadRecord(record, scope, {
+        request: active.request, checkActive: active.checkActive,
+        put: (body, getUrl, refreshUrl, onProgress) => putWithRetry(body, "application/octet-stream", {
+          getUrl, refreshUrl, onProgress, xhrSet: xhrSetFor(record.id), waitWhilePaused: active.waitWhilePaused,
+          isCancelled: () => cancelledIds.current.has(record.id) || !active.isActive(),
+        }),
+      }, {
+        currentSpaceKeyVersion: active.currentVersion,
+        onProgress: (progress) => setTask({ progress, statusText: undefined }),
+        onChunkComplete: (index) => markChunkComplete(active.journal, record.id, index).catch(() => {}),
+      });
+      active.checkActive();
+      await upsertLocalObject(scope.accountId, object as Parameters<typeof upsertLocalObject>[1], record.bucketId);
+      active.checkActive();
+      await deleteUploadRecord(scope, record.id).catch(() => {});
+      resumeRecordsRef.current.delete(record.id);
+      setTask({ status: "completed", progress: 100, statusText: undefined });
+    } catch (error) {
+      if (cancelledIds.current.has(record.id)) {
+        const scope: UploadJournalScope = { accountId: record.userId, productId: "drive", spaceId: record.spaceId,
+          wrappedBy: record.wrappedBy, spaceKeyVersion: record.spaceKeyVersion ?? null };
+        await deleteUploadRecord(scope, record.id).catch(() => {});
+        resumeRecordsRef.current.delete(record.id);
+      }
+      setTask({ status: "failed", statusText: undefined, interrupted: error instanceof NonRetryableUploadError,
+        error: error instanceof Error ? error.message : "Resume failed" });
+    } finally {
+      snapshot?.dispose();
+      uploadingIds.current.delete(record.id);
+      xhrsByTask.current.delete(record.id);
+      cancelledIds.current.delete(record.id);
+    }
+  }, [captureUploadContext, xhrSetFor]);
+
   useEffect(() => {
-    const engine = new UploadEngine(
-      {
-        async upload(input) {
-          await uploadFileDirectly(input.source as UploadTask);
-          return input.id;
-        },
-      },
-      acceptAllUploadPolicy,
-      createMemoryCheckpointStore(),
-      { concurrency: MAX_CONCURRENT_UPLOADS, maxAttempts: 1 },
-    );
+    const engine = new UploadEngine({ async upload(input) {
+      const record = resumeRecordsRef.current.get(input.id);
+      if (record) await resumeRecord(record);
+      else await uploadFileDirectly(input.source as UploadTask);
+      return input.id;
+    } }, acceptAllUploadPolicy, createMemoryCheckpointStore(), { concurrency: MAX_CONCURRENT_UPLOADS, maxAttempts: 1 });
     engineRef.current = engine;
     return () => {
       if (engineRef.current === engine) engineRef.current = null;
     };
-  }, [uploadFileDirectly]);
+  }, [uploadFileDirectly, resumeRecord]);
 
   const enqueueTask = useCallback((task: UploadTask) => {
     const engine = engineRef.current;
-    if (!engine) {
-      setTimeout(() => enqueueTask(task), 0);
-      return;
-    }
-    void engine.enqueue({
-      id: task.id,
-      name: task.file.name,
-      size: task.file.size,
-      contentType: task.file.type || "application/octet-stream",
-      source: task,
+    if (!engine) return;
+    taskEpochsRef.current.set(task.id, accessRef.current);
+    void engine.enqueue({ id: task.id, name: task.file.name, size: task.file.size,
+      contentType: task.file.type, source: task }).then((result) => {
+      if (result.status === "cancelled") setTasks((previous) => previous.map((candidate) => candidate.id === task.id
+        ? { ...candidate, status: "failed", error: "Upload stopped when its encryption context changed" } : candidate));
     });
   }, []);
 
-  // Records eligible for auto-resume after a reload, kept so retryTask can
-  // re-drive them. Populated by the rehydrate effect below.
-  const resumeRecordsRef = useRef<Map<string, UploadRecord>>(new Map());
-  const rehydratedRef = useRef(false);
+  const addTasks = useCallback((files: File[], bucketId: string, folderId: string | null) => {
+    const current = accessRef.current;
+    if (!current.unlocked || !current.journalKey || !current.metadataKey) return;
+    const scope: UploadJournalScope = { accountId: current.accountId, productId: "drive", spaceId: current.spaceId,
+      wrappedBy: current.wrappedBy, spaceKeyVersion: current.version };
+    const newTasks: UploadTask[] = files.map((file) => ({ id: crypto.randomUUID(), scope: { ...scope },
+      file, bucketId, folderId, status: "pending", progress: 0 }));
+    void requestPersistentStorage();
+    setTasks((previous) => [...previous, ...newTasks]);
+    newTasks.forEach(enqueueTask);
+  }, [enqueueTask]);
 
-  /**
-   * Resume an upload from its persisted, encrypted bytes after a reload. Skips
-   * pieces already in B2 (via /api/objects/upload-status), re-PUTs the rest to
-   * the SAME keys, then finalizes. Works for both the chunked and single paths.
-   */
-  const resumeRecord = useCallback(
-    async (rec: UploadRecord) => {
-      const userId = rec.userId || sessionRef.current?.user?.id;
-      if (!userId) return;
-      if (uploadingIds.current.has(rec.id)) return;
-      uploadingIds.current.add(rec.id);
-
-      const xhrSet = xhrSetFor(rec.id);
-      const isCancelled = () => cancelledIds.current.has(rec.id);
-      const setTask = (patch: Partial<UploadTask>) =>
-        setTasks((prev) =>
-          prev.map((t) => (t.id === rec.id ? { ...t, ...patch } : t)),
-        );
-      setTask({
-        status: pausedRef.current ? "paused" : "uploading",
-        statusText: "Resuming…",
-        interrupted: false,
-        error: undefined,
-      });
-
-      try {
-        if (!rec.mainBytes) throw new Error("Upload bytes unavailable");
-
-        // What's already in B2?
-        let mainExists = false;
-        const serverDone = new Set<number>(rec.completedChunks ?? []);
-        try {
-          const st = await fetch(
-            `/api/objects/upload-status?bucketId=${encodeURIComponent(
-              rec.bucketId,
-            )}&fileId=${encodeURIComponent(rec.fileId)}`,
-          );
-          if (st.ok) {
-            const j = await st.json();
-            mainExists = !!j.mainExists;
-            if (Array.isArray(j.completedChunks))
-              for (const i of j.completedChunks) serverDone.add(i);
-          }
-        } catch {
-          /* fall back to the persisted completedChunks */
-        }
-
-        if (rec.isChunked) {
-          const cipherChunkSize = rec.cipherChunkSize ?? 0;
-          const chunkCount = rec.chunkCount ?? 0;
-          if (!cipherChunkSize || !chunkCount)
-            throw new Error("Missing chunk metadata");
-          const total = rec.mainBytes.size;
-          const presignBody = {
-            fileSize: total,
-            fileType: rec.uploadContentType,
-            bucketId: rec.bucketId,
-            chunkCount,
-            chunkSize: rec.chunkSize,
-            sessionId: rec.sessionId,
-          };
-          const presignMultipart = async () => {
-            const res = await fetch("/api/objects/presign-upload-multipart", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(presignBody),
-            });
-            if (!res.ok) throw new Error("Failed to re-presign chunks");
-            return res.json();
-          };
-          let presign = await presignMultipart();
-          let urls = presign.urls as { index: number; key: string; url: string }[];
-
-          const loaded = new Array(chunkCount).fill(0);
-          for (const i of serverDone)
-            loaded[i] = Math.min(cipherChunkSize, total - i * cipherChunkSize);
-          const update = () => {
-            const tl = loaded.reduce((a, b) => a + b, 0);
-            setTask({ progress: Math.round((tl / total) * 100), statusText: undefined });
-          };
-          update();
-
-          let next = 0;
-          const worker = async () => {
-            while (true) {
-              const i = next++;
-              if (i >= chunkCount) break;
-              if (serverDone.has(i)) continue;
-              const start = i * cipherChunkSize;
-              const end = Math.min(start + cipherChunkSize, total);
-              const blob = rec.mainBytes!.slice(start, end);
-              await putWithRetry(blob, rec.uploadContentType, {
-                getUrl: () => urls[i].url,
-                onProgress: (l) => {
-                  loaded[i] = l;
-                  update();
-                },
-                xhrSet,
-                isCancelled,
-                waitWhilePaused,
-                refreshUrl: async () => {
-                  presign = await presignMultipart();
-                  urls = presign.urls;
-                },
-              });
-              loaded[i] = blob.size;
-              serverDone.add(i);
-              markChunkComplete(userId, rec.id, i).catch(() => {});
-              update();
-            }
-          };
-          await Promise.all(
-            Array.from({ length: Math.min(4, chunkCount) }, () => worker()),
-          );
-
-          const allChunks = Array.from({ length: chunkCount }, (_, i) => {
-            const start = i * cipherChunkSize;
-            const end = Math.min(start + cipherChunkSize, total);
-            return { index: i, key: urls[i].key, size: end - start };
-          });
-          let thumbKey = rec.thumbnailKey;
-          if (!thumbKey && rec.thumbnail?.startsWith("enc:"))
-            thumbKey = await uploadEncryptedThumbnail(
-              rec.thumbnail,
-              rec.bucketId,
-              rec.fileId,
-              rec.sessionId,
-            );
-
-          const comp = await fetch("/api/objects/complete-upload", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              objectKey: rec.fileId,
-              bucketId: rec.bucketId,
-              sessionId: rec.sessionId,
-              folderId: rec.folderId ?? null,
-              size: total,
-              contentType: rec.type || "application/octet-stream",
-              originalContentType: rec.type,
-              mediaCategory: rec.mediaCategory,
-              encryptedContentType: rec.encryptedContentType,
-              thumbnail: thumbKey,
-              isEncrypted: rec.isEncrypted,
-              encryptedDEK: rec.encryptedDEK,
-              encryptedName: rec.encryptedName,
-              chunkSize: rec.chunkSize,
-              chunkCount,
-              chunkIvs: rec.chunkIvs,
-              isChunked: true,
-              chunks: allChunks,
-              encryptedMetadata: rec.encryptedMetadata,
-              aspectRatio: rec.aspectRatio,
-            }),
-          });
-          if (!comp.ok) {
-            const e = await comp.json().catch(() => ({}));
-            throw new Error(e.error || "Failed to finalize upload");
-          }
-          const cd = await comp.json();
-          await upsertLocalObject(userId, cd.object, rec.bucketId);
-        } else {
-          const total = rec.mainBytes.size;
-          let optimizedKey: string | undefined = undefined;
-          // Optimized preview (best-effort).
-          if (rec.optimizedBytes && rec.optimizedKey) {
-            try {
-              const optimizedPresign = await fetch("/api/objects/presign-upload", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    fileSize: rec.optimizedBytes.size,
-                    fileType: rec.isEncrypted
-                      ? "application/octet-stream"
-                      : rec.optimizedContentType,
-                    bucketId: rec.bucketId,
-                    parentSessionId: rec.sessionId,
-                    variant: "optimized",
-                  }),
-                });
-              if (!optimizedPresign.ok) throw new Error("Could not reserve optimized variant");
-              const op = await optimizedPresign.json();
-              await putWithRetry(
-                rec.optimizedBytes,
-                rec.isEncrypted
-                  ? "application/octet-stream"
-                  : rec.optimizedContentType || "application/octet-stream",
-                {
-                  getUrl: () => op.uploadUrl,
-                  xhrSet,
-                  isCancelled,
-                  waitWhilePaused,
-                },
-              );
-              optimizedKey = op.objectKey;
-            } catch (e) {
-              if (isCancelled()) throw e;
-              console.warn("[Resume] optimized upload failed, skipping", e);
-            }
-          }
-          if (!mainExists) {
-            const p = await (
-              await fetch("/api/objects/presign-upload", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  fileSize: total,
-                  fileType: rec.uploadContentType,
-                  bucketId: rec.bucketId,
-                  sessionId: rec.sessionId,
-                }),
-              })
-            ).json();
-            await putWithRetry(rec.mainBytes, rec.uploadContentType, {
-              getUrl: () => p.uploadUrl,
-              onProgress: (l) =>
-                setTask({ progress: Math.round((l / total) * 100), statusText: undefined }),
-              xhrSet,
-              isCancelled,
-              waitWhilePaused,
-            });
-          }
-          let thumbKey = rec.thumbnailKey;
-          if (!thumbKey && rec.thumbnail?.startsWith("enc:"))
-            thumbKey = await uploadEncryptedThumbnail(
-              rec.thumbnail,
-              rec.bucketId,
-              rec.fileId,
-              rec.sessionId,
-            );
-          const comp = await fetch("/api/objects/complete-upload", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              objectKey: rec.fileId,
-              bucketId: rec.bucketId,
-              sessionId: rec.sessionId,
-              folderId: rec.folderId ?? null,
-              size: total,
-              contentType: rec.isEncrypted
-                ? "application/octet-stream"
-                : rec.type,
-              originalContentType: rec.type,
-              mediaCategory: rec.mediaCategory,
-              encryptedContentType: rec.encryptedContentType,
-              thumbnail: thumbKey,
-              isEncrypted: rec.isEncrypted,
-              encryptedDEK: rec.encryptedDEK,
-              iv: rec.iv,
-              encryptedName: rec.encryptedName,
-              encryptedMetadata: rec.encryptedMetadata,
-              optimizedKey,
-              optimizedSize: optimizedKey ? rec.optimizedSize : undefined,
-              optimizedContentType: rec.optimizedContentType,
-              optimizedIV: rec.optimizedIV,
-              optimizedEncryptedDEK: rec.optimizedEncryptedDEK,
-              aspectRatio: rec.aspectRatio,
-            }),
-          });
-          if (!comp.ok) {
-            const e = await comp.json().catch(() => ({}));
-            throw new Error(e.error || "Failed to finalize upload");
-          }
-          const cd = await comp.json();
-          await upsertLocalObject(userId, cd.object, rec.bucketId);
-        }
-
-        await deleteUploadRecord(userId, rec.id).catch(() => {});
-        resumeRecordsRef.current.delete(rec.id);
-        setTask({ status: "completed", progress: 100, statusText: undefined });
-      } catch (error) {
-        const cancelled = isCancelled();
-        if (cancelled) {
-          await deleteUploadRecord(userId, rec.id).catch(() => {});
-          resumeRecordsRef.current.delete(rec.id);
-        } else {
-          console.error("[Resume] error:", error);
-        }
-        setTask({
-          status: "failed",
-          statusText: undefined,
-          error: cancelled
-            ? "Upload cancelled"
-            : error instanceof Error
-              ? error.message
-              : "Resume failed",
-        });
-      } finally {
-        uploadingIds.current.delete(rec.id);
-        xhrsByTask.current.delete(rec.id);
-        cancelledIds.current.delete(rec.id);
-      }
-    },
-    [waitWhilePaused, xhrSetFor, uploadEncryptedThumbnail],
-  );
-
-  const addTasks = useCallback(
-    (files: File[], bucketId: string, folderId: string | null) => {
-      const newTasks: UploadTask[] = files.map((file) => ({
-        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        file,
-        bucketId,
-        folderId,
-        status: "pending",
-        progress: 0,
-      }));
-
-      // Best-effort: keep our IndexedDB from being evicted mid-upload (iOS).
-      void requestPersistentStorage();
-
-      setTasks((prev) => [...prev, ...newTasks]);
-      newTasks.forEach(enqueueTask);
-    },
-    [enqueueTask],
-  );
-
+  const taskInCurrentScope = useCallback((id: string) => tasksRef.current.find((task) => task.id === id &&
+    task.scope.accountId === accessRef.current.accountId && task.scope.spaceId === accessRef.current.spaceId), []);
   const removeTask = useCallback((id: string) => {
+    const task = taskInCurrentScope(id);
+    if (!task) return;
+    snapshotsRef.current.get(id)?.abort();
+    engineRef.current?.cancel(id);
+    abortTaskXhrs(id);
     resumeRecordsRef.current.delete(id);
-    const uid = sessionRef.current?.user?.id;
-    if (uid) deleteUploadRecord(uid, id).catch(() => {});
-    setTasks((prev) => prev.filter((t) => t.id !== id));
-  }, []);
+    void deleteUploadRecord(task.scope, id).catch(() => {});
+    setTasks((previous) => previous.filter((candidate) => candidate.id !== id));
+  }, [taskInCurrentScope, abortTaskXhrs]);
+  const cancelTask = useCallback((id: string) => {
+    const task = taskInCurrentScope(id);
+    if (!task) return;
+    cancelledIds.current.add(id);
+    snapshotsRef.current.get(id)?.abort();
+    engineRef.current?.cancel(id);
+    abortTaskXhrs(id);
+    resumeRecordsRef.current.delete(id);
+    void deleteUploadRecord(task.scope, id).catch(() => {});
+    setTasks((previous) => previous.map((candidate) => candidate.id === id
+      ? { ...candidate, status: "failed", error: "Upload cancelled" } : candidate));
+  }, [taskInCurrentScope, abortTaskXhrs]);
 
-  const cancelTask = useCallback(
-    (id: string) => {
-      cancelledIds.current.add(id);
-      engineRef.current?.cancel(id);
-      abortTaskXhrs(id);
-      resumeRecordsRef.current.delete(id);
-      const uid = sessionRef.current?.user?.id;
-      if (uid) deleteUploadRecord(uid, id).catch(() => {});
-      setTasks((prev) =>
-        prev.map((t) =>
-          t.id === id
-            ? { ...t, status: "failed", error: "Upload cancelled" }
-            : t,
-        ),
-      );
-    },
-    [abortTaskXhrs],
-  );
-
-  const retryTask = useCallback(
-    (id: string) => {
-      cancelledIds.current.delete(id);
-      const rec = resumeRecordsRef.current.get(id);
-      if (rec) {
-        void resumeRecord(rec);
-        return;
-      }
-      // Live task whose File is still in memory - re-queue from scratch.
-      const task = tasks.find(
-        (candidate) =>
-          candidate.id === id &&
-          candidate.status === "failed" &&
-          !candidate.interrupted,
-      );
-      if (!task) return;
-      const queued: UploadTask = {
-        ...task,
-        status: "pending",
-        progress: 0,
-        error: undefined,
-      };
-      setTasks((prev) =>
-        prev.map((candidate) => (candidate.id === id ? queued : candidate)),
-      );
+  const retryTask = useCallback((id: string) => {
+    const task = taskInCurrentScope(id);
+    if (!task || task.interrupted) return;
+    cancelledIds.current.delete(id);
+    if (resumeRecordsRef.current.has(id)) { enqueueTask(task); return; }
+    const current = accessRef.current;
+    if (!current.unlocked || !current.journalKey || !current.metadataKey) return;
+    // A fresh attempt has a fresh job identity; late callbacks cannot replace it.
+    void deleteUploadRecord(task.scope, id).catch(() => {}).then(() => {
+      if (accessRef.current !== current) return;
+      const scope: UploadJournalScope = { accountId: current.accountId, productId: "drive", spaceId: current.spaceId,
+        wrappedBy: current.wrappedBy, spaceKeyVersion: current.version };
+      const queued: UploadTask = { ...task, id: crypto.randomUUID(), scope, status: "pending", progress: 0, error: undefined };
+      setTasks((previous) => previous.map((candidate) => candidate.id === id ? queued : candidate));
       enqueueTask(queued);
-    },
-    [resumeRecord, tasks, enqueueTask],
-  );
-
+    });
+  }, [taskInCurrentScope, enqueueTask]);
   const clearCompleted = useCallback(() => {
     setTasks((prev) => prev.filter((t) => t.status !== "completed"));
   }, []);
 
-  // Rehydrate interrupted uploads after a reload. Records with persisted bytes
-  // auto-resume; bytes-less records (over the resume cap) surface as a failed,
-  // "interrupted" task and their B2 orphans are reclaimed by the cleanup cron.
+  // Read only this account/Space's sealed headers; labels appear only after unlock.
   useEffect(() => {
-    const userId = session?.user?.id;
-    if (!userId || rehydratedRef.current) return;
-    rehydratedRef.current = true;
+    if (!access.unlocked || !access.journalKey || !access.metadataKey) return;
+    let cancelled = false;
     (async () => {
-      const records = await listUploadRecords(userId).catch(() => []);
-      if (!records.length) return;
-      const resumable = records.filter((r) => r.bytesPersisted && r.mainBytes);
-      const stale = records.filter((r) => !r.bytesPersisted || !r.mainBytes);
-
-      setTasks((prev) => {
-        const existing = new Set(prev.map((t) => t.id));
-        const add: UploadTask[] = [];
-        for (const r of resumable) {
-          if (existing.has(r.id)) continue;
-          add.push({
-            id: r.id,
-            file: new File([], r.fileName, { type: r.type }),
-            bucketId: r.bucketId,
-            folderId: r.folderId ?? null,
-            status: "paused",
-            progress: 0,
-            statusText: "Waiting to resume…",
-          });
-        }
-        for (const r of stale) {
-          if (existing.has(r.id)) continue;
-          add.push({
-            id: r.id,
-            file: new File([], r.fileName, { type: r.type }),
-            bucketId: r.bucketId,
-            folderId: r.folderId ?? null,
-            status: "failed",
-            progress: 0,
-            interrupted: true,
-            error:
-              "Upload interrupted — too large to resume automatically. Please re-upload.",
-          });
-        }
-        return add.length ? [...prev, ...add] : prev;
-      });
-
-      for (const r of resumable) resumeRecordsRef.current.set(r.id, r);
-      // Bytes-less records can't be resumed client-side; drop them (the cron
-      // cleans their B2 blobs via the still-pending UploadSession).
-      for (const r of stale) deleteUploadRecord(userId, r.id).catch(() => {});
-      // Auto-resume. resumeRecord parks itself while paused (offline/hidden).
-      for (const r of resumable) void resumeRecord(r);
+      const rows = await listSealedUploadRecords(access.accountId, access.spaceId).catch(() => []);
+      for (const row of rows) {
+        if (cancelled || accessRef.current !== access) return;
+        let reader: UploadSnapshot | undefined;
+        try {
+          const version = row.scope.wrappedBy === "space" ? await keyForRef.current(row.scope.spaceKeyVersion) : null;
+          const key = row.scope.wrappedBy === "space" ? version?.uploadJournalKey : access.journalKey;
+          if (!key || cancelled || accessRef.current !== access || uploadingIds.current.has(row.id)) continue;
+          reader = captureUploadContext({ id: row.id, scope: row.scope }, key);
+          const record = await getUploadRecord(reader.journal, row.id);
+          reader.checkActive();
+          if (!record || cancelled) continue;
+          const canResume = record.bytesPersisted && Boolean(record.mainBytes);
+          const task: UploadTask = { id: record.id, scope: row.scope,
+            file: new File([], record.fileName, { type: record.type }), bucketId: record.bucketId,
+            folderId: record.folderId, status: canResume ? "paused" : "failed", progress: 0,
+            interrupted: !canResume, error: canResume ? undefined : "Upload interrupted; re-upload this file" };
+          setTasks((previous) => previous.some((existing) => existing.id === task.id) ? previous : [...previous, task]);
+          if (canResume) resumeRecordsRef.current.set(record.id, record);
+          else await deleteUploadRecord(row.scope, row.id).catch(() => {});
+          reader.dispose();
+          reader = undefined;
+          if (cancelled || accessRef.current !== access) return;
+          if (canResume) enqueueTask(task);
+        } catch {
+          // Corrupt, foreign or unavailable-key records never authorize networking.
+        } finally { reader?.dispose(); }
+      }
     })();
-  }, [session?.user?.id, resumeRecord]);
+    return () => { cancelled = true; };
+  }, [access, captureUploadContext, enqueueTask]);
 
+  const visibleTasks = access.unlocked && access.metadataKey && access.journalKey
+    ? tasks.filter((task) => task.scope.accountId === access.accountId && task.scope.spaceId === access.spaceId) : [];
   return (
     <UploadContext.Provider
       value={{
-        tasks,
+        tasks: visibleTasks,
         isPaused,
         addTasks,
         removeTask,

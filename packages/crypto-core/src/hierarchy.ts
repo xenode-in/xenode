@@ -65,13 +65,28 @@ export async function deriveMetadataKey(
   productId: string,
   spaceId: string,
 ): Promise<CryptoKey> {
+  return deriveSpacePurposeKey(productSpaceKey, productId, spaceId, "metadata");
+}
+
+/** A distinct memory-only key for sealed upload checkpoints. */
+export async function deriveUploadJournalKey(
+  productSpaceKey: Uint8Array,
+  productId: string,
+  spaceId: string,
+): Promise<CryptoKey> {
+  return deriveSpacePurposeKey(productSpaceKey, productId, spaceId, "upload-journal");
+}
+
+async function deriveSpacePurposeKey(
+  productSpaceKey: Uint8Array, productId: string, spaceId: string, purpose: string,
+): Promise<CryptoKey> {
   const salt = new Uint8Array(
     await crypto.subtle.digest(
       "SHA-256",
-      utf8(`xenode/${productId}/${spaceId}/metadata-salt/v1`) as BufferSource,
+      utf8(`xenode/${productId}/${spaceId}/${purpose}-salt/v1`) as BufferSource,
     ),
   );
-  const metadataBytes = await derivePurposeKey(productSpaceKey, productId, "metadata", salt);
+  const metadataBytes = await derivePurposeKey(productSpaceKey, productId, purpose, salt);
   try {
     return await crypto.subtle.importKey(
       "raw",
