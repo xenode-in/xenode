@@ -1,123 +1,173 @@
-version: "3.8"
+# Xenode production stack: Accounts, Drive, Photos, the static file runtimes
+# and the scheduler. MongoDB (a replica set), Redis and R2 are external.
+#
+# Values come from the environment or a .env file beside this file (names as in
+# .env.example). Each service receives only the settings it reads, and only
+# Accounts receives BETTER_AUTH_SECRET. Generate every secret independently
+# (`openssl rand -hex 32`). Origins are exact (`https://host`, no path) and are
+# compiled into the images, so changing one needs `docker compose build`.
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Xenode — Production Docker Compose
-#
-# MongoDB, Redis, and B2 storage are external managed services.
-# All connection strings and secrets come from environment variables
-# (set in Coolify or a .env file alongside this compose file).
-#
-# Required env vars — set all of these in Coolify:
-#
-#   ACCOUNTS_ORIGIN / DRIVE_ORIGIN / PHOTOS_ORIGIN   Exact product origins
-#   NEXT_PUBLIC_APP_URL       Public Drive URL (e.g. https://xenode.in)
-#
-#   MONGODB_URI               MongoDB Atlas / self-hosted connection string
-#   MONGODB_LOGS_URI          Separate DB for logs (can be same cluster)
-#   REDIS_URL                 Redis connection URL (e.g. redis://host:6379)
-#
-#   BETTER_AUTH_SECRET        32+ char Accounts identity secret
-#   REALTIME_TICKET_SECRET    Independent 32+ char realtime ticket secret
-#   CDN_SIGNING_SECRET        Independent 32+ char CDN signing secret
-#   REALTIME_ALLOWED_ORIGIN   Exact comma-separated product origins
-#
-#   ADMIN_USERNAME            Initial super-admin username
-#   ADMIN_PASSWORD            Initial super-admin password
-#   ADMIN_JWT_SECRET          32+ char secret for admin JWT sessions
-#
-#   S3_KEY_ID / S3_APPLICATION_KEY / S3_BUCKET_NAME / S3_ENDPOINT / S3_REGION
-#                              Backblaze B2 S3-compatible system bucket
-#
-#   RESEND_API_KEY            Resend transactional email API key
-#
-#   CRON_SECRET               Random secret for cron job auth (Bearer token)
-#
-#   RAZORPAY_KEY_ID           Razorpay key ID
-#   RAZORPAY_KEY_SECRET       Razorpay key secret
-#   RAZORPAY_WEBHOOK_SECRET   Webhook signature secret
-#   RAZORPAY_SUBSCRIPTION_WEBHOOK_SECRET  Subscription webhook secret
-#   NEXT_PUBLIC_RAZORPAY_KEY_ID           Razorpay key ID (browser-visible)
-#
-# Optional env vars:
-#   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET   Google OAuth
-#   GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET   GitHub OAuth
-#   NEXT_PUBLIC_POSTHOG_KEY                   PostHog analytics
-#   NEXT_PUBLIC_POSTHOG_HOST
-#   POSTHOG_KEY
-# ─────────────────────────────────────────────────────────────────────────────
+x-app-build: &app-build
+  context: .
+  dockerfile: deploy/app.Dockerfile
+
+# Build args: next.config headers read the origins too, and are frozen at build.
+x-public-origins: &public-origins
+  ACCOUNTS_ORIGIN: ${ACCOUNTS_ORIGIN:?}
+  DRIVE_ORIGIN: ${DRIVE_ORIGIN:?}
+  PHOTOS_ORIGIN: ${PHOTOS_ORIGIN:?}
+  NEXT_PUBLIC_ACCOUNTS_ORIGIN: ${ACCOUNTS_ORIGIN:?}
+  NEXT_PUBLIC_DRIVE_ORIGIN: ${DRIVE_ORIGIN:?}
+  NEXT_PUBLIC_PHOTOS_ORIGIN: ${PHOTOS_ORIGIN:?}
+  NEXT_PUBLIC_OFFICE_EDITOR_ORIGIN: ${NEXT_PUBLIC_ONLYOFFICE_EDITOR_ORIGIN:?}
+  NEXT_PUBLIC_ONLYOFFICE_EDITOR_ORIGIN: ${NEXT_PUBLIC_ONLYOFFICE_EDITOR_ORIGIN:?}
+
+x-origins: &origins
+  ACCOUNTS_ORIGIN: ${ACCOUNTS_ORIGIN:?}
+  DRIVE_ORIGIN: ${DRIVE_ORIGIN:?}
+  PHOTOS_ORIGIN: ${PHOTOS_ORIGIN:?}
+
+# One R2 bucket per region; asia uses the unprefixed names.
+x-storage: &storage
+  S3_BUCKET_NAME: ${S3_BUCKET_NAME:?}
+  S3_ENDPOINT: ${S3_ENDPOINT:?}
+  S3_REGION: ${S3_REGION:-auto}
+  S3_KEY_ID: ${S3_KEY_ID:?}
+  S3_APPLICATION_KEY: ${S3_APPLICATION_KEY:?}
+  S3_US_BUCKET_NAME: ${S3_US_BUCKET_NAME:-}
+  S3_US_ENDPOINT: ${S3_US_ENDPOINT:-}
+  S3_US_REGION: ${S3_US_REGION:-}
+  S3_US_KEY_ID: ${S3_US_KEY_ID:-}
+  S3_US_APPLICATION_KEY: ${S3_US_APPLICATION_KEY:-}
+  S3_EU_BUCKET_NAME: ${S3_EU_BUCKET_NAME:-}
+  S3_EU_ENDPOINT: ${S3_EU_ENDPOINT:-}
+  S3_EU_REGION: ${S3_EU_REGION:-}
+  S3_EU_KEY_ID: ${S3_EU_KEY_ID:-}
+  S3_EU_APPLICATION_KEY: ${S3_EU_APPLICATION_KEY:-}
 
 services:
-  # ── Drive Next.js app ───────────────────────────────────────────────────────
-  drive:
+  accounts:
     build:
-      context: .
-      dockerfile: apps/drive/Dockerfile
+      <<: *app-build
+      args:
+        APP: accounts
+        <<: *public-origins
     restart: always
     ports:
-      - "3000:3000"
+      - "3001:3001"
     environment:
-      NODE_ENV: production
-      NEXT_TELEMETRY_DISABLED: "1"
-
-      # ── App ───────────────────────────────────────────────────────────────
-      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
-      ACCOUNTS_ORIGIN: ${ACCOUNTS_ORIGIN}
-      DRIVE_ORIGIN: ${DRIVE_ORIGIN}
-      PHOTOS_ORIGIN: ${PHOTOS_ORIGIN}
-      NEXT_PUBLIC_ACCOUNTS_ORIGIN: ${NEXT_PUBLIC_ACCOUNTS_ORIGIN}
-      NEXT_PUBLIC_DRIVE_ORIGIN: ${NEXT_PUBLIC_DRIVE_ORIGIN}
-      NEXT_PUBLIC_PHOTOS_ORIGIN: ${NEXT_PUBLIC_PHOTOS_ORIGIN}
-
-      # ── Database & Cache (external managed services) ───────────────────────
-      MONGODB_URI: ${MONGODB_URI}
-      MONGODB_LOGS_URI: ${MONGODB_LOGS_URI}
-      REDIS_URL: ${REDIS_URL}
-
-      # ── Auth, realtime, and CDN (all secrets must be distinct) ───────────
-      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
-      REALTIME_TICKET_SECRET: ${REALTIME_TICKET_SECRET}
-      CDN_SIGNING_SECRET: ${CDN_SIGNING_SECRET}
-      REALTIME_ALLOWED_ORIGIN: ${REALTIME_ALLOWED_ORIGIN}
-
-      # ── Admin panel ────────────────────────────────────────────────────────
-      ADMIN_USERNAME: ${ADMIN_USERNAME}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
-      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET}
-
-      # ── Cloudflare R2 S3-compatible system bucket ─────────────────────────
-      S3_KEY_ID: ${S3_KEY_ID}
-      S3_APPLICATION_KEY: ${S3_APPLICATION_KEY}
-      S3_BUCKET_NAME: ${S3_BUCKET_NAME}
-      S3_ENDPOINT: ${S3_ENDPOINT}
-      S3_REGION: ${S3_REGION}
-
-      # ── Email ──────────────────────────────────────────────────────────────
-      RESEND_API_KEY: ${RESEND_API_KEY}
-
-      # ── Cron ───────────────────────────────────────────────────────────────
-      CRON_SECRET: ${CRON_SECRET}
-
-      # ── Payments (Razorpay) ────────────────────────────────────────────────
-      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID}
-      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET}
-      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET}
-      RAZORPAY_SUBSCRIPTION_WEBHOOK_SECRET: ${RAZORPAY_SUBSCRIPTION_WEBHOOK_SECRET}
-      NEXT_PUBLIC_RAZORPAY_KEY_ID: ${NEXT_PUBLIC_RAZORPAY_KEY_ID}
-
-      # ── OAuth (optional) ───────────────────────────────────────────────────
+      <<: *origins
+      MONGODB_URI: ${MONGODB_URI:?}
+      REDIS_URL: ${REDIS_URL:?}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?}
+      # CIDRs of every proxy in front of Accounts (rate limits key on client IP).
+      AUTH_TRUSTED_PROXIES: ${AUTH_TRUSTED_PROXIES:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:?}
+      EMAIL_FROM: ${EMAIL_FROM:?}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
 
-      # ── Analytics (optional) ───────────────────────────────────────────────
-      NEXT_PUBLIC_POSTHOG_KEY: ${NEXT_PUBLIC_POSTHOG_KEY:-}
-      NEXT_PUBLIC_POSTHOG_HOST: ${NEXT_PUBLIC_POSTHOG_HOST:-https://us.i.posthog.com}
+  # Drive also serves the realtime socket for every product.
+  drive:
+    build:
+      <<: *app-build
+      args:
+        APP: drive
+        <<: *public-origins
+        NEXT_PUBLIC_APP_URL: ${DRIVE_ORIGIN:?}
+        NEXT_PUBLIC_REALTIME_ORIGIN: ${DRIVE_ORIGIN:?}
+        NEXT_PUBLIC_ONLYOFFICE_EDITOR_BASE_URL: ${NEXT_PUBLIC_ONLYOFFICE_EDITOR_ORIGIN:?}/onlyoffice
+        NEXT_PUBLIC_ONLYOFFICE_ARTIFACT_VERSION: ${NEXT_PUBLIC_ONLYOFFICE_ARTIFACT_VERSION:-}
+        NEXT_PUBLIC_POSTHOG_KEY: ${NEXT_PUBLIC_POSTHOG_KEY:-}
+        NEXT_PUBLIC_POSTHOG_HOST: ${NEXT_PUBLIC_POSTHOG_HOST:-}
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      <<: [*origins, *storage]
+      MONGODB_URI: ${MONGODB_URI:?}
+      MONGODB_LOGS_URI: ${MONGODB_LOGS_URI:?}
+      REDIS_URL: ${REDIS_URL:?}
+      DRIVE_SESSION_COOKIE_SECRET: ${DRIVE_SESSION_COOKIE_SECRET:?}
+      REALTIME_TICKET_SECRET: ${REALTIME_TICKET_SECRET:?}
+      REALTIME_ALLOWED_ORIGIN: ${DRIVE_ORIGIN:?},${PHOTOS_ORIGIN:?}
+      CDN_SIGNING_SECRET: ${CDN_SIGNING_SECRET:?}
+      CRON_SECRET: ${CRON_SECRET:?}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?}
+      ADMIN_JWT_SECRET: ${ADMIN_JWT_SECRET:?}
+      ADMIN_NOTIFY_EMAIL: ${ADMIN_NOTIFY_EMAIL:-}
+      PUBLIC_S3_BUCKET: ${PUBLIC_S3_BUCKET:?}
+      PUBLIC_S3_ENDPOINT: ${PUBLIC_S3_ENDPOINT:?}
+      AZURE_CDN_URL: ${AZURE_CDN_URL:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:?}
+      EMAIL_FROM: ${EMAIL_FROM:?}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:?}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:?}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:?}
+      RAZORPAY_SUBSCRIPTION_WEBHOOK_SECRET: ${RAZORPAY_SUBSCRIPTION_WEBHOOK_SECRET:?}
+      RZP_ORG_STARTER_MONTHLY: ${RZP_ORG_STARTER_MONTHLY:-}
+      RZP_ORG_STARTER_YEARLY: ${RZP_ORG_STARTER_YEARLY:-}
+      RZP_ORG_TEAM_MONTHLY: ${RZP_ORG_TEAM_MONTHLY:-}
+      RZP_ORG_TEAM_YEARLY: ${RZP_ORG_TEAM_YEARLY:-}
+      RZP_ORG_BUSINESS_MONTHLY: ${RZP_ORG_BUSINESS_MONTHLY:-}
+      RZP_ORG_BUSINESS_YEARLY: ${RZP_ORG_BUSINESS_YEARLY:-}
+      ORGS_ENABLED: ${ORGS_ENABLED:-false}
+      ONLYOFFICE_V2_ENABLED: ${ONLYOFFICE_V2_ENABLED:-false}
+      SAFE_PREVIEW_GLOBAL_ENABLED: ${SAFE_PREVIEW_GLOBAL_ENABLED:-false}
+      SAFE_PREVIEW_PDF_ENABLED: ${SAFE_PREVIEW_PDF_ENABLED:-false}
+      SAFE_PREVIEW_OFFICE_ENABLED: ${SAFE_PREVIEW_OFFICE_ENABLED:-false}
+      SAFE_PREVIEW_SVG_ENABLED: ${SAFE_PREVIEW_SVG_ENABLED:-false}
+      SAFE_PREVIEW_HTML_ENABLED: ${SAFE_PREVIEW_HTML_ENABLED:-false}
+      SAFE_PREVIEW_IMAGE_ENABLED: ${SAFE_PREVIEW_IMAGE_ENABLED:-false}
+      SAFE_PREVIEW_MEDIA_ENABLED: ${SAFE_PREVIEW_MEDIA_ENABLED:-false}
+      SAFE_PREVIEW_ARCHIVE_ENABLED: ${SAFE_PREVIEW_ARCHIVE_ENABLED:-false}
+      SAFE_PREVIEW_TEXT_ENABLED: ${SAFE_PREVIEW_TEXT_ENABLED:-false}
       POSTHOG_KEY: ${POSTHOG_KEY:-}
+      POSTHOG_USER_ID_SALT: ${POSTHOG_USER_ID_SALT:-}
 
-  # ── Scheduler ───────────────────────────────────────────────────────────────
-  # Runs every product's vercel.json crons against that product's origin; the
-  # secret stays out of the crontab, command lines and logs (Dockerfile.cron).
+  photos:
+    build:
+      <<: *app-build
+      args:
+        APP: photos
+        <<: *public-origins
+        NEXT_PUBLIC_REALTIME_ORIGIN: ${DRIVE_ORIGIN:?}
+    restart: always
+    ports:
+      - "3002:3002"
+    environment:
+      <<: [*origins, *storage]
+      MONGODB_URI: ${MONGODB_URI:?}
+      PHOTOS_SESSION_COOKIE_SECRET: ${PHOTOS_SESSION_COOKIE_SECRET:?}
+      REALTIME_TICKET_SECRET: ${REALTIME_TICKET_SECRET:?}
+      CRON_SECRET: ${CRON_SECRET:?}
+
+  # Static-only file runtimes, framed by Drive.
+  editor:
+    build:
+      context: .
+      dockerfile: deploy/file-runtimes/editor/Dockerfile
+    restart: always
+    ports:
+      - "8080:8080"
+    environment:
+      DRIVE_ORIGIN: ${DRIVE_ORIGIN:?}
+
+  preview:
+    build:
+      context: .
+      dockerfile: deploy/file-runtimes/preview/Dockerfile
+    restart: always
+    ports:
+      - "8081:8080"
+    environment:
+      DRIVE_ORIGIN: ${DRIVE_ORIGIN:?}
+
+  # Runs every product's vercel.json crons against that product; the secret
+  # stays out of the crontab, command lines and logs (Dockerfile.cron).
   cron:
     build:
       context: .
@@ -125,7 +175,8 @@ services:
     restart: unless-stopped
     depends_on:
       - drive
+      - photos
     environment:
       DRIVE_URL: http://drive:3000
-      PHOTOS_URL: ${PHOTOS_URL}
-      CRON_SECRET: ${CRON_SECRET}
+      PHOTOS_URL: http://photos:3002
+      CRON_SECRET: ${CRON_SECRET:?}

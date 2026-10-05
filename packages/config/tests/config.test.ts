@@ -3,9 +3,9 @@ import { cookieNames, createProductRegistry, readFeatureFlag } from "../src";
 import { getServerEnv } from "../src/server";
 import { resolveSystemBucketConfig } from "../src/storage";
 
+// A product's env: Accounts' identity secret is not part of it.
 const validServerEnv = {
   MONGODB_URI: "mongodb://localhost/test",
-  BETTER_AUTH_SECRET: "a".repeat(48),
   ADMIN_JWT_SECRET: "b".repeat(48),
   REALTIME_TICKET_SECRET: "r".repeat(48),
   CDN_SIGNING_SECRET: "c".repeat(48),
@@ -34,7 +34,7 @@ describe("shared config", () => {
     expect(() =>
       getServerEnv({ MONGODB_URI: "mongodb://localhost/test" }),
     ).toThrow();
-    expect(getServerEnv(validServerEnv)).toMatchObject({
+    expect(getServerEnv({ ...validServerEnv, NODE_ENV: "production" })).toMatchObject({
       REALTIME_TICKET_SECRET: validServerEnv.REALTIME_TICKET_SECRET,
       CDN_SIGNING_SECRET: validServerEnv.CDN_SIGNING_SECRET,
     });
@@ -44,7 +44,7 @@ describe("shared config", () => {
     expect(() =>
       getServerEnv({
         ...validServerEnv,
-        REALTIME_TICKET_SECRET: validServerEnv.BETTER_AUTH_SECRET,
+        BETTER_AUTH_SECRET: validServerEnv.REALTIME_TICKET_SECRET,
       }),
     ).toThrow("must not reuse");
     expect(() =>

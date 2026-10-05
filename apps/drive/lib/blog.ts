@@ -98,9 +98,3 @@ export async function getPostBySlug(
     folder: blog.folder,
   };
 }
-
-export async function getAllSlugs(): Promise<string[]> {
-  await dbConnect();
-  const slugs = await Blog.find({}, { slug: 1 }).lean();
-  return slugs.map((s: any) => s.slug);
-}

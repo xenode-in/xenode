@@ -1,6 +1,9 @@
 # Docker build context is the monorepo root.
 **/node_modules
 **/.next
+**/.turbo
+**/coverage
+**/*.tsbuildinfo
 **/npm-debug.log
 .git
 .github
@@ -11,10 +14,13 @@ agents
 vendor
 docs
 security-corpus
+.security-corpus
+.artifacts
 Dockerfile*
 .dockerignore
 docker-compose*.yaml
-# Never send local secrets into an image build context.
+# Never send local secrets or keys into an image build context.
 **/.env*
 !**/.env.example
+**/*.pem
 tmp

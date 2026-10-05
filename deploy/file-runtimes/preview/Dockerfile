@@ -1,7 +1,7 @@
-FROM nginx:1.27-alpine
+FROM nginx:1.30-alpine
 
-COPY deploy/file-runtimes/preview/nginx.conf /etc/nginx/conf.d/default.conf
+# The image's entrypoint renders templates into conf.d with the environment.
+COPY deploy/file-runtimes/preview/default.conf.template /etc/nginx/templates/default.conf.template
 COPY tools/file-runtimes/preview/ /usr/share/nginx/html/
 
 EXPOSE 8080
-CMD ["nginx", "-g", "daemon off;"]

@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       # Release gate: any published advisory (runtime or tooling) needs triage.
@@ -25,15 +25,9 @@ jobs:
       - run: npm run check:boundaries
       - run: npm run test:security
       - run: npm run test
+      # A build needs no secret or database; origins are compiled in.
       - run: npm run build
         env:
-          MONGODB_URI: mongodb://127.0.0.1:27017/xenode-ci
-          BETTER_AUTH_SECRET: ci-better-auth-secret-000000000000000000000000
-          ADMIN_JWT_SECRET: ci-admin-jwt-secret-0000000000000000000000000
-          REALTIME_TICKET_SECRET: ci-realtime-ticket-secret-000000000000000000000
-          CDN_SIGNING_SECRET: ci-cdn-signing-secret-000000000000000000000000
-          CRON_SECRET: ci-cron-secret-000000000000000000000000000
-          REALTIME_ALLOWED_ORIGIN: https://xenode.in,https://photos.xenode.in
           ACCOUNTS_ORIGIN: https://accounts.xenode.in
           DRIVE_ORIGIN: https://xenode.in
           PHOTOS_ORIGIN: https://photos.xenode.in

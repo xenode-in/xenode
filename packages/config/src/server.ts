@@ -23,7 +23,9 @@ const serverEnvSchema = z
       .enum(["development", "test", "production"])
       .default("development"),
     MONGODB_URI: z.string().min(1),
-    BETTER_AUTH_SECRET: z.string().min(1),
+    // Only Accounts holds the identity secret. A shared development env may
+    // still provide it, and then it must not be reused.
+    BETTER_AUTH_SECRET: z.string().optional(),
     ADMIN_JWT_SECRET: z.string().min(1),
     REALTIME_TICKET_SECRET: mandatoryIndependentSecret,
     CDN_SIGNING_SECRET: mandatoryIndependentSecret,
@@ -38,7 +40,7 @@ const serverEnvSchema = z
       ["CDN_SIGNING_SECRET", env.CDN_SIGNING_SECRET],
     ] as const;
     for (const [key, value] of independentSecrets) {
-      if (value === env.BETTER_AUTH_SECRET) {
+      if (env.BETTER_AUTH_SECRET && value === env.BETTER_AUTH_SECRET) {
         context.addIssue({
           code: "custom",
           path: [key],
@@ -55,14 +57,12 @@ const serverEnvSchema = z
     }
 
     if (env.NODE_ENV !== "production") return;
-    for (const key of ["BETTER_AUTH_SECRET", "ADMIN_JWT_SECRET"] as const) {
-      if (!productionSecret.safeParse(env[key]).success) {
-        context.addIssue({
-          code: "custom",
-          path: [key],
-          message: `${key} must contain at least 32 characters in production`,
-        });
-      }
+    if (!productionSecret.safeParse(env.ADMIN_JWT_SECRET).success) {
+      context.addIssue({
+        code: "custom",
+        path: ["ADMIN_JWT_SECRET"],
+        message: "ADMIN_JWT_SECRET must contain at least 32 characters in production",
+      });
     }
   });
 

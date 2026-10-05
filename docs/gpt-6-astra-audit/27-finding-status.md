@@ -30,7 +30,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F11 | HIGH | Partial | 0Q, 0S, 0T, 0V, 0ZH: verified bytes and transactional finalize/revision/purge accounting; usage reads are read-only from the Space owner; non-transactional writers removed. 0ZQ: admin account deletion retires the personal Space through the purge pipeline instead of deleting rows and Usage | No OrgUsage reconciliation report |
 | F12 | HIGH | Addressed | 0M, 0N, 0P `4e04408`: exact manifests, transactional completion | — |
 | F13 | HIGH | Addressed | 0M–0O, 0ZB `cffd54b`: manifest-owned cleanup honoring PUT expiry | — |
-| F14 | HIGH | Partial | R2 endpoint validation (0Z) makes uploads/previews match the CSP wildcard | Photos `connect-src` uses `*.r2.cloudflarestorage.com` instead of configured origins and omits the realtime origin; Drive's main app only sends a report-only CSP |
+| F14 | HIGH | Partial | R2 endpoint validation (0Z) makes uploads/previews match the CSP wildcard. 0ZS: header origins are build inputs, so deployed CSPs carry the configured origins, and Drive's `frame-src` names the configured editor origin | Photos `connect-src` uses `*.r2.cloudflarestorage.com` instead of configured origins and omits the realtime origin; Drive's main app only sends a report-only CSP |
 | F15 | HIGH | Addressed | 0ZO: the editor takes a plain title and seals it as a crypto-core `album-name` envelope under the Photos HKDF metadata key (`deriveMetadataKey`, derived at unlock); the albums route accepts only an envelope bound to the route Space and the creating account; list, search and detail decrypt locally | — |
 | F16 | MED | Open | Timeline mounts every tile; share/settings/help unwired; no trash API | Product completion (Phase 5) |
 | F17 | MED | Open | `UploadRecord` stores plaintext names and no Space/wrap context; resume uses bare `fetch`; checkpoints are read-modify-write | Encrypted versioned journal bound to job scope |
@@ -38,7 +38,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F19 | MED | Partial | 0T removed the editor byte proxy | Downloads, version content and shares still stream through Next with `max-age=3600` regardless of token lifetime |
 | F20 | MED | Open | `updatedAt > lastSync`, time-only sort, global `localStorage` cursor, no tombstones | Tuple cursor per account/Space with tombstones |
 | F21 | MED | Partial | Presign no longer writes plans (0S); 0ZH removed metering's expired-plan downgrades and usage upserts | Onboarding plan reset, expire-plans cron, refund/campaign handlers, admin plan routes and OrgUsage creation on billing reads bypass the canonical service |
-| F22 | HIGH | Partial | 0ZR: one scheduler contract (each product's `vercel.json`, baked into `Dockerfile.cron`; the removed PayU job is gone), `.dockerignore` excludes `.env*`, shell scripts are LF via `.gitattributes` | Product images (Drive's installs 3 of the workspace manifests and ships symlinked packages without sources), Compose lacks Accounts/Photos, editor nginx invalid |
+| F22 | HIGH | Addressed | 0ZR: one scheduler contract baked into `Dockerfile.cron`; `.dockerignore` excludes `.env*`. 0ZS: one image recipe (`deploy/app.Dockerfile`) for all three products with every workspace manifest and the custom server's runtime files; builds need no secret or database; Compose runs every product, both runtimes and the scheduler with per-service secrets and required-value checks; runtime nginx templates pass `nginx -t`, serve the versioned OnlyOffice tree with queries, take `frame-ancestors` from `DRIVE_ORIGIN` and send same-site CORP plus COEP. Verified by `docker compose build`/`up` and a browser framing check (allowed from Drive, blocked from Accounts) | Real OnlyOffice artifacts in the deployed editor origin and the malicious-file corpus are release gates |
 | F23 | HIGH | Partial | 0ZF: non-force upgrades (Next 16.3.8, pdfjs-dist 6.3.289, Better Auth family 1.7.7, socket.io-parser 4.2.7, engine.io 6.6.11, sharp 0.35.5, axios 1.20.0, vitest 4.1.11); `npm audit` 24 → 0; CI now gates on `npm audit` | 2026-10-05: GHSA-vfj7-8cjw-p6xm (`braces` ≤ 3.0.3, glob-pattern DoS) has no patched release; it reaches only dev/build tooling (`shadcn` CSS/CLI, `eslint-config-next`, `ts-morph`), whose patterns are developer-controlled. The CI audit gate stays red until upstream ships a fix; npm's suggested fixes are breaking downgrades. Renderer corpus re-run is a release gate |
 | F24 | HIGH | Addressed | No Vault v1/PBKDF2 code remains; 0ZM: the self-keyed name format is no longer read by `decryptMetadataString`, the crypto worker or the deleted `decryptFileName` | — |
 | F25 | MED | Open | `update-metadata` writes plaintext description/link; share `bundleName` and access-request notes are plaintext; tag/folder plaintext fallbacks | Encrypt user text or remove the fields; define observable metadata |
@@ -47,7 +47,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F28 | MED | Addressed | 0ZI: shared protocol module, Engine.IO Origin allowlist, origin- and session-bound tickets, WebSocket-only, fail-fast Redis, session/15-minute deadline, fresh ticket per attempt; see [30](30-realtime-contract.md) | Deployed proxy/Redis and real browsers are release gates |
 | F29 | MED | Partial | 0Z requires R2 endpoints and region `auto` | Shared bucket-name default, unknown bucket → `asia`, no startup validation of complete distinct regions |
 | F30 | HIGH | Addressed | 0ZN: the projection route, `PhotosService.createProjection` with its repository methods, and the ownership-relabel script are removed; PhotoAssets come only from Photos upload completion | — |
-| F31 | MED | Open | `test:security` is scoped ESLint and fails; CI Node 22, Docker Node 20, no `engines` | Repair gates, align runtime, add lint/audit/container checks |
+| F31 | MED | Partial | 0ZS: Node 24 in CI, all images and root `engines`; CI builds without secrets | `test:security` is scoped ESLint and fails on pre-existing hook errors; no lint or container checks in CI |
 
 ## Findings discovered during verification
 
@@ -59,6 +59,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F35 | HIGH | Addressed | 0ZJ: move is a metadata-only transaction (no copy, no delete); version snapshots, chunks and signed URLs keep their keys; contract in [31](31-drive-folder-model.md) | — |
 | F36 | MED | Addressed | 0ZR: the scheduler writes the bearer header to a root-only file read by `curl -H @file`, unsets the secret before `crond`, and logs only schedules and URLs; verified in a container (secret absent from logs, crontab, process list and crond's environment; header sent) | — |
 | F37 | MED | Addressed | 0ZH: both routes and their orphaned non-transactional helpers removed | — |
+| F38 | HIGH | Addressed | 0ZS: Drive's startup validation required `BETTER_AUTH_SECRET`, so product containers held Accounts' identity secret (with database access, enough to decrypt the OIDC signing key); PostHog IDs used it as a salt; product cookie secrets fell back to one shared value. Only Accounts receives it now and no fallback remains | — |
 
 ## Release gates not verified by tests
 
@@ -71,6 +72,7 @@ entries (2 critical, 13 high, 9 moderate).
 - Deployed schedulers calling every cron route with the production secret.
 - Realtime server behind the production proxy with hostile Origin, replay and
   session expiry.
-- Container/static-runtime startup, `nginx -t`, iframe isolation and the
-  malicious-file corpus.
+- Production deployment behind TLS and the real proxy, real OnlyOffice
+  artifacts served from the editor origin, and the malicious-file corpus
+  (local container startup, `nginx -t` and framing were verified in 0ZS).
 - Production indexes, bucket policy and backups inspected rather than inferred.

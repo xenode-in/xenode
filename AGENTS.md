@@ -57,6 +57,10 @@ and Photos are OIDC clients and store host-only ProductSession cookies. They
 must validate issuer, audience, state, nonce, and PKCE and must reject revoked,
 expired, cross-product, or version-stale ProductSessions.
 
+Only Accounts receives `BETTER_AUTH_SECRET`. Each product signs its
+ProductSession cookie with its own secret (`DRIVE_SESSION_COOKIE_SECRET`,
+`PHOTOS_SESSION_COOKIE_SECRET`); there is no shared fallback.
+
 A session for a two-factor account is pending until a passkey, two-factor
 challenge, step-up or consented trusted browser completes the factor
 (`session.twoFactorVerifiedAt`). Pending sessions receive no OIDC code, key
@@ -140,6 +144,12 @@ origins. Application/API routes return 404 there. Office plaintext crosses the
 iframe boundary only as bounded transferable buffers over the exact-origin
 bridge. Keep `public/internal-editors/onlyoffice` and `vendor/` isolated.
 
+Only the Drive origin may frame them (`frame-ancestors` from `DRIVE_ORIGIN`).
+Drive pages are cross-origin isolated, so the runtimes must be same-site with
+Drive and send `Cross-Origin-Resource-Policy: same-site` and COEP
+`require-corp`. Product images never contain Office artifacts; the editor
+image serves them under `/onlyoffice/<version>/`.
+
 The Bin is cron-purged only after encrypted R2 objects are removed. Never add a
 TTL index on `StorageObject.deletedAt`; the historical `deletedAt_1` index is a
 data-loss/orphaning hazard.
@@ -153,6 +163,9 @@ data-loss/orphaning hazard.
 - Use `@xenode/crypto-core`, `@xenode/crypto-react`, and
   `@xenode/key-handoff`; do not invent parallel formats.
 - Use `@xenode/upload-engine` for browser upload orchestration.
+- `next build` and image builds need no secret or database: create
+  secret-bearing clients on first use, and read request-time data only after
+  `headers()`/`connection()`. Origins read by `next.config` are build inputs.
 - User dashboard components live under `apps/drive`; Accounts profile/security
   presentation belongs in `apps/accounts`; Photos must not import Drive.
 - A PhotoAsset is created only by Photos upload completion with its

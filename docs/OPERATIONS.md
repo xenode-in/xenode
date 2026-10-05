@@ -12,12 +12,38 @@
 ## Required secrets
 
 Generate distinct values for `BETTER_AUTH_SECRET`, `ADMIN_JWT_SECRET`,
-`REALTIME_TICKET_SECRET`, `CDN_SIGNING_SECRET`, and `CRON_SECRET`. Reusing an
-identity secret for realtime/CDN signing is rejected by configuration validation.
+`REALTIME_TICKET_SECRET`, `CDN_SIGNING_SECRET`, `CRON_SECRET`,
+`DRIVE_SESSION_COOKIE_SECRET` and `PHOTOS_SESSION_COOKIE_SECRET`. Only Accounts
+holds `BETTER_AUTH_SECRET`; where a shared development env provides it, reusing it
+for realtime/CDN signing is rejected by configuration validation.
 Set exact `REALTIME_ALLOWED_ORIGIN` values and exact product origins.
 `ADMIN_JWT_SECRET` must contain at least 32 characters in development as well as
 production. Admin JWTs are bound to current database role/status/session version;
 see [the Admin session contract](gpt-6-astra-audit/26-admin-session-contract.md).
+
+## Container deployment
+
+`docker-compose.yaml` runs every product from one recipe, `deploy/app.Dockerfile`
+(`--build-arg APP=accounts|drive|photos`), plus the static `editor` and `preview`
+runtimes and the scheduler. `NEXT_PUBLIC_*` settings are compiled into the
+bundles, so Compose passes them as build args derived from the product origins;
+an image build needs no secret or database. Each service receives only what it
+reads:
+
+| Service | Secrets |
+| --- | --- |
+| accounts | `BETTER_AUTH_SECRET`, OAuth client secrets, `RESEND_API_KEY` |
+| drive | `DRIVE_SESSION_COOKIE_SECRET`, `REALTIME_TICKET_SECRET`, `CDN_SIGNING_SECRET`, `CRON_SECRET`, `ADMIN_*`, R2 keys, Razorpay, `RESEND_API_KEY` |
+| photos | `PHOTOS_SESSION_COOKIE_SECRET`, `REALTIME_TICKET_SECRET`, `CRON_SECRET`, R2 keys |
+| cron | `CRON_SECRET` |
+
+The editor and preview runtimes must be same-site with Drive (subdomains of one
+registrable domain). Drive pages are cross-origin isolated, so the runtimes send
+`Cross-Origin-Resource-Policy: same-site` and their own COEP. `DRIVE_ORIGIN` is
+their only `frame-ancestors` source, and nginx refuses to start without it. The
+editor serves `/onlyoffice/<version>/` from `npm run onlyoffice:build-client`
+output and otherwise only its fail-closed page; product images never contain
+Office artifacts.
 
 ## Scheduled jobs
 

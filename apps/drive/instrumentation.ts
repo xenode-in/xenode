@@ -3,9 +3,8 @@ export async function register() {
     const { getServerEnv } = await import("@xenode/config/server");
     getServerEnv();
 
-    // Import the razorpay library to ensure it's initialized on server startup
-    // This will throw an error early if environment variables are missing
-    await import("@/lib/razorpay");
-    console.log("✓ Razorpay SDK logic initialized on server startup");
+    // Fail at startup, not on the first payment, when Razorpay is unconfigured.
+    const { getRazorpayClient } = await import("@/lib/razorpay");
+    getRazorpayClient();
   }
 }

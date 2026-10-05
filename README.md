@@ -101,11 +101,13 @@ flat ESLint config.
 
 ## Deployment
 
-The Drive image is built from `apps/drive/Dockerfile`. `docker-compose.yaml`
-defines Drive plus the cron sidecar; Accounts, Photos, and the static-only file
-runtimes should be deployed on their declared origins. Generate every secret
-independently—especially `BETTER_AUTH_SECRET`, `ADMIN_JWT_SECRET`,
-`REALTIME_TICKET_SECRET`, `CDN_SIGNING_SECRET`, and `CRON_SECRET`.
+`docker-compose.yaml` builds and runs Accounts, Drive and Photos from
+`deploy/app.Dockerfile`, the static-only `editor` and `preview` runtimes, and the
+scheduler; MongoDB, Redis and R2 are external. Each service receives only the
+settings it reads, and every required value is checked before anything starts.
+Generate every secret independently. See
+[Operations](docs/OPERATIONS.md#container-deployment) and
+[scheduled jobs](CRON_DEPLOYMENT.md).
 
 ## License
 

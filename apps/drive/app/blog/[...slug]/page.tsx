@@ -3,7 +3,7 @@ import { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
 import { MDXRemote } from "next-mdx-remote/rsc";
-import { getPostBySlug, getAllSlugs, getAllPosts, BLOG_FOLDERS } from "@/lib/blog";
+import { getPostBySlug, getAllPosts, BLOG_FOLDERS } from "@/lib/blog";
 import { useMDXComponents } from "@/mdx-components";
 import { Navbar } from "@/components/Navbar";
 import { ThemeGradientBackground } from "@/components/ThemeGradientBackground";
@@ -45,21 +45,6 @@ const folderIconColor = (f: string) =>
 
 interface PageProps {
   params: Promise<{ slug: string[] }>;
-}
-
-export async function generateStaticParams() {
-  const slugs = await getAllSlugs();
-
-  const params: { slug: string[] }[] = slugs.map((s) => ({
-    slug: s.split("/"),
-  }));
-
-  // Ensure hardcoded folders are included in static params
-  for (const folder of BLOG_FOLDERS) {
-    params.push({ slug: [folder.slug] });
-  }
-
-  return params;
 }
 
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {

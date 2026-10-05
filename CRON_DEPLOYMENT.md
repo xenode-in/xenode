@@ -23,7 +23,7 @@ origin:
 
 ```
 DRIVE_URL=http://drive:3000
-PHOTOS_URL=http://photos:3000
+PHOTOS_URL=http://photos:3002
 CRON_SECRET=<openssl rand -hex 32>
 ```
 

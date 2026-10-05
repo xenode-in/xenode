@@ -6,10 +6,10 @@ import { applyTrustedSecondFactor } from "@/lib/trusted-second-factor";
 import { needsSecondFactor } from "@/lib/second-factor-state";
 
 export async function getAccountsSession(request?: Request) {
+  // Headers first: a page render becomes request-time before any database work.
+  const requestHeaders = request?.headers ?? (await headers());
   const auth = await getAccountsAuth();
-  return auth.api.getSession({
-    headers: request?.headers ?? (await headers()),
-  });
+  return auth.api.getSession({ headers: requestHeaders });
 }
 
 export async function requireAccountsPageSession(next = "/") {

@@ -4,6 +4,7 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
+      "env": ["ACCOUNTS_ORIGIN", "DRIVE_ORIGIN", "PHOTOS_ORIGIN"],
       "outputs": [".next/**", "!.next/cache/**", "dist/**"]
     },
     "dev": {

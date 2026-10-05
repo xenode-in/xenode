@@ -57,7 +57,7 @@ function getClient(): PostHog | null {
 }
 
 function analyticsDistinctId(userId: string): string | null {
-  const salt = process.env.POSTHOG_USER_ID_SALT || process.env.BETTER_AUTH_SECRET;
+  const salt = process.env.POSTHOG_USER_ID_SALT;
   if (!salt) return null;
   return crypto.createHmac("sha256", salt).update(userId).digest("hex");
 }

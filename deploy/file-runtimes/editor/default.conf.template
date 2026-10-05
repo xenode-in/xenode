@@ -1,0 +1,45 @@
+# Static-only Office runtime. The nginx image renders this template at start;
+# DRIVE_ORIGIN is the only origin allowed to frame it.
+server {
+  listen 8080;
+  root /usr/share/nginx/html;
+  server_tokens off;
+  access_log off;
+
+  set $runtime_csp "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; worker-src 'self' blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors ${DRIVE_ORIGIN}";
+  set $runtime_cache "no-cache";
+
+  # Drive pages are cross-origin isolated (COEP require-corp), so a framed
+  # runtime loads only with a same-site CORP and its own COEP.
+  add_header Content-Security-Policy $runtime_csp always;
+  add_header Cross-Origin-Embedder-Policy "require-corp" always;
+  add_header Cross-Origin-Resource-Policy "same-site" always;
+  add_header Permissions-Policy "accelerometer=(), autoplay=(), camera=(), clipboard-read=(), clipboard-write=(), display-capture=(), encrypted-media=(), fullscreen=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), usb=()" always;
+  add_header Referrer-Policy "no-referrer" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header Cache-Control $runtime_cache;
+
+  if ($request_method !~ ^(GET|HEAD)$) {
+    return 405;
+  }
+
+  # Fail-closed page shown when no editor artifact is requested.
+  location = / {
+    try_files /index.html =404;
+  }
+  location = /runtime.js {
+    try_files $uri =404;
+  }
+
+  # Versioned OnlyOffice artifacts (`npm run onlyoffice:build-client`). Their
+  # pages load with query strings and need inline and eval script.
+  location ^~ /onlyoffice/ {
+    set $runtime_csp "default-src 'self'; base-uri 'none'; object-src 'none'; form-action 'none'; frame-ancestors 'self' ${DRIVE_ORIGIN}; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:";
+    set $runtime_cache "public, max-age=31536000, immutable";
+    try_files $uri =404;
+  }
+
+  location / {
+    return 404;
+  }
+}
