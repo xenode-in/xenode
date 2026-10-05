@@ -121,6 +121,8 @@ export async function resolveNewDriveObjectPlacement(
 }
 
 export async function createDriveFolder(input: {
+  /** Chosen by the client so the encrypted name can be bound to it. */
+  folderId: unknown;
   spaceId: string;
   bucketId: Types.ObjectId;
   accountId: string;
@@ -137,14 +139,17 @@ export async function createDriveFolder(input: {
   ) {
     throw new DriveUploadCommitError(400, "encrypted_name_required", "An encrypted folder name is required");
   }
+  if (typeof input.folderId !== "string" || !/^[a-f0-9]{24}$/u.test(input.folderId)) {
+    throw new DriveUploadCommitError(400, "invalid_folder_id", "A folder id is required");
+  }
   if (!input.storageRoot.endsWith("/")) throw new Error("Invalid storage root");
+  const _id = new Types.ObjectId(input.folderId);
   await connectDatabase();
   return withTransaction(async (session) => {
     // Fences the active Space against retirement, like an upload commit.
     const { personal, usages, ownerFilter } = await loadSpaceUsage(input.spaceId, undefined, session);
     if (!personal) await assertCurrentSpaceKeyVersion(input.spaceId, input.spaceKeyVersion, session);
     const placement = await resolveDriveFolderPlacement(input.spaceId, input.parentFolderId, session);
-    const _id = new Types.ObjectId();
     const now = new Date();
     const folder = {
       _id,
@@ -171,7 +176,14 @@ export async function createDriveFolder(input: {
       updatedAt: now,
       __v: 0,
     };
-    await getDatabase().collection("storageobjects").insertOne(folder, { session });
+    try {
+      await getDatabase().collection("storageobjects").insertOne(folder, { session });
+    } catch (error) {
+      if ((error as { code?: number }).code === 11000) {
+        throw new DriveUploadCommitError(409, "folder_id_conflict", "Folder id is already in use");
+      }
+      throw error;
+    }
     // A folder is a zero-byte record; purge retires it like any other object.
     await usages.updateOne(ownerFilter, { $inc: { totalObjects: 1 }, $set: { updatedAt: now } }, { session });
     const bucket = await getDatabase().collection("buckets").updateOne(

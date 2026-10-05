@@ -137,7 +137,7 @@ moving or renaming never touches a blob.
     *   `GET /api/objects?bucketId=...&folder=<folderId|root>` (omit `folder` to list the whole Space)
 *   **Create Folder** (Space manage permission)
     *   `POST /api/objects/folder`
-    *   **Body:** `{ "bucketId": "...", "encryptedDisplayName": "<encrypted name>", "parentFolderId": "optional_parent_id" }`
+    *   **Body:** `{ "bucketId": "...", "folderId": "<24 lowercase hex, chosen by the client>", "encryptedDisplayName": "<name sealed for folderId>", "parentFolderId": "optional_parent_id" }` (409 `folder_id_conflict` if the id is in use)
 *   **Move Files/Folders** (Space manage permission; metadata only)
     *   `POST /api/objects/move`
     *   **Body:** `{ "objectIds": ["id1", "id2"], "destinationFolderId": "new_parent_id or null" }`

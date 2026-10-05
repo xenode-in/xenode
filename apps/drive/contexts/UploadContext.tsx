@@ -502,6 +502,32 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     return { wrappedBy: "user", publicKey };
   }
 
+  /**
+   * Seals an upload's name, content type, metadata object and thumbnail under
+   * the current metadata key, bound to the reserved object id. A thumbnail is
+   * best effort; everything else fails the upload.
+   */
+  async function sealUploadMetadata(
+    fileId: string,
+    file: File,
+    metadata: FileMetadata | null,
+    rawThumbnail: string | undefined,
+  ) {
+    const metadataKey = currentMetadataKey();
+    if (!metadataKey || !metadata) throw new Error("Metadata key unavailable");
+    return {
+      thumbnail: rawThumbnail
+        ? await encryptThumbnail(rawThumbnail, metadataKey, fileId).catch(() => undefined)
+        : undefined,
+      encryptedMetadata: await encryptMetadataObject(metadata, metadataKey, fileId),
+      encryptedName: await encryptMetadataString(file.name, metadataKey, { fileId, purpose: "name" }),
+      encryptedContentType: await encryptMetadataString(file.type, metadataKey, {
+        fileId,
+        purpose: "content-type",
+      }),
+    };
+  }
+
   function spaceFieldsFor(target: FileKeyTarget) {
     return target.wrappedBy === "space"
       ? { wrappedBy: "space", spaceKeyVersion: target.spaceKeyVersion }
@@ -616,6 +642,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         let encryptedDEK: string | undefined;
         let spaceKeyWrapIv: string | undefined;
         let encryptedName: string | undefined;
+        let encryptedContentTypeVal: string | undefined;
         let chunkIvs: string | undefined;
 
         let encryptedMetadata: string | undefined;
@@ -634,12 +661,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             rawThumbnail = extracted.rawThumbnail;
             aspectRatio = extracted.aspectRatio;
             metadata.thumbnail = rawThumbnail ?? null;
-            if (rawThumbnail && currentMetadataKey()) {
-              thumbnail = await encryptThumbnail(
-                rawThumbnail,
-                currentMetadataKey()!,
-              ).catch(() => undefined);
-            }
 
             /*
             // Handle Subtitle Extraction & Sidecar Upload
@@ -825,18 +846,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             }
             */
 
-            // Encrypt standardized metadata object
-            encryptedMetadata = await encryptMetadataObject(
-              metadata,
-              currentMetadataKey()!,
-            );
-
-            // Legacy backward-compatibility headers (optional but kept for safety)
-            encryptedName = await encryptMetadataString(
-              uploadFile.name,
-              currentMetadataKey()!,
-            );
-
           } catch (err) {
             failClosedOnEncryptionError(err);
           }
@@ -901,10 +910,19 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         if (uploadBody.size !== totalSize) {
           throw new Error("Encrypted size does not match the reservation");
         }
+        try {
+          const sealed = await sealUploadMetadata(sessionId, uploadFile, metadata, rawThumbnail);
+          thumbnail = sealed.thumbnail;
+          encryptedMetadata = sealed.encryptedMetadata;
+          encryptedName = sealed.encryptedName;
+          encryptedContentTypeVal = sealed.encryptedContentType;
+        } catch (err) {
+          failClosedOnEncryptionError(err);
+        }
 
         // Handle thumbnail upload to B2
         let thumbnailKey: string | undefined;
-        if (thumbnail && thumbnail.startsWith("enc:")) {
+        if (thumbnail) {
           thumbnailKey = await uploadEncryptedThumbnail(
             thumbnail,
             returnedBucketId,
@@ -914,13 +932,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         }
 
         const userId = sessionRef.current?.user?.id;
-        const encryptedContentTypeVal =
-          shouldEncryptNow() && currentMetadataKey()
-            ? await encryptMetadataString(
-                uploadFile.type,
-                currentMetadataKey()!,
-              )
-            : undefined;
 
         // Deterministic per-chunk metadata (ciphertext slice sizes) — matches
         // what we PUT and is resume-safe (independent of upload order).
@@ -1193,6 +1204,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       let encryptedIV: string | undefined;
       let spaceKeyWrapIv: string | undefined;
       let encryptedName: string | undefined;
+      let encryptedContentTypeVal: string | undefined;
 
       let encryptedMetadata: string | undefined;
 
@@ -1200,16 +1212,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         try {
           // Metadata + preview extraction off the main thread (hardened worker).
           const extracted = await extractFileMetadata(task.file);
-          const metadata = extracted.metadata;
           rawThumbnail = extracted.rawThumbnail;
           aspectRatio = extracted.aspectRatio;
-          metadata.thumbnail = rawThumbnail ?? null;
-          if (rawThumbnail && currentMetadataKey()) {
-            thumbnail = await encryptThumbnail(
-              rawThumbnail,
-              currentMetadataKey()!,
-            ).catch(() => undefined);
-          }
+          extracted.metadata.thumbnail = rawThumbnail ?? null;
 
           const enc = await encryptFileBlob(task.file, mainSessionId, keyTarget);
           uploadBody = enc.ciphertext;
@@ -1217,20 +1222,16 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           encryptedIV = enc.iv;
           spaceKeyWrapIv = enc.spaceKeyWrapIv;
 
-          // Encrypt standardized metadata object
-          encryptedMetadata = await encryptMetadataObject(
-            {
-              ...metadata,
-              aspectRatio,
-            },
-            currentMetadataKey()!,
+          const sealed = await sealUploadMetadata(
+            mainSessionId,
+            task.file,
+            { ...extracted.metadata, aspectRatio: aspectRatio ?? null },
+            rawThumbnail,
           );
-
-          // Legacy fields for backward compatibility
-          encryptedName = await encryptMetadataString(
-            task.file.name,
-            currentMetadataKey()!,
-          );
+          thumbnail = sealed.thumbnail;
+          encryptedMetadata = sealed.encryptedMetadata;
+          encryptedName = sealed.encryptedName;
+          encryptedContentTypeVal = sealed.encryptedContentType;
         } catch (err) {
           failClosedOnEncryptionError(err);
         }
@@ -1238,7 +1239,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
       // Step 4: Handle thumbnail upload to B2
       let thumbnailKey: string | undefined;
-      if (thumbnail && thumbnail.startsWith("enc:")) {
+      if (thumbnail) {
         thumbnailKey = await uploadEncryptedThumbnail(
           thumbnail,
           returnedBucketId,
@@ -1250,13 +1251,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       const userId = sessionRef.current?.user?.id;
       const mainSize = uploadBody.size;
       const withinCap = mainSize <= RESUME_BYTE_CAP;
-      const encryptedContentTypeVal =
-        shouldEncryptNow() && currentMetadataKey()
-          ? await encryptMetadataString(
-              task.file.type,
-              currentMetadataKey()!,
-            )
-          : undefined;
 
       // Journal for reload-resume (persist bytes only under the cap).
       if (userId) {

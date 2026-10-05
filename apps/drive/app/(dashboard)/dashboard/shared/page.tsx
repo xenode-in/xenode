@@ -271,6 +271,7 @@ export default function SharedPage() {
             nextNames[row.id] = await decryptMetadataString(
               row.objectId.encryptedName,
               metadataKey,
+              { fileId: row.objectId._id, purpose: "name" },
             );
           } catch (decryptError) {
             console.error("Failed to decrypt file name", decryptError);
@@ -326,20 +327,30 @@ export default function SharedPage() {
       );
     }
 
+    // Re-sealed for the share, bound to the same file; the failure sentinel is
+    // never shared.
+    const fileId = row.objectId._id;
     if (metadataKey && encryptedName) {
-      const name = await decryptMetadataString(encryptedName, metadataKey);
-      packageData.shareEncryptedName = await encryptWithShareKey(
-        name,
-        shareKeyObj,
-      );
+      const name = await decryptMetadataString(encryptedName, metadataKey, { fileId, purpose: "name" });
+      if (name !== "Encrypted File") {
+        packageData.shareEncryptedName = await encryptWithShareKey(name, shareKeyObj, {
+          fileId,
+          purpose: "name",
+        });
+      }
     }
 
     if (metadataKey && encryptedContentType) {
-      const type = await decryptMetadataString(encryptedContentType, metadataKey);
-      packageData.shareEncryptedContentType = await encryptWithShareKey(
-        type,
-        shareKeyObj,
-      );
+      const type = await decryptMetadataString(encryptedContentType, metadataKey, {
+        fileId,
+        purpose: "content-type",
+      });
+      if (type !== "Encrypted File") {
+        packageData.shareEncryptedContentType = await encryptWithShareKey(type, shareKeyObj, {
+          fileId,
+          purpose: "content-type",
+        });
+      }
     }
 
     return { packageData, shareKeyRaw, shareKeyObj };

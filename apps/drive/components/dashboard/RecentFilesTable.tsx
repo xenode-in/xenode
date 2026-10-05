@@ -87,6 +87,7 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
             const name = await decryptMetadataString(
               file.encryptedName,
               metadataKey,
+              { fileId: file.id, purpose: "name" },
             );
             newNames[file.id] = name;
           } catch (e) {

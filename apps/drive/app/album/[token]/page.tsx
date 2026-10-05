@@ -72,7 +72,11 @@ function ThumbnailTile({
     (async () => {
       try {
         const text = await (await fetch(item.thumbnailUrl!)).text();
-        const dataUrl = await decryptWithShareKey(text, shareKey);
+        const dataUrl = await decryptWithShareKey(text, shareKey, {
+          fileId: item.objectId,
+          purpose: "thumbnail",
+        });
+        if (!dataUrl.startsWith("data:image/")) throw new Error("Not an image thumbnail");
         if (!cancelled) setSrc(dataUrl);
       } catch {
         if (!cancelled) setFailed(true);
@@ -81,7 +85,7 @@ function ThumbnailTile({
     return () => {
       cancelled = true;
     };
-  }, [item.thumbnailUrl, shareKey]);
+  }, [item.objectId, item.thumbnailUrl, shareKey]);
 
   return (
     <button
@@ -203,8 +207,12 @@ export default function SharedAlbumPage() {
             setLoading(false);
             if (meta.shareEncryptedAlbumName) {
               try {
+                // An album has no file id; its name is bound to the share token.
                 setAlbumName(
-                  await decryptWithShareKey(meta.shareEncryptedAlbumName, shareKey),
+                  await decryptWithShareKey(meta.shareEncryptedAlbumName, shareKey, {
+                    fileId: token,
+                    purpose: "name",
+                  }),
                 );
               } catch {
                 /* keep default */
@@ -237,7 +245,12 @@ export default function SharedAlbumPage() {
     if (!shareKey) return;
     if (data.shareEncryptedAlbumName) {
       try {
-        setAlbumName(await decryptWithShareKey(data.shareEncryptedAlbumName, shareKey));
+        setAlbumName(
+          await decryptWithShareKey(data.shareEncryptedAlbumName, shareKey, {
+            fileId: token,
+            purpose: "name",
+          }),
+        );
       } catch {
         /* keep default */
       }
@@ -247,7 +260,10 @@ export default function SharedAlbumPage() {
         let name = "Photo";
         if (it.shareEncryptedName) {
           try {
-            name = await decryptWithShareKey(it.shareEncryptedName, shareKey);
+            name = await decryptWithShareKey(it.shareEncryptedName, shareKey, {
+              fileId: it.objectId,
+              purpose: "name",
+            });
           } catch {
             /* keep default */
           }

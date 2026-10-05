@@ -116,7 +116,7 @@ export function useSyncManager() {
           const nameToDecrypt = f.encryptedDisplayName || f.encryptedName;
           if (f.isEncrypted && nameToDecrypt) {
             try {
-              name = await decryptMetadataString(nameToDecrypt, metadataKey);
+              name = await decryptMetadataString(nameToDecrypt, metadataKey, { fileId: f.id, purpose: "name" });
             } catch {
               name = "Encrypted File";
             }

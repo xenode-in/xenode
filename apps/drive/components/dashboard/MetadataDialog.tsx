@@ -71,8 +71,9 @@ export function MetadataDialog({
           const decrypted = await decryptMetadataObject(
             data.encryptedMetadata,
             metadataKey,
+            item.id,
           );
-          setMetadata(decrypted);
+          setMetadata(decrypted as FileMetadata);
         })
         .catch((err) => {
           console.error("[MetadataDialog] Error:", err);

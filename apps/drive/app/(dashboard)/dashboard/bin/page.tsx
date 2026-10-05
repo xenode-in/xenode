@@ -62,7 +62,7 @@ function daysLeft(deletedAt?: string): number {
 function Thumb({ item }: { item: BinObject }) {
   const { metadataKey } = useCrypto();
   const [ref, isVisible] = useIsVisible();
-  const url = useThumbnail(isVisible ? item.thumbnail : undefined, metadataKey);
+  const url = useThumbnail(isVisible ? item.thumbnail : undefined, metadataKey, item._id);
   const isFolder = item.contentType === "application/x-directory" || item.key.endsWith("/");
 
   return (
@@ -134,7 +134,7 @@ export default function BinPage() {
           const enc = o.encryptedDisplayName || o.encryptedName;
           if (enc && metadataKey) {
             try {
-              decryptedName = await decryptMetadataString(enc, metadataKey);
+              decryptedName = await decryptMetadataString(enc, metadataKey, { fileId: o._id, purpose: "name" });
             } catch {
               /* keep fallback */
             }

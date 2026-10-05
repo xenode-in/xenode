@@ -552,17 +552,18 @@
       "post": {
         "tags": ["Objects"],
         "summary": "Create a folder",
-        "description": "Requires Space manage permission. Folders are metadata records with no blob; the server assigns the opaque key <spaceRoot><folderId>/. Plaintext names are not accepted.",
+        "description": "Requires Space manage permission. Folders are metadata records with no blob and the opaque key <spaceRoot><folderId>/. The client chooses the folder id so the encrypted name can be bound to it. Plaintext names are not accepted.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["bucketId", "encryptedDisplayName"],
+                "required": ["bucketId", "folderId", "encryptedDisplayName"],
                 "properties": {
                   "bucketId": { "type": "string" },
-                  "encryptedDisplayName": { "type": "string", "minLength": 16, "maxLength": 4096, "description": "Folder name encrypted with the Space metadata key" },
+                  "folderId": { "type": "string", "pattern": "^[a-f0-9]{24}$", "description": "New folder id chosen by the client (12 random bytes, lowercase hex)" },
+                  "encryptedDisplayName": { "type": "string", "minLength": 16, "maxLength": 4096, "description": "Folder name sealed with the Space metadata key, bound to folderId (xenode-file/1 metadata, purpose name)" },
                   "parentFolderId": { "type": ["string", "null"], "description": "Live parent folder in the same Space; null or omitted for the Space root" }
                 }
               }
@@ -571,7 +572,8 @@
         },
         "responses": {
           "201": { "description": "Folder created; body { folder }" },
-          "400": { "description": "Missing encrypted name or nesting deeper than 32 folders" },
+          "400": { "description": "Missing or malformed folder id, missing encrypted name, or nesting deeper than 32 folders" },
+          "409": { "description": "folder_id_conflict: the folder id is already in use" },
           "403": { "description": "Space manage permission required" },
           "404": { "description": "Bucket or parent folder not found in this Space" },
           "409": { "description": "Space inactive or storage usage not initialized" }

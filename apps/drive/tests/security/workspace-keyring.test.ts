@@ -32,11 +32,12 @@ describe("workspace keyring", () => {
 
     // A name written under v1 decrypts only with v1's HKDF metadata key — not
     // with the newer version and not with the raw Space key itself.
-    const name = await encryptMetadataString("Q3 plan.xlsx", keyVersionOf(keyring, 1)!.metadataKey);
-    expect(await decryptMetadataString(name, keyVersionOf(keyring, 1)!.metadataKey)).toBe("Q3 plan.xlsx");
-    expect(await decryptMetadataString(name, keyring.current.metadataKey)).toBe("Encrypted File");
+    const binding = { fileId: "65f0000000000000000000cc", purpose: "name" as const };
+    const name = await encryptMetadataString("Q3 plan.xlsx", keyVersionOf(keyring, 1)!.metadataKey, binding);
+    expect(await decryptMetadataString(name, keyVersionOf(keyring, 1)!.metadataKey, binding)).toBe("Q3 plan.xlsx");
+    expect(await decryptMetadataString(name, keyring.current.metadataKey, binding)).toBe("Encrypted File");
     const rawAsKey = await crypto.subtle.importKey("raw", new Uint8Array(v1), "AES-GCM", false, ["decrypt"]);
-    expect(await decryptMetadataString(name, rawAsKey)).toBe("Encrypted File");
+    expect(await decryptMetadataString(name, rawAsKey, binding)).toBe("Encrypted File");
 
     await loadWorkspaceKeyring(scope);
     expect(fetchMock).toHaveBeenCalledTimes(1);

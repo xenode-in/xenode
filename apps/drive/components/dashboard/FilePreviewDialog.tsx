@@ -1049,6 +1049,7 @@ export function FilePreviewDialog({
           const name = await decryptMetadataString(
             file.encryptedName,
             activeMetadataKey ?? null,
+            { fileId: file.id, purpose: "name" },
           );
           if (!cancelled) setDecryptedName(name);
         }
@@ -1248,6 +1249,7 @@ export function FilePreviewDialog({
             type = await decryptWithShareKey(
               data.shareEncryptedContentType,
               shareKeyObj,
+              { fileId, purpose: "content-type" },
             );
             if (!cancelled) setDecryptedContentType(type);
           } catch (e) {
@@ -1267,6 +1269,7 @@ export function FilePreviewDialog({
             type = await decryptMetadataString(
               data.encryptedContentType,
               activeMetadataKey,
+              { fileId, purpose: "content-type" },
             );
             if (!cancelled) setDecryptedContentType(type);
           } catch (e) {
@@ -1643,6 +1646,7 @@ export function FilePreviewDialog({
             type = await decryptMetadataString(
               data.encryptedContentType,
               activeMetadataKey,
+              { fileId: file.id, purpose: "content-type" },
             );
           } catch (metadataError) {
             console.warn(

@@ -22,7 +22,6 @@ import {
   parseChunkIvs,
   unwrapShareFileKey,
 } from "@/lib/crypto/fileEncryption";
-import { useThumbnail } from "@/hooks/useThumbnail";
 import { Navbar } from "@/components/Navbar";
 import { LandingFooter } from "@/components/landing/LandingFooter";
 import { FilePreviewDialog } from "@/components/dashboard/FilePreviewDialog";
@@ -73,7 +72,6 @@ function BundleFileCard({
   token,
   password,
   shareKey,
-  shareKeyObj,
   requiresPassword,
   downloading,
   onPreview,
@@ -85,17 +83,15 @@ function BundleFileCard({
   token: string;
   password: string;
   shareKey: string;
-  shareKeyObj: CryptoKey | null;
   requiresPassword: boolean;
   downloading: boolean;
   onPreview: () => void;
   onDownload: () => void;
 }) {
-  const thumbnailKey =
-    item.shareEncryptedThumbnail && !shareKeyObj ? undefined : item.thumbnail;
-  const thumbnailUrl = useThumbnail(thumbnailKey, shareKeyObj);
+  // Stored thumbnails are sealed under the owner's metadata key, which a link
+  // visitor does not hold; image items get a thumbnail from their own content.
   const fallbackThumbnailUrl = useSharedImageThumbnailFallback({
-    enabled: !thumbnailUrl && !item.shareEncryptedThumbnail,
+    enabled: true,
     item,
     token,
     password,
@@ -104,7 +100,7 @@ function BundleFileCard({
     displayType,
     requiresPassword,
   });
-  const effectiveThumbnailUrl = thumbnailUrl || fallbackThumbnailUrl;
+  const effectiveThumbnailUrl = fallbackThumbnailUrl;
 
   return (
     <div className="group overflow-hidden rounded-xl border border-border bg-background/50 transition-colors hover:border-primary/40 hover:bg-secondary/20">
@@ -438,9 +434,6 @@ export default function SharedFilePage() {
 
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [previewItem, setPreviewItem] = useState<ShareMetaItem | null>(null);
-  const singleThumbnailKey =
-    meta?.shareEncryptedThumbnail && !shareKeyObj ? undefined : meta?.thumbnail;
-  const decryptedThumbnailUrl = useThumbnail(singleThumbnailKey, shareKeyObj);
 
   // Sync shareKey from URL hash
   useEffect(() => {
@@ -547,6 +540,7 @@ export default function SharedFilePage() {
                 const name = await decryptWithShareKey(
                   d.shareEncryptedName,
                   shareKeyObj,
+                  { fileId: String(d.id), purpose: "name" },
                 );
                 setDecryptedName(name);
               }
@@ -555,6 +549,7 @@ export default function SharedFilePage() {
                 const type = await decryptWithShareKey(
                   d.shareEncryptedContentType,
                   shareKeyObj,
+                  { fileId: String(d.id), purpose: "content-type" },
                 );
                 setDecryptedContentType(type);
               }
@@ -569,12 +564,14 @@ export default function SharedFilePage() {
                     nextItem.name = await decryptWithShareKey(
                       item.shareEncryptedName,
                       shareKeyObj,
+                      { fileId: item.id, purpose: "name" },
                     );
                   }
                   if (item.shareEncryptedContentType) {
                     nextItem.contentType = await decryptWithShareKey(
                       item.shareEncryptedContentType,
                       shareKeyObj,
+                      { fileId: item.id, purpose: "content-type" },
                     );
                   }
                   nextItems[item.id] = nextItem;
@@ -782,12 +779,6 @@ export default function SharedFilePage() {
             <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-2xl bg-primary/10 overflow-hidden shadow-inner">
               {meta.isBundle ? (
                 <FileStack className="h-10 w-10 text-primary" />
-              ) : decryptedThumbnailUrl ? (
-                <img
-                  src={decryptedThumbnailUrl}
-                  alt={displayName}
-                  className="h-full w-full object-cover"
-                />
               ) : (
                 getFileIcon(
                   decryptedContentType || meta.contentType,
@@ -854,7 +845,6 @@ export default function SharedFilePage() {
                         token={token}
                         password={password}
                         shareKey={shareKey}
-                        shareKeyObj={shareKeyObj}
                         requiresPassword={meta.isPasswordProtected}
                         downloading={downloading || downloadingAll}
                         onPreview={() => handlePreviewItem(item)}

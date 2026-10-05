@@ -78,6 +78,7 @@ import {
   unwrapStoredFileKey,
 } from "@/lib/crypto/fileEncryption";
 import { cn } from "@/lib/utils";
+import { bytesToHex } from "@/lib/crypto/utils";
 import { driveScopeSpaceId, useWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 import {
@@ -805,6 +806,7 @@ export function FilesBrowser() {
             newMap[obj.id] = await decryptMetadataString(
               obj.encryptedDisplayName,
               key,
+              { fileId: obj.id, purpose: "name" },
             );
           } catch {}
         }
@@ -833,6 +835,7 @@ export function FilesBrowser() {
             newMap[obj.id] = await decryptMetadataString(
               obj.encryptedName,
               key,
+              { fileId: obj.id, purpose: "name" },
             );
           } catch {}
         }
@@ -1346,15 +1349,19 @@ export function FilesBrowser() {
         setModalOpen(true);
         throw new Error("Vault locked");
       }
+      // The folder's id is chosen here so its name can be bound to it.
+      const folderId = bytesToHex(crypto.getRandomValues(new Uint8Array(12)));
       const encryptedDisplayName = await encryptMetadataString(
         newFolderName.trim(),
         writeMetadataKey,
+        { fileId: folderId, purpose: "name" },
       );
       const res = await workspace.scopedFetch("/api/objects/folder", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           bucketId,
+          folderId,
           encryptedDisplayName,
           parentFolderId: currentFolderId,
           ...(isWorkspaceEncrypted ? { spaceKeyVersion: current?.keyVersion } : {}),
@@ -1481,11 +1488,17 @@ export function FilesBrowser() {
       setNewTag("");
       return;
     }
-    let tagToSave = newTag.trim();
-    // Tags use the record's key version, like the rest of its metadata.
+    // Tags use the record's key version, like the rest of its metadata, and
+    // are never stored in plaintext.
     const tagKey = metadataKeyFor(taggingObj.spaceKeyVersion);
-    if (privateKey && tagKey)
-      tagToSave = await encryptMetadataString(tagToSave, tagKey);
+    if (!privateKey || !tagKey) {
+      setModalOpen(true);
+      return;
+    }
+    const tagToSave = await encryptMetadataString(newTag.trim(), tagKey, {
+      fileId: taggingObj.id,
+      purpose: "tags",
+    });
     try {
       const res = await workspace.scopedFetch(`/api/objects/${taggingObj.id}`, {
         method: "PATCH",
@@ -2181,6 +2194,7 @@ export function FilesBrowser() {
               taggingObj.tags.map((tag) => (
                 <TagItem
                   key={tag}
+                  fileId={taggingObj.id}
                   encryptedTag={tag}
                   metadataKey={metadataKeyFor(taggingObj.spaceKeyVersion)}
                   onRemove={handleRemoveTag}
@@ -2297,33 +2311,35 @@ export function FilesBrowser() {
 // ─── Tag Item ─────────────────────────────────────────────────────────────────
 
 function TagItem({
+  fileId,
   encryptedTag,
   metadataKey,
   onRemove,
 }: {
+  fileId: string;
   encryptedTag: string;
   metadataKey: CryptoKey | null;
   onRemove: (tag: string) => void;
 }) {
-  const [display, setDisplay] = useState(encryptedTag);
-  const shouldDecrypt =
-    !!metadataKey &&
-    (encryptedTag.startsWith("0x02") || encryptedTag.length > 50);
+  // A tag is shown only once it opens as this file's tag.
+  const [display, setDisplay] = useState("…");
 
   useEffect(() => {
-    if (shouldDecrypt) {
-      decryptMetadataString(encryptedTag, metadataKey)
-        .then(setDisplay)
-        .catch(() => setDisplay(encryptedTag));
-    }
-  }, [encryptedTag, metadataKey, shouldDecrypt]);
+    let active = true;
+    decryptMetadataString(encryptedTag, metadataKey, { fileId, purpose: "tags" }).then((tag) => {
+      if (active) setDisplay(tag);
+    });
+    return () => {
+      active = false;
+    };
+  }, [encryptedTag, fileId, metadataKey]);
 
   return (
     <Badge
       variant="secondary"
       className="bg-secondary text-primary hover:bg-secondary flex gap-1 items-center pl-2 pr-1 py-1"
     >
-      {shouldDecrypt ? display : encryptedTag}
+      {display}
       <button
         onClick={() => onRemove(encryptedTag)}
         className="hover:text-destructive p-0.5 rounded-full hover:bg-background/20"

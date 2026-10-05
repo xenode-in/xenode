@@ -13,7 +13,10 @@ import {
   decryptFileChunks,
   encryptFileChunks,
   generateFileKey,
+  openFileMetadata,
   sealFileChunk,
+  sealFileMetadata,
+  type FileMetadataPurpose,
   unwrapFileKey,
   unwrapFileKeyForShare,
   unwrapFileKeyForUser,
@@ -243,185 +246,113 @@ export function decryptFilePart(
   return decryptFileChunk(sealedPart, fileKey, fromB64(ivB64), { fileId }, index, count);
 }
 
-/**
- * Encrypt a thumbnail (Data URL) using the metadataKey
- */
-export async function encryptThumbnail(
-  dataUrl: string,
-  metadataKey: CryptoKey,
-): Promise<string> {
-  const encoded = new TextEncoder().encode(dataUrl);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const cipher = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    metadataKey,
-    encoded,
-  );
-  const combined = new Uint8Array(12 + cipher.byteLength);
-  combined.set(iv, 0);
-  combined.set(new Uint8Array(cipher), 12);
-  return "enc:" + toB64(combined);
+/** What a metadata value is bound to: its object and its purpose. */
+export interface MetadataBinding {
+  fileId: string;
+  purpose: FileMetadataPurpose;
 }
 
-/**
- * Decrypts a thumbnail encrypted with encryptThumbnail().
- * Returns the original data URL unchanged if not encrypted (no "enc:" prefix).
- */
-export async function decryptThumbnail(
-  thumbnail: string,
-  metadataKey: CryptoKey,
-): Promise<string> {
-  if (!thumbnail.startsWith("enc:")) return thumbnail;
-  try {
-    const bytes = fromB64(thumbnail.slice(4));
-    const iv = bytes.slice(0, 12);
-    const cipher = bytes.slice(12);
-    const plain = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv },
-      metadataKey,
-      cipher,
-    );
-    return new TextDecoder().decode(plain);
-  } catch {
-    return "";
+/** Bound metadata values are base64 of [0x04][12-byte IV][AES-GCM ciphertext]. */
+const METADATA_FORMAT = 0x04;
+const METADATA_IV_BYTES = 12;
+
+async function sealString(text: string, key: CryptoKey, binding: MetadataBinding): Promise<string> {
+  const sealed = await sealFileMetadata(new TextEncoder().encode(text), key, binding);
+  const combined = new Uint8Array(1 + METADATA_IV_BYTES + sealed.ciphertext.byteLength);
+  combined[0] = METADATA_FORMAT;
+  combined.set(sealed.iv, 1);
+  combined.set(new Uint8Array(sealed.ciphertext), 1 + METADATA_IV_BYTES);
+  return toB64(combined);
+}
+
+async function openString(value: string, key: CryptoKey, binding: MetadataBinding): Promise<string> {
+  const combined = fromB64(value);
+  if (combined[0] !== METADATA_FORMAT || combined.length < 1 + METADATA_IV_BYTES + 16) {
+    throw new Error("Unsupported metadata format");
   }
-}
-
-/**
- * Encrypts a metadata string using a raw AES-GCM key (the share DEK).
- * Used to re-encrypt filename/contentType/thumbnail for public share pages
- * that have no vault access.
- */
-export async function encryptWithShareKey(
-  text: string,
-  shareKey: CryptoKey,
-): Promise<string> {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const cipher = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    shareKey,
-    new TextEncoder().encode(text),
+  const plaintext = await openFileMetadata(
+    combined.slice(1 + METADATA_IV_BYTES),
+    combined.slice(1, 1 + METADATA_IV_BYTES),
+    key,
+    binding,
   );
-  const combined = new Uint8Array(12 + cipher.byteLength);
-  combined.set(iv, 0);
-  combined.set(new Uint8Array(cipher), 12);
-  return toB64(combined);
+  return new TextDecoder().decode(plaintext);
 }
 
-export async function decryptWithShareKey(
-  b64: string,
-  shareKey: CryptoKey,
-): Promise<string> {
-  const bytes = fromB64(b64);
-  const iv = bytes.slice(0, 12);
-  const cipher = bytes.slice(12);
-  const plain = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
-    shareKey,
-    cipher,
-  );
-  return new TextDecoder().decode(plain);
-}
-
-/**
- * Encrypts a string using the shared metadataKey.
- * Format: [0x02 version byte] + [12 bytes IV] + [ciphertext]
- */
-export async function encryptMetadataString(
+/** Seals a name, content type or tag list under the Space metadata key. */
+export function encryptMetadataString(
   text: string,
   metadataKey: CryptoKey,
+  binding: MetadataBinding,
 ): Promise<string> {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encoded = new TextEncoder().encode(text);
-  const ciphertextBuffer = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    metadataKey,
-    encoded,
-  );
-
-  // 0x02 = new metadataKey format. Distinguishes from legacy format unambiguously.
-  const combined = new Uint8Array(1 + iv.length + ciphertextBuffer.byteLength);
-  combined[0] = 0x02;
-  combined.set(iv, 1);
-  combined.set(new Uint8Array(ciphertextBuffer), 1 + iv.length);
-  return toB64(combined);
+  return sealString(text, metadataKey, binding);
 }
 
 /**
- * Decrypts a metadata string: [0x02] + [12 bytes IV] + [ciphertext] under the
- * metadata key. Any other value (including the retired format that carried
- * its own AES key, i.e. plaintext) is rejected.
+ * Opens a bound metadata string. A missing key, another file's value, another
+ * purpose or any other format yields the "Encrypted File" sentinel.
  */
 export async function decryptMetadataString(
-  encryptedB64: string,
+  value: string,
   metadataKey: CryptoKey | null,
+  binding: MetadataBinding,
 ): Promise<string> {
+  if (!metadataKey) return "Encrypted File";
   try {
-    const combined = fromB64(encryptedB64);
-
-    // New format: version byte 0x02
-    if (combined[0] === 0x02) {
-      if (!metadataKey) return "Encrypted File";
-      const iv = combined.slice(1, 13);
-      const ciphertext = combined.slice(13);
-      const plaintext = await crypto.subtle.decrypt(
-        { name: "AES-GCM", iv },
-        metadataKey,
-        ciphertext,
-      );
-      return new TextDecoder().decode(plaintext);
-    }
-
-    return "Encrypted File";
+    return await openString(value, metadataKey, binding);
   } catch (err) {
     console.warn("[E2EE] Failed to decrypt metadata string", err);
     return "Encrypted File";
   }
 }
 
-export async function encryptMetadataObject(
-  metadata: Record<string, any>,
+export function encryptMetadataObject(
+  metadata: object,
   metadataKey: CryptoKey,
+  fileId: string,
 ): Promise<string> {
-  const json = JSON.stringify(metadata);
-
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encoded = new TextEncoder().encode(json);
-
-  const cipher = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    metadataKey,
-    encoded,
-  );
-
-  // 0x03 = standardized FileMetadata object
-  const combined = new Uint8Array(1 + iv.length + cipher.byteLength);
-  combined[0] = 0x03;
-  combined.set(iv, 1);
-  combined.set(new Uint8Array(cipher), 1 + iv.length);
-
-  return toB64(combined);
+  return sealString(JSON.stringify(metadata), metadataKey, { fileId, purpose: "metadata" });
 }
 
 export async function decryptMetadataObject(
-  encryptedB64: string,
+  value: string,
   metadataKey: CryptoKey,
-): Promise<any> {
-  const combined = fromB64(encryptedB64);
+  fileId: string,
+): Promise<unknown> {
+  return JSON.parse(await openString(value, metadataKey, { fileId, purpose: "metadata" }));
+}
 
-  // Supports both 0x02 (experimental) and 0x03 (standardized)
-  if (combined[0] !== 0x02 && combined[0] !== 0x03) {
-    throw new Error("Invalid metadata version: " + combined[0]);
+/** Seals a thumbnail data URL; the upload stores it as the `-thumb` sidecar. */
+export function encryptThumbnail(dataUrl: string, metadataKey: CryptoKey, fileId: string): Promise<string> {
+  return sealString(dataUrl, metadataKey, { fileId, purpose: "thumbnail" });
+}
+
+/** Opens a bound thumbnail; anything else, including plaintext, yields "". */
+export async function decryptThumbnail(value: string, key: CryptoKey, fileId: string): Promise<string> {
+  try {
+    const dataUrl = await openString(value, key, { fileId, purpose: "thumbnail" });
+    return dataUrl.startsWith("data:image/") ? dataUrl : "";
+  } catch {
+    return "";
   }
+}
 
-  const iv = combined.slice(1, 13);
-  const cipher = combined.slice(13);
+/**
+ * Seals a value under a share key (or, for comments, the file key), bound like
+ * metadata. Share pages have no vault, so names and types are re-sealed for them.
+ */
+export function encryptWithShareKey(
+  text: string,
+  shareKey: CryptoKey,
+  binding: MetadataBinding,
+): Promise<string> {
+  return sealString(text, shareKey, binding);
+}
 
-  const plain = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
-    metadataKey,
-    cipher,
-  );
-
-  return JSON.parse(new TextDecoder().decode(plain));
+export function decryptWithShareKey(
+  value: string,
+  shareKey: CryptoKey,
+  binding: MetadataBinding,
+): Promise<string> {
+  return openString(value, shareKey, binding);
 }

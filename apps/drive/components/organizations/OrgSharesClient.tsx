@@ -184,10 +184,18 @@ function SharedWithMe({ orgId }: { orgId: string }) {
           continue;
         }
         try {
+          const fileId = row.object?.id;
+          if (!fileId) throw new Error("Shared file is unavailable");
           const shareKey = await buildShareKey(row.wrappedShareKey, privateKey);
-          const name = await decryptWithShareKey(row.shareEncryptedName, shareKey);
+          const name = await decryptWithShareKey(row.shareEncryptedName, shareKey, {
+            fileId,
+            purpose: "name",
+          });
           const contentType = row.shareEncryptedContentType
-            ? await decryptWithShareKey(row.shareEncryptedContentType, shareKey)
+            ? await decryptWithShareKey(row.shareEncryptedContentType, shareKey, {
+                fileId,
+                purpose: "content-type",
+              })
             : row.object?.contentType || "application/octet-stream";
           resolved[row.id] = { name, contentType };
         } catch {
@@ -465,10 +473,16 @@ function SharedOut({ orgId }: { orgId: string }) {
         const key = keyVersionOf(keyring, s.object.spaceKeyVersion)?.metadataKey;
         if (!key) continue;
         if (s.object.encryptedName) {
-          resolved[s.id] = await decryptMetadataString(s.object.encryptedName, key);
+          resolved[s.id] = await decryptMetadataString(s.object.encryptedName, key, {
+            fileId: s.object.id,
+            purpose: "name",
+          });
         }
         if (s.object.encryptedContentType) {
-          resolvedTypes[s.id] = await decryptMetadataString(s.object.encryptedContentType, key);
+          resolvedTypes[s.id] = await decryptMetadataString(s.object.encryptedContentType, key, {
+            fileId: s.object.id,
+            purpose: "content-type",
+          });
         }
       }
       if (active) {

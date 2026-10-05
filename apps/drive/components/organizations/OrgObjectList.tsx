@@ -120,7 +120,7 @@ export function OrgObjectList({ orgId, scope }: { orgId: string; scope: Scope })
       for (const row of rows) {
         const key = keyVersionOf(keyring, row.spaceKeyVersion)?.metadataKey;
         if (!key || !row.isEncrypted || !row.encryptedName) continue;
-        resolved[row.id] = await decryptMetadataString(row.encryptedName, key);
+        resolved[row.id] = await decryptMetadataString(row.encryptedName, key, { fileId: row.id, purpose: "name" });
       }
       if (active) setNames((prev) => ({ ...prev, ...resolved }));
     })().catch(() => {

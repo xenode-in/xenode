@@ -104,9 +104,16 @@ export default function SharedWithMeDetailPage() {
           share.recipient.wrappedShareKey,
           privateKey,
         );
-        const name = await decryptWithShareKey(share.shareEncryptedName, shareKey);
+        const fileId = share.objectId._id;
+        const name = await decryptWithShareKey(share.shareEncryptedName, shareKey, {
+          fileId,
+          purpose: "name",
+        });
         const contentType = share.shareEncryptedContentType
-          ? await decryptWithShareKey(share.shareEncryptedContentType, shareKey)
+          ? await decryptWithShareKey(share.shareEncryptedContentType, shareKey, {
+              fileId,
+              purpose: "content-type",
+            })
           : fallbackType;
 
         if (active) {

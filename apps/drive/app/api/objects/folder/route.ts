@@ -40,7 +40,7 @@ function errorResponse(error: unknown, fallback: string) {
 export async function POST(request: NextRequest) {
   try {
     const ctx = await requireAccessContext(request, "manage");
-    const { bucketId, encryptedDisplayName, parentFolderId, spaceKeyVersion } = await request.json();
+    const { bucketId, folderId, encryptedDisplayName, parentFolderId, spaceKeyVersion } = await request.json();
     if (typeof bucketId !== "string" || !/^[a-f0-9]{24}$/iu.test(bucketId)) {
       return NextResponse.json({ error: "bucketId is required" }, { status: 400 });
     }
@@ -52,6 +52,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
     const created = await createDriveFolder({
+      folderId,
       spaceId: ctx.spaceId,
       bucketId: bucket._id,
       accountId: ctx.accountId,

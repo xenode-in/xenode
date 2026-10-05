@@ -14,7 +14,6 @@ import {
   FolderOpen,
 } from "lucide-react";
 import { toast } from "sonner";
-import { WRITE_ONCE_PUT_HEADERS } from "@xenode/upload-engine";
 import { useCrypto } from "@/contexts/CryptoContext";
 import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
@@ -235,7 +234,6 @@ export function ShareDialog({
       let shareKeyIv: string | undefined;
       let shareEncryptedName: string | undefined;
       let shareEncryptedContentType: string | undefined;
-      let shareEncryptedThumbnail: string | undefined;
       let ownerEncryptedShareKey: string | undefined;
       let fragment: string | undefined;
       let shareKeyRaw: Uint8Array | undefined;
@@ -303,7 +301,6 @@ export function ShareDialog({
 
         let itemShareEncryptedName: string | undefined;
         let itemShareEncryptedContentType: string | undefined;
-        let itemShareEncryptedThumbnail: string | undefined;
 
         // Org/team file metadata uses the workspace key version the record was
         // created with, not the personal vault metadata key. Using the wrong
@@ -319,18 +316,22 @@ export function ShareDialog({
         }
 
         if (itemMetadataKey) {
+          // Re-sealed under the share key, bound to the same file; the failure
+          // sentinel (decryptMetadataString never throws) is never shared.
+          const fileId = targetFile.id;
           const nameToDecrypt =
             targetFile.encryptedDisplayName || targetFile.encryptedName;
           if (nameToDecrypt) {
             const plaintextName = await decryptMetadataString(
               nameToDecrypt,
               itemMetadataKey,
+              { fileId, purpose: "name" },
             );
-            // decryptMetadataString returns this sentinel instead of throwing.
             if (plaintextName && plaintextName !== "Encrypted File") {
               itemShareEncryptedName = await encryptWithShareKey(
                 plaintextName,
                 shareKeyObj,
+                { fileId, purpose: "name" },
               );
             }
           }
@@ -339,80 +340,14 @@ export function ShareDialog({
             const plaintextType = await decryptMetadataString(
               targetFile.encryptedContentType,
               itemMetadataKey,
+              { fileId, purpose: "content-type" },
             );
             if (plaintextType && plaintextType !== "Encrypted File") {
               itemShareEncryptedContentType = await encryptWithShareKey(
                 plaintextType,
                 shareKeyObj,
+                { fileId, purpose: "content-type" },
               );
-            }
-          }
-
-          if (
-            targetFile.thumbnail &&
-            targetFile.thumbnail.startsWith("enc:")
-          ) {
-            const { decryptThumbnail } =
-              await import("@/lib/crypto/fileEncryption");
-            // Returns "" when the key is wrong — skip rather than wrap junk.
-            const plaintextThumb = await decryptThumbnail(
-              targetFile.thumbnail,
-              itemMetadataKey,
-            );
-            const encryptedThumb = plaintextThumb
-              ? await encryptWithShareKey(plaintextThumb, shareKeyObj)
-              : "";
-
-            if (encryptedThumb) {
-              try {
-              const configRes = workspace?.scopedFetch
-                ? await workspace.scopedFetch("/api/drive/config")
-                : await fetch("/api/drive/config");
-              const config = await configRes.json();
-              const token = (body as { token?: string }).token;
-              if (config.bucket && token) {
-                const thumbName = isBundle
-                  ? `${token}-${targetFile.id}-thumb`
-                  : `${token}-thumb`;
-                const presignRes = workspace?.scopedFetch
-                  ? await workspace.scopedFetch("/api/objects/presign-upload", {
-                      method: "POST",
-                      body: JSON.stringify({
-                        bucketId: config.bucket._id,
-                        prefix: "shares/",
-                        fileName: thumbName,
-                        fileType: "application/octet-stream",
-                        fileSize: encryptedThumb.length,
-                      }),
-                    })
-                  : await fetch("/api/objects/presign-upload", {
-                      method: "POST",
-                      body: JSON.stringify({
-                        bucketId: config.bucket._id,
-                        prefix: "shares/",
-                        fileName: thumbName,
-                        fileType: "application/octet-stream",
-                        fileSize: encryptedThumb.length,
-                      }),
-                    });
-                const { uploadUrl, objectKey } = await presignRes.json();
-
-                const uploaded = await fetch(uploadUrl, {
-                  method: "PUT",
-                  body: encryptedThumb,
-                  credentials: "omit",
-                  headers: { "Content-Type": "application/octet-stream", ...WRITE_ONCE_PUT_HEADERS },
-                });
-                if (!uploaded.ok) throw new Error(`Share thumbnail upload failed (${uploaded.status})`);
-
-                itemShareEncryptedThumbnail = objectKey;
-              }
-              } catch (thumbnailError) {
-                console.error(
-                  "Failed to upload shared thumbnail to B2",
-                  thumbnailError,
-                );
-              }
             }
           }
         }
@@ -423,7 +358,6 @@ export function ShareDialog({
           shareKeyIv: wrapped.shareKeyIv,
           shareEncryptedName: itemShareEncryptedName,
           shareEncryptedContentType: itemShareEncryptedContentType,
-          shareEncryptedThumbnail: itemShareEncryptedThumbnail,
         };
       }
 
@@ -435,15 +369,11 @@ export function ShareDialog({
         shareKeyIv = onlyItem.shareKeyIv;
         shareEncryptedName = onlyItem.shareEncryptedName;
         shareEncryptedContentType = onlyItem.shareEncryptedContentType;
-        shareEncryptedThumbnail = onlyItem.shareEncryptedThumbnail;
         if (shareEncryptedDEK) body.shareEncryptedDEK = shareEncryptedDEK;
         if (shareKeyIv) body.shareKeyIv = shareKeyIv;
         if (shareEncryptedName) body.shareEncryptedName = shareEncryptedName;
         if (shareEncryptedContentType) {
           body.shareEncryptedContentType = shareEncryptedContentType;
-        }
-        if (shareEncryptedThumbnail) {
-          body.shareEncryptedThumbnail = shareEncryptedThumbnail;
         }
       }
 
@@ -552,7 +482,6 @@ export function ShareDialog({
             patchBody.shareKeyIv = shareKeyIv;
             patchBody.shareEncryptedName = shareEncryptedName;
             patchBody.shareEncryptedContentType = shareEncryptedContentType;
-            patchBody.shareEncryptedThumbnail = shareEncryptedThumbnail;
           }
 
           const patchRes = await scopedOrPlainFetch(
@@ -610,7 +539,6 @@ export function ShareDialog({
             shareKeyIv,
             shareEncryptedName,
             shareEncryptedContentType,
-            shareEncryptedThumbnail,
             recipients,
           }),
         });

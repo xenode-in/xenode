@@ -8,7 +8,9 @@ import {
   fileChunkRange,
   fileCiphertextBytes,
   generateFileKey,
+  openFileMetadata,
   sealFileChunk,
+  sealFileMetadata,
   unwrapFileKey,
   unwrapFileKeyForShare,
   unwrapFileKeyForUser,
@@ -117,6 +119,18 @@ describe("authenticated file chunks", () => {
       .rejects.toThrow("Invalid file context");
     await expect(encryptFileChunks(bytes(1), key, { fileId: "" }, CHUNK))
       .rejects.toThrow("Invalid file context");
+  });
+});
+
+describe("file metadata", () => {
+  it("opens only for its own file and purpose", async () => {
+    const key = await aesKey(["encrypt", "decrypt"]);
+    const name = new TextEncoder().encode("invoice.pdf");
+    const sealed = await sealFileMetadata(name, key, { ...file, purpose: "name" });
+    expect(new Uint8Array(await openFileMetadata(sealed.ciphertext, sealed.iv, key, { ...file, purpose: "name" })))
+      .toEqual(name);
+    await expect(openFileMetadata(sealed.ciphertext, sealed.iv, key, { ...other, purpose: "name" })).rejects.toThrow();
+    await expect(openFileMetadata(sealed.ciphertext, sealed.iv, key, { ...file, purpose: "content-type" })).rejects.toThrow();
   });
 });
 

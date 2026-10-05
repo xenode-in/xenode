@@ -145,7 +145,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
       let name = obj.key.split("/").pop() || "download";
       if (isEncrypted && obj.encryptedName && metadataKey) {
         try {
-          name = await decryptMetadataString(obj.encryptedName, metadataKey);
+          name = await decryptMetadataString(obj.encryptedName, metadataKey, { fileId: obj.id, purpose: "name" });
         } catch (e) {
           console.error("Failed to decrypt filename for download", e);
         }
@@ -382,7 +382,10 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         let finalContentType = data.contentType ?? obj.contentType;
         if (isEncrypted && data.encryptedContentType && metadataKey) {
           try {
-            finalContentType = await decryptMetadataString(data.encryptedContentType, metadataKey);
+            finalContentType = await decryptMetadataString(data.encryptedContentType, metadataKey, {
+              fileId: obj.id,
+              purpose: "content-type",
+            });
           } catch (e) {}
         }
 

@@ -110,10 +110,10 @@ export class XenodeBinaryPersistenceAdapter implements BinaryPersistenceAdapter 
     if (meta.wrappedBy === "space" && !workspaceKey) throw new Error("workspace_key_locked");
     const metadataKey = workspaceKey?.metadataKey ?? this.options.metadataKey;
     const name = meta.encryptedName
-      ? await decryptMetadataString(meta.encryptedName, metadataKey)
+      ? await decryptMetadataString(meta.encryptedName, metadataKey, { fileId: objectId, purpose: "name" })
       : "Encrypted spreadsheet.xlsx";
     const contentType = meta.encryptedContentType
-      ? await decryptMetadataString(meta.encryptedContentType, metadataKey)
+      ? await decryptMetadataString(meta.encryptedContentType, metadataKey, { fileId: objectId, purpose: "content-type" })
       : meta.contentType;
     if (!isSupportedSpreadsheet(name, contentType)) {
       throw new Error("unsupported_spreadsheet_type");

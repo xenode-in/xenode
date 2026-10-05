@@ -54,9 +54,17 @@ async function readJson<T>(res: Response): Promise<T> {
   return data as T;
 }
 
-async function decryptComment(raw: RawComment, dek: CryptoKey): Promise<DecryptedComment> {
+/** Comments are sealed under the file key, bound to the file they discuss. */
+async function decryptComment(
+  raw: RawComment,
+  dek: CryptoKey,
+  objectId: string,
+): Promise<DecryptedComment> {
   try {
-    const plaintext = await decryptWithShareKey(raw.ciphertext, dek);
+    const plaintext = await decryptWithShareKey(raw.ciphertext, dek, {
+      fileId: objectId,
+      purpose: "comment",
+    });
     const payload = JSON.parse(plaintext) as CommentPayload;
     return { ...raw, body: payload.body ?? "", anchor: payload.anchor };
   } catch {
@@ -108,7 +116,7 @@ export function SpreadsheetCommentsPanel({
       const data = await readJson<{ comments: RawComment[] }>(
         await doFetch(`/api/objects/${objectId}/comments`),
       );
-      setComments(await Promise.all(data.comments.map((c) => decryptComment(c, dek))));
+      setComments(await Promise.all(data.comments.map((c) => decryptComment(c, dek, objectId))));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to load comments");
     } finally {
@@ -140,7 +148,10 @@ export function SpreadsheetCommentsPanel({
     try {
       const payload: CommentPayload = { body: trimmed };
       if (anchor && (anchor.ref || anchor.sheetName)) payload.anchor = anchor;
-      const ciphertext = await encryptWithShareKey(JSON.stringify(payload), dek);
+      const ciphertext = await encryptWithShareKey(JSON.stringify(payload), dek, {
+        fileId: objectId,
+        purpose: "comment",
+      });
       const data = await readJson<{ comment: RawComment }>(
         await doFetch(`/api/objects/${objectId}/comments`, {
           method: "POST",

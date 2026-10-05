@@ -160,6 +160,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     const decryptedThumbnail = useThumbnail(
       isVisible ? item.thumbnail : undefined,
       activeMetadataKey,
+      item.id,
     );
     const [isMetaOpen, setIsMetaOpen] = useState(false);
     const { starred, toggle: toggleStar } = useStarToggle(item);
@@ -177,7 +178,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
             : null;
 
         if (nameToDecrypt) {
-          decryptMetadataString(nameToDecrypt, activeMetadataKey).then(
+          decryptMetadataString(nameToDecrypt, activeMetadataKey, { fileId: item.id, purpose: "name" }).then(
             setDecryptedName,
           );
         } else {
@@ -186,7 +187,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
 
         if (item.tags && item.tags.length > 0 && activeMetadataKey) {
           Promise.all(
-            item.tags.map((t) => decryptMetadataString(t, activeMetadataKey)),
+            item.tags.map((t) => decryptMetadataString(t, activeMetadataKey, { fileId: item.id, purpose: "tags" })),
           ).then(setDecryptedTags);
         } else {
           setDecryptedTags(null);
@@ -563,6 +564,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
     const decryptedThumbnail = useThumbnail(
       isVisible ? item.thumbnail : undefined,
       activeMetadataKey,
+      item.id,
     );
     const [isMetaOpen, setIsMetaOpen] = useState(false);
     const { starred, toggle: toggleStar } = useStarToggle(item);
@@ -580,7 +582,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
             : null;
 
         if (nameToDecrypt) {
-          decryptMetadataString(nameToDecrypt, activeMetadataKey).then(
+          decryptMetadataString(nameToDecrypt, activeMetadataKey, { fileId: item.id, purpose: "name" }).then(
             setDecryptedName,
           );
         } else {
@@ -589,7 +591,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
 
         if (item.tags && item.tags.length > 0 && activeMetadataKey) {
           Promise.all(
-            item.tags.map((t) => decryptMetadataString(t, activeMetadataKey)),
+            item.tags.map((t) => decryptMetadataString(t, activeMetadataKey, { fileId: item.id, purpose: "tags" })),
           ).then(setDecryptedTags);
         } else {
           setDecryptedTags(null);

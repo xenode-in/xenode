@@ -55,9 +55,12 @@ async function personal() {
 
 type Fixture = Awaited<ReturnType<typeof personal>>;
 
+/** The client chooses a folder's id so its encrypted name can be bound to it. */
+const newFolderId = () => new Types.ObjectId().toHexString();
+
 async function folder(fixture: Fixture, parentFolderId: string | null = null) {
   const response = await createFolder(request("/api/objects/folder", "POST", {
-    bucketId: String(fixture.bucket._id), encryptedDisplayName: ENCRYPTED_NAME, parentFolderId,
+    bucketId: String(fixture.bucket._id), folderId: newFolderId(), encryptedDisplayName: ENCRYPTED_NAME, parentFolderId,
   }));
   expect(response.status).toBe(201);
   return (await response.json()).folder as { _id: string; key: string; folderId: string | null; ancestorIds: string[] };
@@ -101,9 +104,22 @@ describe("Drive folders are metadata", () => {
     expect(send).not.toHaveBeenCalled();
 
     const plaintext = await createFolder(request("/api/objects/folder", "POST", {
-      bucketId: String(fixture.bucket._id), name: "Tax returns",
+      bucketId: String(fixture.bucket._id), folderId: newFolderId(), name: "Tax returns",
     }));
     expect(plaintext.status).toBe(400);
+
+    // The id is the client's; it must be well formed and never reused.
+    for (const folderId of [undefined, "not-an-id", parent._id.toUpperCase()]) {
+      const invalid = await createFolder(request("/api/objects/folder", "POST", {
+        bucketId: String(fixture.bucket._id), folderId, encryptedDisplayName: ENCRYPTED_NAME,
+      }));
+      expect(invalid.status).toBe(400);
+    }
+    const reused = await createFolder(request("/api/objects/folder", "POST", {
+      bucketId: String(fixture.bucket._id), folderId: parent._id, encryptedDisplayName: ENCRYPTED_NAME,
+    }));
+    expect(reused.status).toBe(409);
+    expect((await reused.json()).code).toBe("folder_id_conflict");
   });
 
   it("refuses parents outside the Space or in the Bin", async () => {
@@ -111,14 +127,14 @@ describe("Drive folders are metadata", () => {
     const foreign = await folder(other);
     const fixture = await personal();
     const response = await createFolder(request("/api/objects/folder", "POST", {
-      bucketId: String(fixture.bucket._id), encryptedDisplayName: ENCRYPTED_NAME, parentFolderId: foreign._id,
+      bucketId: String(fixture.bucket._id), folderId: newFolderId(), encryptedDisplayName: ENCRYPTED_NAME, parentFolderId: foreign._id,
     }));
     expect(response.status).toBe(404);
 
     const binned = await folder(fixture);
     expect((await deleteFolder(request("/api/objects/folder", "DELETE", { folderId: binned._id }))).status).toBe(200);
     const underBinned = await createFolder(request("/api/objects/folder", "POST", {
-      bucketId: String(fixture.bucket._id), encryptedDisplayName: ENCRYPTED_NAME, parentFolderId: binned._id,
+      bucketId: String(fixture.bucket._id), folderId: newFolderId(), encryptedDisplayName: ENCRYPTED_NAME, parentFolderId: binned._id,
     }));
     expect(underBinned.status).toBe(404);
   });
@@ -129,7 +145,7 @@ describe("Drive folders are metadata", () => {
     for (let depth = 0; depth <= 32; depth += 1) parent = (await folder(fixture, parent))._id;
     expect((await StorageObject.findById(parent).lean())?.ancestorIds).toHaveLength(32);
     const tooDeep = await createFolder(request("/api/objects/folder", "POST", {
-      bucketId: String(fixture.bucket._id), encryptedDisplayName: ENCRYPTED_NAME, parentFolderId: parent,
+      bucketId: String(fixture.bucket._id), folderId: newFolderId(), encryptedDisplayName: ENCRYPTED_NAME, parentFolderId: parent,
     }));
     expect(tooDeep.status).toBe(400);
   });

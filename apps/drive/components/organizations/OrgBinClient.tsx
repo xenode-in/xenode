@@ -119,7 +119,7 @@ export function OrgBinClient({ orgId }: { orgId: string }) {
       for (const item of items) {
         const key = keyVersionOf(keyring, item.spaceKeyVersion)?.metadataKey;
         if (!key || !item.isEncrypted || !item.encryptedName) continue;
-        resolved[item.id] = await decryptMetadataString(item.encryptedName, key);
+        resolved[item.id] = await decryptMetadataString(item.encryptedName, key, { fileId: item.id, purpose: "name" });
       }
       if (active) setNames((prev) => ({ ...prev, ...resolved }));
     })().catch(() => {

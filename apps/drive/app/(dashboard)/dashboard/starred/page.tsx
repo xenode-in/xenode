@@ -43,7 +43,7 @@ function getFileName(key: string) {
 function Thumb({ item }: { item: StarredObject }) {
   const { metadataKey } = useCrypto();
   const [ref, isVisible] = useIsVisible();
-  const url = useThumbnail(isVisible ? item.thumbnail : undefined, metadataKey);
+  const url = useThumbnail(isVisible ? item.thumbnail : undefined, metadataKey, item._id);
   return (
     <div
       ref={ref}
@@ -109,7 +109,7 @@ export default function StarredPage() {
           const enc = o.encryptedDisplayName || o.encryptedName;
           if (enc && metadataKey) {
             try {
-              decryptedName = await decryptMetadataString(enc, metadataKey);
+              decryptedName = await decryptMetadataString(enc, metadataKey, { fileId: o._id, purpose: "name" });
             } catch {
               /* keep fallback */
             }

@@ -208,6 +208,55 @@ export async function decryptFileChunks(
   return plaintext;
 }
 
+/** What a sealed metadata value is; a value opens only as its own purpose. */
+export type FileMetadataPurpose =
+  | "name"
+  | "content-type"
+  | "metadata"
+  | "thumbnail"
+  | "tags"
+  | "comment";
+
+export interface FileMetadataContext extends FileContext {
+  purpose: FileMetadataPurpose;
+}
+
+const metadataData = (context: FileMetadataContext) =>
+  additionalData("metadata", [context.fileId, context.purpose]) as BufferSource;
+
+/**
+ * Seals one metadata value (a name, content type, thumbnail, tag list or
+ * metadata object) bound to its file and purpose, so a server cannot show one
+ * file's metadata on another or swap a name for a content type.
+ */
+export async function sealFileMetadata(
+  plaintext: BufferSource,
+  key: CryptoKey,
+  context: FileMetadataContext,
+): Promise<SealedFileChunk> {
+  const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv, additionalData: metadataData(context), tagLength: 128 },
+    key,
+    plaintext,
+  );
+  return { ciphertext, iv };
+}
+
+export async function openFileMetadata(
+  ciphertext: BufferSource,
+  iv: Uint8Array,
+  key: CryptoKey,
+  context: FileMetadataContext,
+): Promise<ArrayBuffer> {
+  if (iv.byteLength !== IV_BYTES) throw new Error("Invalid metadata IV");
+  return crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: iv as BufferSource, additionalData: metadataData(context), tagLength: 128 },
+    key,
+    ciphertext,
+  );
+}
+
 export function generateFileKey(): Promise<CryptoKey> {
   return crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
 }

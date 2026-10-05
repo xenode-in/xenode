@@ -76,6 +76,7 @@ export class DirectShareBinaryPersistenceAdapter
     const meta = (await response.json()) as ShareMetadata;
     const object = meta.objectId;
     if (!object) throw new Error("spreadsheet_not_found");
+    const objectId = String(object._id);
     if (!object.isEncrypted || !object.iv) throw new Error("encrypted_spreadsheet_required");
     const wrappedShareKey = meta.recipient?.wrappedShareKey;
     if (!wrappedShareKey || !meta.shareEncryptedDEK || !meta.shareKeyIv) {
@@ -85,10 +86,10 @@ export class DirectShareBinaryPersistenceAdapter
     const shareKey = await buildShareKey(wrappedShareKey, privateKey);
     const fallbackName = object.key.split("/").pop() ?? "Shared spreadsheet.xlsx";
     const name = meta.shareEncryptedName
-      ? await decryptWithShareKey(meta.shareEncryptedName, shareKey).catch(() => fallbackName)
+      ? await decryptWithShareKey(meta.shareEncryptedName, shareKey, { fileId: objectId, purpose: "name" }).catch(() => fallbackName)
       : fallbackName;
     const contentType = meta.shareEncryptedContentType
-      ? await decryptWithShareKey(meta.shareEncryptedContentType, shareKey).catch(
+      ? await decryptWithShareKey(meta.shareEncryptedContentType, shareKey, { fileId: objectId, purpose: "content-type" }).catch(
           () => object.contentType,
         )
       : object.contentType;
@@ -97,7 +98,6 @@ export class DirectShareBinaryPersistenceAdapter
     }
 
     const role = normalizeShareRole(meta.role ?? meta.recipient?.accessType);
-    const objectId = String(object._id);
     const dek = await buildDek(shareKey, meta.shareEncryptedDEK, meta.shareKeyIv, objectId);
 
     const streamResponse = await this.fetchImpl(

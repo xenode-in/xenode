@@ -4,6 +4,7 @@ import {
   __thumbnailBatchTestUtils,
   __thumbnailDecodeTestUtils,
 } from "@/hooks/useThumbnail";
+import { encryptThumbnail } from "@/lib/crypto/fileEncryption";
 import {
   clearThumbnailMemoryCache,
   getCachedThumbnail,
@@ -103,17 +104,21 @@ describe("useThumbnail batcher", () => {
 
 });
 describe("thumbnail plaintext cache", () => {
-  it("never treats encrypted bytes as an image when the key is unavailable", async () => {
+  it("renders only a thumbnail sealed for this file, never plaintext", async () => {
+    vi.restoreAllMocks(); // data: URLs go through the real fetch
     expect(__thumbnailDecodeTestUtils).toBeDefined();
-    const encoded = new TextEncoder().encode("enc:not-decryptable");
-    const data = encoded.buffer.slice(
-      encoded.byteOffset,
-      encoded.byteOffset + encoded.byteLength,
-    ) as ArrayBuffer;
+    const decode = __thumbnailDecodeTestUtils!.decodeDownloadedThumbnail;
+    const bytes = (text: string) => new TextEncoder().encode(text).slice().buffer as ArrayBuffer;
+    const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+    const sealed = await encryptThumbnail("data:image/png;base64,iVBORw0KGgo=", key, "65f0000000000000000000aa");
 
-    await expect(
-      __thumbnailDecodeTestUtils!.decodeDownloadedThumbnail(data, null),
-    ).resolves.toBeNull();
+    await expect(decode(bytes(sealed), null, "65f0000000000000000000aa")).resolves.toBeNull();
+    await expect(decode(bytes(sealed), key, "65f0000000000000000000bb")).resolves.toBeNull();
+    // Raw image bytes or a data URL served by the server are not rendered.
+    await expect(decode(bytes("\u00ff\u00d8\u00ff\u00e0 JFIF"), key, "65f0000000000000000000aa")).resolves.toBeNull();
+    await expect(decode(bytes("data:image/png;base64,iVBORw0KGgo="), key, "65f0000000000000000000aa")).resolves.toBeNull();
+    const opened = await decode(bytes(sealed), key, "65f0000000000000000000aa");
+    expect(opened?.type).toBe("image/png");
   });
 
   it("clears plaintext and rejects in-flight writes from an older generation", () => {

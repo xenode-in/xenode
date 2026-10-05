@@ -175,6 +175,8 @@ describe("organization object route adoption", () => {
         method: "POST",
         body: JSON.stringify({
           bucketId: String(bucket._id),
+          folderId: Array.from(crypto.getRandomValues(new Uint8Array(12)), (byte) =>
+            byte.toString(16).padStart(2, "0")).join(""),
           encryptedDisplayName: "encrypted-folder-name-envelope",
           spaceKeyVersion,
           name: "Design",

@@ -53,8 +53,11 @@ async function buildFixture() {
 
   const meta = {
     encryptedDEK,
-    encryptedName: await encryptMetadataString("book.xlsx", metadataKey),
-    encryptedContentType: await encryptMetadataString(CONTENT_TYPE, metadataKey),
+    encryptedName: await encryptMetadataString("book.xlsx", metadataKey, { fileId: OBJECT_ID, purpose: "name" }),
+    encryptedContentType: await encryptMetadataString(CONTENT_TYPE, metadataKey, {
+      fileId: OBJECT_ID,
+      purpose: "content-type",
+    }),
     contentType: CONTENT_TYPE,
     iv: toB64(iv),
     revision: 3,

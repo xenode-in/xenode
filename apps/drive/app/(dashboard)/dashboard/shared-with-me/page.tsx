@@ -65,6 +65,7 @@ async function decryptSharedName(
   shareEncryptedName: string,
   wrappedShareKey: string,
   privateKey: CryptoKey,
+  fileId: string,
 ) {
   const rawShareKey = await crypto.subtle.decrypt(
     { name: "RSA-OAEP" },
@@ -80,7 +81,7 @@ async function decryptSharedName(
     ["decrypt"],
   );
 
-  return decryptWithShareKey(shareEncryptedName, shareKey);
+  return decryptWithShareKey(shareEncryptedName, shareKey, { fileId, purpose: "name" });
 }
 
 export default function SharedWithMePage() {
@@ -144,6 +145,7 @@ export default function SharedWithMePage() {
               share.shareEncryptedName,
               share.recipient.wrappedShareKey,
               privateKey,
+              share.objectId._id,
             );
           } catch (decryptError) {
             console.error("Failed to decrypt direct share name", decryptError);

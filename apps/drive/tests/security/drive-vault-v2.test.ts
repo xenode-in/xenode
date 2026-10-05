@@ -43,8 +43,9 @@ describe("Drive Vault v2 crypto", () => {
     );
     expect(new Uint8Array(await opened.arrayBuffer())).toEqual(plaintext);
 
-    const encryptedName = await encryptMetadataString("private.txt", metadataKey);
-    expect(await decryptMetadataString(encryptedName, metadataKey)).toBe(
+    const binding = { fileId, purpose: "name" as const };
+    const encryptedName = await encryptMetadataString("private.txt", metadataKey, binding);
+    expect(await decryptMetadataString(encryptedName, metadataKey, binding)).toBe(
       "private.txt",
     );
     expect(encryptedName).not.toContain("private.txt");
@@ -55,8 +56,9 @@ describe("Drive Vault v2 crypto", () => {
     const productSpaceKey = crypto.getRandomValues(new Uint8Array(32));
     const first = await deriveMetadataKey(productSpaceKey, "drive", "personal:a");
     const wrongSpace = await deriveMetadataKey(productSpaceKey, "drive", "personal:b");
-    const ciphertext = await encryptMetadataString("space-bound", first);
-    expect(await decryptMetadataString(ciphertext, wrongSpace)).toBe(
+    const binding = { fileId: "65f000000000000000000002", purpose: "name" as const };
+    const ciphertext = await encryptMetadataString("space-bound", first, binding);
+    expect(await decryptMetadataString(ciphertext, wrongSpace, binding)).toBe(
       "Encrypted File",
     );
     productSpaceKey.fill(0);

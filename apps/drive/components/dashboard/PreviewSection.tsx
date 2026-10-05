@@ -42,7 +42,7 @@ function VideoCard({
   onClick: () => void;
 }) {
   const { metadataKey } = useCrypto();
-  const thumbUrl = useThumbnail(video.thumbnail, metadataKey);
+  const thumbUrl = useThumbnail(video.thumbnail, metadataKey, video.id);
 
   return (
     <div
@@ -97,7 +97,7 @@ function ImageCard({
   onClick: () => void;
 }) {
   const { metadataKey } = useCrypto();
-  const thumbUrl = useThumbnail(image.thumbnail, metadataKey);
+  const thumbUrl = useThumbnail(image.thumbnail, metadataKey, image.id);
 
   return (
     <div
@@ -159,7 +159,7 @@ export function PreviewSection({
           !decryptedNames[item.id]
         ) {
           try {
-            const name = await decryptMetadataString(item.encryptedName, metadataKey);
+            const name = await decryptMetadataString(item.encryptedName, metadataKey, { fileId: item.id, purpose: "name" });
             newNames[item.id] = name;
           } catch (e) {
             console.error("Failed to decrypt name", e);

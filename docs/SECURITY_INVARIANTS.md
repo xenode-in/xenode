@@ -29,7 +29,9 @@ These are release-blocking rules.
 - Each file has an independent AES-256-GCM DEK. Content chunks and every wrap
   of the DEK are bound to the object id (`xenode-file/1`), so ciphertext,
   chunks and wrapped keys cannot be reordered, truncated or moved between
-  files. Metadata purpose keys are derived with HKDF and bound to the Space.
+  files. Metadata purpose keys are derived with HKDF and bound to the Space;
+  each metadata value is bound to its file and purpose and is never stored or
+  rendered in plaintext.
 - Workspace key grants are create-only per member and version, every new
   keyholder receives every issued version, and rotation never retires the
   remaining members' older versions.

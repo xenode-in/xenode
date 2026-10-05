@@ -299,6 +299,7 @@ function thumbnailCacheIdentity(
   thumbnail: string,
   userId: string | undefined,
   decryptionKey: CryptoKey | null,
+  fileId: string | undefined,
 ): string {
   let keyScope = "unencrypted";
   if (decryptionKey) {
@@ -309,22 +310,20 @@ function thumbnailCacheIdentity(
     }
     keyScope = `key-${keyId}`;
   }
-  return `${userId ?? "public"}\u0000${keyScope}\u0000${thumbnail}`;
+  return `${userId ?? "public"}\u0000${keyScope}\u0000${fileId ?? ""}\u0000${thumbnail}`;
 }
 
+/** A thumbnail renders only if it opens as this file's thumbnail; never plaintext. */
 async function decodeDownloadedThumbnail(
   data: ArrayBuffer,
   decryptionKey: CryptoKey | null,
+  fileId: string | undefined,
 ): Promise<Blob | null> {
-  const prefix = new TextDecoder().decode(data.slice(0, 8));
-  if (!prefix.startsWith("enc:")) {
-    return new Blob([data], { type: "image/jpeg" });
-  }
-  if (!decryptionKey) return null;
-  const fullText = new TextDecoder().decode(data);
+  if (!decryptionKey || !fileId) return null;
   const { decryptThumbnail } = await import("@/lib/crypto/fileEncryption");
-  const decryptedDataUrl = await decryptThumbnail(fullText, decryptionKey);
-  const blob = await (await fetch(decryptedDataUrl)).blob();
+  const dataUrl = await decryptThumbnail(new TextDecoder().decode(data), decryptionKey, fileId);
+  if (!dataUrl) return null;
+  const blob = await (await fetch(dataUrl)).blob();
   return blob.type.startsWith("image/") ? blob : null;
 }
 export const __thumbnailDecodeTestUtils =
@@ -334,14 +333,16 @@ export const __thumbnailDecodeTestUtils =
 
 export function useThumbnail(
   thumbnail: string | undefined,
-  decryptionKey: CryptoKey | null = null,
+  decryptionKey: CryptoKey | null,
+  /** The object the thumbnail belongs to. */
+  fileId: string | undefined,
 ) {
   const [url, setUrl] = useState<string | null>(null);
   const { data: session } = useSession();
   const workspace = useOptionalWorkspace();
   const userId = session?.user?.id;
   const thumbnailCacheKey = thumbnail
-    ? thumbnailCacheIdentity(thumbnail, userId, decryptionKey)
+    ? thumbnailCacheIdentity(thumbnail, userId, decryptionKey, fileId)
     : null;
 
   // Track the current object URL in a ref so we can revoke it when replaced
@@ -374,13 +375,6 @@ export function useThumbnail(
 
     // Skip re-loading if the current URL already belongs to this key.
     if (loadedKeyRef.current === thumbnailCacheKey && objectUrlRef.current) {
-      return;
-    }
-
-    // Legacy base64 thumbnails — serve immediately, no fetch needed.
-    if (thumbnail.startsWith("data:")) {
-      setUrl(thumbnail);
-      loadedKeyRef.current = thumbnailCacheKey;
       return;
     }
 
@@ -434,8 +428,8 @@ export function useThumbnail(
 
         if (cancelled) return;
 
-        // ── 4. Decrypt if the blob starts with "enc:" ────────────────────
-        const blob = await decodeDownloadedThumbnail(data, decryptionKey);
+        // ── 4. Open the sealed thumbnail ─────────────────────────────────
+        const blob = await decodeDownloadedThumbnail(data, decryptionKey, fileId);
         if (!blob) return;
 
         if (cancelled) return;
