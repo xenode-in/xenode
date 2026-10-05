@@ -40,7 +40,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F21 | MED | Partial | Presign no longer writes plans (0S); 0ZH removed metering's expired-plan downgrades and usage upserts | Onboarding plan reset, expire-plans cron, refund/campaign handlers, admin plan routes and OrgUsage creation on billing reads bypass the canonical service |
 | F22 | HIGH | Open | Dockerfile copies 3 of 18 manifests and omits `server-events.mjs`; Compose lacks Accounts/Photos and calls removed PayU route; editor nginx invalid | Reproducible all-product deployment; see F36 |
 | F23 | HIGH | Addressed | 0ZF: non-force upgrades (Next 16.3.8, pdfjs-dist 6.3.289, Better Auth family 1.7.7, socket.io-parser 4.2.7, engine.io 6.6.11, sharp 0.35.5, axios 1.20.0, vitest 4.1.11); `npm audit` 24 → 0; CI now gates on `npm audit` | Re-triage whenever the CI audit gate fails; renderer corpus re-run is a release gate |
-| F24 | HIGH | Partial | No Vault v1/PBKDF2 code remains | `decryptMetadataString` still decrypts a legacy format whose key is embedded in the value |
+| F24 | HIGH | Addressed | No Vault v1/PBKDF2 code remains; 0ZM: the self-keyed name format is no longer read by `decryptMetadataString`, the crypto worker or the deleted `decryptFileName` | — |
 | F25 | MED | Open | `update-metadata` writes plaintext description/link; share `bundleName` and access-request notes are plaintext; tag/folder plaintext fallbacks | Encrypt user text or remove the fields; define observable metadata |
 | F26 | MED | Open | Drive content/chunk/metadata AES-GCM has no AAD; chunk order is unauthenticated | Versioned authenticated file manifest |
 | F27 | HIGH | Addressed | 0ZD `c6044ec`: current Admin authority and versioned revocation | Live browser/deployment check is a release gate |

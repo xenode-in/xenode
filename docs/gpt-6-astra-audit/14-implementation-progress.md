@@ -413,3 +413,10 @@ Commit: `71c940b`.
 - Tests: client keyring with real RSA-OAEP and HKDF (both versions kept, v1 names decrypt only with v1's metadata key and never with the raw key, one shared load, one reload for a newer record); stale-version upload refused with the reservation left pending and accepted at the newest version (negative control: without the check the stale upload returns 201); org folder creation refuses a stale version and stores the version. Workspace upload fixtures now issue the key version they wrap with.
 - Validation: all 15 test workspaces passed, **750 tests** (499 Drive, 143 Accounts, 35 Photos app, 73 packages). Root typecheck 16/16, package boundaries and the Drive production build passed; touched Drive files add no lint errors.
 - Remaining: no job re-wraps records created before a rotation; leaving the organization does not rotate team keys (see the contract's limits).
+
+## 0ZM — Self-keyed metadata format removed (F24)
+
+- The retired name format `[32-byte AES key][IV][ciphertext]` carried its own key: anyone, including the server, could read or forge it, yet three readers still accepted it (`decryptMetadataString`, the batch crypto worker and the unused `decryptFileName`). The first two now accept only `0x02` values sealed under a metadata key; `decryptFileName` was deleted. No writer produced the format.
+- Test: `metadata-format.test.ts` accepts a sealed value and rejects a self-keyed one (negative control: the previous reader returned the plaintext).
+- `docs/SECURITY_INVARIANTS.md` updated.
+- Validation: all 15 test workspaces passed, **751 tests** (500 Drive, 143 Accounts, 35 Photos app, 73 packages). Root typecheck 16/16 and package boundaries passed; touched files add no lint errors.

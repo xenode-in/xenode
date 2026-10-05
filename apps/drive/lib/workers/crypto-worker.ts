@@ -37,18 +37,8 @@ self.addEventListener("message", async (event) => {
               ciphertext
             );
             plaintext = new TextDecoder().decode(plain);
-          } else if (combined.byteLength >= 44) {
-            const nameKeyBytes = combined.slice(0, 32);
-            const nameIV = combined.slice(32, 44);
-            const ciphertext = combined.slice(44);
-            const legacyKey = await crypto.subtle.importKey(
-              "raw", nameKeyBytes, { name: "AES-GCM", length: 256 }, false, ["decrypt"],
-            );
-            const plain = await crypto.subtle.decrypt(
-              { name: "AES-GCM", iv: nameIV }, legacyKey, ciphertext,
-            );
-            plaintext = new TextDecoder().decode(plain);
           }
+          // Values carrying their own key are plaintext in disguise: rejected.
         } catch (e) {
           // Ignore and just use fallback
         }

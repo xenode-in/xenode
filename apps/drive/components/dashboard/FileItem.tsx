@@ -28,7 +28,6 @@ import { getFileIcon } from "@/lib/file-icons";
 import { forwardRef, useRef, useCallback, useState, useEffect, memo } from "react";
 import { useCrypto } from "@/contexts/CryptoContext";
 import {
-  decryptFileName,
   decryptMetadataString,
 } from "@/lib/crypto/fileEncryption";
 import { useThumbnail } from "@/hooks/useThumbnail";

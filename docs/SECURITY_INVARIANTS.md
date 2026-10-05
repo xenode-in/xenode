@@ -35,7 +35,8 @@ These are release-blocking rules.
   commit transaction); workspace metadata is encrypted with the per-version
   HKDF metadata key, never the raw Space key.
 - No PBKDF2 Vault v1, private-key hashing, wildcard postMessage origin, or
-  server-side plaintext fallback may be introduced.
+  server-side plaintext fallback may be introduced. Metadata readers accept
+  only values sealed under a metadata key, never a value carrying its own key.
 
 ## Storage and authorization
 
