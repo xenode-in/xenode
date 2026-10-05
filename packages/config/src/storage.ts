@@ -10,9 +10,8 @@ import { z } from "zod";
  *   us             → S3_US_BUCKET_NAME / S3_US_ENDPOINT / S3_US_REGION / S3_US_KEY_ID / S3_US_APPLICATION_KEY
  *   eu             → S3_EU_BUCKET_NAME / S3_EU_ENDPOINT / S3_EU_REGION / S3_EU_KEY_ID / S3_EU_APPLICATION_KEY
  *
- * Asia keeps the unprefixed names for backward compatibility. A region whose
- * env is unset resolves to defaults with no credentials — it only errors when a
- * caller actually tries to use it (requireRegionBucketCredentials).
+ * The default pool uses unprefixed names. Enabled pools are declared without
+ * credentials so Accounts can advertise the same choices as the products.
  */
 
 export const STORAGE_REGIONS = ["asia", "us", "eu"] as const;
@@ -22,10 +21,20 @@ export const DEFAULT_STORAGE_REGION: StorageRegion = "asia";
 
 /** Human-facing labels for the onboarding region picker. */
 export const STORAGE_REGION_LABELS: Record<StorageRegion, string> = {
-  asia: "Asia",
+  asia: "Default storage",
   us: "United States",
-  eu: "Europe",
+  eu: "European Union",
 };
+
+/** Non-secret deployment contract shared by Accounts, Drive and Photos. */
+export function enabledStorageRegions(env: Record<string, string | undefined> = process.env): StorageRegion[] {
+  const values = (env.STORAGE_ENABLED_REGIONS ?? "asia").split(",").map((value) => value.trim());
+  if (!values.length || values.some((value) => !isStorageRegion(value)) ||
+    new Set(values).size !== values.length || !values.includes(DEFAULT_STORAGE_REGION)) {
+    throw new Error("STORAGE_ENABLED_REGIONS must list unique supported pools including asia");
+  }
+  return values as StorageRegion[];
+}
 
 export function isStorageRegion(value: unknown): value is StorageRegion {
   return (
@@ -41,8 +50,8 @@ const REGION_ENV_PREFIX: Record<StorageRegion, string> = {
 };
 
 const storageEnvSchema = z.object({
-  S3_BUCKET_NAME: z.string().trim().min(3).default("xenode-drive-storage"),
-  S3_ENDPOINT: z.url().optional(),
+  S3_BUCKET_NAME: z.string().trim().regex(/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u),
+  S3_ENDPOINT: z.url(),
   S3_REGION: z.string().trim().min(1).default("auto"),
   S3_KEY_ID: z.string().trim().min(1).optional(),
   S3_APPLICATION_KEY: z.string().trim().min(1).optional(),
@@ -84,19 +93,31 @@ export function resolveRegionBucketConfig(
   region: StorageRegion,
   env: Record<string, string | undefined> = process.env,
 ): SystemBucketConfig {
+  if (!isStorageRegion(region) || !enabledStorageRegions(env).includes(region)) {
+    throw new Error(`Storage pool "${region}" is not enabled`);
+  }
   const useCache = env === process.env;
   if (useCache) {
     const hit = cachedByRegion.get(region);
     if (hit) return hit;
   }
 
-  const parsed = storageEnvSchema.parse(envForRegion(region, env));
-  if (parsed.S3_ENDPOINT) {
+  const values = envForRegion(region, env);
+  if (!values.S3_BUCKET_NAME || !values.S3_ENDPOINT) {
+    throw new Error(`${REGION_ENV_PREFIX[region]}BUCKET_NAME and ${REGION_ENV_PREFIX[region]}ENDPOINT are required for storage pool "${region}"`);
+  }
+  const parsed = storageEnvSchema.parse(values);
+  {
     const endpoint = new URL(parsed.S3_ENDPOINT);
     if (endpoint.protocol !== "https:" ||
       !/^[a-z0-9-]+\.(?:(?:eu|us)\.)?r2\.cloudflarestorage\.com$/u.test(endpoint.hostname) ||
+      endpoint.username || endpoint.password || endpoint.port ||
       endpoint.pathname !== "/" || endpoint.search || endpoint.hash) {
       throw new Error(`Region "${region}" requires a Cloudflare R2 S3 endpoint`);
+    }
+    if ((region === "us" || region === "eu") &&
+      !endpoint.hostname.endsWith(`.${region}.r2.cloudflarestorage.com`)) {
+      throw new Error(`Storage pool "${region}" requires its R2 ${region} jurisdiction endpoint`);
     }
   }
   if (parsed.S3_REGION !== "auto") {
@@ -114,7 +135,7 @@ export function resolveRegionBucketConfig(
   const config: SystemBucketConfig = {
     region: parsed.S3_REGION,
     bucketName: parsed.S3_BUCKET_NAME,
-    endpoint: parsed.S3_ENDPOINT ?? "",
+    endpoint: new URL(parsed.S3_ENDPOINT).origin,
     // NOT frozen: the AWS SDK mutates the credentials object it receives.
     credentials:
       parsed.S3_KEY_ID && parsed.S3_APPLICATION_KEY
@@ -130,8 +151,7 @@ export function resolveRegionBucketConfig(
 }
 
 /**
- * Backward-compatible default-region resolver. Existing callers that don't know
- * the region get the default (asia) bucket. Accepts an explicit env for tests.
+ * Explicitly resolve the deployment's default pool (also used by public assets).
  */
 export function resolveSystemBucketConfig(
   env: Record<string, string | undefined> = process.env,
@@ -142,18 +162,42 @@ export function resolveSystemBucketConfig(
 /**
  * Reverse-lookup the region that owns a physical bucket name. Used by token-
  * served download routes that have no session context but carry the bucket name
- * in the signed URL. Falls back to the default region.
+ * in the signed URL. Unknown or ambiguous names must never select a pool.
  */
 export function regionForBucketName(
   bucketName: string,
   env: Record<string, string | undefined> = process.env,
 ): StorageRegion {
-  for (const region of STORAGE_REGIONS) {
+  const matches: StorageRegion[] = [];
+  for (const region of enabledStorageRegions(env)) {
     if (resolveRegionBucketConfig(region, env).bucketName === bucketName) {
-      return region;
+      matches.push(region);
     }
   }
-  return DEFAULT_STORAGE_REGION;
+  if (matches.length !== 1) throw new Error("Physical storage bucket is unknown or ambiguous");
+  return matches[0];
+}
+
+/** Runtime-only: reject incomplete, undeclared or ambiguous provisioning. */
+export function validateStorageDeployment(env: Record<string, string | undefined> = process.env): Map<StorageRegion, SystemBucketConfig> {
+  const enabled = enabledStorageRegions(env);
+  const configs = new Map<StorageRegion, SystemBucketConfig>();
+  const bucketNames = new Set<string>();
+  for (const region of STORAGE_REGIONS) {
+    const values = envForRegion(region, env);
+    if (!enabled.includes(region)) {
+      if (Object.values(values).some((value) => value !== undefined)) {
+        throw new Error(`Storage pool "${region}" is configured but not declared in STORAGE_ENABLED_REGIONS`);
+      }
+      continue;
+    }
+    const config = resolveRegionBucketConfig(region, env);
+    requireRegionBucketCredentials(region, env);
+    if (bucketNames.has(config.bucketName)) throw new Error("Enabled storage pools must have distinct bucket names");
+    bucketNames.add(config.bucketName);
+    configs.set(region, config);
+  }
+  return configs;
 }
 
 export function requireRegionBucketCredentials(

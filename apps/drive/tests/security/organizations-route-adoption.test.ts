@@ -1,12 +1,12 @@
 import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { createB2Bucket } = vi.hoisted(() => ({
-  createB2Bucket: vi.fn(async (name: string) => `b2-${name}`),
+const { bucketExists } = vi.hoisted(() => ({
+  bucketExists: vi.fn(async () => true),
 }));
 
 vi.mock("@/lib/b2/buckets", () => ({
-  createB2Bucket,
+  bucketExists,
 }));
 
 import { GET, POST } from "@/app/api/buckets/route";
@@ -45,7 +45,7 @@ describe("organization route adoption", () => {
   afterEach(() => {
     delete process.env.ORGS_ENABLED;
     delete process.env.NEXT_PUBLIC_ORGS_ENABLED;
-    createB2Bucket.mockClear();
+    bucketExists.mockClear();
     mockedGetServerSession.mockReset();
   });
 
@@ -79,7 +79,7 @@ describe("organization route adoption", () => {
       error: "Custom buckets are no longer supported",
       code: "system_bucket_only",
     });
-    expect(createB2Bucket).not.toHaveBeenCalled();
+    expect(bucketExists).not.toHaveBeenCalled();
   });
 
   it("returns the system bucket regardless of a legacy scope query param", async () => {

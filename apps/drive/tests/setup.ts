@@ -1,8 +1,26 @@
 import { MongoMemoryReplSet } from "mongodb-memory-server";
 import mongoose from "mongoose";
-import { beforeAll, afterAll, afterEach, vi } from "vitest";
+import { beforeAll, beforeEach, afterAll, afterEach, vi } from "vitest";
+import { clearStorageConfigCacheForTests } from "@xenode/config/storage";
 
 let mongod: MongoMemoryReplSet;
+
+beforeEach(() => {
+  vi.stubEnv("STORAGE_ENABLED_REGIONS", "asia");
+  vi.stubEnv("S3_BUCKET_NAME", "xenode-drive-storage");
+  vi.stubEnv("S3_ENDPOINT", "https://example.r2.cloudflarestorage.com");
+  vi.stubEnv("S3_REGION", "auto");
+  vi.stubEnv("S3_KEY_ID", "test-key");
+  vi.stubEnv("S3_APPLICATION_KEY", "test-secret");
+  for (const region of ["US", "EU"]) {
+    for (const name of ["BUCKET_NAME", "ENDPOINT", "REGION", "KEY_ID", "APPLICATION_KEY"]) {
+      vi.stubEnv(`S3_${region}_${name}`, undefined);
+    }
+  }
+  clearStorageConfigCacheForTests();
+});
+
+vi.mock("@/lib/b2/buckets", () => ({ bucketExists: vi.fn(async () => true) }));
 
 beforeAll(async () => {
   mongod = await MongoMemoryReplSet.create({ replSet: { count: 1 } });

@@ -46,7 +46,8 @@ const BucketSchema = new Schema<IBucket>(
     },
     region: {
       type: String,
-      default: "us-west-004",
+      enum: ["auto"],
+      default: "auto",
     },
     objectCount: {
       type: Number,

@@ -26,6 +26,20 @@ handoff allowlists; see [the product origin contract](gpt-6-astra-audit/33-produ
 production. Admin JWTs are bound to current database role/status/session version;
 see [the Admin session contract](gpt-6-astra-audit/26-admin-session-contract.md).
 
+## Storage pools
+
+Set the same non-secret `STORAGE_ENABLED_REGIONS` on Accounts, Drive and Photos
+(default `asia`). Configure every enabled pool completely with distinct bucket
+names; US/EU must use their matching R2 jurisdiction endpoints. Leave disabled
+pool variables empty. Products validate this at runtime startup, and Accounts
+advertises only the enabled list without receiving storage credentials.
+
+Provision and verify R2 buckets and CORS outside the application. User requests
+verify buckets rather than creating them, and stored mappings are never
+relabelled. After resetting disposable development storage, seed verified
+mappings with `npm run seed:storage-buckets --workspace @xenode/drive`.
+See [the storage pool contract](gpt-6-astra-audit/36-storage-pool-provisioning.md).
+
 ## Container deployment
 
 `docker-compose.yaml` runs every product from one recipe, `deploy/app.Dockerfile`

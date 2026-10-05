@@ -42,6 +42,7 @@ Start with [the executive summary](00-executive-summary.md), then [the migration
 | [33 — Product origins](33-product-origin-contract.md) | Exact configured web origins, OAuth allowlists and build inputs |
 | [34 — Storage usage reconciliation](34-storage-usage-reconciliation.md) | Read-only snapshot reports for organization and personal counters |
 | [35 — File format](35-file-content-format.md) | AAD-bound chunks, file-key wraps and metadata keyed to the object id |
+| [36 — Storage pool provisioning](36-storage-pool-provisioning.md) | Explicit enabled pools, verified bucket mappings and immutable selection |
 
 ## Reading the judgments
 

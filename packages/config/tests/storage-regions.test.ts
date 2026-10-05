@@ -6,9 +6,13 @@ import {
   resolveRegionBucketConfig,
   resolveSystemBucketConfig,
   STORAGE_REGIONS,
+  enabledStorageRegions,
+  regionForBucketName,
+  validateStorageDeployment,
 } from "../src/storage";
 
 const FULL_ENV = {
+  STORAGE_ENABLED_REGIONS: "asia,us,eu",
   // asia (unprefixed)
   S3_BUCKET_NAME: "xenode-asia",
   S3_ENDPOINT: "https://example.r2.cloudflarestorage.com",
@@ -65,12 +69,15 @@ describe("multi-region storage config", () => {
     }).not.toThrow();
   });
 
-  it("an unconfigured region resolves without credentials and errors only on use", () => {
-    const cfg = resolveRegionBucketConfig("eu", { S3_KEY_ID: "x", S3_APPLICATION_KEY: "y" });
-    expect(cfg.credentials).toBeUndefined();
-    expect(() =>
-      requireRegionBucketCredentials("eu", { S3_KEY_ID: "x", S3_APPLICATION_KEY: "y" }),
-    ).toThrow(/not configured for region "eu"/);
+  it("refuses a disabled or incompletely provisioned pool", () => {
+    expect(() => resolveRegionBucketConfig("eu", {})).toThrow("not enabled");
+    expect(() => resolveRegionBucketConfig("us", { ...FULL_ENV, S3_US_BUCKET_NAME: "" }))
+      .toThrow("S3_US_BUCKET_NAME and S3_US_ENDPOINT are required");
+    expect(() => validateStorageDeployment({ ...FULL_ENV, S3_EU_APPLICATION_KEY: "" }))
+      .toThrow("configured together");
+    expect(() => requireRegionBucketCredentials("asia", {
+      S3_BUCKET_NAME: "explicit", S3_ENDPOINT: FULL_ENV.S3_ENDPOINT,
+    })).toThrow("credentials are not configured");
   });
 
   it("rejects non-R2 endpoints and signing regions", () => {
@@ -82,6 +89,40 @@ describe("multi-region storage config", () => {
     })).toThrow(/signing region "auto"/);
     expect(() => requireRegionBucketCredentials("asia", {
       S3_KEY_ID: "id", S3_APPLICATION_KEY: "secret",
-    })).toThrow(/endpoint is not configured/);
+    })).toThrow(/BUCKET_NAME and S3_ENDPOINT are required/);
+  });
+
+  it("validates the non-secret enabled list and a complete deployment", () => {
+    expect(enabledStorageRegions({})).toEqual(["asia"]);
+    expect([...validateStorageDeployment(FULL_ENV).keys()]).toEqual(STORAGE_REGIONS);
+    expect(() => enabledStorageRegions({ STORAGE_ENABLED_REGIONS: "asia,asia" })).toThrow("unique");
+    expect(() => enabledStorageRegions({ STORAGE_ENABLED_REGIONS: "us" })).toThrow("including asia");
+    expect(() => enabledStorageRegions({ STORAGE_ENABLED_REGIONS: "asia,moon" })).toThrow("supported");
+    expect(() => validateStorageDeployment({ ...FULL_ENV, STORAGE_ENABLED_REGIONS: "asia" }))
+      .toThrow("configured but not declared");
+    expect(() => validateStorageDeployment({})).toThrow("required");
+  });
+
+  it("never guesses unknown or ambiguous physical bucket routing", () => {
+    expect(regionForBucketName("xenode-us", FULL_ENV)).toBe("us");
+    expect(() => regionForBucketName("unknown", FULL_ENV)).toThrow("unknown or ambiguous");
+    const duplicate = { ...FULL_ENV, S3_US_BUCKET_NAME: FULL_ENV.S3_BUCKET_NAME };
+    expect(() => regionForBucketName("xenode-asia", duplicate)).toThrow("ambiguous");
+    expect(() => validateStorageDeployment(duplicate)).toThrow("distinct bucket names");
+  });
+
+  it("requires jurisdiction endpoints for advertised US/EU pools", () => {
+    expect(() => resolveRegionBucketConfig("us", { ...FULL_ENV, S3_US_ENDPOINT: FULL_ENV.S3_ENDPOINT }))
+      .toThrow("us jurisdiction endpoint");
+    expect(() => resolveRegionBucketConfig("eu", { ...FULL_ENV, S3_EU_ENDPOINT: FULL_ENV.S3_US_ENDPOINT }))
+      .toThrow("eu jurisdiction endpoint");
+  });
+
+  it.each([
+    "https://user:secret@example.r2.cloudflarestorage.com", "https://example.r2.cloudflarestorage.com:8080",
+    "https://example.r2.cloudflarestorage.com/path", "https://example.r2.cloudflarestorage.com?x=1",
+  ])("rejects credentials, ports and URL suffixes without exposing values", (endpoint) => {
+    expect(() => resolveRegionBucketConfig("asia", { ...FULL_ENV, S3_ENDPOINT: endpoint }))
+      .toThrow("Cloudflare R2 S3 endpoint");
   });
 });

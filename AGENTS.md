@@ -124,6 +124,11 @@ key, never the raw Space key. Browser code reads keys through
 - Browser clients upload/download directly to Cloudflare R2 using its
   S3-compatible API. Next.js signs URLs and records metadata but never proxies
   file bytes. Do not add provider-specific B2 version APIs or endpoints.
+- `STORAGE_ENABLED_REGIONS` is a shared non-secret list of enabled pools.
+  Products validate complete, distinct provisioning at runtime startup; Accounts
+  advertises that list without receiving storage credentials. Unknown bucket
+  routing fails closed. Requests verify pre-provisioned buckets and never create
+  them or relabel existing mappings (docs/gpt-6-astra-audit/36-storage-pool-provisioning.md).
 - Presigned ciphertext PUTs are create-only: sign `If-None-Match: *` and send
   that header from browser clients. Treat a 412 precondition failure as an
   occupied key, not permission to overwrite. Cleanup must honor outstanding

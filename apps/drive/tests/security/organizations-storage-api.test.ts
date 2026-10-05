@@ -12,7 +12,7 @@ import { ensureOrganizationSpace } from "@xenode/spaces/repository";
 import { createTestProductKey } from "@/tests/helpers/spaceProductKeys";
 
 vi.mock("@/lib/b2/buckets", () => ({
-  createB2Bucket: vi.fn(async (name: string) => `b2-${name}`),
+  bucketExists: vi.fn(async () => true),
 }));
 
 vi.mock("@/lib/b2/client", () => ({

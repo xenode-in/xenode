@@ -3,6 +3,7 @@ import { sanitizeReturnTo } from "@xenode/identity-core";
 import { getAccountOnboardingReadiness } from "@xenode/database";
 import { requireAccountsPageSession } from "@/lib/session";
 import { OnboardingWizard } from "./OnboardingWizard";
+import { enabledStorageRegions } from "@xenode/config/storage";
 
 export const metadata = { title: "Welcome" };
 
@@ -31,6 +32,7 @@ export default async function OnboardingPage({
   return (
     <OnboardingWizard
       accountId={session.user.id}
+      storageRegions={enabledStorageRegions()}
       hasExistingVault={readiness.hasVault}
       email={session.user.email ?? ""}
       name={session.user.name ?? ""}

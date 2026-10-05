@@ -1,25 +1,12 @@
-import { bucketExists, createB2Bucket } from "@/lib/b2/buckets";
+import { bucketExists } from "@/lib/b2/buckets";
 import Bucket, { type IBucket } from "@/models/Bucket";
 import {
-  DEFAULT_STORAGE_REGION,
-  resolveRegionBucketConfig,
-  type StorageRegion,
+  DEFAULT_STORAGE_REGION, resolveRegionBucketConfig, validateStorageDeployment, type StorageRegion,
 } from "@xenode/config/storage";
 
-/**
- * Storage-bucket selector for the regional system-bucket model.
- *
- * Xenode uses one shared physical bucket per storage region and isolates
- * tenants within that bucket by immutable object-key prefixes. Workspace type
- * remains an authorization concern, not a physical-bucket selector.
- * Never hardcode a bucket name; always resolve it here.
- */
 export type WorkspaceStorageType = "PERSONAL" | "ORGANIZATION";
 
-/**
- * The B2 bucket name backing a workspace type. Stored as `Bucket.b2BucketId`
- * (B2's S3 API addresses buckets by name). Env-driven, with safe defaults.
- */
+/** Workspace type controls authorization; the pool controls physical storage. */
 export function getBucketForWorkspace(
   type: WorkspaceStorageType,
   storageRegion: StorageRegion = DEFAULT_STORAGE_REGION,
@@ -28,128 +15,47 @@ export function getBucketForWorkspace(
   return resolveRegionBucketConfig(storageRegion).bucketName;
 }
 
-export function systemWorkspaceBucketName(
-  type: WorkspaceStorageType,
-  storageRegion: StorageRegion = DEFAULT_STORAGE_REGION,
-): string {
-  return getBucketForWorkspace(type, storageRegion);
-}
+export const systemWorkspaceBucketName = getBucketForWorkspace;
 
-function isBucketAlreadyOwned(err: unknown): boolean {
-  const e = err as { Code?: string; name?: string } | null;
-  return (
-    e?.Code === "BucketAlreadyOwnedByYou" ||
-    e?.name === "BucketAlreadyOwnedByYou"
-  );
-}
-
-function isDuplicateKey(err: unknown): boolean {
-  const e = err as { code?: number } | null;
-  return e?.code === 11000;
-}
-
-/**
- * Idempotently ensure the shared B2 bucket for a workspace type exists.
- *
- * Mirrors the lazy create-on-first-use in `app/api/drive/config` for personal
- * storage. Called once when an organization is created (the first org-storage
- * touch point) rather than per-org. No-op under tests. Returns the resolved
- * bucket name to store as `Bucket.b2BucketId`.
- */
+/** Buckets are pre-provisioned; a failed verification never creates a bucket. */
 export async function ensureWorkspaceBucket(
   type: WorkspaceStorageType,
   storageRegion: StorageRegion = DEFAULT_STORAGE_REGION,
 ): Promise<string> {
+  validateStorageDeployment();
   const name = getBucketForWorkspace(type, storageRegion);
-  if (process.env.NODE_ENV === "test" || process.env.VITEST) {
-    return name;
-  }
-  // Buckets are provisioned out-of-band (per region, by the account owner), so
-  // treat this as ensure-if-missing and never let bucket provisioning 500 the
-  // config route: verify existence first, and if creation errors in a way we
-  // can't classify (e.g. an S3-compatible provider returning "UnknownError" on
-  // CreateBucket) assume the bucket is externally managed and carry on.
-  try {
-    if (await bucketExists(name, storageRegion)) return name;
-  } catch {
-    // HeadBucket unsupported/errored — fall through and try to create.
-  }
-  try {
-    await createB2Bucket(name, storageRegion);
-  } catch (err) {
-    if (isBucketAlreadyOwned(err)) return name;
-    console.warn(
-      `[storage] ensureWorkspaceBucket: could not verify/create bucket "${name}" ` +
-        `(${(err as { name?: string })?.name ?? "error"}); assuming it is provisioned externally.`,
-    );
-  }
+  if (!await bucketExists(name, storageRegion)) throw new Error("Configured storage bucket is unavailable");
   return name;
 }
 
-/**
- * Ensure the Mongo bucket document for a regional physical workspace bucket
- * exists. There is exactly one `drive` record per logical storage region.
- */
+function assertBucketMapping(bucket: IBucket, storageRegion: StorageRegion, bucketName: string) {
+  if (bucket.systemKey !== "drive" || bucket.storageRegion !== storageRegion ||
+    bucket.name !== bucketName || bucket.b2BucketId !== bucketName || bucket.region !== "auto") {
+    throw new Error("Stored bucket mapping conflicts with deployment configuration; reset disposable development data");
+  }
+}
+
+/** Creation-only metadata for the verified bucket; never relabel stored data. */
 export async function ensureSystemWorkspaceBucketRecord(
   type: WorkspaceStorageType,
   storageRegion: StorageRegion = DEFAULT_STORAGE_REGION,
 ): Promise<IBucket> {
   const bucketName = await ensureWorkspaceBucket(type, storageRegion);
-  const storageConfig = resolveRegionBucketConfig(storageRegion);
-  const existing = await Bucket.findOne({
-    $or: [
-      { systemKey: "drive", storageRegion },
-      { b2BucketId: bucketName },
-    ],
-  });
+  await Bucket.init();
+  const existing = await Bucket.findOne({ $or: [
+    { systemKey: "drive", storageRegion }, { b2BucketId: bucketName },
+  ] });
   if (existing) {
-    if (
-      existing.systemKey !== "drive" ||
-      existing.storageRegion !== storageRegion ||
-      existing.name !== bucketName ||
-      existing.b2BucketId !== bucketName ||
-      existing.region !== storageConfig.region
-    ) {
-      await Bucket.updateOne(
-        { _id: existing._id },
-        {
-          $set: {
-            systemKey: "drive",
-            storageRegion,
-            name: bucketName,
-            b2BucketId: bucketName,
-            region: storageConfig.region,
-          },
-          $unset: {
-            userId: "",
-            ownerScope: "",
-            orgId: "",
-            teamId: "",
-            createdBy: "",
-          },
-        },
-      );
-      const normalized = await Bucket.findById(existing._id);
-      if (normalized) return normalized;
-    }
+    assertBucketMapping(existing, storageRegion, bucketName);
     return existing;
   }
-
   try {
-    return await Bucket.create({
-      systemKey: "drive",
-      storageRegion,
-      name: bucketName,
-      b2BucketId: bucketName,
-      region: storageConfig.region,
-    });
-  } catch (err) {
-    if (!isDuplicateKey(err)) throw err;
-    const existingAfterRace = await Bucket.findOne({
-      systemKey: "drive",
-      storageRegion,
-    });
-    if (existingAfterRace) return existingAfterRace;
-    throw err;
+    return await Bucket.create({ systemKey: "drive", storageRegion, name: bucketName, b2BucketId: bucketName, region: "auto" });
+  } catch (error) {
+    if (!error || typeof error !== "object" || !("code" in error) || error.code !== 11000) throw error;
+    const winner = await Bucket.findOne({ systemKey: "drive", storageRegion });
+    if (!winner) throw error;
+    assertBucketMapping(winner, storageRegion, bucketName);
+    return winner;
   }
 }

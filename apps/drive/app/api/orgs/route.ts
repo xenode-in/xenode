@@ -19,6 +19,7 @@ import { putMemberProductKey } from "@xenode/spaces/product-keys";
 import { getOrCreateOrgUsage } from "@/lib/orgs/billing/orgUsage";
 import {
   isStorageRegion,
+  enabledStorageRegions,
   type StorageRegion,
 } from "@xenode/config/storage";
 
@@ -191,6 +192,9 @@ export async function POST(request: NextRequest) {
       requestedStorageRegion = body.storageRegion;
     }
     const storageRegion = requestedStorageRegion ?? ctx.region;
+    if (!enabledStorageRegions().includes(storageRegion)) {
+      return NextResponse.json({ error: "Choose an enabled storage pool" }, { status: 400 });
+    }
     if (typeof body.logo === "string" && body.logo.trim() && !logo) {
       return NextResponse.json(
         { error: "Logo must be a valid URL" },

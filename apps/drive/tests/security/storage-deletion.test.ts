@@ -12,6 +12,11 @@ const missing = { name: "NotFound", $metadata: { httpStatusCode: 404 } };
 describe("confirmed S3-compatible object deletion", () => {
   beforeEach(() => { send.mockReset(); });
 
+  it("rejects an unknown physical bucket before issuing a storage operation", async () => {
+    await expect(deleteObjects("unknown-bucket", ["users/account/file"])).rejects.toThrow("unknown or ambiguous");
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("deduplicates exact keys and respects the 1,000-key batch limit", async () => {
     send.mockImplementation(async (command) => {
       if (command instanceof DeleteObjectsCommand) return {};

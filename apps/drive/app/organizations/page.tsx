@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { OrganizationsClient } from "@/components/organizations/OrganizationsClient";
 import { getServerSession } from "@/lib/auth/session";
+import { enabledStorageRegions } from "@xenode/config/storage";
 
 export default async function OrganizationsPage() {
   const session = await getServerSession();
@@ -8,5 +9,5 @@ export default async function OrganizationsPage() {
     redirect("/auth/login");
   }
 
-  return <OrganizationsClient user={session.user} />;
+  return <OrganizationsClient user={session.user} storageRegions={enabledStorageRegions()} />;
 }

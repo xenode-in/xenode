@@ -5,8 +5,9 @@ import {
   AuditEvent,
   connectDatabase,
   getDatabase,
+  withTransaction,
 } from "@xenode/database";
-import { isStorageRegion } from "@xenode/config/storage";
+import { enabledStorageRegions, isStorageRegion } from "@xenode/config/storage";
 import { normalizeUsername, validateUsername } from "@xenode/identity-core";
 import { getAccountsSession } from "@/lib/session";
 import { userFilter } from "@/lib/hub-data";
@@ -39,6 +40,9 @@ export async function POST(request: Request) {
     typeof body.defaultEncrypt === "boolean" ? body.defaultEncrypt : undefined;
   const image = isValidProfileImage(body.image) ? body.image : null;
   const region = isStorageRegion(body.region) ? body.region : undefined;
+  if (!region || !enabledStorageRegions().includes(region)) {
+    return Response.json({ error: "Choose an enabled storage pool" }, { status: 400 });
+  }
   const username =
     typeof body.username === "string"
       ? normalizeUsername(body.username)
@@ -48,65 +52,42 @@ export async function POST(request: Request) {
   }
 
   await connectDatabase();
-
-  // Storage region is chosen once and never changes — only set it if the
-  // account doesn't already have one (any later value is ignored).
-  const [existing, currentUser] = await Promise.all([
-    AccountProfile.findOne({
-      accountId: session.user.id,
-    }).lean(),
-    getDatabase()
-      .collection<{ username?: string }>("user")
-      .findOne(userFilter(session.user.id)),
-  ]);
-  if (!currentUser?.username && !username) {
-    return Response.json({ error: "Choose a username" }, { status: 400 });
-  }
-  const regionToSet =
-    existing?.storageRegion ?? region ?? undefined;
-
-  if (image || username) {
-    const update: Record<string, unknown> = {};
-    if (image) update.image = image;
-    if (username) {
-      update.username = username;
-      update.displayUsername = username;
-    }
-    try {
-    await getDatabase()
-      .collection("user")
-      .updateOne(userFilter(session.user.id), {
-        $set: { ...update, updatedAt: new Date() },
-      });
-    } catch (error) {
-      if (error && typeof error === "object" && "code" in error && error.code === 11000) {
-        return Response.json(
-          { error: "That username is already in use" },
-          { status: 409 },
+  await AccountProfile.init();
+  try {
+    return await withTransaction(async (transaction) => {
+      const existing = await AccountProfile.findOne({ accountId: session.user.id }).session(transaction).lean();
+      const currentUser = await getDatabase().collection<{ username?: string }>("user")
+        .findOne(userFilter(session.user.id), { session: transaction });
+      if (!currentUser) return Response.json({ error: "Account is unavailable" }, { status: 409 });
+      if (!currentUser.username && !username) return Response.json({ error: "Choose a username" }, { status: 400 });
+      if (existing?.storageRegion && existing.storageRegion !== region) {
+        return Response.json({ error: "The storage pool is already locked" }, { status: 409 });
+      }
+      const update: Record<string, unknown> = {};
+      if (image) update.image = image;
+      if (username) { update.username = username; update.displayUsername = username; }
+      if (Object.keys(update).length) {
+        await getDatabase().collection("user").updateOne(
+          userFilter(session.user.id), { $set: { ...update, updatedAt: new Date() } }, { session: transaction },
         );
       }
-      throw error;
+      const set: Record<string, unknown> = { onboarded: true, storageRegion: region };
+      if (theme) set.theme = theme;
+      if (defaultEncrypt !== undefined) set.defaultEncrypt = defaultEncrypt;
+      await AccountProfile.updateOne(
+        { accountId: session.user.id }, { $set: set }, { upsert: true, session: transaction },
+      );
+      await AuditEvent.create([{
+        accountId: session.user.id, action: "account.onboarding.completed",
+        metadata: { theme: theme ?? null, hasAvatar: Boolean(image), storageRegion: region,
+          regionLocked: Boolean(existing?.storageRegion) },
+      }], { session: transaction });
+      return Response.json({ ok: true, storageRegion: region });
+    });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === 11000) {
+      return Response.json({ error: "Onboarding details changed or the username is already in use; retry" }, { status: 409 });
     }
+    throw error;
   }
-  const set: Record<string, unknown> = { onboarded: true };
-  if (theme) set.theme = theme;
-  if (defaultEncrypt !== undefined) set.defaultEncrypt = defaultEncrypt;
-  if (regionToSet) set.storageRegion = regionToSet;
-  await AccountProfile.updateOne(
-    { accountId: session.user.id },
-    { $set: set },
-    { upsert: true },
-  );
-  await AuditEvent.create({
-    accountId: session.user.id,
-    action: "account.onboarding.completed",
-    metadata: {
-      theme: theme ?? null,
-      hasAvatar: Boolean(image),
-      storageRegion: regionToSet ?? null,
-      regionLocked: Boolean(existing?.storageRegion),
-    },
-  }).catch(() => undefined);
-
-  return Response.json({ ok: true, storageRegion: regionToSet ?? null });
 }

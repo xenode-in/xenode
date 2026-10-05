@@ -178,6 +178,10 @@ describe("organization lifecycle API", () => {
   it("uses an optional organization storage-region override", async () => {
     process.env.ORGS_ENABLED = "true";
     process.env.S3_US_BUCKET_NAME = "xenode-us-test";
+    process.env.STORAGE_ENABLED_REGIONS = "asia,us";
+    process.env.S3_US_ENDPOINT = "https://example.us.r2.cloudflarestorage.com";
+    process.env.S3_US_KEY_ID = "test-key";
+    process.env.S3_US_APPLICATION_KEY = "test-secret";
     clearStorageConfigCacheForTests();
     mockSession("owner_1");
 
@@ -200,6 +204,17 @@ describe("organization lifecycle API", () => {
     await expect(
       Bucket.exists({ systemKey: "drive", storageRegion: "us" }),
     ).resolves.toBeTruthy();
+  });
+
+  it("refuses a disabled pool without creating organization records", async () => {
+    process.env.ORGS_ENABLED = "true";
+    mockSession("owner_1");
+    const response = await orgsPOST(orgPost({
+      name: "Disabled Pool Org", orgType: "company", teamSize: "1-10", storageRegion: "us",
+    }));
+    expect(response.status).toBe(400);
+    expect(await Bucket.db.collection("organization").countDocuments()).toBe(0);
+    expect(await OrgUsage.countDocuments()).toBe(0);
   });
 
   it("rejects duplicate org slugs", async () => {

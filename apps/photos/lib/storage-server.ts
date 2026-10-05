@@ -37,9 +37,10 @@ export async function getPhotosStorageContext(accountId: string) {
   const profile = await AccountProfile.findOne({ accountId })
     .select("storageRegion")
     .lean();
-  const storageRegion = isStorageRegion(profile?.storageRegion)
-    ? profile.storageRegion
-    : DEFAULT_STORAGE_REGION;
+  if (profile?.storageRegion != null && !isStorageRegion(profile.storageRegion)) {
+    throw new Error("Account storage pool is invalid");
+  }
+  const storageRegion = profile?.storageRegion ?? DEFAULT_STORAGE_REGION;
   const config = resolveRegionBucketConfig(storageRegion);
   const bucket = await getDatabase().collection("buckets").findOne({
     systemKey: "drive",
@@ -48,7 +49,7 @@ export async function getPhotosStorageContext(accountId: string) {
   });
   if (!bucket) {
     throw new Error(
-      `Regional bucket metadata is missing for ${storageRegion}; run the regional bucket migration`,
+      `Regional bucket metadata is missing for ${storageRegion}; seed the verified development storage buckets`,
     );
   }
   return {

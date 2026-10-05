@@ -17,7 +17,6 @@ import {
 import { useTheme } from "next-themes";
 import { generateRecoveryMnemonic } from "@xenode/crypto-core";
 import {
-  STORAGE_REGIONS,
   STORAGE_REGION_LABELS,
   type StorageRegion,
 } from "@xenode/config/storage";
@@ -37,9 +36,9 @@ import {
 const TOTAL_STEPS = 6;
 
 const REGION_BLURB: Record<StorageRegion, string> = {
-  asia: "Lowest latency across Asia-Pacific.",
-  us: "Data stored in the United States.",
-  eu: "Data stored in Europe (EU).",
+  asia: "The deployment's default storage pool.",
+  us: "An R2 United States jurisdiction bucket.",
+  eu: "An R2 European Union jurisdiction bucket.",
 };
 
 const slideVariants = {
@@ -68,6 +67,7 @@ async function downscaleToDataUri(file: File): Promise<string> {
 
 export function OnboardingWizard({
   accountId,
+  storageRegions,
   hasExistingVault,
   email,
   name,
@@ -75,6 +75,7 @@ export function OnboardingWizard({
   next,
 }: {
   accountId: string;
+  storageRegions: StorageRegion[];
   hasExistingVault: boolean;
   email: string;
   name: string;
@@ -550,13 +551,13 @@ export function OnboardingWizard({
               >
                 <Globe className="onb-art" size={120} strokeWidth={1} />
                 <p className="eyebrow">Storage region</p>
-                <h1>Where should your files live?</h1>
+                <h1>Choose a storage pool</h1>
                 <p className="lede">
-                  Your files are stored in this region. Choose the one closest
-                  to you — <strong>this can&rsquo;t be changed later</strong>.
+                  Choose one of the configured storage pools —
+                  <strong> this can&rsquo;t be changed later</strong>.
                 </p>
                 <div className="onb-themes onb-regions">
-                  {STORAGE_REGIONS.map((value) => (
+                  {storageRegions.map((value) => (
                     <button
                       key={value}
                       type="button"

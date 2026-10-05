@@ -7,9 +7,8 @@ import {
 import OrgUsage from "@/models/OrgUsage";
 
 /**
- * Resolve the immutable storage region an account chose at onboarding. Falls
- * back to the default region for accounts created before regions existed (their
- * data lives in the default/asia bucket). Assumes the DB is already connected.
+ * Resolve the selected pool. Unassigned owners use the explicit default pool;
+ * corrupt or unsupported stored values must never silently change routing.
  */
 export async function resolveAccountStorageRegion(
   accountId: string,
@@ -17,9 +16,9 @@ export async function resolveAccountStorageRegion(
   const profile = await AccountProfile.findOne({ accountId })
     .select("storageRegion")
     .lean();
-  return isStorageRegion(profile?.storageRegion)
-    ? profile.storageRegion
-    : DEFAULT_STORAGE_REGION;
+  if (profile?.storageRegion == null) return DEFAULT_STORAGE_REGION;
+  if (!isStorageRegion(profile.storageRegion)) throw new Error("Account storage pool is invalid");
+  return profile.storageRegion;
 }
 
 /** Storage region for an organization's space (default region until assigned). */
@@ -27,9 +26,9 @@ export async function resolveOrgStorageRegion(
   orgId: string,
 ): Promise<StorageRegion> {
   const usage = await OrgUsage.findOne({ orgId }).select("storageRegion").lean();
-  return isStorageRegion(usage?.storageRegion)
-    ? usage.storageRegion
-    : DEFAULT_STORAGE_REGION;
+  if (usage?.storageRegion == null) return DEFAULT_STORAGE_REGION;
+  if (!isStorageRegion(usage.storageRegion)) throw new Error("Organization storage pool is invalid");
+  return usage.storageRegion;
 }
 
 /**

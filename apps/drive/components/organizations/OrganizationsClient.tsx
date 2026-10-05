@@ -230,7 +230,7 @@ async function compressImageToLimit(
   return file;
 }
 
-export function OrganizationsClient({ user }: { user: SessionUser }) {
+export function OrganizationsClient({ user, storageRegions }: { user: SessionUser; storageRegions: StorageRegion[] }) {
   const accountsOrganizationsUrl = new URL(
     "/organizations",
     getPublicProductOrigin("accounts"),
@@ -992,6 +992,7 @@ export function OrganizationsClient({ user }: { user: SessionUser }) {
         website={website}
         setWebsite={setWebsite}
         storageRegion={storageRegion}
+        storageRegions={storageRegions}
         setStorageRegion={setStorageRegion}
         logo={logo}
         setLogo={setLogo}
@@ -1348,10 +1349,6 @@ const TEAM_SIZE_OPTIONS: { value: string; label: string }[] = [
   { value: "500+", label: "500+ people" },
 ];
 
-const STORAGE_REGION_OPTIONS: { value: StorageRegion; label: string }[] = (
-  ["asia", "us", "eu"] as const
-).map((value) => ({ value, label: STORAGE_REGION_LABELS[value] }));
-
 const WIZARD_STEPS = ["Details", "Team", "Review"];
 
 function optionLabel(
@@ -1375,6 +1372,7 @@ function CreateOrgWizard({
   website,
   setWebsite,
   storageRegion,
+  storageRegions,
   setStorageRegion,
   logo,
   setLogo,
@@ -1397,6 +1395,7 @@ function CreateOrgWizard({
   website: string;
   setWebsite: (value: string) => void;
   storageRegion: "account" | StorageRegion;
+  storageRegions: StorageRegion[];
   setStorageRegion: (value: "account" | StorageRegion) => void;
   logo: string;
   setLogo: (value: string) => void;
@@ -1633,7 +1632,7 @@ function CreateOrgWizard({
                   <SelectItem value="account">
                     Use my account region
                   </SelectItem>
-                  {STORAGE_REGION_OPTIONS.map((option) => (
+                  {storageRegions.map((value) => ({ value, label: STORAGE_REGION_LABELS[value] })).map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>

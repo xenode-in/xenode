@@ -10,7 +10,7 @@ describe("organization storage scope model fields", () => {
       systemKey: "drive",
       name: "xenode-drive-storage",
       b2BucketId: "xenode-drive-storage",
-      region: "us-west-004",
+      region: "auto",
     });
 
     await StorageObject.create({
@@ -42,7 +42,7 @@ describe("organization storage scope model fields", () => {
       systemKey: "drive",
       name: "xenode-drive-storage",
       b2BucketId: "xenode-drive-storage",
-      region: "us-west-004",
+      region: "auto",
     });
 
     await StorageObject.create({
