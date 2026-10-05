@@ -31,13 +31,11 @@ export interface TimelineCursor {
   id: string;
 }
 
+/**
+ * Assets are created only by Photos upload completion, together with their
+ * Photos-owned storage object; nothing projects another product's object.
+ */
 export interface PhotoRepository {
-  createAsset(asset: PhotoAsset): Promise<PhotoAsset>;
-  findByStorageObject(storageObjectId: string): Promise<PhotoAsset | null>;
-  findBySyncFingerprint(
-    spaceId: string,
-    fingerprint: string,
-  ): Promise<PhotoAsset | null>;
   listTimeline(
     spaceId: string,
     cursor: TimelineCursor | null,
@@ -76,26 +74,6 @@ export function decodeTimelineCursor(value: string): TimelineCursor {
 
 export class PhotosService {
   constructor(private readonly repository: PhotoRepository) {}
-
-  async createProjection(asset: PhotoAsset): Promise<PhotoAsset> {
-    const existing = await this.repository.findByStorageObject(
-      asset.storageObjectId,
-    );
-    if (existing) {
-      if (existing.spaceId !== asset.spaceId) {
-        throw new Error("Storage object belongs to another Space");
-      }
-      return existing;
-    }
-    if (asset.syncContentFingerprint) {
-      const duplicate = await this.repository.findBySyncFingerprint(
-        asset.spaceId,
-        asset.syncContentFingerprint,
-      );
-      if (duplicate) return duplicate;
-    }
-    return this.repository.createAsset(asset);
-  }
 
   async timeline(spaceId: string, cursorText: string | null, limit = 100) {
     const boundedLimit = Math.min(Math.max(limit, 1), 200);

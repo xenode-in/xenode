@@ -42,38 +42,6 @@ function toAlbum(record: PhotoAlbumRecord): PhotoAlbum {
 }
 
 export class MongoPhotosRepository implements PhotoRepository {
-  async createAsset(asset: PhotoAsset): Promise<PhotoAsset> {
-    const created = await PhotoAssetModel.create({
-      assetId: asset.id,
-      spaceId: asset.spaceId,
-      storageObjectId: asset.storageObjectId,
-      mediaType: asset.mediaType,
-      takenAt: asset.takenAt,
-      width: asset.width,
-      height: asset.height,
-      durationMs: asset.durationMs,
-      encryptedMetadata: asset.encryptedMetadata,
-      uploadSource: asset.uploadSource ?? "web",
-      status: asset.status ?? "active",
-      createdByAccountId: asset.createdByAccountId,
-      syncContentFingerprint: asset.syncContentFingerprint,
-    });
-    return toAsset(created.toObject() as PhotoAssetRecord);
-  }
-
-  async findByStorageObject(storageObjectId: string) {
-    const record = await PhotoAssetModel.findOne({ storageObjectId }).lean();
-    return record ? toAsset(record as PhotoAssetRecord) : null;
-  }
-
-  async findBySyncFingerprint(spaceId: string, fingerprint: string) {
-    const record = await PhotoAssetModel.findOne({
-      spaceId,
-      syncContentFingerprint: fingerprint,
-    }).lean();
-    return record ? toAsset(record as PhotoAssetRecord) : null;
-  }
-
   async listTimeline(
     spaceId: string,
     cursor: TimelineCursor | null,

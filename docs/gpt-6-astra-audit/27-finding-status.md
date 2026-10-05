@@ -46,7 +46,7 @@ entries (2 critical, 13 high, 9 moderate).
 | F27 | HIGH | Addressed | 0ZD `c6044ec`: current Admin authority and versioned revocation | Live browser/deployment check is a release gate |
 | F28 | MED | Addressed | 0ZI: shared protocol module, Engine.IO Origin allowlist, origin- and session-bound tickets, WebSocket-only, fail-fast Redis, session/15-minute deadline, fresh ticket per attempt; see [30](30-realtime-contract.md) | Deployed proxy/Redis and real browsers are release gates |
 | F29 | MED | Partial | 0Z requires R2 endpoints and region `auto` | Shared bucket-name default, unknown bucket → `asia`, no startup validation of complete distinct regions |
-| F30 | HIGH | Open | Photos `assets` POST projects any encrypted Space object; `migrate-storage-ownership` relabels `productId` | Remove projection and script or implement client-assisted transfer |
+| F30 | HIGH | Addressed | 0ZN: the projection route, `PhotosService.createProjection` with its repository methods, and the ownership-relabel script are removed; PhotoAssets come only from Photos upload completion | — |
 | F31 | MED | Open | `test:security` is scoped ESLint and fails; CI Node 22, Docker Node 20, no `engines` | Repair gates, align runtime, add lint/audit/container checks |
 
 ## Findings discovered during verification

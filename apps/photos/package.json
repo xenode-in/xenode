@@ -8,8 +8,7 @@
     "start": "next start -p 3002",
     "typecheck": "tsc --noEmit",
     "lint": "eslint app lib",
-    "test": "vitest run",
-    "migrate:storage-ownership": "node --env-file-if-exists=../../.env.local --import tsx scripts/migrate-storage-ownership.ts"
+    "test": "vitest run"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.988.0",

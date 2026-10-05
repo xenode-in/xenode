@@ -12,20 +12,6 @@ import {
 class MemoryPhotos implements PhotoRepository {
   assets: PhotoAsset[] = [];
   albums: PhotoAlbum[] = [];
-  async createAsset(asset: PhotoAsset) {
-    this.assets.push(asset);
-    return asset;
-  }
-  async findByStorageObject(id: string) {
-    return this.assets.find((asset) => asset.storageObjectId === id) ?? null;
-  }
-  async findBySyncFingerprint(spaceId: string, fingerprint: string) {
-    return this.assets.find(
-      (asset) =>
-        asset.spaceId === spaceId &&
-        asset.syncContentFingerprint === fingerprint,
-    ) ?? null;
-  }
   async listTimeline(
     spaceId: string,
     cursor: TimelineCursor | null,
@@ -69,14 +55,6 @@ const asset = (id: string, spaceId = "space_1"): PhotoAsset => ({
 });
 
 describe("Photos domain", () => {
-  it("projects one asset over one physical storage object idempotently", async () => {
-    const repository = new MemoryPhotos();
-    const service = new PhotosService(repository);
-    expect(await service.createProjection(asset("1"))).toEqual(asset("1"));
-    expect(await service.createProjection(asset("1"))).toEqual(asset("1"));
-    expect(repository.assets).toHaveLength(1);
-  });
-
   it("rejects cross-Space album assets", async () => {
     const repository = new MemoryPhotos();
     repository.assets.push(asset("1", "space_2"));
@@ -141,19 +119,4 @@ describe("Photos domain", () => {
     ).rejects.toThrow("only image and video");
   });
 
-  it("deduplicates mobile sync projections by Space fingerprint", async () => {
-    const repository = new MemoryPhotos();
-    const service = new PhotosService(repository);
-    const first = {
-      ...asset("1"),
-      syncContentFingerprint: "device-hash-1",
-    };
-    const second = {
-      ...asset("2"),
-      syncContentFingerprint: "device-hash-1",
-    };
-    expect(await service.createProjection(first)).toEqual(first);
-    expect(await service.createProjection(second)).toEqual(first);
-    expect(repository.assets).toHaveLength(1);
-  });
 });

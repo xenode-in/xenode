@@ -154,6 +154,8 @@ data-loss/orphaning hazard.
 - Use `@xenode/upload-engine` for browser upload orchestration.
 - User dashboard components live under `apps/drive`; Accounts profile/security
   presentation belongs in `apps/accounts`; Photos must not import Drive.
+- A PhotoAsset is created only by Photos upload completion with its
+  Photos-owned object; never project or relabel another product's objects.
 
 ## Drive-specific conventions
 

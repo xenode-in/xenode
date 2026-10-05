@@ -420,3 +420,9 @@ Commit: `71c940b`.
 - Test: `metadata-format.test.ts` accepts a sealed value and rejects a self-keyed one (negative control: the previous reader returned the plaintext).
 - `docs/SECURITY_INVARIANTS.md` updated.
 - Validation: all 15 test workspaces passed, **751 tests** (500 Drive, 143 Accounts, 35 Photos app, 73 packages). Root typecheck 16/16 and package boundaries passed; touched files add no lint errors.
+
+## 0ZN — Photos projection and ownership relabel removed (F30)
+
+- `POST /api/photos/assets` attached a PhotoAsset to any encrypted object in an accessible Space, Drive objects included, although Photos can decrypt only Photos-wrapped content; `migrate-storage-ownership.ts` relabelled every projected object as Photos-owned, hiding it from Drive without re-encrypting it. Photos upload completion already creates the PhotoAsset atomically with its Photos-owned storage object, and no client called the route. The route, `PhotosService.createProjection` with the repository methods only it used, the script and its npm script are deleted. A move between products would need an explicit client-assisted re-encryption, which does not exist.
+- Tests: the projection cases in the Photos permission and domain suites were removed with the code they exercised; album permission and timeline coverage remain. `docs/PRODUCTS.md` and `AGENTS.md` state the rule.
+- Validation: all 15 test workspaces passed, **748 tests** (500 Drive, 143 Accounts, 34 Photos app, 71 packages). Root typecheck 16/16, package boundaries and the Photos production build passed.

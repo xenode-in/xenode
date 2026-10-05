@@ -15,9 +15,11 @@ user identity sessions and never sees the ARK.
 
 ## Photos
 
-Photos is an independent OIDC product and projection over Space-owned encrypted
-objects. It uses `@xenode/photos`, its own ProductSession, and its own key-access
-gate. It must not import Drive components, contexts, models, or routes.
+Photos is an independent OIDC product over Space-owned encrypted objects. It
+uses `@xenode/photos`, its own ProductSession, and its own key-access gate. It
+must not import Drive components, contexts, models, or routes. A PhotoAsset is
+created only by Photos upload completion, together with its Photos-owned
+storage object; Photos never adopts or relabels another product's objects.
 
 ## Office editor
 
