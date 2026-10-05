@@ -72,6 +72,15 @@
         }
       }
     },
+    "/api/orgs/{orgId}/billing": {
+      "get": {
+        "tags": ["Billing"], "summary": "Read organization billing state",
+        "description": "Requires organization owner/admin access. Returns existing Usage or free defaults without creating billing or audit records.",
+        "parameters": [{ "name": "orgId", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Organization billing summary" }, "403": { "description": "Organization billing access denied" } }
+      }
+    },
+
     "/api/orgs/{orgId}/restore": {
       "post": {
         "tags": ["Organizations"],
@@ -1569,9 +1578,14 @@
       "post": {
         "tags": ["Onboarding"],
         "summary": "Complete onboarding",
-        "description": "Sets `user.onboarded` to `true`.",
+        "description": "Initializes missing Drive billing Usage through the canonical entitlement service. Existing paid state and storage counters are preserved; returns the effective plan and quota. Accounts onboarding and storage-pool selection are separate.",
         "responses": {
-          "200": { "description": "Onboarding completed" }
+          "200": { "description": "Effective Usage initialized or preserved", "content": { "application/json": { "schema": {
+            "type": "object", "required": ["success", "plan", "storageLimitBytes"],
+            "properties": { "success": { "type": "boolean" }, "plan": { "type": "string" },
+              "storageLimitBytes": { "type": "integer", "nullable": true } }
+          } } } },
+          "409": { "description": "Subscription scope or plan configuration is invalid" }
         }
       }
     },
@@ -1622,7 +1636,7 @@
       "get": {
         "tags": ["Cron"],
         "summary": "Expire overdue plans",
-        "description": "Scheduled job that expires plans past their end date. Requires `Authorization: Bearer <CRON_SECRET>`.",
+        "description": "Processes up to 200 due personal and 200 due organization entitlements, rechecking each transactionally. Grace deadlines derive from recorded expiry; delayed runs do not extend them. Returns personal and organization grace/expiry counts. Preserves storage counters. Requires `Authorization: Bearer <CRON_SECRET>`.",
         "security": [{ "cronAuth": [] }],
         "responses": {
           "200": { "description": "Expiry job completed" }
@@ -1721,11 +1735,18 @@
       "patch": {
         "tags": ["Admin"],
         "summary": "Update user",
+        "description": "Update manual plan/quota overrides through the canonical entitlement writer. Live provider plan or expiry changes return 409. Quotas are nonnegative safe integers; null storage limit means unlimited. Preserves storage counters and commits a sanitized audit event.",
+        "security": [{ "adminCookieAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ManualUsageOverride" } } } },
         "parameters": [
-          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "Idempotency-Key", "in": "header", "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "User updated" }
+          "200": { "description": "Usage and audit committed" },
+          "400": { "description": "Invalid body, plan, date or quota" },
+          "404": { "description": "User not found" },
+          "409": { "description": "Live provider subscription or idempotency conflict" }
         }
       },
       "delete": {
@@ -1741,14 +1762,27 @@
     },
 
     "/api/admin/users/{userId}/plan": {
-      "patch": {
+      "post": {
         "tags": ["Admin"],
         "summary": "Update user plan (admin override)",
+        "description": "Assign or revoke a manual plan through the canonical entitlement writer. Resolves the plan quota and clears old autopay/campaign/grace state. Refuses a live provider subscription; manage it through the subscription lifecycle first.",
+        "security": [{ "adminCookieAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": {
+          "type": "object", "additionalProperties": false, "required": ["plan"],
+          "properties": {
+            "plan": { "type": "string", "enum": ["free", "basic", "pro", "plus", "max", "enterprise"] },
+            "expiresAt": { "type": "string", "format": "date-time", "nullable": true }
+          }
+        } } } },
         "parameters": [
-          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "userId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "Idempotency-Key", "in": "header", "schema": { "type": "string" } }
         ],
         "responses": {
-          "200": { "description": "Plan updated" }
+          "200": { "description": "Plan, quota, identity projection and audit committed" },
+          "400": { "description": "Invalid body, plan or date" },
+          "404": { "description": "User not found" },
+          "409": { "description": "Live provider subscription or idempotency conflict" }
         }
       }
     },
@@ -1838,8 +1872,11 @@
       "post": {
         "tags": ["Admin"],
         "summary": "Admin-cancel a subscription",
+        "description": "Cancel the exact provider subscription and project its personal or organization entitlement through the canonical writer. Supports Idempotency-Key and preserves the remaining paid period unless refunded.",
+        "security": [{ "adminCookieAuth": [] }],
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "Idempotency-Key", "in": "header", "schema": { "type": "string" } }
         ],
         "responses": {
           "200": { "description": "Subscription cancelled" }
@@ -2109,6 +2146,15 @@
       }
     },
     "schemas": {
+      "ManualUsageOverride": {
+        "type": "object", "minProperties": 1, "additionalProperties": false,
+        "properties": {
+          "plan": { "type": "string", "enum": ["free", "basic", "pro", "plus", "max", "enterprise"] },
+          "planExpiresAt": { "type": "string", "format": "date-time", "nullable": true },
+          "storageLimitBytes": { "type": "integer", "nullable": true, "minimum": 0, "maximum": 9007199254740991 },
+          "egressLimitBytes": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+        }
+      },
       "StorageUsageTotals": {
         "type": "object", "required": ["totalStorageBytes", "totalObjects"],
         "properties": {

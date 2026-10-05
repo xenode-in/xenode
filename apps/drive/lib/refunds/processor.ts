@@ -233,6 +233,7 @@ export async function initiateRefund(
     try {
       await cancelSubscription({
         userId: refundRequest.userId,
+        accountId: payment.accountId ?? undefined,
         subscriptionId: refundRequest.razorpaySubscriptionId,
         cancelAtPeriodEnd: false,
         actorType: "admin",

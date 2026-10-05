@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth/session";
-import dbConnect from "@/lib/mongodb";
-import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
+import { syncUserSubscriptionState } from "@/lib/subscriptions/service";
+import { jsonError } from "@/lib/billing/http";
 import { captureEvent } from "@/lib/posthog";
 
 export const dynamic = "force-dynamic";
@@ -11,39 +11,18 @@ export async function POST(request: NextRequest) {
     const session = await requireAuth(request);
     const userId = session.user.id;
 
-    await dbConnect();
-
-    await Usage.findOneAndUpdate(
-      { userId },
-      {
-        $setOnInsert: {
-          totalStorageBytes: 0,
-          totalEgressBytes: 0,
-          totalObjects: 0,
-          totalBuckets: 0,
-          uploadCount: 0,
-          downloadCount: 0,
-        },
-        $set: {
-          plan: "free",
-          storageLimitBytes: FREE_TIER_LIMIT_BYTES,
-          planActivatedAt: new Date(),
-          planExpiresAt: null,
-          planPriceINR: 0,
-          lastActiveAt: new Date(),
-        },
-      },
-      { upsert: true, new: true },
-    );
+    const { usage } = await syncUserSubscriptionState({
+      userId, action: "initialize", actor: { actorType: "user", actorId: userId },
+    });
+    if (!usage) throw new Error("Usage initialization failed");
 
     captureEvent(userId, "onboarding_completed", {
-      planSlug: "free",
+      planSlug: usage.plan,
       source: "web",
     });
 
-    return NextResponse.json({ success: true, plan: "free", storageLimitBytes: FREE_TIER_LIMIT_BYTES });
+    return NextResponse.json({ success: true, plan: usage.plan, storageLimitBytes: usage.storageLimitBytes });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to complete onboarding";
-    return NextResponse.json({ error: message }, { status: 500 });
+    return jsonError(error);
   }
 }

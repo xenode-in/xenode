@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/admin/session";
 import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
+import { updateAdminPlan } from "@/lib/billing/admin-plans";
+import { jsonError } from "@/lib/billing/http";
 import ShareLink from "@/models/ShareLink";
 import DirectShare from "@/models/DirectShare";
 import ApiKey from "@/models/ApiKey";
@@ -87,70 +89,17 @@ export async function GET(_req: NextRequest, { params }: RouteContext) {
   });
 }
 
-/** PATCH /api/admin/users/[userId] — update plan / storage limits */
+/** PATCH /api/admin/users/[userId] — update manual plan / quota overrides. */
 export async function PATCH(req: NextRequest, { params }: RouteContext) {
-  const session = await getAdminSession();
-  if (!session)
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-  const { userId } = await params;
-  const body = await req.json();
-
-  const update: Record<string, unknown> = {};
-
-  if (body.plan !== undefined) {
-    if (!["free", "basic", "pro", "plus", "max", "enterprise"].includes(body.plan))
-      return NextResponse.json(
-        { error: "Invalid plan value" },
-        { status: 400 },
-      );
-    update.plan = body.plan;
-    update.planActivatedAt = body.plan !== "free" ? new Date() : null;
+  const admin = await getAdminSession();
+  if (!admin) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  try {
+    const { userId } = await params;
+    return await updateAdminPlan(req, userId, admin.id, "usage");
+  } catch (error) {
+    return jsonError(error);
   }
-
-  if (body.storageLimitBytes !== undefined) {
-    const val = Number(body.storageLimitBytes);
-    if (isNaN(val) || val < 0)
-      return NextResponse.json(
-        { error: "Invalid storageLimitBytes" },
-        { status: 400 },
-      );
-    update.storageLimitBytes = val;
-  }
-
-  if (body.egressLimitBytes !== undefined) {
-    const val = Number(body.egressLimitBytes);
-    if (isNaN(val) || val < 0)
-      return NextResponse.json(
-        { error: "Invalid egressLimitBytes" },
-        { status: 400 },
-      );
-    update.egressLimitBytes = val;
-  }
-
-  if (body.planExpiresAt !== undefined) {
-    update.planExpiresAt = body.planExpiresAt
-      ? new Date(body.planExpiresAt)
-      : null;
-  }
-
-  if (Object.keys(update).length === 0)
-    return NextResponse.json(
-      { error: "No valid fields to update" },
-      { status: 400 },
-    );
-
-  await dbConnect();
-
-  const updated = await Usage.findOneAndUpdate(
-    { userId },
-    { $set: update },
-    { upsert: true, new: true },
-  );
-
-  return NextResponse.json({ usage: updated });
 }
-
 /**
  * DELETE /api/admin/users/[userId] — delete an account. Super admin only.
  *

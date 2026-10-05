@@ -25,6 +25,7 @@ export interface IOrgUsage extends Document {
   orgId: string;
   /** Billing account id — always `org:{orgId}`. Mirrors Subscription.accountId. */
   accountId: string;
+  subscriptionDocId: mongoose.Types.ObjectId | null;
   totalStorageBytes: number;
   totalObjects: number;
   storageLimitBytes: number | null; // null = unlimited (enterprise)
@@ -60,6 +61,7 @@ const OrgUsageSchema = new Schema<IOrgUsage>(
   {
     orgId: { type: String, required: true, unique: true, index: true },
     accountId: { type: String, default: null, index: true },
+    subscriptionDocId: { type: Schema.Types.ObjectId, default: null },
     totalStorageBytes: { type: Number, default: 0, min: 0 },
     totalObjects: { type: Number, default: 0, min: 0 },
     storageLimitBytes: { type: Number, default: ORG_FREE_TIER_LIMIT_BYTES },

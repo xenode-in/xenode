@@ -59,6 +59,9 @@ These are release-blocking rules.
 - Billing code may read Usage byte counters, plan state, and billing models.
 - Billing must not import crypto/Vault code or inspect encrypted object fields.
 - `syncUserSubscriptionState` is the only Usage plan/limit mutation path.
+- `syncOrgSubscriptionState` owns organization entitlements. Initialization,
+  admin changes, expiry and refunds use these transactionally audited writers;
+  billing reads never create Usage (docs/gpt-6-astra-audit/37-billing-entitlement-contract.md).
 - BillingEvent payloads are sanitized and transitions are idempotent.
 
 ## Realtime and rendering

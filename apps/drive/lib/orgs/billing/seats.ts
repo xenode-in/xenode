@@ -40,7 +40,7 @@ export async function syncSeatsUsed(orgId: string): Promise<number> {
   await OrgUsage.updateOne(
     { orgId },
     { $set: { seatsUsed: used } },
-    { upsert: true },
+    { upsert: false },
   );
   return used;
 }

@@ -1,4 +1,5 @@
 import dbConnect from "@/lib/mongodb";
+import type { ClientSession } from "mongoose";
 import { sanitize } from "@/lib/audit/sanitize";
 import BillingEvent, {
   type BillingEventActorType,
@@ -7,9 +8,8 @@ import BillingEvent, {
 /**
  * Billing event emitter.
  *
- * Writes one row to BillingEvent per call. Fire-and-forget by design — never
- * throws out of `emit()`; failure to persist an audit row must not break the
- * surrounding billing operation. Errors are logged.
+ * With a transaction session, an audit failure aborts the entitlement change.
+ * Other callers log failures without interrupting their provider operation.
  *
  * Payload sanitization (`lib/audit/sanitize`): strips known PII keys defensively.
  */
@@ -24,10 +24,10 @@ export interface EmitArgs {
   payload?: Record<string, unknown>;
 }
 
-export async function emitBillingEvent(args: EmitArgs): Promise<void> {
+export async function emitBillingEvent(args: EmitArgs, session?: ClientSession): Promise<void> {
   try {
     await dbConnect();
-    await BillingEvent.create({
+    await BillingEvent.create([{
       type: args.type,
       userId: args.userId ?? null,
       actorType: args.actorType,
@@ -35,8 +35,10 @@ export async function emitBillingEvent(args: EmitArgs): Promise<void> {
       subjectType: args.subjectType,
       subjectId: args.subjectId ?? null,
       payload: sanitize(args.payload ?? {}),
-    });
+    }], { session });
   } catch (error) {
+    // Entitlement changes require the audit row to commit with their state.
+    if (session) throw error;
     // Audit failures must not block billing. Log loudly.
     console.error("[BillingEvent] emit failed", {
       type: args.type,

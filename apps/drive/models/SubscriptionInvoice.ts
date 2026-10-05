@@ -8,6 +8,7 @@ export interface ISubscriptionInvoice extends Document {
   amount: number;
   status: string;
   billing_date: Date;
+  usageAppliedAt?: Date | null;
   pdfUrl?: string;         // S3/B2 storage URL for the generated PDF invoice
   metadata?: Record<string, any>;
   createdAt: Date;
@@ -22,6 +23,7 @@ const SubscriptionInvoiceSchema = new Schema<ISubscriptionInvoice>(
     amount: { type: Number, required: true },
     status: { type: String, required: true },
     billing_date: { type: Date, required: true },
+    usageAppliedAt: { type: Date, default: null },
     pdfUrl: { type: String, default: null },
     metadata: { type: Schema.Types.Mixed, default: {} },
   },

@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import dbConnect from "@/lib/mongodb";
 import razorpay from "@/lib/razorpay";
 import Subscription, { type ISubscription } from "@/models/Subscription";
-import { syncUserSubscriptionState } from "@/lib/subscriptions/service";
+import type { UserSubscriptionStatus } from "@/lib/subscriptions/service";
+import { syncBillingSubscriptionState } from "@/lib/billing/subscriptions";
 import { emitBillingEvent } from "@/lib/billing/events";
+import { SUBSCRIPTION_GRACE_PERIOD_MS } from "@/lib/subscriptions/constants";
 
 /**
  * Daily reconciliation. For every non-terminal Subscription doc we fetch the
@@ -37,7 +39,7 @@ const STATUS_MAP: Record<string, ISubscription["status"] | undefined> = {
   expired: "expired",
 };
 
-type UserStatus = Parameters<typeof syncUserSubscriptionState>[0]["status"];
+type UserStatus = UserSubscriptionStatus;
 
 const USER_STATUS: Record<ISubscription["status"], UserStatus> = {
   created: "none",
@@ -119,12 +121,13 @@ export async function GET(req: NextRequest) {
       };
       await sub.save();
 
-      await syncUserSubscriptionState({
-        userId: sub.userId,
-        subscriptionDocId: sub._id,
+      await syncBillingSubscriptionState(sub, {
         status: USER_STATUS[remoteStatus],
         expiresAt: sub.current_period_end || sub.endDate || null,
         autopayActive: remoteStatus === "active",
+        actor: { actorType: "system", actorId: "cron" },
+        gracePeriod: remoteStatus === "halted" || remoteStatus === "past_due"
+          ? { active: true, endsAt: new Date(Date.now() + SUBSCRIPTION_GRACE_PERIOD_MS) } : undefined,
       });
 
       corrected++;

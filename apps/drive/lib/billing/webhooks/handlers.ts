@@ -2,7 +2,6 @@ import mongoose from "mongoose";
 import dbConnect from "@/lib/mongodb";
 import Payment from "@/models/Payment";
 import Subscription from "@/models/Subscription";
-import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import RefundRequest from "@/models/RefundRequest";
 import SupportTicket from "@/models/SupportTicket";
 import { User } from "@/models/User";
@@ -13,6 +12,7 @@ import {
   syncUserSubscriptionState,
 } from "@/lib/subscriptions/service";
 import { syncOrgSubscriptionState } from "@/lib/orgs/billing/service";
+import { syncBillingSubscriptionState } from "@/lib/billing/subscriptions";
 import { SUBSCRIPTION_GRACE_PERIOD_MS } from "@/lib/subscriptions/constants";
 import { getPlanByRazorpayPlanIdFromDB } from "@/lib/config/getPricingConfig";
 import { BillingEventType, emitBillingEvent } from "@/lib/billing/events";
@@ -145,33 +145,16 @@ async function routeSubscriptionSync(
     expiresAt?: Date | null;
     autopayActive?: boolean;
     gracePeriod?: { active: boolean; endsAt: Date | null };
+    renewal?: { invoiceId: mongoose.Types.ObjectId | string };
+    actor?: { actorType: "webhook"; actorId: string };
   },
 ): Promise<void> {
-  const accountId = typeof sub.accountId === "string" ? sub.accountId : null;
-  if (accountId && accountId.startsWith("org:")) {
-    const seats =
-      typeof subEntity?.quantity === "number" ? subEntity.quantity : undefined;
-    await syncOrgSubscriptionState({
-      orgId: accountId.slice(4),
-      subscriptionDocId: sub._id,
-      status: args.status,
-      expiresAt: args.expiresAt ?? null,
-      autopayActive: args.autopayActive,
-      gracePeriod: args.gracePeriod,
-      seats,
-    });
-    return;
-  }
-  await syncUserSubscriptionState({
-    userId: sub.userId,
-    subscriptionDocId: sub._id,
-    status: args.status,
-    expiresAt: args.expiresAt ?? null,
-    autopayActive: args.autopayActive,
-    gracePeriod: args.gracePeriod,
+  await syncBillingSubscriptionState(sub, {
+    ...args,
+    seats: typeof subEntity?.quantity === "number" ? subEntity.quantity : undefined,
+    renewal: args.renewal ? { invoiceId: String(args.renewal.invoiceId) } : undefined,
   });
 }
-
 // ─── Refund handlers (subscription payments are refundable via Razorpay) ──
 
 /**
@@ -311,6 +294,9 @@ const handleRefundProcessed: Handler = async (ctx) => {
     }
 
     payment.status = "refunded";
+    if (typeof refundData.amount !== "number" || refundData.amount !== Math.round(payment.amount * 100)) {
+      throw new Error("Only a confirmed full refund can revoke the subscription entitlement");
+    }
     payment.refund_id = refundData.id;
     payment.refund_status = "processed";
     payment.gatewayResponse = {
@@ -319,36 +305,26 @@ const handleRefundProcessed: Handler = async (ctx) => {
     };
     await payment.save({ session });
 
-    // Downgrade user to free immediately. The Razorpay subscription, if any,
-    // should be cancelled separately by an admin or via subscription.cancelled.
-    // Field set matches /api/cron/expire-plans so a refunded user looks
-    // identical to a naturally-lapsed one.
-    await Usage.findOneAndUpdate(
-      { userId: payment.userId },
-      {
-        $set: {
-          plan: "free",
-          storageLimitBytes: FREE_TIER_LIMIT_BYTES,
-          planExpiresAt: new Date(),
-          planPriceINR: 0,
-          basePlanPriceINR: 0,
-          campaignType: null,
-          campaignCyclesLeft: null,
-          isGracePeriod: false,
-          gracePeriodEndsAt: null,
-          autopayActive: false,
-          lastRenewalTxnid: null,
-        },
-      },
-      { session },
-    );
-
-    await Subscription.findOneAndUpdate(
-      { userId: payment.userId },
-      { $set: { status: "cancelled" } },
-      { session },
-    );
-
+    // A refund belongs to one subscription, which may bill an organization.
+    // Refunding an older subscription must not revoke a newer entitlement.
+    const refundedSubscription = payment.order_id
+      ? await Subscription.findOne({ subscription_id: payment.order_id, userId: payment.userId }).session(session)
+      : null;
+    if (!refundedSubscription) throw new Error("Refund payment has no matching subscription");
+    const billingAccount = refundedSubscription.accountId ?? refundedSubscription.userId;
+    if (payment.accountId && payment.accountId !== billingAccount) {
+      throw new Error("Refund payment billing account does not match its subscription");
+    }
+    const actor = { actorType: "webhook" as const, actorId: ctx.eventId };
+    if (billingAccount.startsWith("org:")) {
+      await syncOrgSubscriptionState({ orgId: billingAccount.slice(4), action: "refund",
+        subscriptionDocId: refundedSubscription._id, session, actor });
+    } else {
+      await syncUserSubscriptionState({ userId: payment.userId, action: "refund",
+        subscriptionDocId: refundedSubscription._id, session, actor });
+    }
+    await Subscription.updateOne({ _id: refundedSubscription._id },
+      { $set: { status: "cancelled", autoRenew: false, "metadata.entitlementRevokedAt": new Date() } }, { session });
     // Find the matching RefundRequest (if any) and mark completed. This is
     // outside the transaction because RefundRequest writes don't share state
     // with the Payment/Usage/Subscription consistency requirement.
@@ -374,7 +350,7 @@ const handleRefundProcessed: Handler = async (ctx) => {
             authorType: "system",
             authorId: "system",
             authorName: "Xenode Refunds",
-            message: `Refund of ${refundRequest.currency} ${refundRequest.amount.toFixed(2)} has settled. Your account has been moved to the free plan.`,
+            message: `Refund of ${refundRequest.currency} ${refundRequest.amount.toFixed(2)} has settled. The refunded subscription has been closed.`,
             isInternal: false,
           });
           // Auto-resolve the ticket — user can still reply to reopen.
@@ -457,6 +433,7 @@ const handleSubscriptionActivated: Handler = async (ctx) => {
   await sub.save();
 
   await routeSubscriptionSync(sub, subEntity, {
+    actor: { actorType: "webhook", actorId: ctx.eventId },
     status: "active",
     expiresAt: sub.current_period_end || sub.endDate,
     autopayActive: true,
@@ -512,6 +489,7 @@ const handleSubscriptionCharged: Handler = async (ctx) => {
   if (typeof paymentEntity?.id === "string") {
     await createSubscriptionPaymentIfMissing({
       userId: sub.userId,
+      accountId: sub.accountId,
       paymentId: paymentEntity.id,
       subscriptionId: sub.subscription_id,
       planName:
@@ -550,51 +528,12 @@ const handleSubscriptionCharged: Handler = async (ctx) => {
   }
 
   await routeSubscriptionSync(sub, subEntity, {
+    actor: { actorType: "webhook", actorId: ctx.eventId },
     status: "active",
     expiresAt: sub.current_period_end || sub.endDate,
     autopayActive: true,
+    renewal: "invoice" in invoiceResult ? { invoiceId: String(invoiceResult.invoice._id) } : undefined,
   });
-
-  // Decrement limited-campaign cycle counter and record the renewal txnid.
-  // Guarded on invoiceResult.created so webhook replay doesn't double-count.
-  if (invoiceResult.created) {
-    const txnidUpdate: Record<string, unknown> = {};
-    if (typeof paymentEntity?.id === "string") {
-      txnidUpdate.lastRenewalTxnid = paymentEntity.id;
-    }
-
-    // Atomic decrement only when cycles remain. If this drops to zero,
-    // the next charge's findOneAndUpdate clears the campaign (see below).
-    await Usage.findOneAndUpdate(
-      {
-        userId: sub.userId,
-        campaignType: "limited",
-        campaignCyclesLeft: { $gt: 0 },
-      },
-      {
-        $inc: { campaignCyclesLeft: -1 },
-        ...(Object.keys(txnidUpdate).length ? { $set: txnidUpdate } : {}),
-      },
-    );
-
-    // Clear the campaign once it's fully consumed.
-    await Usage.updateOne(
-      {
-        userId: sub.userId,
-        campaignType: "limited",
-        campaignCyclesLeft: { $lte: 0 },
-      },
-      { $set: { campaignType: null, campaignCyclesLeft: null } },
-    );
-
-    // Fallback for users without an active campaign — still record the txnid.
-    if (Object.keys(txnidUpdate).length) {
-      await Usage.updateOne(
-        { userId: sub.userId, campaignType: { $ne: "limited" } },
-        { $set: txnidUpdate },
-      );
-    }
-  }
 
   await emitBillingEvent({
     type: BillingEventType.SUBSCRIPTION_CHARGED,
@@ -644,6 +583,7 @@ const setStatusAndSync = async (
       : undefined;
 
   await routeSubscriptionSync(sub, subEntity, {
+    actor: { actorType: "webhook", actorId: ctx.eventId },
     status: userStatus,
     expiresAt: sub.current_period_end || sub.endDate || null,
     autopayActive: userStatus === "active",
@@ -680,6 +620,7 @@ const handleSubscriptionResumed: Handler = async (ctx) => {
   await sub.save();
 
   await routeSubscriptionSync(sub, subEntity, {
+    actor: { actorType: "webhook", actorId: ctx.eventId },
     status: "active",
     expiresAt: sub.current_period_end || sub.endDate,
     autopayActive: true,
@@ -790,6 +731,7 @@ const handleSubscriptionUpdated: Handler = async (ctx) => {
   const isOrgSub = !!accountId && accountId.startsWith("org:");
   if (sub.status === "active" && (planApplied || isOrgSub)) {
     await routeSubscriptionSync(sub, subEntity, {
+    actor: { actorType: "webhook", actorId: ctx.eventId },
       status: "active",
       expiresAt: sub.current_period_end || sub.endDate,
       autopayActive: true,

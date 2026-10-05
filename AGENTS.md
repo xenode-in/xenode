@@ -138,6 +138,10 @@ key, never the raw Space key. Browser code reads keys through
   object metadata.
 - `syncUserSubscriptionState` is the sole writer of Usage plan/limit/autopay
   state. Billing transitions emit sanitized `BillingEvent` records.
+  `syncOrgSubscriptionState` owns organization entitlements. Both writers commit
+  state and audit together; billing reads never initialize Usage. Refunds bind
+  the exact subscription/payment billing account, and renewal invoices carry a
+  transactional checkpoint (docs/gpt-6-astra-audit/37-billing-entitlement-contract.md).
 
 ### Realtime and file runtimes
 

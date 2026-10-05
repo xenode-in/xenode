@@ -17,9 +17,12 @@ import { nextSequence } from "@/models/Counter";
 import WebhookLog from "@/models/WebhookLog";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import { User } from "@/models/User";
-import { SUBSCRIPTION_GRACE_PERIOD_DAYS } from "./constants";
+import { getDatabase, possibleUserIds, withTransaction } from "@xenode/database";
+import { BillingError } from "@/lib/billing/http";
+import { emitBillingEvent, type EmitArgs } from "@/lib/billing/events";
+import { SUBSCRIPTION_GRACE_PERIOD_DAYS, SUBSCRIPTION_GRACE_PERIOD_MS } from "./constants";
 
-type UserSubscriptionStatus =
+export type UserSubscriptionStatus =
   | "none"
   | "active"
   | "past_due"
@@ -210,78 +213,212 @@ export async function markWebhookFailed(eventId: string, errorMessage: string) {
 
 // ─── User State Sync ──────────────────────────────────────────────────────────
 
-export async function syncUserSubscriptionState(args: {
+export type PersonalPlanOverride = {
+  plan?: "free" | "basic" | "pro" | "plus" | "max" | "enterprise";
+  planExpiresAt?: Date | null;
+  storageLimitBytes?: number | null;
+  egressLimitBytes?: number;
+};
+
+type UserStateCommand = {
   userId: string;
-  subscriptionDocId?: mongoose.Types.ObjectId | string | null;
-  status: UserSubscriptionStatus;
-  expiresAt?: Date | null;
-  autopayActive?: boolean;
-  /**
-   * Set explicit grace-period state in the same atomic write. Used by halted/
-   * past_due webhooks so the banner flips on without a second updateOne race.
-   * If omitted, grace-period flags are cleared when expiresAt is provided.
-   */
-  gracePeriod?: { active: boolean; endsAt: Date | null };
-}) {
-  await dbConnect();
+  session?: mongoose.ClientSession;
+  actor?: Pick<EmitArgs, "actorType" | "actorId">;
+} & (
+  | { action?: "subscription"; subscriptionDocId?: mongoose.Types.ObjectId | string | null;
+      status: UserSubscriptionStatus; expiresAt?: Date | null; autopayActive?: boolean;
+      gracePeriod?: { active: boolean; endsAt: Date | null };
+      renewal?: { invoiceId: mongoose.Types.ObjectId | string } }
+  | { action: "initialize" }
+  | { action: "admin"; override: PersonalPlanOverride }
+  | { action: "expire"; now: Date }
+  | { action: "refund"; subscriptionDocId: mongoose.Types.ObjectId | string }
+);
 
-  const expiresAt = args.expiresAt ?? null;
-  await User.updateOne(
-    { _id: new mongoose.Types.ObjectId(args.userId) },
-    {
-      $set: {
-        subscriptionStatus: args.status,
-        subscriptionId: args.subscriptionDocId ?? null,
-        subscriptionExpiresAt: expiresAt,
-      },
-    },
-  );
-
-  const usageUpdate: Record<string, unknown> = {
-    autopayActive: args.autopayActive ?? args.status === "active",
+function freeEntitlement() {
+  return {
+    subscriptionDocId: null, plan: "free", storageLimitBytes: FREE_TIER_LIMIT_BYTES,
+    planActivatedAt: null, planExpiresAt: null, planPriceINR: 0, basePlanPriceINR: 0,
+    campaignType: null, campaignCyclesLeft: null, isGracePeriod: false,
+    gracePeriodEndsAt: null, autopayActive: false, autopayMandateId: null, lastRenewalTxnid: null,
   };
+}
 
-  if (expiresAt) {
-    const subscription = args.subscriptionDocId
-      ? await Subscription.findById(args.subscriptionDocId).lean()
-      : null;
-    const planSlug = subscription?.planSlug || "free";
-    usageUpdate.plan = planSlug;
-    usageUpdate.planActivatedAt = subscription?.startDate || new Date();
-    usageUpdate.planExpiresAt = expiresAt;
-    usageUpdate.planPriceINR =
-      subscription?.metadata?.offerAppliedAmountINR ??
-      subscription?.metadata?.basePlanAmountINR ??
-      0;
-    usageUpdate.basePlanPriceINR =
-      subscription?.metadata?.basePlanAmountINR ?? 0;
-
-    // Resolve storage limit from the pricing config. Paid plans get the
-    // per-plan ceiling; free / unknown plans fall back to the 5 GB default.
-    // Without this, paid users stay locked at FREE_TIER_LIMIT_BYTES.
-    if (planSlug && planSlug !== "free") {
-      const plan = await getPlanBySlugFromDB(planSlug);
-      if (plan && typeof plan.storageLimitBytes === "number") {
-        usageUpdate.storageLimitBytes = plan.storageLimitBytes;
-      }
-    } else {
-      usageUpdate.storageLimitBytes = FREE_TIER_LIMIT_BYTES;
+/** Sole Usage entitlement writer. State, identity projection and audit commit together. */
+export async function syncUserSubscriptionState(args: UserStateCommand) {
+  await dbConnect();
+  await Promise.all([Usage.init(), SubscriptionInvoice.init()]);
+  const apply = async (session: mongoose.ClientSession) => {
+    const current = await Usage.findOne({ userId: args.userId }).session(session);
+    if (args.action === "initialize" && current) return { usage: current, outcome: "unchanged" as const };
+    if (args.action === "expire" && (!current || current.plan === "free" ||
+      !current.planExpiresAt || current.planExpiresAt > args.now)) {
+      return { usage: current, outcome: "unchanged" as const };
     }
-  }
 
-  if (args.gracePeriod) {
-    usageUpdate.isGracePeriod = args.gracePeriod.active;
-    usageUpdate.gracePeriodEndsAt = args.gracePeriod.endsAt;
-  } else if (expiresAt) {
-    usageUpdate.isGracePeriod = false;
-    usageUpdate.gracePeriodEndsAt = null;
-  }
+    let subscription = "subscriptionDocId" in args && args.subscriptionDocId
+      ? await Subscription.findById(args.subscriptionDocId).session(session)
+      : null;
+    if (args.action === "initialize") {
+      subscription = await Subscription.findOne({
+        userId: args.userId, accountId: { $in: [null, args.userId] },
+        status: { $in: ["active", "paused", "past_due", "halted", "cancelled"] },
+        "metadata.entitlementRevokedAt": { $exists: false },
+      }).sort({ createdAt: -1, _id: -1 }).session(session);
+    }
+    if (subscription && (subscription.userId !== args.userId ||
+      (subscription.accountId && subscription.accountId !== args.userId))) {
+      throw new BillingError(409, "Subscription belongs to a different billing account", "subscription_scope");
+    }
+    if ("subscriptionDocId" in args && args.subscriptionDocId && !subscription) {
+      throw new BillingError(404, "Subscription not found", "subscription_missing");
+    }
+    if (args.action === "refund" && String(current?.subscriptionDocId) !== String(subscription?._id)) {
+      return { usage: current, outcome: "unchanged" as const };
+    }
+    if ((args.action === undefined || args.action === "subscription") && subscription) {
+      if (subscription.metadata?.entitlementRevokedAt) return { usage: current, outcome: "unchanged" as const };
+      if (current?.manualPlanAssignedAt && subscription.createdAt <= current.manualPlanAssignedAt) {
+        return { usage: current, outcome: "unchanged" as const };
+      }
+      if (current?.subscriptionDocId && String(current.subscriptionDocId) !== String(subscription._id)) {
+        const bound = await Subscription.findById(current.subscriptionDocId).session(session);
+        if (bound && (bound.createdAt > subscription.createdAt ||
+          (bound.createdAt.getTime() === subscription.createdAt.getTime() && String(bound._id) > String(subscription._id)))) {
+          return { usage: current, outcome: "unchanged" as const };
+        }
+      }
+      if (args.renewal) {
+        const invoice = await SubscriptionInvoice.findById(args.renewal.invoiceId).session(session);
+        if (!invoice || invoice.subscription_id !== subscription.subscription_id) {
+          throw new BillingError(409, "Renewal invoice belongs to a different subscription", "invoice_scope");
+        }
+        if (invoice.usageAppliedAt) return { usage: current, outcome: "unchanged" as const };
+      }
+    }
 
-  await Usage.findOneAndUpdate(
-    { userId: args.userId },
-    { $set: usageUpdate },
-    { upsert: true },
-  );
+    let outcome = "synced";
+    let status: UserSubscriptionStatus = "none";
+    let update: Record<string, unknown> = {};
+    if (args.action === "expire") {
+      const usage = current!;
+      const graceEndsAt = usage.isGracePeriod && usage.gracePeriodEndsAt
+        ? usage.gracePeriodEndsAt
+        : new Date(usage.planExpiresAt!.getTime() + SUBSCRIPTION_GRACE_PERIOD_MS);
+      if (graceEndsAt > args.now) {
+        update = { isGracePeriod: true, gracePeriodEndsAt: graceEndsAt };
+        status = "past_due";
+        outcome = "grace";
+      } else {
+        update = freeEntitlement();
+        status = "cancelled";
+        outcome = "expired";
+        await Subscription.updateMany({
+          userId: args.userId, accountId: { $in: [null, args.userId] },
+          status: { $in: ["active", "paused", "pending", "past_due", "halted"] },
+          endDate: { $lte: usage.planExpiresAt },
+        }, { $set: { status: "expired", autoRenew: false } }, { session });
+      }
+    } else if (args.action === "refund") {
+      update = freeEntitlement();
+      status = "cancelled";
+      outcome = "refunded";
+    } else if (args.action === "admin") {
+      const { override } = args;
+      const identity = await getDatabase().collection<{ _id: string | mongoose.mongo.ObjectId; id?: string;
+        subscriptionStatus?: UserSubscriptionStatus }>("user").findOne(
+        { $or: [{ _id: { $in: possibleUserIds(args.userId) } }, { id: args.userId }] }, { session });
+      if (!identity) throw new BillingError(404, "User not found", "user_missing");
+      if (override.plan !== undefined || override.planExpiresAt !== undefined) {
+        const bound = await Subscription.findOne({ userId: args.userId, accountId: { $in: [null, args.userId] },
+          status: { $in: ["authenticated", "active", "paused", "pending", "past_due", "halted"] } }).session(session);
+        if (bound) {
+          throw new BillingError(409, "Manage the live subscription before assigning a manual plan", "subscription_active");
+        }
+      }
+      if (override.plan !== undefined) {
+        if (override.plan === "free") update = freeEntitlement();
+        else {
+          const plan = await getPlanBySlugFromDB(override.plan);
+          if (!plan) throw new BillingError(400, "Plan is not configured", "invalid_plan");
+          update = { ...freeEntitlement(), plan: override.plan, storageLimitBytes: plan.storageLimitBytes,
+            planActivatedAt: new Date(), planExpiresAt: override.planExpiresAt ?? null };
+        }
+        update.manualPlanAssignedAt = new Date();
+      }
+      if (override.planExpiresAt !== undefined) update.planExpiresAt = override.planExpiresAt;
+      if (override.storageLimitBytes !== undefined) update.storageLimitBytes = override.storageLimitBytes;
+      if (override.egressLimitBytes !== undefined) update.egressLimitBytes = override.egressLimitBytes;
+      if (!Object.keys(update).length) throw new BillingError(400, "No valid fields to update", "invalid_request");
+      status = override.plan !== undefined
+        ? override.plan === "free" ? "none" : "active"
+        : identity.subscriptionStatus ?? ((current?.plan ?? "free") === "free" ? "none" : "active");
+    } else {
+      const initialization = args.action === "initialize";
+      status = initialization
+        ? subscription ? subscription.status === "cancelled" ? "cancelled" : subscription.status === "halted"
+          ? "halted" : subscription.status === "past_due" ? "past_due" : "active" : "none"
+        : args.status;
+      const expiresAt = initialization ? subscription?.current_period_end ?? subscription?.endDate ?? null : args.expiresAt ?? null;
+      if (subscription && expiresAt) {
+        const plan = await getPlanBySlugFromDB(subscription.planSlug);
+        if (!plan) throw new BillingError(409, "Subscription plan is not configured", "invalid_plan");
+        update = { subscriptionDocId: subscription._id, manualPlanAssignedAt: null, plan: subscription.planSlug,
+          storageLimitBytes: plan.storageLimitBytes, planActivatedAt: subscription.startDate,
+          planExpiresAt: expiresAt, planPriceINR: subscription.metadata?.offerAppliedAmountINR ??
+            subscription.metadata?.basePlanAmountINR ?? 0,
+          basePlanPriceINR: subscription.metadata?.basePlanAmountINR ?? 0,
+          autopayActive: initialization ? subscription.autoRenew && status === "active" : args.autopayActive ?? status === "active",
+          isGracePeriod: false, gracePeriodEndsAt: null };
+      } else if (initialization || status === "none" || status === "cancelled") {
+        update = freeEntitlement();
+      } else {
+        throw new BillingError(409, "Paid state requires a subscription and period", "subscription_missing");
+      }
+      if (!initialization && args.gracePeriod) {
+        update.isGracePeriod = args.gracePeriod.active;
+        update.gracePeriodEndsAt = args.gracePeriod.active && current?.isGracePeriod &&
+          current.gracePeriodEndsAt && current.planExpiresAt?.getTime() === expiresAt?.getTime()
+          ? current.gracePeriodEndsAt : args.gracePeriod.endsAt;
+      }
+      if (!initialization && args.renewal) {
+        const invoice = await SubscriptionInvoice.findById(args.renewal.invoiceId).session(session);
+        if (!invoice || invoice.subscription_id !== subscription?.subscription_id) {
+          throw new BillingError(409, "Renewal invoice belongs to a different subscription", "invoice_scope");
+        }
+        if (!invoice.usageAppliedAt) {
+          update.lastRenewalTxnid = invoice.payment_id;
+          if (current?.campaignType === "limited") {
+            const cycles = Math.max(0, (current.campaignCyclesLeft ?? 0) - 1);
+            update.campaignType = cycles ? "limited" : null;
+            update.campaignCyclesLeft = cycles || null;
+          }
+          invoice.usageAppliedAt = new Date();
+          await invoice.save({ session });
+        }
+      }
+      if (initialization) outcome = "initialized";
+    }
+
+    const before = current?.toObject() as Record<string, unknown> | undefined;
+    const changed = Object.entries(update).some(([key, value]) => JSON.stringify(before?.[key]) !== JSON.stringify(value));
+    const usage = await Usage.findOneAndUpdate({ userId: args.userId }, { $set: update },
+      { upsert: true, new: true, runValidators: true, session });
+    const projectedSubscriptionId = "subscriptionDocId" in update ? update.subscriptionDocId : usage.subscriptionDocId;
+    const projection = await getDatabase().collection<{ _id: string | mongoose.mongo.ObjectId; id?: string }>("user").updateOne(
+      { $or: [{ _id: { $in: possibleUserIds(args.userId) } }, { id: args.userId }] },
+      { $set: { subscriptionStatus: status, subscriptionId: projectedSubscriptionId,
+        subscriptionExpiresAt: usage.planExpiresAt } }, { session });
+    if (changed || projection.modifiedCount) await emitBillingEvent({
+      type: "usage.entitlement.changed", userId: args.userId,
+      actorType: args.actor?.actorType ?? "system", actorId: args.actor?.actorId ?? null,
+      subjectType: "usage", subjectId: args.userId,
+      payload: { action: args.action ?? "subscription", outcome, previousPlan: current?.plan ?? null,
+        plan: usage.plan, status, storageLimitBytes: usage.storageLimitBytes, expiresAt: usage.planExpiresAt },
+    }, session);
+    return { usage, outcome };
+  };
+  return args.session ? apply(args.session) : withTransaction(apply);
 }
 
 export async function enforceStorageAccess(userId: string) {
@@ -365,6 +502,7 @@ export async function createSubscriptionInvoiceIfMissing(args: {
 
 export async function createSubscriptionPaymentIfMissing(args: {
   userId: string;
+  accountId?: string | null;
   paymentId: string;
   subscriptionId: string;
   planName: string;
@@ -385,6 +523,7 @@ export async function createSubscriptionPaymentIfMissing(args: {
 
   const payment = await Payment.create({
     userId: args.userId,
+    accountId: args.accountId ?? args.userId,
     amount: args.amountPaise / 100,
     currency: args.currency ?? "INR",
     status: "success",

@@ -86,6 +86,26 @@ See [the reconciliation contract](gpt-6-astra-audit/34-storage-usage-reconciliat
 
 All cron endpoints require `Authorization: Bearer ${CRON_SECRET}`.
 
+## Billing entitlement operations
+
+Drive onboarding initializes missing billing state and preserves existing plans.
+Admin assignments and quota overrides use the canonical transaction writer;
+manage a live provider subscription before assigning a manual plan. Both admin
+mutation surfaces support `Idempotency-Key`. Organization billing reads return
+free defaults without creating records.
+
+`expire-plans` processes up to 200 due personal and 200 due organization rows
+per invocation; monitor the personal/org grace and expiry counts. Missed runs
+do not extend the expiry-based seven-day deadline. Payment refunds bind the
+exact subscription and billing account; an unmatched or partial refund requires
+operator review. Never repair plans/counters directly in MongoDB. See
+[the billing entitlement contract](gpt-6-astra-audit/37-billing-entitlement-contract.md).
+
+For these schema changes, reset disposable development billing/storage data
+together and exercise a fresh provider test-mode checkout. Subscription bindings,
+manual assignment markers and invoice checkpoints are populated by the normal
+flows, with no migration/backfill or automatic reset.
+
 ## Release gates
 
 ```powershell

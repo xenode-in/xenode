@@ -16,7 +16,7 @@ import { emitActivity, ActivityAction } from "@/lib/orgs/activity";
 import { ensureSystemWorkspaceBucketRecord } from "@/lib/storage/workspaceBucket";
 import { ensureOrganizationSpace } from "@xenode/spaces/repository";
 import { putMemberProductKey } from "@xenode/spaces/product-keys";
-import { getOrCreateOrgUsage } from "@/lib/orgs/billing/orgUsage";
+import { syncOrgSubscriptionState } from "@/lib/orgs/billing/service";
 import {
   isStorageRegion,
   enabledStorageRegions,
@@ -278,7 +278,8 @@ export async function POST(request: NextRequest) {
           rotationReason: "initial",
         });
       }
-      await getOrCreateOrgUsage(org.id, storageRegion);
+      await syncOrgSubscriptionState({ orgId: org.id, action: "initialize", storageRegion,
+        actor: { actorType: "user", actorId: ctx.userId } });
       await ensureSystemWorkspaceBucketRecord("ORGANIZATION", storageRegion);
     } catch (error) {
       await organizations.deleteOne({ id: org.id }).catch(() => {});

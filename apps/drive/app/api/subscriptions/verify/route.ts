@@ -8,11 +8,11 @@ import {
   consumeCouponRedemptionIfNeeded,
   createSubscriptionPaymentIfMissing,
   createSubscriptionInvoiceIfMissing,
-  syncUserSubscriptionState,
 } from "@/lib/subscriptions/service";
 import { billingCycleSchema } from "@/lib/billing/validation/schemas";
 import { BillingEventType, emitBillingEvent } from "@/lib/billing/events";
 import { captureEvent } from "@/lib/posthog";
+import { syncBillingSubscriptionState } from "@/lib/billing/subscriptions";
 
 type RazorpaySubscriptionResponse = {
   total_count?: number;
@@ -92,6 +92,7 @@ export async function POST(request: NextRequest) {
       const firstCycleAmount = Number(rzpNotes.firstCycleAmount) || baseAmount;
       subscriptionDoc = await Subscription.create({
         userId: rzpNotes.userId,
+        accountId: rzpNotes.accountId ?? rzpNotes.userId,
         planSlug: rzpNotes.planSlug,
         status: "created",
         subscription_id: razorpay_subscription_id,
@@ -139,7 +140,7 @@ export async function POST(request: NextRequest) {
     const existingInvoice = await SubscriptionInvoice.findOne({
       payment_id: razorpay_payment_id,
     }).lean();
-    if (existingInvoice && subscriptionDoc.status === "active") {
+    if (existingInvoice?.usageAppliedAt && subscriptionDoc.status === "active") {
       return NextResponse.json({ success: true, alreadyProcessed: true });
     }
 
@@ -193,6 +194,7 @@ export async function POST(request: NextRequest) {
 
     await createSubscriptionPaymentIfMissing({
       userId: subscriptionDoc.userId,
+      accountId: subscriptionDoc.accountId,
       paymentId: razorpay_payment_id,
       subscriptionId: razorpay_subscription_id,
       planName:
@@ -226,12 +228,13 @@ export async function POST(request: NextRequest) {
       txnid: razorpay_payment_id,
     });
 
-    await syncUserSubscriptionState({
-      userId: subscriptionDoc.userId,
-      subscriptionDocId: subscriptionDoc._id,
+    await syncBillingSubscriptionState(subscriptionDoc, {
       status: "active",
       expiresAt: subscriptionDoc.current_period_end || subscriptionDoc.endDate,
       autopayActive: true,
+      renewal: { invoiceId: String(invoiceResult.invoice._id) },
+      actor: { actorType: "user", actorId: subscriptionDoc.userId },
+      seats: Number(rzpNotes.seats) || undefined,
     });
 
     captureEvent(subscriptionDoc.userId, "subscription_started", {

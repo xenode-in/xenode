@@ -14,6 +14,8 @@ export interface IUsage extends Document {
   userId: string;
   /** Billing account this usage rolls up under. Today always equals userId. */
   accountId?: string | null;
+  subscriptionDocId: mongoose.Types.ObjectId | null;
+  manualPlanAssignedAt: Date | null;
   totalStorageBytes: number;
   totalEgressBytes: number;
   totalObjects: number;
@@ -45,6 +47,8 @@ const UsageSchema = new Schema<IUsage>(
   {
     userId: { type: String, required: true, unique: true, index: true },
     accountId: { type: String, default: null, index: true },
+    subscriptionDocId: { type: Schema.Types.ObjectId, default: null },
+    manualPlanAssignedAt: { type: Date, default: null },
     totalStorageBytes: { type: Number, default: 0, min: 0 },
     totalEgressBytes:  { type: Number, default: 0, min: 0 },
     totalObjects:      { type: Number, default: 0, min: 0 },

@@ -1,9 +1,11 @@
 import dbConnect from "@/lib/mongodb";
 import razorpay from "@/lib/razorpay";
 import Subscription, { type ISubscription } from "@/models/Subscription";
-import { syncUserSubscriptionState } from "@/lib/subscriptions/service";
+import { syncUserSubscriptionState, type UserSubscriptionStatus } from "@/lib/subscriptions/service";
 import { BillingError } from "./http";
 import { BillingEventType, emitBillingEvent } from "./events";
+import { syncOrgSubscriptionState } from "@/lib/orgs/billing/service";
+import type { EmitArgs } from "./events";
 
 /**
  * High-level subscription lifecycle operations. Wraps the existing helpers
@@ -22,7 +24,7 @@ const TERMINAL_STATUSES = new Set<ISubscription["status"]>([
   "expired",
 ]);
 
-type UserStatus = Parameters<typeof syncUserSubscriptionState>[0]["status"];
+type UserStatus = UserSubscriptionStatus;
 
 const SUBSCRIPTION_TO_USER_STATUS: Record<ISubscription["status"], UserStatus> = {
   created: "none",
@@ -40,15 +42,31 @@ const SUBSCRIPTION_TO_USER_STATUS: Record<ISubscription["status"], UserStatus> =
 export async function findActiveSubscription(
   userId: string,
   subscriptionId?: string,
+  accountId?: string,
 ): Promise<ISubscription | null> {
   await dbConnect();
   if (subscriptionId) {
     return Subscription.findOne({
       userId,
+      accountId: accountId ?? { $in: [null, userId] },
       subscription_id: subscriptionId,
     });
   }
-  return Subscription.findOne({ userId }).sort({ createdAt: -1 });
+  return Subscription.findOne({ userId, accountId: accountId ?? { $in: [null, userId] } })
+    .sort({ createdAt: -1, _id: -1 });
+}
+
+/** Route every subscription projection by its recorded billing account. */
+export async function syncBillingSubscriptionState(
+  sub: { _id: unknown; userId: string; accountId?: string | null },
+  args: { status: UserSubscriptionStatus; expiresAt?: Date | null; autopayActive?: boolean;
+    gracePeriod?: { active: boolean; endsAt: Date | null }; seats?: number | null;
+    renewal?: { invoiceId: string }; actor?: Pick<EmitArgs, "actorType" | "actorId"> },
+) {
+  if (sub.accountId?.startsWith("org:")) {
+    return syncOrgSubscriptionState({ orgId: sub.accountId.slice(4), subscriptionDocId: String(sub._id), ...args });
+  }
+  return syncUserSubscriptionState({ userId: sub.userId, subscriptionDocId: String(sub._id), ...args });
 }
 
 export interface PauseResumeArgs {
@@ -166,6 +184,7 @@ export async function resumeSubscription(args: PauseResumeArgs): Promise<{
 
 export interface CancelArgs {
   userId: string;
+  accountId?: string;
   subscriptionId?: string;
   cancelAtPeriodEnd: boolean;
   actorType: "user" | "admin";
@@ -178,13 +197,18 @@ export async function cancelSubscription(args: CancelArgs): Promise<{
   alreadyCancelled: boolean;
 }> {
   await dbConnect();
-  const sub = await findActiveSubscription(args.userId, args.subscriptionId);
+  const sub = await findActiveSubscription(args.userId, args.subscriptionId, args.accountId);
 
   if (!sub?.subscription_id) {
     throw new BillingError(404, "Subscription not found", "subscription_missing");
   }
 
   if (TERMINAL_STATUSES.has(sub.status)) {
+    const periodEnd = sub.current_period_end || sub.endDate;
+    await syncBillingSubscriptionState(sub, {
+      status: "cancelled", expiresAt: periodEnd > new Date() ? periodEnd : null, autopayActive: false,
+      actor: { actorType: args.actorType, actorId: args.actorId },
+    });
     return {
       status: sub.status,
       cancelAtPeriodEnd: sub.cancelAtPeriodEnd ?? false,
@@ -209,12 +233,11 @@ export async function cancelSubscription(args: CancelArgs): Promise<{
   await sub.save();
 
   if (!args.cancelAtPeriodEnd) {
-    await syncUserSubscriptionState({
-      userId: args.userId,
-      subscriptionDocId: sub._id,
+    await syncBillingSubscriptionState(sub, {
       status: "cancelled",
       expiresAt: sub.current_period_end || sub.endDate || null,
       autopayActive: false,
+      actor: { actorType: args.actorType, actorId: args.actorId },
     });
   }
 

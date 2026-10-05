@@ -1,95 +1,47 @@
 import { NextRequest, NextResponse } from "next/server";
 import dbConnect from "@/lib/mongodb";
-import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
-import Subscription from "@/models/Subscription";
-import { SUBSCRIPTION_GRACE_PERIOD_MS } from "@/lib/subscriptions/constants";
+import Usage from "@/models/Usage";
+import OrgUsage from "@/models/OrgUsage";
+import { syncUserSubscriptionState } from "@/lib/subscriptions/service";
+import { syncOrgSubscriptionState } from "@/lib/orgs/billing/service";
 
-/**
- * Cron endpoint — runs daily at midnight UTC.
- * Secured with CRON_SECRET header to prevent unauthorized triggering.
- *
- * Register in vercel.json:
- * { "crons": [{ "path": "/api/cron/expire-plans", "schedule": "0 0 * * *" }] }
- */
+/** Authenticated HTTP cron. Each bounded candidate is rechecked transactionally. */
 export async function GET(req: NextRequest) {
-  // Verify cron secret
-  const authHeader = req.headers.get("authorization");
-  const cronSecret = process.env.CRON_SECRET;
-
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || req.headers.get("authorization") !== `Bearer ${secret}`) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-
   try {
     await dbConnect();
     const now = new Date();
+    const due = {
+      planExpiresAt: { $lte: now },
+      $or: [{ isGracePeriod: false }, { isGracePeriod: true, gracePeriodEndsAt: { $lte: now } }],
+    };
+    let grantedGraceCount = 0;
     let expiredCount = 0;
-
-    const graceEndsAt = new Date(now.getTime() + SUBSCRIPTION_GRACE_PERIOD_MS);
-
-    // --- Step 1a: Grant Grace Period to recently expired non-autopay users ---
-    // If a user's plan just expired naturally (autopay was off or manual payment)
-    // and they aren't already in a grace period, grant them the standard window.
-    // planExpiresAt is intentionally NOT overwritten — the grace deadline lives
-    // on gracePeriodEndsAt so the UI can still show the real expiry date.
-    const graceResult = await Usage.updateMany(
-      {
-        plan: { $ne: "free" },
-        planExpiresAt: { $lt: now },
-        isGracePeriod: false,
-      },
-      {
-        $set: {
-          isGracePeriod: true,
-          gracePeriodEndsAt: graceEndsAt,
-        },
-      },
-    );
-
-    // --- Step 1b: Expire lapsed plans (Grace period ended) ---
-    // If they were already in a grace period and that period has now expired,
-    // downgrade them to the free tier completely.
-    const expireResult = await Usage.updateMany(
-      {
-        plan: { $ne: "free" },
-        isGracePeriod: true,
-        gracePeriodEndsAt: { $lt: now },
-      },
-      {
-        $set: {
-          plan: "free",
-          storageLimitBytes: FREE_TIER_LIMIT_BYTES,
-          planPriceINR: 0,
-          basePlanPriceINR: 0,
-          campaignType: null,
-          campaignCyclesLeft: null,
-          isGracePeriod: false,
-          gracePeriodEndsAt: null,
-          autopayActive: false,
-        },
-      },
-    );
-    expiredCount = expireResult.modifiedCount;
-
-    // --- Step 2: Update Subscriptions ---
-    await Subscription.updateMany(
-      {
-        status: "active",
-        endDate: { $lt: now },
-      },
-      {
-        $set: {
-          status: "expired"
-        }
-      }
-    );
-
-    return NextResponse.json({
-      success: true,
-      grantedGraceCount: graceResult.modifiedCount,
-      expiredCount,
-      processedAt: now.toISOString(),
-    });
+    let orgGrantedGraceCount = 0;
+    let orgExpiredCount = 0;
+    const personal = await Usage.find({ ...due, plan: { $ne: "free" } })
+      .select("userId").sort({ planExpiresAt: 1, _id: 1 }).limit(200).lean();
+    for (const row of personal) {
+      const { outcome } = await syncUserSubscriptionState({
+        userId: row.userId, action: "expire", now, actor: { actorType: "system", actorId: "cron" },
+      });
+      if (outcome === "grace") grantedGraceCount++;
+      if (outcome === "expired") expiredCount++;
+    }
+    const organizations = await OrgUsage.find({ ...due, plan: { $ne: "org-free" } })
+      .select("orgId").sort({ planExpiresAt: 1, _id: 1 }).limit(200).lean();
+    for (const row of organizations) {
+      const { outcome } = await syncOrgSubscriptionState({
+        orgId: row.orgId, action: "expire", now, actor: { actorType: "system", actorId: "cron" },
+      });
+      if (outcome === "grace") orgGrantedGraceCount++;
+      if (outcome === "expired") orgExpiredCount++;
+    }
+    return NextResponse.json({ success: true, grantedGraceCount, expiredCount,
+      orgGrantedGraceCount, orgExpiredCount, processedAt: now.toISOString() });
   } catch (error) {
     console.error("[Cron] expire-plans error:", error);
     return NextResponse.json({ error: "Cron job failed" }, { status: 500 });

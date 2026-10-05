@@ -63,6 +63,7 @@ export async function POST(request: NextRequest) {
     // payment is confirmed, so that status won't appear here.
     const existing = await Subscription.findOne({
       userId,
+      accountId: { $in: [null, userId] },
       status: { $in: ["authenticated", "active", "pending", "halted"] },
     });
     if (existing) {

@@ -4,7 +4,7 @@ import dbConnect from "@/lib/mongodb";
 import Subscription from "@/models/Subscription";
 import { assertOrgMemberRole } from "@/lib/orgs/access";
 import { orgStorageOwnerId } from "@/lib/orgs/storage";
-import { getOrCreateOrgUsage } from "@/lib/orgs/billing/orgUsage";
+import OrgUsage, { ORG_FREE_SEATS, ORG_FREE_TIER_LIMIT_BYTES } from "@/models/OrgUsage";
 import { getSeatState } from "@/lib/orgs/billing/seats";
 import { ORG_PLANS } from "@/lib/orgs/billing/orgPlans";
 
@@ -31,23 +31,23 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     await dbConnect();
     const accountId = orgStorageOwnerId(orgId);
     const [usage, subscription, seatState] = await Promise.all([
-      getOrCreateOrgUsage(orgId),
+      OrgUsage.findOne({ orgId }).lean(),
       Subscription.findOne({ accountId }).sort({ createdAt: -1 }).lean(),
       getSeatState(orgId),
     ]);
 
     return NextResponse.json({
       usage: {
-        plan: usage.plan,
-        storageLimitBytes: usage.storageLimitBytes,
-        totalStorageBytes: usage.totalStorageBytes,
-        totalObjects: usage.totalObjects,
-        seats: usage.seats,
+        plan: usage?.plan ?? "org-free",
+        storageLimitBytes: usage ? usage.storageLimitBytes : ORG_FREE_TIER_LIMIT_BYTES,
+        totalStorageBytes: usage?.totalStorageBytes ?? 0,
+        totalObjects: usage?.totalObjects ?? 0,
+        seats: usage?.seats ?? ORG_FREE_SEATS,
         seatsUsed: seatState.seatsUsed,
         pendingInvites: seatState.pendingInvites,
-        planExpiresAt: usage.planExpiresAt,
-        isGracePeriod: usage.isGracePeriod,
-        gracePeriodEndsAt: usage.gracePeriodEndsAt,
+        planExpiresAt: usage?.planExpiresAt ?? null,
+        isGracePeriod: usage?.isGracePeriod ?? false,
+        gracePeriodEndsAt: usage?.gracePeriodEndsAt ?? null,
       },
       subscription: subscription
         ? {
