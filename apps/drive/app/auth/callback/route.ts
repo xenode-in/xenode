@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { ProductSession } from "@xenode/database";
-import { sanitizeReturnTo } from "@xenode/identity-core";
+import { isAuthorizedParty, sanitizeReturnTo } from "@xenode/identity-core";
 import dbConnect from "@/lib/mongodb";
 import { createDriveSessionCookie } from "@/lib/auth/product-cookie";
 
@@ -82,7 +82,7 @@ export async function GET(request: Request) {
   if (typeof payload.sid !== "string") {
     return failure("Invalid OIDC issuer session");
   }
-  if (payload.azp !== "xenode-drive-web") {
+  if (!isAuthorizedParty(payload, "xenode-drive-web")) {
     return failure("Invalid OIDC authorized party");
   }
   if (typeof payload.exp !== "number") {

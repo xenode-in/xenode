@@ -12,6 +12,7 @@ import {
   sanitizeReturnTo,
   validateAuthorizationRequest,
   validateIdTokenClaims,
+  isAuthorizedParty,
   validateUsername,
 } from "../src";
 
@@ -89,6 +90,17 @@ describe("identity authority contracts", () => {
         store,
       ),
     ).rejects.toThrow("consumed");
+  });
+
+  it("requires azp only for several audiences and only ever the client", () => {
+    expect(isAuthorizedParty({ aud: "xenode-drive-web" }, "xenode-drive-web")).toBe(true);
+    expect(isAuthorizedParty({ aud: ["xenode-drive-web"] }, "xenode-drive-web")).toBe(true);
+    expect(isAuthorizedParty({ aud: "xenode-drive-web", azp: "xenode-drive-web" }, "xenode-drive-web")).toBe(true);
+    expect(isAuthorizedParty({ aud: "xenode-drive-web", azp: "xenode-photos-web" }, "xenode-drive-web")).toBe(false);
+    expect(isAuthorizedParty({ aud: ["xenode-drive-web", "xenode-photos-web"] }, "xenode-drive-web")).toBe(false);
+    expect(
+      isAuthorizedParty({ aud: ["xenode-drive-web", "other"], azp: "xenode-drive-web" }, "xenode-drive-web"),
+    ).toBe(true);
   });
 
   it("validates issuer, audience, nonce, and lifetime", () => {

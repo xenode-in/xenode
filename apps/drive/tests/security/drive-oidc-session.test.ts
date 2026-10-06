@@ -62,17 +62,18 @@ function seedFlowCookies() {
 
 async function signIdToken(overrides: {
   iss?: string;
-  aud?: string;
+  aud?: string | string[];
   nonce?: string;
   sub?: string;
   expiresIn?: string;
   sid?: string | null;
   azp?: string;
 }) {
+  // Like Accounts' Better Auth tokens, no azp unless a test sets one.
   const claims: Record<string, string> = {
     nonce: overrides.nonce ?? "nonce-0123456789abcdef",
-    azp: overrides.azp ?? "xenode-drive-web",
   };
+  if (overrides.azp) claims.azp = overrides.azp;
   if (overrides.sid !== null) {
     claims.sid = overrides.sid ?? "accounts-session-1";
   }
@@ -201,6 +202,19 @@ describe("Drive OIDC callback", () => {
   it("rejects an id_token for another authorized party", async () => {
     seedFlowCookies();
     mockAccountsFetch(await signIdToken({ azp: "xenode-photos-web" }));
+    const response = await callbackGET(
+      callbackRequest({ code: "code_1", state: "state-0123456789abcdef" }),
+    );
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Invalid OIDC authorized party",
+    });
+    expect(await ProductSession.countDocuments({ productId: "drive" })).toBe(0);
+  });
+
+  it("rejects a token for several audiences that does not name Drive", async () => {
+    seedFlowCookies();
+    mockAccountsFetch(await signIdToken({ aud: ["xenode-drive-web", "xenode-photos-web"] }));
     const response = await callbackGET(
       callbackRequest({ code: "code_1", state: "state-0123456789abcdef" }),
     );

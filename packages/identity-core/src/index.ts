@@ -325,6 +325,20 @@ export function validateIdTokenClaims(
   }
 }
 
+/**
+ * OIDC Core 3.1.3.7 authorized party. The verifier has already checked that
+ * `aud` contains the client. A token for several audiences must name the
+ * client as `azp`, and an `azp` that is present must be the client. Better
+ * Auth issues single-audience ID tokens without `azp`.
+ */
+export function isAuthorizedParty(
+  claims: { aud?: string | string[]; azp?: unknown },
+  clientId: string,
+): boolean {
+  if (claims.azp !== undefined) return claims.azp === clientId;
+  return !Array.isArray(claims.aud) || claims.aud.length === 1;
+}
+
 export interface AuthorizationCodeRecord {
   code: string;
   clientId: string;

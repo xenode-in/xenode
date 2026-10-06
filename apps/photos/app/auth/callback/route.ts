@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { cookies } from "next/headers";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { connectDatabase, ProductSession } from "@xenode/database";
-import { sanitizeReturnTo } from "@xenode/identity-core";
+import { isAuthorizedParty, sanitizeReturnTo } from "@xenode/identity-core";
 import { createPhotosSessionCookie } from "@/lib/product-cookie";
 
 function failure(message: string) {
@@ -74,7 +74,7 @@ export async function GET(request: Request) {
   if (typeof payload.sid !== "string") {
     return failure("Invalid OIDC issuer session");
   }
-  if (payload.azp !== "xenode-photos-web") {
+  if (!isAuthorizedParty(payload, "xenode-photos-web")) {
     return failure("Invalid OIDC authorized party");
   }
   if (typeof payload.exp !== "number") {
