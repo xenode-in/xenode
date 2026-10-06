@@ -61,3 +61,5 @@ Paths in the reports are repository-relative unless explicitly identified as ins
 - [40 — Direct ciphertext downloads](40-direct-ciphertext-downloads.md)
 
 - [41 — Enforced Drive CSP](41-drive-content-security-policy.md)
+
+- [42 — Photos lifecycle and API origin boundary](42-photos-lifecycle.md)

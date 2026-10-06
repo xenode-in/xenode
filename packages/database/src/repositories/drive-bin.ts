@@ -9,11 +9,11 @@ import { findReferencedStorageObjectKeys, storedObjectBlobKeys, storageObjectTot
 
 export const BIN_BATCH_LIMIT = 100;
 export const BIN_PURGE_LEASE_MS = 5 * 60 * 1000;
-interface BinSelection { spaceId: string; bucketId: Types.ObjectId; ids?: Types.ObjectId[]; all?: boolean; cutoff?: Date; includeRelated?: boolean }
+interface BinSelection { productId?: "drive" | "photos"; spaceId: string; bucketId: Types.ObjectId; ids?: Types.ObjectId[]; all?: boolean; cutoff?: Date; includeRelated?: boolean }
 
 async function selectBinned(input: BinSelection, session?: ClientSession) {
   const objects = getDatabase().collection("storageobjects");
-  const base = { productId: "drive", spaceId: input.spaceId, bucketId: input.bucketId, deletedAt: { $type: "date" as const, ...(input.cutoff ? { $lte: input.cutoff } : {}) } };
+  const base = { productId: input.productId ?? "drive", spaceId: input.spaceId, bucketId: input.bucketId, deletedAt: { $type: "date" as const, ...(input.cutoff ? { $lte: input.cutoff } : {}) } };
   const primaries = await objects.find({ ...base, ...(input.all ? { purgeState: { $exists: false } } : { _id: { $in: input.ids ?? [] } }) }, { session })
     .sort({ deletedAt: 1, _id: 1 }).limit(BIN_BATCH_LIMIT + 1).toArray();
   if (input.all) return primaries.slice(0, BIN_BATCH_LIMIT);
@@ -39,7 +39,7 @@ async function selectBinned(input: BinSelection, session?: ClientSession) {
 export async function restoreDriveBin(input: BinSelection) {
   return withTransaction(async (session) => {
     const objects = getDatabase().collection("storageobjects");
-    const primaries = await selectBinned({ ...input, includeRelated: false }, session);
+    const primaries = await selectBinned({ ...input, productId: "drive", includeRelated: false }, session);
     if (!primaries.length) return { restoredCount: 0 };
     const ids = primaries.map((object) => object._id);
     const batch = {
@@ -66,7 +66,7 @@ export async function restoreDriveBin(input: BinSelection) {
 }
 
 /** Capture an immutable, permanently non-restorable deletion manifest. */
-export async function queueDriveBinPurge(input: BinSelection) {
+export async function queueStorageBinPurge(input: BinSelection & { productId: "drive" | "photos" }) {
   return withTransaction(async (session) => {
     const objects = getDatabase().collection("storageobjects");
     const selected = await selectBinned(input, session);
@@ -82,15 +82,20 @@ export async function queueDriveBinPurge(input: BinSelection) {
     }
     for (const object of selected) {
       if (object.purgeState) continue;
+      if (input.productId === "photos") {
+        const asset = await getDatabase().collection("photoAssets").updateOne({ storageObjectId: String(object._id), spaceId: input.spaceId, status: "trashed" }, { $set: { purgeRequestedAt: new Date(), updatedAt: new Date() } }, { session });
+        if (asset.matchedCount !== 1) throw new DriveUploadCommitError(409, "photo_asset_missing", "Photo asset lifecycle is unavailable");
+      }
       const keys = storedObjectBlobKeys(object);
       const bytes = storageObjectTotalBytes({ size: object.size, thumbnailSize: object.thumbnailSize, optimizedSize: object.optimizedSize, versions: object.versions });
       if (!Number.isSafeInteger(bytes) || bytes < 0) throw new DriveUploadCommitError(409, "invalid_storage_bytes", "Storage byte accounting is invalid");
       // Respect every known PUT grace window, including retained revision uploads.
-      const upload = keys.length ? await getDatabase().collection("uploadsessions").find({
-        bucketId: input.bucketId, keys: { $in: keys },
+      const upload = keys.length ? await getDatabase().collection(input.productId === "drive" ? "uploadsessions" : "photoUploads").find({
+        bucketId: input.bucketId,
+        ...(input.productId === "drive" ? { keys: { $in: keys } } : { $or: ["original.key", "optimized.key", "thumbnail.key"].map(field => ({ [field]: { $in: keys } })) }),
       }, { session }).sort({ expiresAt: -1 }).limit(1).next() : null;
       const purgeAfter = upload?.expiresAt instanceof Date && upload.expiresAt > new Date() ? upload.expiresAt : new Date(0);
-      await objects.updateOne({ _id: object._id, ...{ productId: "drive", spaceId: input.spaceId }, purgeState: { $exists: false }, deletedAt: { $type: "date" } }, {
+      await objects.updateOne({ _id: object._id, ...{ productId: input.productId, spaceId: input.spaceId }, purgeState: { $exists: false }, deletedAt: { $type: "date" } }, {
         $set: {
           purgeState: "pending", purgeKeys: keys, purgeBytes: bytes, purgeAfter,
           purgeOwnerCollection: personal ? "usages" : "orgusages", purgeOwnerId: ownerId, updatedAt: new Date(),
@@ -102,18 +107,18 @@ export async function queueDriveBinPurge(input: BinSelection) {
 }
 
 /** Confirm physical deletion before one atomic metadata/accounting retirement. */
-export async function cleanupDriveBinObject(input: { objectId: Types.ObjectId; now?: Date; deleteBlobs: (bucketName: string, keys: string[]) => Promise<void> }) {
+export async function cleanupStorageBinObject(input: { productId: "drive" | "photos"; objectId: Types.ObjectId; now?: Date; deleteBlobs: (bucketName: string, keys: string[]) => Promise<void> }) {
   await connectDatabase();
   const objects = getDatabase().collection("storageobjects"), now = input.now ?? new Date(), leaseId = randomUUID();
   const object = await objects.findOneAndUpdate({
-    _id: input.objectId, productId: "drive", purgeState: "pending", deletedAt: { $type: "date" }, purgeAfter: { $lte: now },
+    _id: input.objectId, productId: input.productId, purgeState: "pending", deletedAt: { $type: "date" }, purgeAfter: { $lte: now },
     $and: [
       { $or: [{ purgeLeaseExpiresAt: { $exists: false } }, { purgeLeaseExpiresAt: { $lte: now } }] },
       { $or: [{ purgeNextAttemptAt: { $exists: false } }, { purgeNextAttemptAt: { $lte: now } }] },
     ],
   }, { $set: { purgeLeaseId: leaseId, purgeLeaseExpiresAt: new Date(now.getTime() + BIN_PURGE_LEASE_MS) }, $inc: { __v: 1 } }, { returnDocument: "after" });
   if (!object) return "skipped" as const;
-  const lease = { _id: object._id, productId: "drive", spaceId: object.spaceId, purgeState: "pending", purgeLeaseId: leaseId };
+  const lease = { _id: object._id, productId: input.productId, spaceId: object.spaceId, purgeState: "pending", purgeLeaseId: leaseId };
   try {
     const keys = object.purgeKeys as string[];
     if (!Array.isArray(keys) || keys.some((key) => typeof key !== "string" || !key)) throw new Error("invalid_purge_manifest");
@@ -124,6 +129,7 @@ export async function cleanupDriveBinObject(input: { objectId: Types.ObjectId; n
     }
     const bucket = await getDatabase().collection("buckets").findOne({ _id: object.bucketId });
     if (!bucket || !isStorageRegion(bucket.storageRegion) || resolveRegionBucketConfig(bucket.storageRegion).bucketName !== bucket.b2BucketId) throw new Error("bucket_missing");
+    if (input.productId === "photos" && !await getDatabase().collection("photoAssets").findOne({ storageObjectId: String(object._id), spaceId: object.spaceId, status: "trashed", purgeRequestedAt: { $type: "date" } })) throw new Error("photo_asset_missing");
     if (keys.length) await input.deleteBlobs(bucket.b2BucketId, keys);
     return await withTransaction(async (session) => {
       const current = await objects.findOne(lease, { session });
@@ -138,6 +144,7 @@ export async function cleanupDriveBinObject(input: { objectId: Types.ObjectId; n
         _id: current.bucketId, totalSizeBytes: { $gte: bytes }, objectCount: { $gte: 1 },
       }, { $inc: { totalSizeBytes: -bytes, objectCount: -1 }, $set: { updatedAt: new Date() } }, { session });
       if (usage.matchedCount !== 1 || bucketUpdate.matchedCount !== 1) throw new Error("accounting_unavailable");
+      if (input.productId === "drive") {
       const sharelinks = getDatabase().collection("sharelinks");
       const affectedLinks = await sharelinks.find({ $or: [
         { objectId: current._id }, { "bundleItems.objectId": current._id },
@@ -177,6 +184,16 @@ export async function cleanupDriveBinObject(input: { objectId: Types.ObjectId; n
         { $set: { coverObjectId: { $cond: [{ $eq: ["$coverObjectId", current._id] }, { $ifNull: [{ $arrayElemAt: ["$objectIds", 0] }, null] }, "$coverObjectId"] } } },
       ], { session });
       if (current.isSidecar !== true) await recordDriveSyncRemoval(current.spaceId, current._id, session);
+      } else {
+        const assets = getDatabase().collection("photoAssets");
+        const asset = await assets.findOne({ storageObjectId: String(current._id), spaceId: current.spaceId, status: "trashed" }, { session });
+        if (!asset) throw new Error("photo_asset_missing");
+        await getDatabase().collection("photoAlbumsV2").updateMany({ spaceId: current.spaceId, photoAssetIds: asset.assetId }, [
+          { $set: { photoAssetIds: { $filter: { input: "$photoAssetIds", as: "id", cond: { $ne: ["$$id", asset.assetId] } } } } },
+          { $set: { coverPhotoAssetId: { $cond: [{ $eq: ["$coverPhotoAssetId", asset.assetId] }, { $arrayElemAt: ["$photoAssetIds", 0] }, "$coverPhotoAssetId"] }, updatedAt: new Date() } },
+        ], { session });
+        await assets.deleteOne({ _id: asset._id }, { session });
+      }
       await objects.deleteOne(lease, { session });
       return "deleted" as const;
     });
@@ -187,4 +204,10 @@ export async function cleanupDriveBinObject(input: { objectId: Types.ObjectId; n
     });
     return "retry" as const;
   }
+}
+
+/** Drive entry points keep a fixed product boundary. */
+export function queueDriveBinPurge(input: BinSelection) { return queueStorageBinPurge({ ...input, productId: "drive" }); }
+export function cleanupDriveBinObject(input: { objectId: Types.ObjectId; now?: Date; deleteBlobs: (bucketName: string, keys: string[]) => Promise<void> }) {
+  return cleanupStorageBinObject({ ...input, productId: "drive" });
 }

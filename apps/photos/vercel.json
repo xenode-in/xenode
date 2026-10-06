@@ -3,6 +3,10 @@
     {
       "path": "/api/cron/cleanup-photo-uploads",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/purge-photo-trash",
+      "schedule": "30 * * * *"
     }
   ]
 }

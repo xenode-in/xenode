@@ -9,6 +9,7 @@ export * from "./types";
 export * from "./storage-objects";
 export * from "./storage-usage";
 export * from "./photo-uploads";
+export * from "./photo-lifecycle";
 export * from "./photo-upload-cleanup";
 export * from "./drive-uploads";
 export * from "./drive-upload-cleanup";

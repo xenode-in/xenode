@@ -519,6 +519,8 @@ export interface PhotoAssetRecord {
   encryptedMetadata?: string;
   uploadSource: string;
   status: "active" | "trashed";
+  trashedAt?: Date;
+  purgeRequestedAt?: Date;
   createdByAccountId: string;
   syncContentFingerprint?: string;
   createdAt: Date;
@@ -537,13 +539,17 @@ const photoAssetSchema = new Schema<PhotoAssetRecord>(
     encryptedMetadata: String,
     uploadSource: { type: String, required: true },
     status: { type: String, enum: ["active", "trashed"], default: "active" },
+    trashedAt: Date,
+    purgeRequestedAt: Date,
     createdByAccountId: { type: String, required: true },
     syncContentFingerprint: String,
   },
   { timestamps: true, collection: "photoAssets" },
 );
 photoAssetSchema.index({ spaceId: 1, takenAt: -1, assetId: -1 });
-photoAssetSchema.index({ spaceId: 1, status: 1 });
+photoAssetSchema.index({ spaceId: 1, status: 1, trashedAt: -1, assetId: -1 });
+// Retention cron: expired trash across all Spaces.
+photoAssetSchema.index({ trashedAt: 1 }, { partialFilterExpression: { status: "trashed" } });
 photoAssetSchema.index(
   { spaceId: 1, syncContentFingerprint: 1 },
   {

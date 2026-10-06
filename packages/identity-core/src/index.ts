@@ -1,3 +1,4 @@
+export * from "./request-origin";
 import { resolveProductOrigin } from "@xenode/config";
 
 const DEFAULT_RESERVED_USERNAMES = new Set([

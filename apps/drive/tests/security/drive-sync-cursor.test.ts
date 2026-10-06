@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { Space, DriveSyncTombstone, withTransaction, readDriveSyncPage, stampDriveSyncObjects,
   recordDriveSyncRemoval, parseDriveSyncCursor, updateDriveObjectMetadata } from "@xenode/database";
 import StorageObject from "@/models/StorageObject";
@@ -15,6 +15,9 @@ async function object(spaceId: string, extra: Record<string, unknown> = {}) {
     encryptedName: "cipher-name", encryptedDEK: "sealed-key", ...extra });
 }
 describe("commit-ordered scoped sync tuples", () => {
+  // An index build queued behind the intentionally held writer would block
+  // later IX locks and turn this fixture into a DDL lock test.
+  beforeAll(async () => { await Promise.all([Space.init(), StorageObject.init(), DriveSyncTombstone.init()]); });
   it("paginates every equal-time/equal-version object with an id tie-breaker", async () => {
     const s = await scope();
     const rows = await Promise.all(Array.from({ length: 7 }, () => object(s.spaceId, { updatedAt: new Date(0) })));
@@ -93,9 +96,12 @@ describe("commit-ordered scoped sync tuples", () => {
       ready(); await resume;
     });
     await started;
-    const before = await readDriveSyncPage(s);
-    expect(before.changes[0].syncVersion).toBe(0);
-    release(); await mutation;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let before: Awaited<ReturnType<typeof readDriveSyncPage>>;
+    try {
+      before = await Promise.race([readDriveSyncPage(s), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Snapshot reader blocked by uncommitted writer")), 5000); })]);
+      expect(before.changes[0].syncVersion).toBe(0);
+    } finally { if (timer) clearTimeout(timer); release(); await mutation; }
     expect((await readDriveSyncPage({ ...s, cursor: before.cursor })).changes[0].syncVersion).toBe(1);
   });
   it("rejects cursors from another account/Space, malformed dates and unsafe limits", async () => {

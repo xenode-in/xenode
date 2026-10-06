@@ -171,3 +171,11 @@ Keep HTML uncached and preserve per-response CSP/nonces through the proxy.
 Changing CSP origins requires checking checkout, handoff, crypto workers and
 static runtime framing in a browser. Use the isolated browser command for local
 policy/SDK evidence; real provider-authorized checkout remains a release check.
+
+## Photos trash
+
+Photos trash retains quota until confirmed physical purge. The hourly
+`/api/cron/purge-photo-trash` route uses the existing scheduler bearer contract.
+Inspect retained pending/blocked purge records on repeated failures; never drop
+metadata or counters to make cleanup appear successful. See the
+[Photos lifecycle contract](gpt-6-astra-audit/42-photos-lifecycle.md).

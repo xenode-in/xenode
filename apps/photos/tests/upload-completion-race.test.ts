@@ -1,3 +1,4 @@
+import { clearStorageConfigCacheForTests } from "@xenode/config/storage";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MongoMemoryReplSet } from "mongodb-memory-server";
 import { DeleteObjectsCommand, HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
@@ -19,7 +20,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@aws-sdk/s3-request-presigner", () => ({ getSignedUrl: mocks.sign }));
 vi.mock("@/lib/session", () => ({ getPhotosProductSession: mocks.session }));
-vi.mock("@/lib/storage-server", () => ({ getPhotosStorageContext: mocks.storage }));
+vi.mock("@/lib/storage-server", () => ({ getPhotosStorageContext: mocks.storage, getPhotosS3Client: () => ({ send: mocks.send }) }));
 vi.mock("@xenode/spaces", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@xenode/spaces")>()),
   resolveSpaceAccess: mocks.resolveAccess,
@@ -108,6 +109,8 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  vi.stubEnv("STORAGE_ENABLED_REGIONS","asia");vi.stubEnv("S3_BUCKET_NAME","photos-test-bucket");vi.stubEnv("S3_ENDPOINT","https://fixture.r2.cloudflarestorage.com");vi.stubEnv("S3_REGION","auto");
+  clearStorageConfigCacheForTests();
   bucketId = new (getMongoose().Types.ObjectId)();
   mocks.session.mockResolvedValue({ accountId });
   mocks.resolveAccess.mockResolvedValue({ role: "owner" });
@@ -130,7 +133,7 @@ beforeEach(async () => {
   mocks.sign.mockResolvedValue("https://upload.example.test/signed");
   process.env.CRON_SECRET = cronSecret;
   await getDatabase().collection("buckets").insertOne({
-    _id: bucketId, b2BucketId: "photos-test-bucket",
+    _id: bucketId, b2BucketId: "photos-test-bucket", storageRegion: "asia",
     objectCount: 0, totalSizeBytes: 0,
   });
   await getDatabase().collection("usages").insertOne({

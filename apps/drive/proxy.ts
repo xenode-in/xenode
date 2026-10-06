@@ -1,3 +1,4 @@
+import { isCrossOriginProductRequest } from "@xenode/identity-core";
 import { randomBytes } from "node:crypto";
 import { driveContentSecurityPolicy } from "@/lib/security/csp";
 import { getServerProductOrigin } from "@xenode/config";
@@ -163,14 +164,7 @@ function routeRequest(req: NextRequest) {
   const appOrigin =
     getServerProductOrigin("drive");
   if (pathname.startsWith("/api/")) {
-    const origin = req.headers.get("origin");
-    const fetchSite = req.headers.get("sec-fetch-site");
-    const isMutation = !["GET", "HEAD", "OPTIONS"].includes(req.method);
-    if (
-      (origin !== null && origin !== appOrigin) ||
-      fetchSite === "same-site" ||
-      (isMutation && fetchSite !== null && origin !== appOrigin)
-    ) {
+    if (isCrossOriginProductRequest(req, appOrigin)) {
       return NextResponse.json(
         { error: "Cross-origin application API requests are forbidden" },
         { status: 403 },
