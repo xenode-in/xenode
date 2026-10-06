@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { proxy } from "@/proxy";
-import { getPasskeyExpectedOrigin, getPasskeyRpId } from "@/lib/passkey-rp";
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -14,16 +13,6 @@ function request(host: string, pathname: string) {
 }
 
 describe("proxy office routing", () => {
-  it("uses the configured Drive WebAuthn origin and refuses malformed configuration", () => {
-    vi.stubEnv("DRIVE_ORIGIN", "https://configured.test:8443/");
-    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://obsolete.test");
-    expect(getPasskeyExpectedOrigin()).toBe("https://configured.test:8443");
-    expect(getPasskeyRpId()).toBe("configured.test");
-    vi.stubEnv("DRIVE_ORIGIN", "https://configured.test/path");
-    expect(() => getPasskeyExpectedOrigin()).toThrow("exact http(s) origin");
-    expect(() => getPasskeyRpId()).toThrow("exact http(s) origin");
-  });
-
   it("keeps the configured root Drive host on its own login flow", () => {
     vi.stubEnv("DRIVE_ORIGIN", "https://xenode.in");
     const response = proxy(request("xenode.in", "/dashboard"));

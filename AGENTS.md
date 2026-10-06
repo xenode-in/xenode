@@ -55,7 +55,9 @@ Accounts is the only user auth authority. It uses Better Auth with
 email/password, username, OAuth, OTP/TOTP, JWT, and OIDC-provider plugins. Drive
 and Photos are OIDC clients and store host-only ProductSession cookies. They
 must validate issuer, audience, state, nonce, and PKCE and must reject revoked,
-expired, cross-product, or version-stale ProductSessions.
+expired, cross-product, or version-stale ProductSessions. Passkeys, for sign-in
+and Vault unlock, live only in Accounts; Drive and Photos have no WebAuthn
+routes or passkey records.
 
 Only Accounts receives `BETTER_AUTH_SECRET`. Each product signs its
 ProductSession cookie with its own secret (`DRIVE_SESSION_COOKIE_SECRET`,

@@ -16,7 +16,6 @@
   ],
   "tags": [
     { "name": "Auth", "description": "Authentication, sessions, email verification, password recovery" },
-    { "name": "Passkeys", "description": "WebAuthn passkey registration and login" },
     { "name": "Buckets", "description": "Top-level storage containers" },
     { "name": "Objects", "description": "File & folder CRUD, listing, metadata" },
     { "name": "Uploads", "description": "Direct-to-B2 upload flow (presign → upload → complete)" },
@@ -219,69 +218,6 @@
         "responses": {
           "200": { "description": "Recovery completed" },
           "401": { "description": "Unauthorized" }
-        }
-      }
-    },
-
-    "/api/passkey": {
-      "get": {
-        "tags": ["Passkeys"],
-        "summary": "List registered passkeys",
-        "responses": {
-          "200": { "description": "List of passkeys" },
-          "401": { "description": "Unauthorized" }
-        }
-      },
-      "delete": {
-        "tags": ["Passkeys"],
-        "summary": "Delete a passkey",
-        "responses": {
-          "200": { "description": "Passkey deleted" },
-          "401": { "description": "Unauthorized" }
-        }
-      }
-    },
-
-    "/api/passkey/register/start": {
-      "post": {
-        "tags": ["Passkeys"],
-        "summary": "Start passkey registration",
-        "description": "Generates WebAuthn registration options for the user's browser.",
-        "responses": {
-          "200": { "description": "Registration options returned" }
-        }
-      }
-    },
-
-    "/api/passkey/register/finish": {
-      "post": {
-        "tags": ["Passkeys"],
-        "summary": "Finish passkey registration",
-        "description": "Verifies and stores the WebAuthn credential after user confirmation.",
-        "responses": {
-          "200": { "description": "Passkey registered" }
-        }
-      }
-    },
-
-    "/api/passkey/login/start": {
-      "post": {
-        "tags": ["Passkeys"],
-        "summary": "Start passkey login",
-        "description": "Generates WebAuthn authentication options.",
-        "responses": {
-          "200": { "description": "Authentication options returned" }
-        }
-      }
-    },
-
-    "/api/passkey/login/finish": {
-      "post": {
-        "tags": ["Passkeys"],
-        "summary": "Finish passkey login",
-        "description": "Verifies the WebAuthn assertion and creates a session.",
-        "responses": {
-          "200": { "description": "Login successful, session created" }
         }
       }
     },
