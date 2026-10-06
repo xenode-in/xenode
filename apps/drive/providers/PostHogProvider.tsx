@@ -36,6 +36,7 @@ export function PostHogProvider({ children }: { children: React.ReactNode }) {
       persistence: "localStorage",
       autocapture: false, // explicit events only
       disable_session_recording: true,
+      disable_external_dependency_loading: true,
       mask_all_text: true,
       mask_all_element_attributes: true,
     });

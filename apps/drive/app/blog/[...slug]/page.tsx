@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { getServerProductOrigin } from "@xenode/config";
 import { notFound } from "next/navigation";
 import { Metadata } from "next";
@@ -5,7 +6,7 @@ import Link from "next/link";
 import Image from "next/image";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import { getPostBySlug, getAllPosts, BLOG_FOLDERS } from "@/lib/blog";
-import { useMDXComponents } from "@/mdx-components";
+import { createMDXComponents } from "@/mdx-components";
 import { Navbar } from "@/components/Navbar";
 import { ThemeGradientBackground } from "@/components/ThemeGradientBackground";
 import {
@@ -98,6 +99,7 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export default async function BlogSlugPage({ params }: PageProps) {
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   const { slug } = await params;
 
   // ── Folder listing logic ──────────────────────────────────────────
@@ -149,7 +151,7 @@ export default async function BlogSlugPage({ params }: PageProps) {
                   <PenSquare className="w-10 h-10 mx-auto mb-4 opacity-20 text-foreground" />
                   <h2 className="text-xl font-medium text-foreground mb-2">No posts yet</h2>
                   <p className="text-sm text-muted-foreground max-w-[300px] mx-auto">
-                    We haven't published any articles in this category yet. Check back soon!
+                    We haven&apos;t published any articles in this category yet. Check back soon!
                   </p>
                   <Link
                     href="/blog"
@@ -244,7 +246,7 @@ export default async function BlogSlugPage({ params }: PageProps) {
   const post = await getPostBySlug(slug);
   if (!post) notFound();
 
-  const components = useMDXComponents({});
+  const components = createMDXComponents({});
   const postUrl = `${BASE_URL}/blog/${slug.join("/")}`;
 
   const articleJsonLd = {
@@ -317,10 +319,12 @@ export default async function BlogSlugPage({ params }: PageProps) {
     <div className="relative min-h-screen flex flex-col font-sans bg-background text-foreground transition-colors duration-300">
       <ThemeGradientBackground />
       <script
+        nonce={nonce}
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(articleJsonLd) }}
       />
       <script
+        nonce={nonce}
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(breadcrumbJsonLd) }}
       />

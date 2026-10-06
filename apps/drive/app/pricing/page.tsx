@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { getServerProductOrigin } from "@xenode/config";
 import { Suspense } from "react";
 import Link from "next/link";
@@ -40,7 +41,8 @@ export const metadata: Metadata = {
   },
 };
 
-export default function PricingPage() {
+export default async function PricingPage() {
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   const breadcrumbJsonLd = {
     "@context": "https://schema.org",
     "@type": "BreadcrumbList",
@@ -64,6 +66,7 @@ export default function PricingPage() {
     <div className="relative min-h-screen flex flex-col font-sans bg-background text-foreground transition-colors duration-300">
       <ThemeGradientBackground />
       <script
+        nonce={nonce}
         type="application/ld+json"
         dangerouslySetInnerHTML={{
           __html: JSON.stringify(breadcrumbJsonLd),

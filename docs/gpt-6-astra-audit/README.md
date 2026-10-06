@@ -59,3 +59,5 @@ Start with [the executive summary](00-executive-summary.md), then [the migration
 Paths in the reports are repository-relative unless explicitly identified as installed dependency source. Findings apply to the audited working tree; uncommitted features are not represented as already merged. No application implementation, migrations, dependencies, or deployment configuration were changed during this audit. No live database migrations, billing actions, or destructive storage operations were performed.
 
 - [40 — Direct ciphertext downloads](40-direct-ciphertext-downloads.md)
+
+- [41 — Enforced Drive CSP](41-drive-content-security-policy.md)

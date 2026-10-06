@@ -163,3 +163,11 @@ ETag/Content-Length/Content-Range/Accept-Ranges. Verify no-store response
 overrides, deadline expiry and encrypted seeking in each enabled pool. Private
 buckets must not have public domains/r2.dev enabled. Ignored environment files
 may discard CDN_SIGNING_SECRET/AZURE_CDN_URL; startup no longer uses them.
+
+## Drive page CSP
+
+Follow the [nonce policy contract](gpt-6-astra-audit/41-drive-content-security-policy.md).
+Keep HTML uncached and preserve per-response CSP/nonces through the proxy.
+Changing CSP origins requires checking checkout, handoff, crypto workers and
+static runtime framing in a browser. Use the isolated browser command for local
+policy/SDK evidence; real provider-authorized checkout remains a release check.

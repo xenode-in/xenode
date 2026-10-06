@@ -53,3 +53,7 @@ apps/platform-web/public/internal-editors/onlyoffice/*
 /x2t-build.log
 # Restricted malicious-file corpus is fetched and deleted by CI.
 /.security-corpus/
+
+# Browser test artifacts
+**/test-results/
+**/playwright-report/

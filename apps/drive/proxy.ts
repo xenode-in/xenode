@@ -1,3 +1,5 @@
+import { randomBytes } from "node:crypto";
+import { driveContentSecurityPolicy } from "@/lib/security/csp";
 import { getServerProductOrigin } from "@xenode/config";
 /**
  * Next.js Proxy configuration (replaces deprecated middleware file convention)
@@ -95,7 +97,7 @@ function authGate(req: NextRequest): NextResponse | null {
   return NextResponse.redirect(loginUrl);
 }
 
-export function proxy(req: NextRequest) {
+function routeRequest(req: NextRequest) {
   const hostname = req.headers.get("host") || "";
   const hostnameWithoutPort = hostname.split(":")[0];
   const { pathname } = req.nextUrl;
@@ -189,13 +191,34 @@ export function proxy(req: NextRequest) {
   return NextResponse.next();
 }
 
+/** Preserve routing/auth decisions while supplying the trusted nonce to SSR. */
+export function proxy(req: NextRequest) {
+  const pathname = req.nextUrl.pathname;
+  if (pathname.startsWith("/api/") || pathname === "/auth/logout/cleanup" || pathname.startsWith("/internal-editors/")) return routeRequest(req);
+  const nonce = randomBytes(32).toString("base64");
+  const policy = driveContentSecurityPolicy(nonce, pathname === "/checkout" || pathname.startsWith("/checkout/"));
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("content-security-policy", policy);
+  requestHeaders.delete("content-security-policy-report-only");
+  const routed = routeRequest(req);
+  let response = routed;
+  const rewrite = routed.headers.get("x-middleware-rewrite");
+  if (rewrite) response = NextResponse.rewrite(rewrite, { request: { headers: requestHeaders } });
+  else if (routed.headers.get("x-middleware-next")) response = NextResponse.next({ request: { headers: requestHeaders } });
+  response.headers.set("Content-Security-Policy", policy);
+  response.headers.delete("Content-Security-Policy-Report-Only");
+  response.headers.set("Cache-Control", "private, no-store");
+  return response;
+}
+
 export const config = {
   /*
    * Match everything EXCEPT:
    *   - Next.js internals  (_next/static, _next/image)
-   *   - Static files       (favicon, images, css, js)
+   *   - Known static asset directories (dynamic slugs keep CSP at any extension)
    */
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|icons/|fonts/|images/).*)",
   ],
 };

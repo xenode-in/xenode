@@ -1,3 +1,5 @@
+import { headers } from "next/headers";
+import { NonceProvider } from "@/providers/NonceProvider";
 import { getServerProductOrigin } from "@xenode/config";
 import type { Metadata } from "next";
 import { Suspense } from "react";
@@ -127,11 +129,12 @@ export const metadata: Metadata = {
   manifest: "/icons/manifest.json",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   const organizationJsonLd = {
     "@context": "https://schema.org",
     "@type": "Organization",
@@ -164,12 +167,14 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <head>
         <script
+          nonce={nonce}
           type="application/ld+json"
           dangerouslySetInnerHTML={{
             __html: JSON.stringify(organizationJsonLd),
           }}
         />
         <script
+          nonce={nonce}
           type="application/ld+json"
           dangerouslySetInnerHTML={{
             __html: JSON.stringify(websiteJsonLd),
@@ -179,9 +184,11 @@ export default function RootLayout({
       <body
         className={`${suisseIntl.variable} ${libreBaskerville.variable} font-sans antialiased`}
       >
+        <NonceProvider nonce={nonce}>
         <PostHogProvider>
           <QueryProvider>
             <ThemeProvider
+              nonce={nonce}
               attribute="class"
               defaultTheme="system"
               enableSystem
@@ -195,6 +202,7 @@ export default function RootLayout({
             <Toaster />
           </QueryProvider>
         </PostHogProvider>
+        </NonceProvider>
       </body>
     </html>
   );

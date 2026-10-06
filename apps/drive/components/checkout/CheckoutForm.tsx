@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import Script from "next/script";
+import { useScriptNonce } from "@/providers/NonceProvider";
 import { AlertTriangle } from "lucide-react";
 import type { CheckoutPlan, CheckoutUser, CouponResult } from "./CheckoutPage";
 import AddressSection from "./AddressSection";
@@ -48,6 +49,7 @@ export default function CheckoutForm({
   onCouponChange,
   appliedCoupon,
 }: CheckoutFormProps) {
+  const nonce = useScriptNonce();
   const [serverError, setServerError] = useState<string | null>(null);
   const [razorpayLoaded, setRazorpayLoaded] = useState(false);
 
@@ -82,6 +84,7 @@ export default function CheckoutForm({
   return (
     <>
       <Script
+        nonce={nonce}
         src="https://checkout.razorpay.com/v1/checkout.js"
         crossOrigin="anonymous"
         onLoad={() => setRazorpayLoaded(true)}

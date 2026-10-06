@@ -36,16 +36,10 @@ const nextConfig: NextConfig = {
   },
 
   async headers() {
-    const accountsOrigin =
-      getServerProductOrigin("accounts");
-    const editorOrigin = new URL(
-      process.env.NEXT_PUBLIC_ONLYOFFICE_EDITOR_ORIGIN ?? "https://edit.xenode.in",
-    ).origin;
     const securityHeaders = [
       { key: "X-Content-Type-Options", value: "nosniff" },
       { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
       { key: "Cross-Origin-Resource-Policy", value: "same-origin" },
-      { key: "Content-Security-Policy-Report-Only", value: `base-uri 'self'; object-src 'none'; frame-ancestors 'none'; frame-src ${editorOrigin} ${new URL(accountsOrigin).origin}; form-action 'self'` },
     ];
     const relaxedHeaders = [
       ...securityHeaders,
@@ -86,18 +80,6 @@ const nextConfig: NextConfig = {
         // Fallback catch-all (excluding the public ones above)
         source: "/((?!plans|pricing|checkout|auth/logout/cleanup).*)",
         headers: strictHeaders,
-      },
-      {
-        source: "/office-editor/:path*",
-        headers: [
-          {
-            key: "Content-Security-Policy",
-            value:
-              "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; frame-src 'self' blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; worker-src 'self' blob:",
-          },
-          { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "Referrer-Policy", value: "no-referrer" },
-        ],
       },
       {
         source: "/internal-editors/onlyoffice/:path*",

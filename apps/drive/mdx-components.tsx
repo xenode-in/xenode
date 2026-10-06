@@ -1,6 +1,6 @@
 import type { MDXComponents } from "mdx/types";
 
-export function useMDXComponents(components: MDXComponents): MDXComponents {
+export function createMDXComponents(components: MDXComponents): MDXComponents {
   return {
     h1: ({ children }) => (
       <h1 className="text-4xl font-bold mt-8 mb-4 text-foreground">
@@ -60,3 +60,6 @@ export function useMDXComponents(components: MDXComponents): MDXComponents {
     ...components,
   };
 }
+
+/** Next MDX provider convention; this is a pure component-map factory. */
+export const useMDXComponents = createMDXComponents;
