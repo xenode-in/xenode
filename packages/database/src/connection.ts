@@ -28,9 +28,10 @@ export async function connectDatabase(
 
   if (!cache.promise || cache.uri !== uri) {
     cache.uri = uri;
-    cache.promise = mongoose
-      .connect(uri, { bufferCommands: false })
-      .then((connected) => connected);
+    // Default buffering: a model defined while the connection is opening must
+    // wait for it. Mongoose runs each model's init() once and keeps the
+    // result, so without buffering that init fails for the process lifetime.
+    cache.promise = mongoose.connect(uri).then((connected) => connected);
   }
 
   try {
