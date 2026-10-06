@@ -10,6 +10,7 @@ import {
   Clock3,
   HardDrive,
   Laptop,
+  Loader2,
   Monitor,
   MoreVertical,
   Smartphone,
@@ -67,10 +68,14 @@ function DeviceCard({
   device,
   busy,
   onRevoke,
+  productBusy,
+  onRevokeProduct,
 }: {
   device: AccountDevice;
   busy: boolean;
   onRevoke: (deviceId: string) => Promise<void>;
+  productBusy: string | null;
+  onRevokeProduct: (sessionId: string) => Promise<void>;
 }) {
   const [open, setOpen] = useState(device.isCurrent);
   const activeProducts = [
@@ -230,6 +235,21 @@ function DeviceCard({
                           Authorized {formatDate(access.authenticatedAt)}
                         </p>
                       </div>
+                      {/* Ends only this product's access; the browser stays signed in to Accounts. */}
+                      {!access.revokedAt ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={productBusy !== null}
+                          aria-label={`Sign out of Xenode ${productName(access.productId)} on ${device.title}`}
+                          onClick={() => void onRevokeProduct(access.sessionId)}
+                        >
+                          {productBusy === access.sessionId ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : null}
+                          Sign out
+                        </Button>
+                      ) : null}
                     </div>
                   ))
                 ) : (
@@ -255,6 +275,7 @@ export function DevicesList({
   const [devices, setDevices] = useState(initialDevices);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [productBusy, setProductBusy] = useState<string | null>(null);
   const [everywhereBusy, setEverywhereBusy] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const activeDevices = useMemo(
@@ -293,6 +314,31 @@ export function DevicesList({
             }
           : device,
       ),
+    );
+  }
+
+  async function revokeProduct(sessionId: string) {
+    setProductBusy(sessionId);
+    setError("");
+    const response = await fetch("/api/product-sessions", {
+      method: "DELETE",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId }),
+    });
+    setProductBusy(null);
+    if (!response.ok) {
+      setError("We could not sign out of that product. Please try again.");
+      return;
+    }
+    const revokedAt = new Date().toISOString();
+    setDevices((current) =>
+      current.map((device) => ({
+        ...device,
+        productAccess: device.productAccess.map((access) =>
+          access.sessionId === sessionId ? { ...access, revokedAt } : access,
+        ),
+      })),
     );
   }
 
@@ -360,6 +406,8 @@ export function DevicesList({
               device={device}
               busy={busy === device.deviceId}
               onRevoke={revokeDevice}
+              productBusy={productBusy}
+              onRevokeProduct={revokeProduct}
             />
           ))
         ) : (
@@ -405,6 +453,8 @@ export function DevicesList({
                   device={device}
                   busy={busy === device.deviceId}
                   onRevoke={revokeDevice}
+                  productBusy={productBusy}
+                  onRevokeProduct={revokeProduct}
                 />
               ))}
             </div>

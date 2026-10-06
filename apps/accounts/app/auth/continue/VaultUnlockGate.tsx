@@ -194,7 +194,7 @@ export function VaultUnlockGate({
                 </>
               )}
             </button>
-            <button className="button button-secondary" type="button" disabled={busy} onClick={() => setPhase("recovery")}>
+            <button className="button button-secondary" type="button" disabled={busy} onClick={() => { setError(""); setPhase("recovery"); }}>
               Recover with my recovery phrase
             </button>
           </form>

@@ -508,6 +508,7 @@ export function SecurityCenter({
                 onChange={(event) => setTotpCode(event.target.value)}
                 inputMode="numeric"
                 autoComplete="one-time-code"
+                aria-label="Authenticator code"
                 placeholder="000000"
                 className="text-center text-lg tracking-[0.22em]"
                 minLength={6}

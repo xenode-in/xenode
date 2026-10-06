@@ -170,6 +170,7 @@ export function AccountShell({
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
+                  aria-label="Account menu"
                   className="h-11 rounded-full px-1.5 md:pr-3"
                 >
                   <Avatar className="size-8 border">

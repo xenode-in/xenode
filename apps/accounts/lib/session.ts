@@ -14,7 +14,7 @@ export async function getAccountsSession(request?: Request) {
 
 export async function requireAccountsPageSession(next = "/") {
   const session = await getAccountsSession();
-  if (!session) redirect("/login");
+  if (!session) redirect(next === "/" ? "/login" : `/login?next=${encodeURIComponent(next)}`);
   if (
     needsSecondFactor(session) &&
     !(await applyTrustedSecondFactor(session, await headers()))
@@ -25,7 +25,7 @@ export async function requireAccountsPageSession(next = "/") {
 }
 
 export async function requireUnlockedAccountsPageSession(next = "/") {
-  const session = await requireAccountsPageSession();
+  const session = await requireAccountsPageSession(next);
   const unlocked = await hasVaultUnlockConfirmation(await headers(), {
     accountId: session.user.id,
     sessionId: session.session.id,

@@ -43,6 +43,8 @@ export function VaultPasswordForm({
       setRecoveryPhrase("");
       setNewPassword("");
       setConfirm("");
+      setSaved(false);
+      setBusy(false);
       onComplete();
     } catch (cause) {
       setError(

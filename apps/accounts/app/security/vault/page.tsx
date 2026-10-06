@@ -126,7 +126,15 @@ export default function VaultPage() {
           </form>
         </section>
       ) : null}
-      {state?.vault && !recoverySecret ? <VaultPasswordForm migrating={state.vault.passwordMode !== "separate"} onComplete={() => window.location.assign(nextPath)} /> : null}
+      {state?.vault && !recoverySecret ? <VaultPasswordForm
+          migrating={state.vault.passwordMode !== "separate"}
+          // Opened from Security: confirm here instead of leaving the page.
+          onComplete={() =>
+            new URLSearchParams(window.location.search).has("next")
+              ? window.location.assign(nextPath)
+              : setStatus("Your Vault password was changed. Use it the next time you unlock.")
+          }
+        /> : null}
       {recoverySecret ? (
         <section className="callout callout-warning" style={{ marginTop: 24 }}>
           <strong className="callout-title">

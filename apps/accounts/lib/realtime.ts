@@ -10,6 +10,7 @@ import Redis from "ioredis";
 
 declare global {
   var __xenodeAccountsRealtimeRedis: Redis | undefined;
+  var __xenodeAccountsRealtimeConnect: Promise<void> | undefined;
 }
 
 function getPublisher(): Redis {
@@ -27,6 +28,16 @@ function getPublisher(): Redis {
     });
   }
   return global.__xenodeAccountsRealtimeRedis;
+}
+
+/**
+ * Offline queueing is off, so every caller must wait for the connection.
+ * Concurrent revocations share the first caller's connect instead of failing
+ * with "Stream isn't writeable" while it is still in progress.
+ */
+function connected(redis: Redis): Promise<void> {
+  if (redis.status === "wait") global.__xenodeAccountsRealtimeConnect = redis.connect();
+  return global.__xenodeAccountsRealtimeConnect ?? Promise.resolve();
 }
 
 export async function publishProductSessionRevoked(args: {
@@ -52,7 +63,7 @@ export async function publishProductSessionRevoked(args: {
 
   try {
     const redis = getPublisher();
-    if (redis.status === "wait") await redis.connect();
+    await connected(redis);
     const result = await redis
       .multi()
       .set(realtimeRevokedSessionKey(args.sessionId), "1", "EX", ttl)

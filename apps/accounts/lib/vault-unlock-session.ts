@@ -36,6 +36,17 @@ function cookieValue(headers: Headers, name: string): string | null {
   return null;
 }
 
+/** Attributes of the unlock-confirmation cookie (shared by every writer). */
+export function vaultUnlockCookieAttributes() {
+  return {
+    httpOnly: true,
+    secure: accountsOrigin().startsWith("https://"),
+    sameSite: "strict" as const,
+    path: "/",
+    maxAge: VAULT_UNLOCK_TTL_SECONDS,
+  };
+}
+
 export async function createVaultUnlockToken(params: {
   accountId: string;
   sessionId: string;

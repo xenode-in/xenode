@@ -43,4 +43,11 @@ describe("Accounts presentation helpers", () => {
     expect(result).not.toContain("unexpected");
     expect(result.startsWith("/api/auth/oauth2/authorize?")).toBe(true);
   });
+
+  it("otherwise returns to a same-origin Accounts page only", () => {
+    expect(resumeAuthorizationPath(new URLSearchParams({ next: "/security/vault" }))).toBe("/security/vault");
+    expect(resumeAuthorizationPath(new URLSearchParams({ next: "//evil.test/x" }))).toBe("/");
+    expect(resumeAuthorizationPath(new URLSearchParams({ next: "https://evil.test/" }))).toBe("/");
+    expect(resumeAuthorizationPath(new URLSearchParams())).toBe("/");
+  });
 });

@@ -9,7 +9,7 @@ import { requireSameOrigin } from "@/lib/logout-coordinator";
 import {
   createVaultUnlockToken,
   VAULT_UNLOCK_COOKIE,
-  VAULT_UNLOCK_TTL_SECONDS,
+  vaultUnlockCookieAttributes,
 } from "@/lib/vault-unlock-session";
 
 function accountsOrigin() {
@@ -68,13 +68,7 @@ export async function POST(request: Request) {
     sessionId: session.session.id,
   });
   const response = NextResponse.json({ ok: true });
-  response.cookies.set(VAULT_UNLOCK_COOKIE, token, {
-    httpOnly: true,
-    secure: accountsOrigin().startsWith("https://"),
-    sameSite: "strict",
-    path: "/",
-    maxAge: VAULT_UNLOCK_TTL_SECONDS,
-  });
+  response.cookies.set(VAULT_UNLOCK_COOKIE, token, vaultUnlockCookieAttributes());
   await AuditEvent.create({
     accountId: session.user.id,
     action: "vault.local-unlock.continued",
@@ -90,12 +84,6 @@ export async function DELETE(request: Request) {
     return response as Response;
   }
   const response = NextResponse.json({ ok: true });
-  response.cookies.set(VAULT_UNLOCK_COOKIE, "", {
-    httpOnly: true,
-    secure: accountsOrigin().startsWith("https://"),
-    sameSite: "strict",
-    path: "/",
-    maxAge: 0,
-  });
+  response.cookies.set(VAULT_UNLOCK_COOKIE, "", { ...vaultUnlockCookieAttributes(), maxAge: 0 });
   return response;
 }

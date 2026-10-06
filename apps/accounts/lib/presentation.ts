@@ -1,3 +1,5 @@
+import { sanitizeReturnTo } from "@xenode/identity-core";
+
 const ACTION_LABELS: Record<string, string> = {
   "account.session.created": "Signed in to Xenode Account",
   "account.profile.updated": "Updated account profile",
@@ -55,5 +57,6 @@ export function resumeAuthorizationPath(search: URLSearchParams): string {
     if (allowed.has(key) && value) target.append(key, value);
   }
   const query = target.toString();
-  return query ? `/api/auth/oauth2/authorize?${query}` : "/";
+  // Without an authorization to resume, return to the Accounts page that asked.
+  return query ? `/api/auth/oauth2/authorize?${query}` : sanitizeReturnTo(search.get("next"), "/");
 }

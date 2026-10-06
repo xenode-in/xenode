@@ -85,6 +85,7 @@ export async function POST(request: Request) {
     );
   }
   if (body.revokeOtherSessions) {
+    await keepUnrememberedSession(auth, request, result.response?.token);
     // Better Auth deletes every issuer session, including this one, and gives
     // this browser a new session. Revoke product sessions account-wide: the
     // session delete hook sees at most the first 100 deleted sessions.
@@ -105,6 +106,26 @@ export async function POST(request: Request) {
   const headers = new Headers(result.headers);
   headers.set("content-type", "application/json");
   return new Response(JSON.stringify({ ok: true }), { headers });
+}
+
+/**
+ * Better Auth recreates this browser's session as a remembered (7-day) one; it
+ * keeps the cookie session-only but not the server lifetime. A browser signed
+ * in without "Keep me signed in" keeps Better Auth's 1-day unremembered expiry.
+ */
+async function keepUnrememberedSession(
+  auth: Awaited<ReturnType<typeof getAccountsAuth>>,
+  request: Request,
+  token: string | null | undefined,
+) {
+  if (!token) return;
+  const context = await auth.$context;
+  const name = `${context.authCookies.dontRememberToken.name}=`;
+  const cookies = request.headers.get("cookie")?.split(/;\s*/u) ?? [];
+  if (!cookies.some((cookie) => cookie.startsWith(name))) return;
+  await context.internalAdapter.updateSession(token, {
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+  });
 }
 
 /** Old clients must reload; staged credential/envelope coupling is retired. */

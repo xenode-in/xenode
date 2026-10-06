@@ -7,7 +7,8 @@ import { Button, Card, CardContent, CardHeader, CardTitle, Input } from "@xenode
 export default function TwoFactorPage() {
   const [code, setCode] = useState("");
   const [method, setMethod] = useState<"totp" | "backup">("totp");
-  const [trustDevice, setTrustDevice] = useState(true);
+  // Skipping the second factor on this browser is an explicit choice.
+  const [trustDevice, setTrustDevice] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -62,6 +63,7 @@ export default function TwoFactorPage() {
               onChange={(event) => setCode(event.target.value)}
               inputMode={method === "totp" ? "numeric" : "text"}
               autoComplete="one-time-code"
+              aria-label={method === "totp" ? "Authenticator code" : "Backup code"}
               placeholder={method === "totp" ? "000000" : "Backup code"}
               className="h-12 text-center text-lg tracking-[0.22em]"
               required

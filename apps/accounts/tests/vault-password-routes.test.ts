@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   changePassword: vi.fn(),
   verifyPassword: vi.fn(),
   revoke: vi.fn(),
+  updateSession: vi.fn(),
 }));
 vi.mock("@/lib/auth", () => ({
   getAccountsAuth: async () => ({
@@ -32,6 +33,10 @@ vi.mock("@/lib/auth", () => ({
       changePassword: mocks.changePassword,
       verifyPassword: mocks.verifyPassword,
     },
+    $context: Promise.resolve({
+      authCookies: { dontRememberToken: { name: "xenode_accounts.dont_remember" } },
+      internalAdapter: { updateSession: mocks.updateSession },
+    }),
   }),
 }));
 vi.mock("@/lib/logout-coordinator", async (importOriginal) => ({
@@ -290,5 +295,24 @@ describe("separate Vault password routes", () => {
       action: "password_changed",
     });
     expect(retiredCommit().status).toBe(410);
+    // Signed in with "Keep me signed in": the rotated session keeps its lifetime.
+    expect(mocks.updateSession).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unremembered sign-in short-lived after the session is rotated", async () => {
+    await PUT(request({ expectedVaultRevision: 1, passwordEnvelope: envelope }));
+    mocks.changePassword.mockResolvedValue({ headers: new Headers(), response: { token: "rotated-token" } });
+    const change = request({
+      currentPassword: "old-login-password-only",
+      newPassword: "new-login-password-only",
+      revokeOtherSessions: true,
+    });
+    change.headers.set("cookie", "xenode_accounts.session_token=a.b; xenode_accounts.dont_remember=true.sig");
+    const before = Date.now();
+    expect((await changePassword(change)).status).toBe(200);
+    const [token, { expiresAt }] = mocks.updateSession.mock.calls[0];
+    expect(token).toBe("rotated-token");
+    expect(expiresAt.getTime() - before).toBeGreaterThanOrEqual(24 * 60 * 60 * 1000 - 1000);
+    expect(expiresAt.getTime() - before).toBeLessThanOrEqual(24 * 60 * 60 * 1000 + 5000);
   });
 });
