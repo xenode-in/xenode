@@ -244,6 +244,20 @@ function freeEntitlement() {
   };
 }
 
+/**
+ * Accounts onboarding runs before the first Drive visit and does not touch
+ * billing, so Drive creates the account's storage entitlement (free, or paid
+ * from an owned subscription) when it is missing. A cheap existence check
+ * keeps repeat visits off the transactional writer.
+ */
+export async function ensureUserUsage(userId: string) {
+  await dbConnect();
+  if (await Usage.exists({ userId })) return;
+  await syncUserSubscriptionState({
+    userId, action: "initialize", actor: { actorType: "user", actorId: userId },
+  });
+}
+
 /** Sole Usage entitlement writer. State, identity projection and audit commit together. */
 export async function syncUserSubscriptionState(args: UserStateCommand) {
   await dbConnect();

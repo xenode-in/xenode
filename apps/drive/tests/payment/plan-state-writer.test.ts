@@ -7,7 +7,7 @@ import Subscription from "@/models/Subscription";
 import SubscriptionInvoice from "@/models/SubscriptionInvoice";
 import Payment from "@/models/Payment";
 import BillingEvent from "@/models/BillingEvent";
-import { syncUserSubscriptionState } from "@/lib/subscriptions/service";
+import { ensureUserUsage, syncUserSubscriptionState } from "@/lib/subscriptions/service";
 import { syncOrgSubscriptionState } from "@/lib/orgs/billing/service";
 import { dispatchWebhookEvent } from "@/lib/billing/webhooks/handlers";
 import { requireAuth, getServerSession } from "@/lib/auth/session";
@@ -80,6 +80,18 @@ describe("canonical billing entitlement writes", () => {
     expect((await onboarding(request("/api/onboarding/complete", {}))).status).toBe(200);
     const after = await Usage.findOne({ userId }).lean();
     expect(after).toEqual(before);
+    expect(await BillingEvent.countDocuments()).toBe(1);
+  });
+
+  it("gives an account arriving from Accounts onboarding its free entitlement once", async () => {
+    const userId = await user();
+    await ensureUserUsage(userId);
+    const usage = await Usage.findOne({ userId }).lean();
+    expect(usage).toMatchObject({ plan: "free", storageLimitBytes: FREE_TIER_LIMIT_BYTES, totalStorageBytes: 0 });
+    await Usage.updateOne({ userId }, { $set: { totalStorageBytes: 42 } });
+    await ensureUserUsage(userId);
+    expect((await Usage.findOne({ userId }).lean())?.totalStorageBytes).toBe(42);
+    expect(await Usage.countDocuments({ userId })).toBe(1);
     expect(await BillingEvent.countDocuments()).toBe(1);
   });
 

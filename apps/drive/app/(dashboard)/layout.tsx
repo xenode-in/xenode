@@ -13,6 +13,7 @@ import { PreviewProvider } from "@/contexts/PreviewContext";
 import { DownloadProvider } from "@/contexts/DownloadContext";
 import { CryptoDashboardWrapper } from "@/components/dashboard/CryptoDashboardWrapper";
 import { DownloadProgress } from "@/components/dashboard/DownloadProgress";
+import { ensureUserUsage } from "@/lib/subscriptions/service";
 // import UploadDebugOverlay from "@/components/debug/UploadDebugOverlay"; // TODO: Remove after iOS debugging
 
 export const metadata: Metadata = {
@@ -33,6 +34,12 @@ export default async function DashboardLayout({
 
   // Email verification is enforced by the Accounts authority at sign-in —
   // Drive no longer hosts a verification flow.
+
+  // A failure leaves writes refused with "usage not initialized" and is
+  // retried on the next page load.
+  await ensureUserUsage(session.user.id).catch((error) => {
+    console.error("[dashboard] storage entitlement initialization failed", error);
+  });
 
   // Resolve the active workspace (personal or organization) for the sidebar +
   // switcher. activeOrganizationId lives on the better-auth session.
