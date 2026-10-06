@@ -124,4 +124,23 @@ describe("commit-ordered scoped sync tuples", () => {
     expect(page.changes[0].object).not.toHaveProperty("encryptedDEK");
     expect(page.changes[0].object).not.toHaveProperty("versions");
   });
+  it("renames files and folders with sealed names only, and publishes the change", async () => {
+    const s = await scope();
+    const sealed = () => Buffer.concat([Buffer.from([4]), crypto.getRandomValues(Buffer.alloc(40))]).toString("base64");
+    const file = await object(s.spaceId);
+    const folder = await object(s.spaceId, { contentType: "application/x-directory", encryptedName: undefined, encryptedDisplayName: sealed() });
+    const before = await readDriveSyncPage(s);
+    const fileName = sealed(), folderName = sealed();
+    await updateDriveObjectMetadata({ spaceId: s.spaceId, objectId: String(file._id), encryptedName: fileName });
+    await updateDriveObjectMetadata({ spaceId: s.spaceId, objectId: String(folder._id), encryptedName: folderName });
+    expect((await StorageObject.findById(file._id).lean())?.encryptedName).toBe(fileName);
+    const renamedFolder = await StorageObject.findById(folder._id).lean();
+    expect(renamedFolder?.encryptedDisplayName).toBe(folderName);
+    expect(renamedFolder?.encryptedName).toBeUndefined();
+    expect((await readDriveSyncPage({ ...s, cursor: before.cursor })).changes).toHaveLength(2);
+    await expect(updateDriveObjectMetadata({ spaceId: s.spaceId, objectId: String(file._id), encryptedName: "report.pdf" }))
+      .rejects.toMatchObject({ code: "invalid_encrypted_name" });
+    const other = await scope("rename_other");
+    expect(await updateDriveObjectMetadata({ spaceId: other.spaceId, objectId: String(file._id), encryptedName: sealed() })).toBeNull();
+  });
 });

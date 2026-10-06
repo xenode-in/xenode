@@ -271,6 +271,7 @@ export function DashboardShell({
                   <DropdownMenuTrigger asChild>
                     <Button
                       variant="ghost"
+                      aria-label="Account menu"
                       className="flex items-center gap-2 hover:bg-accent px-2"
                     >
                       <Avatar className="w-7 h-7">

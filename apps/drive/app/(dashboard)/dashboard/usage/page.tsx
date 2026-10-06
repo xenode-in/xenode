@@ -3,6 +3,7 @@ import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
 import StorageObject from "@/models/StorageObject";
 import { personalSpaceId } from "@xenode/spaces/ids";
+import { DRIVE_FOLDER_CONTENT_TYPE } from "@xenode/database";
 import { bytesToGB, formatBytes } from "@/lib/utils/format";
 import {
   Archive,
@@ -57,7 +58,8 @@ export default async function UsagePage() {
   const [usage, rawBreakdown] = await Promise.all([
     Usage.findOne({ userId }).lean(),
     StorageObject.aggregate<{ _id: string | null; bytes: number; count: number }>([
-      { $match: { spaceId: personalSpaceId(userId) } },
+      // Folders are metadata records, not stored files.
+      { $match: { spaceId: personalSpaceId(userId), contentType: { $ne: DRIVE_FOLDER_CONTENT_TYPE } } },
       {
         $group: {
           _id: "$mediaCategory",
@@ -97,7 +99,7 @@ export default async function UsagePage() {
           Usage
         </h1>
         <p className="text-muted-foreground mt-2">
-          Monitor your storage consumption across all buckets.
+          Monitor your storage consumption across your files.
         </p>
       </div>
 

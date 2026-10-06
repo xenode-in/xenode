@@ -1,6 +1,7 @@
 import { type ClientSession, Types, type mongo } from "mongoose";
 import { getDatabase, withTransaction } from "../connection";
 import { Space, DriveSyncTombstone } from "../models";
+import { DRIVE_FOLDER_CONTENT_TYPE } from "./drive-folders";
 
 export class DriveSyncError extends Error {
   constructor(public readonly status: number, public readonly code: string, message: string) {
@@ -29,18 +30,28 @@ export async function recordDriveSyncRemoval(spaceId: string, objectId: Types.Ob
     { $setOnInsert: { spaceId, syncVersion, deletedAt: new Date() } }, { upsert: true, session });
 }
 
+/** Client-sealed metadata (format 4, IV + tag); the server never sees plaintext. */
+function isSealedMetadata(value: unknown): value is string {
+  if (typeof value !== "string" || value.length > 4096) return false;
+  const bytes = Buffer.from(value, "base64");
+  return bytes.length >= 29 && bytes[0] === 4 && bytes.toString("base64") === value;
+}
+
 export async function updateDriveObjectMetadata(input: {
   spaceId: string; objectId: string; tags?: unknown; position?: unknown; starred?: unknown;
+  /** Rename: the new name sealed for this object (a file name or a folder display name). */
+  encryptedName?: unknown;
 }) {
   if (!/^[a-f0-9]{24}$/iu.test(input.objectId)) throw new DriveSyncError(400, "invalid_object_id", "Invalid object id");
   const set: Record<string, unknown> = {};
   if (input.tags !== undefined) {
-    if (!Array.isArray(input.tags) || input.tags.length > 100 || input.tags.some((tag) => {
-      if (typeof tag !== "string" || tag.length > 4096) return true;
-      const bytes = Buffer.from(tag, "base64");
-      return bytes.length < 29 || bytes[0] !== 4 || bytes.toString("base64") !== tag;
-    })) throw new DriveSyncError(400, "invalid_encrypted_tags", "Tags must be sealed metadata");
+    if (!Array.isArray(input.tags) || input.tags.length > 100 || !input.tags.every(isSealedMetadata)) {
+      throw new DriveSyncError(400, "invalid_encrypted_tags", "Tags must be sealed metadata");
+    }
     set.tags = input.tags;
+  }
+  if (input.encryptedName !== undefined && !isSealedMetadata(input.encryptedName)) {
+    throw new DriveSyncError(400, "invalid_encrypted_name", "Names must be sealed metadata");
   }
   if (input.position !== undefined) {
     if (!Number.isSafeInteger(input.position) || (input.position as number) < 0) throw new DriveSyncError(400, "invalid_position", "Invalid position");
@@ -50,13 +61,23 @@ export async function updateDriveObjectMetadata(input: {
     if (typeof input.starred !== "boolean") throw new DriveSyncError(400, "invalid_starred", "Invalid favourite flag");
     set.starred = input.starred;
   }
-  if (!Object.keys(set).length) throw new DriveSyncError(400, "empty_metadata_update", "No metadata changes");
+  if (!Object.keys(set).length && input.encryptedName === undefined) {
+    throw new DriveSyncError(400, "empty_metadata_update", "No metadata changes");
+  }
+  const filter = {
+    _id: new Types.ObjectId(input.objectId), spaceId: input.spaceId, productId: "drive",
+    deletedAt: null, purgeState: { $exists: false },
+  };
   return withTransaction(async (session) => {
+    const objects = getDatabase().collection("storageobjects");
+    if (input.encryptedName !== undefined) {
+      const current = await objects.findOne(filter, { session, projection: { contentType: 1 } });
+      if (!current) return null;
+      set[current.contentType === DRIVE_FOLDER_CONTENT_TYPE ? "encryptedDisplayName" : "encryptedName"] = input.encryptedName;
+    }
     const syncVersion = await nextDriveSyncVersion(input.spaceId, session);
-    return getDatabase().collection("storageobjects").findOneAndUpdate({
-      _id: new Types.ObjectId(input.objectId), spaceId: input.spaceId, productId: "drive",
-      deletedAt: null, purgeState: { $exists: false },
-    }, { $set: { ...set, syncVersion, updatedAt: new Date() }, $inc: { __v: 1 } }, { session, returnDocument: "after" });
+    return objects.findOneAndUpdate(filter,
+      { $set: { ...set, syncVersion, updatedAt: new Date() }, $inc: { __v: 1 } }, { session, returnDocument: "after" });
   });
 }
 export async function reorderDriveObjects(input: { spaceId: string; bucketId: Types.ObjectId; items: unknown }) {

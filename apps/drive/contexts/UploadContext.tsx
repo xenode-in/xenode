@@ -25,6 +25,7 @@ import {
 import { useSession } from "@/lib/auth/client";
 import { useCrypto } from "@/contexts/CryptoContext";
 import {
+  decryptMetadataString,
   encryptFileBlob,
   encryptFileParts,
   encryptMetadataString,
@@ -38,6 +39,8 @@ import type { FileMetadata } from "@/lib/metadata/types";
 import { extractFileMetadata } from "@/lib/metadata/metadataClient";
 import { optimizeVideoForStreaming } from "@/lib/video/faststart";
 import { upsertLocalObject } from "@/lib/db/object-cache";
+import { getDb } from "@/lib/db/local";
+import { uniqueName } from "@/lib/uploads/uniqueName";
 import { useWorkspace, driveScopeSpaceId } from "@/contexts/WorkspaceContext";
 import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 import {
@@ -1529,13 +1532,37 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const addTasks = useCallback((files: File[], bucketId: string, folderId: string | null) => {
     const current = accessRef.current;
     if (!current.unlocked || !current.journalKey || !current.metadataKey) return;
+    const metadataKey = current.metadataKey;
     const scope: UploadJournalScope = { accountId: current.accountId, productId: "drive", spaceId: current.spaceId,
       wrappedBy: current.wrappedBy, spaceKeyVersion: current.version };
-    const newTasks: UploadTask[] = files.map((file) => ({ id: crypto.randomUUID(), scope: { ...scope },
-      file, bucketId, folderId, status: "pending", progress: 0 }));
-    void requestPersistentStorage();
-    setTasks((previous) => [...previous, ...newTasks]);
-    newTasks.forEach(enqueueTask);
+    void (async () => {
+      // Same-named uploads keep both files ("name (1).ext"): names are sealed,
+      // so only this device can see the collision.
+      const taken = new Set<string>();
+      try {
+        const siblings = await getDb(current.accountId).files.where("spaceId").equals(current.spaceId)
+          .filter((file) => (file.folderId ?? null) === folderId && file.contentType !== "application/x-directory")
+          .toArray();
+        const names = await Promise.all(siblings.map((file) => file.encryptedName
+          ? decryptMetadataString(file.encryptedName, metadataKey, { fileId: file.id, purpose: "name" })
+          : Promise.resolve("")));
+        names.forEach((name) => { if (name && name !== "Encrypted File") taken.add(name.toLowerCase()); });
+      } catch { /* an unreadable cache only means no renaming */ }
+      for (const task of tasksRef.current) {
+        if (task.folderId === folderId && task.scope.spaceId === current.spaceId && task.status !== "failed") {
+          taken.add(task.file.name.toLowerCase());
+        }
+      }
+      const newTasks: UploadTask[] = files.map((file) => {
+        const name = uniqueName(file.name, taken);
+        taken.add(name.toLowerCase());
+        const named = name === file.name ? file : new File([file], name, { type: file.type, lastModified: file.lastModified });
+        return { id: crypto.randomUUID(), scope: { ...scope }, file: named, bucketId, folderId, status: "pending", progress: 0 };
+      });
+      void requestPersistentStorage();
+      setTasks((previous) => [...previous, ...newTasks]);
+      newTasks.forEach(enqueueTask);
+    })();
   }, [enqueueTask]);
 
   const taskInCurrentScope = useCallback((id: string) => tasksRef.current.find((task) => task.id === id &&

@@ -16,6 +16,7 @@ import {
   Trash2,
   Tag,
   Scissors,
+  Pencil,
   Lock,
   FileText,
   Link2,
@@ -24,7 +25,7 @@ import {
   Star,
 } from "lucide-react";
 import { formatBytes, formatDate, cn } from "@/lib/utils";
-import { getFileIcon } from "@/lib/file-icons";
+import { fileTypeLabel, getFileIcon } from "@/lib/file-icons";
 import { forwardRef, useRef, useCallback, useState, useEffect, memo } from "react";
 import { useCrypto } from "@/contexts/CryptoContext";
 import {
@@ -149,6 +150,8 @@ interface ItemProps {
   onDelete?: (item: ObjectData) => void;
   onTag?: (item: ObjectData) => void;
   onCut?: (item: ObjectData) => void;
+  /** Rename, given the locally decrypted current name. */
+  onRename?: (item: ObjectData, currentName: string | null) => void;
   isDownloading?: boolean;
   style?: React.CSSProperties;
   dragHandleProps?: React.HTMLAttributes<HTMLElement>;
@@ -190,6 +193,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
       onDelete,
       onTag,
       onCut,
+      onRename,
       style,
       dragHandleProps,
       isOverlay,
@@ -228,6 +232,18 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
 
     const defaultActions = (
       <>
+        {onRename && !item.id.startsWith("virtual-") && (
+          <ContextMenuItem
+            className="hover:bg-accent cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRename(item, decryptedName);
+            }}
+          >
+            <Pencil className="w-4 h-4 mr-2" />
+            Rename
+          </ContextMenuItem>
+        )}
         {onCut && (
           <>
             <ContextMenuSeparator className="bg-border" />
@@ -403,7 +419,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
               variant="secondary"
               className="bg-secondary text-muted-foreground border-0 text-xs"
             >
-              {item.contentType.split("/").pop()}
+              {fileTypeLabel(item.contentType, decryptedName)}
             </Badge>
           )}
         </TableCell>
@@ -418,6 +434,8 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
               <Button
                 variant="ghost"
                 size="icon"
+                aria-label="Preview"
+                title="Preview"
                 className="h-8 w-8 rounded-md border border-border bg-background/90 text-foreground shadow-sm hover:bg-primary hover:text-primary-foreground dark:border-white/15 dark:bg-zinc-900/90 dark:text-zinc-100 dark:shadow-black/40 dark:hover:bg-primary dark:hover:text-primary-foreground"
                 onClick={(e) => {
                   e.stopPropagation();
@@ -430,6 +448,8 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
             {!isFolder && (
               <Button
                 size="icon"
+                aria-label="Share"
+                title="Share"
                 variant="ghost"
                 className="h-8 w-8 rounded-md border border-border bg-background/90 text-foreground shadow-sm hover:bg-primary hover:text-primary-foreground dark:border-white/15 dark:bg-zinc-900/90 dark:text-zinc-100 dark:shadow-black/40 dark:hover:bg-primary dark:hover:text-primary-foreground"
                 onClick={(e) => {
@@ -442,6 +462,8 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
             )}
             <Button
               size="icon"
+              aria-label="Tags"
+              title="Tags"
               variant="ghost"
               className="h-8 w-8 rounded-md border border-border bg-background/90 text-foreground shadow-sm hover:bg-primary hover:text-primary-foreground dark:border-white/15 dark:bg-zinc-900/90 dark:text-zinc-100 dark:shadow-black/40 dark:hover:bg-primary dark:hover:text-primary-foreground"
               onClick={(e) => {
@@ -453,6 +475,8 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
             </Button>
             <Button
               size="icon"
+              aria-label="Details"
+              title="Details"
               variant="ghost"
               className="h-8 w-8 rounded-md border border-border bg-background/90 text-foreground shadow-sm hover:bg-primary hover:text-primary-foreground dark:border-white/15 dark:bg-zinc-900/90 dark:text-zinc-100 dark:shadow-black/40 dark:hover:bg-primary dark:hover:text-primary-foreground"
               onClick={(e) => {
@@ -558,6 +582,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
       onDelete,
       onTag,
       onCut,
+      onRename,
       style,
       dragHandleProps,
       isOverlay,
@@ -596,6 +621,18 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
 
     const defaultActions = (
       <>
+        {onRename && !item.id.startsWith("virtual-") && (
+          <ContextMenuItem
+            className="hover:bg-accent cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRename(item, decryptedName);
+            }}
+          >
+            <Pencil className="w-4 h-4 mr-2" />
+            Rename
+          </ContextMenuItem>
+        )}
         {onCut && (
           <>
             <ContextMenuSeparator className="bg-border" />
@@ -783,6 +820,8 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
         <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex-col gap-1.5 hidden md:flex">
           <Button
             size="icon"
+            aria-label="Cut"
+            title="Cut"
             variant="ghost"
             className="h-7 w-7 rounded-md border border-border bg-background/90 text-foreground shadow-sm backdrop-blur-sm hover:bg-primary hover:text-primary-foreground dark:border-white/15 dark:bg-zinc-900/90 dark:text-zinc-100 dark:shadow-black/40 dark:hover:bg-primary dark:hover:text-primary-foreground"
             onClick={(e) => {
@@ -796,6 +835,8 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
           {!item.id.startsWith("virtual-") && (
             <Button
               size="icon"
+              aria-label="Tags"
+              title="Tags"
               variant="ghost"
               className="h-7 w-7 rounded-md border border-border bg-background/90 text-foreground shadow-sm backdrop-blur-sm hover:bg-primary hover:text-primary-foreground dark:border-white/15 dark:bg-zinc-900/90 dark:text-zinc-100 dark:shadow-black/40 dark:hover:bg-primary dark:hover:text-primary-foreground"
               onClick={(e) => {
@@ -810,6 +851,8 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
           {!isFolder && (
             <Button
               size="icon"
+              aria-label="Share"
+              title="Share"
               variant="ghost"
               className="h-7 w-7 rounded-md border border-border bg-background/90 text-foreground shadow-sm backdrop-blur-sm hover:bg-primary hover:text-primary-foreground dark:border-white/15 dark:bg-zinc-900/90 dark:text-zinc-100 dark:shadow-black/40 dark:hover:bg-primary dark:hover:text-primary-foreground"
               onClick={(e) => {
@@ -824,6 +867,8 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
           {onDelete && (
             <Button
               size="icon"
+              aria-label="Delete"
+              title="Delete"
               variant="ghost"
               className="h-7 w-7 rounded-md border border-border !bg-background/90 !text-foreground shadow-sm backdrop-blur-sm hover:!border-destructive/40 hover:!bg-destructive/10 hover:!text-destructive dark:!border-white/15 dark:!bg-zinc-900/90 dark:!text-zinc-100 dark:shadow-black/40 dark:hover:!border-destructive/50 dark:hover:!bg-red-950/70 dark:hover:!text-red-200 dark:focus-visible:!bg-zinc-900/90 dark:data-[state=open]:!bg-zinc-900/90"
               onClick={(e) => {
@@ -837,6 +882,8 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
 
           <Button
             size="icon"
+            aria-label="Details"
+            title="Details"
             variant="ghost"
             className="h-7 w-7 rounded-md border border-border bg-background/90 text-foreground shadow-sm backdrop-blur-sm hover:bg-primary hover:text-primary-foreground dark:border-white/15 dark:bg-zinc-900/90 dark:text-zinc-100 dark:shadow-black/40 dark:hover:bg-primary dark:hover:text-primary-foreground"
             onClick={(e) => {

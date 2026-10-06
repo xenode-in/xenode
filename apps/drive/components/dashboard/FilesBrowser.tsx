@@ -320,7 +320,7 @@ function Toolbar({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={onCut}
+                onClick={() => onCut()}
                 className="h-8 gap-1.5 text-foreground/60 hover:text-foreground hover:bg-secondary/60 px-2 sm:px-3"
               >
                 <Scissors className="w-3.5 h-3.5" />
@@ -341,6 +341,7 @@ function Toolbar({
           <Button
             variant="ghost"
             size="icon"
+            aria-label="Clear selection"
             onClick={onClearSelection}
             className="h-8 w-8 text-foreground/40 hover:text-foreground"
           >
@@ -452,6 +453,8 @@ function Toolbar({
           <Button
             variant="ghost"
             size="icon"
+            aria-label="List view"
+            aria-pressed={viewMode === "list"}
             onClick={() => onViewMode("list")}
             className={cn(
               "h-7 w-7 rounded-sm",
@@ -465,6 +468,8 @@ function Toolbar({
           <Button
             variant="ghost"
             size="icon"
+            aria-label="Grid view"
+            aria-pressed={viewMode === "grid"}
             onClick={() => onViewMode("grid")}
             className={cn(
               "h-7 w-7 rounded-sm",
@@ -612,6 +617,8 @@ export function FilesBrowser() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [taggingObj, setTaggingObj] = useState<ObjectData | null>(null);
+  const [renaming, setRenaming] = useState<{ item: ObjectData; name: string } | null>(null);
+  const [renameBusy, setRenameBusy] = useState(false);
   const [newTag, setNewTag] = useState("");
   const [clipboard, setClipboard] = useState<{
     action: "move";
@@ -1440,12 +1447,15 @@ export function FilesBrowser() {
     [startDownload, privateKey, metadataKeyFor],
   );
 
-  const handleCut = useCallback(() => {
-    if (selectedIds.size === 0) return;
-
-    const items = [...viewObjects.folders, ...viewObjects.files].filter((i) =>
-      selectedIds.has(i.id),
-    );
+  // A row's menu cuts that row, or the whole selection when the row is in it.
+  const handleCut = useCallback((item?: ObjectData) => {
+    const items =
+      item && !(selectedIds.has(item.id) && selectedIds.size > 1)
+        ? [item]
+        : [...viewObjects.folders, ...viewObjects.files].filter((i) =>
+            selectedIds.has(i.id),
+          );
+    if (items.length === 0) return;
 
     setClipboard({ action: "move", items });
     setSelectedIds(new Set());
@@ -1480,6 +1490,56 @@ export function FilesBrowser() {
       setProcessingPaste(false);
     }
   }, [clipboard, bucketId, currentFolderId, refetch, fetchBucket, workspace]);
+
+  const handleStartRename = useCallback(
+    (item: ObjectData, currentName: string | null) => setRenaming({ item, name: currentName ?? "" }),
+    [],
+  );
+
+  // Names are sealed with the record's own key version, like its tags.
+  const handleRename = async () => {
+    const name = renaming?.name.trim();
+    if (!renaming || !name) return;
+    const nameKey = metadataKeyFor(renaming.item.spaceKeyVersion);
+    if (!privateKey || !nameKey) {
+      setModalOpen(true);
+      return;
+    }
+    setRenameBusy(true);
+    setError("");
+    try {
+      const encryptedName = await encryptMetadataString(name, nameKey, {
+        fileId: renaming.item.id,
+        purpose: "name",
+      });
+      const res = await workspace.scopedFetch(`/api/objects/${renaming.item.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ encryptedName }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Rename failed");
+      }
+      const isFolder = renaming.item.contentType === "application/x-directory";
+      await upsertLocalObject(
+        userId,
+        {
+          ...renaming.item,
+          ...(isFolder ? { encryptedDisplayName: encryptedName } : { encryptedName }),
+          updatedAt: new Date(),
+        },
+        bucketId,
+      );
+      setRenaming(null);
+      fetchBucket();
+      refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Rename failed");
+    } finally {
+      setRenameBusy(false);
+    }
+  };
 
   const handleAddTag = async () => {
     if (!taggingObj || !newTag.trim()) return;
@@ -2051,6 +2111,7 @@ export function FilesBrowser() {
                       onDownload={!isFolder ? handleDownload : undefined}
                       onTag={setTaggingObj}
                       onCut={canManageWorkspace ? handleCut : undefined}
+                      onRename={canManageWorkspace ? handleStartRename : undefined}
                       onShare={handleShareItem}
                       onDelete={canManageWorkspace ? handleDeleteItem : undefined}
                       isDownloading={
@@ -2136,6 +2197,7 @@ export function FilesBrowser() {
                         onDownload={!isFolder ? handleDownload : undefined}
                         onTag={setTaggingObj}
                         onCut={canManageWorkspace ? handleCut : undefined}
+                        onRename={canManageWorkspace ? handleStartRename : undefined}
                         onShare={handleShareItem}
                         onDelete={canManageWorkspace ? handleDeleteItem : undefined}
                         isDownloading={
@@ -2251,21 +2313,60 @@ export function FilesBrowser() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={!!renaming} onOpenChange={(o) => !o && setRenaming(null)}>
+        <DialogContent className="bg-card border-border text-foreground">
+          <DialogHeader>
+            <DialogTitle>Rename</DialogTitle>
+            <DialogDescription className="text-muted-foreground/50">
+              The new name is encrypted on this device before it is saved.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2">
+            <Input
+              aria-label="New name"
+              value={renaming?.name ?? ""}
+              onChange={(e) =>
+                setRenaming((current) => (current ? { ...current, name: e.target.value } : current))
+              }
+              className="bg-secondary/50 border-border text-foreground"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void handleRename();
+              }}
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setRenaming(null)}
+              className="text-muted-foreground/60 hover:text-foreground hover:bg-secondary/10"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void handleRename()}
+              disabled={renameBusy || !renaming?.name.trim()}
+              className="bg-primary text-primary-foreground hover:bg-primary/90"
+            >
+              {renameBusy && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
+              Rename
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog
         open={deleteIds.length > 0}
         onOpenChange={(o) => !o && setDeleteIds([])}
       >
         <DialogContent className="bg-card border-border text-foreground">
           <DialogHeader>
-            <DialogTitle>
-              Delete {deleteIds.length > 1 ? "Objects" : "Object"}
-            </DialogTitle>
+            <DialogTitle>Move to Bin?</DialogTitle>
             <DialogDescription className="text-muted-foreground/50">
-              This will permanently delete{" "}
               {deleteIds.length > 1
-                ? `these ${deleteIds.length} objects`
-                : "this object"}
-              . This action cannot be undone.
+                ? `These ${deleteIds.length} items move`
+                : "This item moves"}{" "}
+              to the Bin. You can restore it from there for 30 days.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -2286,7 +2387,7 @@ export function FilesBrowser() {
               ) : (
                 <Trash2 className="w-4 h-4 mr-2" />
               )}
-              Delete {deleteIds.length > 1 ? "Objects" : "Object"}
+              Move to Bin
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -243,8 +243,8 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-/** 
- * PATCH /api/objects/[id] - Update object metadata (tags, position) 
+/**
+ * PATCH /api/objects/[id] - Update object metadata (tags, position, starred, sealed name)
  */
 export async function PATCH(request: NextRequest, { params }: RouteParams) {
   const startTime = Date.now();
@@ -268,11 +268,11 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    const { tags, position, starred } = body;
+    const { tags, position, starred, encryptedName } = body;
 
     await dbConnect();
 
-    const updated = await updateDriveObjectMetadata({ spaceId: ctx.spaceId, objectId: id, tags, position, starred });
+    const updated = await updateDriveObjectMetadata({ spaceId: ctx.spaceId, objectId: id, tags, position, starred, encryptedName });
     if (!updated) return NextResponse.json({ error: "Object not found" }, { status: 404 });
     const object = await StorageObject.findById(updated._id);
     if (!object) return NextResponse.json({ error: "Object not found" }, { status: 404 });

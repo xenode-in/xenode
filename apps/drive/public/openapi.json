@@ -357,7 +357,7 @@
       },
       "patch": {
         "tags": ["Objects"],
-        "summary": "Update object metadata (tags, position)",
+        "summary": "Update object metadata (tags, position, starred, sealed name)",
         "parameters": [
           { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
         ],
@@ -368,8 +368,10 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "tags": { "type": "array", "items": { "type": "string" }, "example": ["work", "important"] },
-                  "position": { "type": "integer", "example": 1 }
+                  "tags": { "type": "array", "items": { "type": "string" }, "description": "Tags sealed client-side with the metadata key (base64, format 4)." },
+                  "position": { "type": "integer", "example": 1 },
+                  "starred": { "type": "boolean", "example": true },
+                  "encryptedName": { "type": "string", "description": "Rename: the new name sealed client-side for this object id (purpose \"name\"). Stored as the file name, or as a folder's display name." }
                 }
               }
             }

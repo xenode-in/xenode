@@ -240,7 +240,7 @@ export function FileVersionsDialog({
             <History className="h-7 w-7" />
             <p className="text-sm">No previous versions yet.</p>
             <p className="text-xs">
-              Older copies appear here when this file is overwritten.
+              Older copies appear here when this file is edited and saved in Xenode.
             </p>
           </div>
         ) : (

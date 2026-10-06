@@ -18,7 +18,7 @@ import { usePreview } from "@/contexts/PreviewContext";
 import { useThumbnail } from "@/hooks/useThumbnail";
 import { useIsVisible } from "@/hooks/useIsVisible";
 import { decryptMetadataString } from "@/lib/crypto/fileEncryption";
-import { getFileIcon } from "@/lib/file-icons";
+import { fileTypeLabel, getFileIcon } from "@/lib/file-icons";
 import { formatBytes } from "@/lib/utils";
 
 interface StarredObject {
@@ -226,7 +226,7 @@ export default function StarredPage() {
                       variant="secondary"
                       className="bg-secondary text-muted-foreground/60 border-0 text-xs"
                     >
-                      {item.contentType.split("/").pop()}
+                      {fileTypeLabel(item.contentType, item.decryptedName)}
                     </Badge>
                   </TableCell>
                   <TableCell

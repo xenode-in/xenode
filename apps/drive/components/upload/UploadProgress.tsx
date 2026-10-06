@@ -65,8 +65,9 @@ export function UploadProgress() {
             )}
             <div>
               <p className="text-sm font-medium text-card-foreground">
-                Uploading {activeTasks.length} file
-                {activeTasks.length !== 1 ? "s" : ""}
+                {activeTasks.length > 0
+                  ? `Uploading ${activeTasks.length} file${activeTasks.length !== 1 ? "s" : ""}`
+                  : "Uploads finished"}
               </p>
               <p className="text-xs text-muted-foreground">
                 {completedTasks.length} completed • {failedTasks.length} failed

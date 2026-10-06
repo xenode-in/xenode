@@ -2,6 +2,7 @@
 import { binMutationFetch } from "@/lib/storage/bin-client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import Image from "next/image";
 import {
   Trash2,
@@ -221,6 +222,18 @@ export default function BinPage() {
     }
   };
 
+  // Files whose upload links are still valid are erased once those expire
+  // (within a day); until then they still count toward storage.
+  const announcePending = (count: unknown) => {
+    if (typeof count === "number" && count > 0) {
+      toast.info(
+        count === 1
+          ? "1 recently uploaded item is erased within 24 hours and counts toward storage until then."
+          : `${count} recently uploaded items are erased within 24 hours and count toward storage until then.`,
+      );
+    }
+  };
+
   const handleDeleteForever = async () => {
     if (!bucketId || selected.size === 0) return;
     const ids = Array.from(selected);
@@ -233,6 +246,7 @@ export default function BinPage() {
         body: JSON.stringify({ bucketId, ids }),
       });
       if (!res.ok) throw new Error("Delete failed");
+      announcePending((await res.json()).pendingCount);
       dropFromList(new Set(ids));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Delete failed");
@@ -248,6 +262,7 @@ export default function BinPage() {
     setError("");
     try {
       // The server purges one batch per request and reports whether more remain.
+      let pending = 0;
       for (let more = true; more; ) {
         const res = await binMutationFetch("/api/objects/purge", {
           method: "POST",
@@ -255,8 +270,11 @@ export default function BinPage() {
           body: JSON.stringify({ bucketId, all: true }),
         });
         if (!res.ok) throw new Error("Empty bin failed");
-        more = (await res.json()).hasMore === true;
+        const result = await res.json();
+        pending += Number(result.pendingCount) || 0;
+        more = result.hasMore === true;
       }
+      announcePending(pending);
       setItems([]);
       setSelected(new Set());
     } catch (e) {

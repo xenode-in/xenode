@@ -107,3 +107,25 @@ export const getFileIcon = (
   const { icon: Icon, color } = getCategorizedIcon(type, category);
   return <Icon className={cn(color, className)} />;
 };
+
+const TYPE_LABELS: Record<string, string> = {
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+  "application/msword": "doc",
+  "application/vnd.ms-excel": "xls",
+  "application/vnd.ms-powerpoint": "ppt",
+  "application/octet-stream": "file",
+  "image/svg+xml": "svg",
+  "text/plain": "txt",
+};
+
+/** Short type badge: the name's extension, else a readable MIME label. */
+export function fileTypeLabel(contentType: string, name?: string | null): string {
+  const extension = name ? /\.([a-z0-9]{1,8})$/i.exec(name)?.[1] : undefined;
+  if (extension) return extension.toLowerCase();
+  return (
+    TYPE_LABELS[contentType] ??
+    (contentType.split("/").pop() ?? contentType).replace(/^(x-|vnd\.)/, "").split(/[.+]/)[0]
+  );
+}
