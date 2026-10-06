@@ -39,7 +39,8 @@ export default function AuditLogPage() {
   }, [type, actorType, userId]);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   return (

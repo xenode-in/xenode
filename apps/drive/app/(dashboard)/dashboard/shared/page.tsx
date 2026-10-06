@@ -265,14 +265,18 @@ export default function SharedPage() {
   }, []);
 
   useEffect(() => {
-    fetchShares();
+    const timer = setTimeout(() => void fetchShares(), 0);
+    return () => clearTimeout(timer);
   }, [fetchShares]);
 
+  // Locking drops every decrypted name.
+  if ((!isUnlocked || !metadataKey) && Object.keys(decryptedNames).length) {
+    setDecryptedNames({});
+  }
+
   useEffect(() => {
-    if (!isUnlocked || !metadataKey) {
-      setDecryptedNames({});
-      return;
-    }
+    if (!isUnlocked || !metadataKey) return;
+    let cancelled = false;
 
     const run = async () => {
       const nextNames: Record<string, string> = {};
@@ -300,10 +304,13 @@ export default function SharedPage() {
           }
         }
       }
-      setDecryptedNames(nextNames);
+      if (!cancelled) setDecryptedNames(nextNames);
     };
 
-    run();
+    void run();
+    return () => {
+      cancelled = true;
+    };
   }, [rows, isUnlocked, metadataKey, privateKey]);
 
   async function getOwnerFileKey(fileId: string) {

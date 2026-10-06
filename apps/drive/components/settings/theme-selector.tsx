@@ -32,13 +32,12 @@ const themes = [
   },
 ];
 
+const subscribeNever = () => () => {};
+
 export function ThemeSelector() {
   const { theme, setTheme } = useTheme();
-  const [mounted, setMounted] = React.useState(false);
-
-  React.useEffect(() => {
-    setMounted(true);
-  }, []);
+  // The theme is only known in the browser; render unselected on the server.
+  const mounted = React.useSyncExternalStore(subscribeNever, () => true, () => false);
 
   return (
     <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">

@@ -66,7 +66,8 @@ export function OrgBillingClient({ orgId }: { orgId: string }) {
   }, [orgId]);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   async function checkout(planSlug: string) {
@@ -81,7 +82,7 @@ export function OrgBillingClient({ orgId }: { orgId: string }) {
         }),
       );
       if (res.shortUrl) {
-        window.location.href = res.shortUrl;
+        window.location.assign(res.shortUrl);
         return;
       }
       toast.success("Checkout started");

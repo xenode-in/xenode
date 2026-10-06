@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Sparkles, X, ArrowRight } from "lucide-react";
 import Link from "next/link";
@@ -15,6 +15,15 @@ interface Props {
 }
 
 const STORAGE_PREFIX = "xenode-campaign-banner-dismissed:";
+const subscribeNever = () => () => {};
+
+function wasDismissed(campaignKey: string) {
+  try {
+    return localStorage.getItem(STORAGE_PREFIX + campaignKey) === "true";
+  } catch {
+    return false;
+  }
+}
 
 export default function CampaignBanner({
   name,
@@ -23,14 +32,13 @@ export default function CampaignBanner({
   campaignKey,
 }: Props) {
   // Hidden during SSR / first paint so we can read localStorage without flashing.
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    const wasDismissed =
-      typeof window !== "undefined" &&
-      localStorage.getItem(STORAGE_PREFIX + campaignKey) === "true";
-    if (!wasDismissed) setVisible(true);
-  }, [campaignKey]);
+  const dismissedEarlier = useSyncExternalStore(
+    subscribeNever,
+    () => wasDismissed(campaignKey),
+    () => true,
+  );
+  const [dismissedKey, setDismissedKey] = useState<string | null>(null);
+  const visible = !dismissedEarlier && dismissedKey !== campaignKey;
 
   const handleDismiss = () => {
     try {
@@ -38,7 +46,7 @@ export default function CampaignBanner({
     } catch {
       // ignore quota / private mode errors
     }
-    setVisible(false);
+    setDismissedKey(campaignKey);
   };
 
   return (

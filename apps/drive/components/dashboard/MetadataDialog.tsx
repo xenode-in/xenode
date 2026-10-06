@@ -31,7 +31,7 @@ import { Badge } from "@/components/ui/badge";
 import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 
 interface MetadataDialogProps {
-  item: any;
+  item: { id: string; key: string; size: number };
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   metadataKey: CryptoKey | null;
@@ -48,12 +48,19 @@ export function MetadataDialog({
   const [loading, setLoading] = useState(false);
   const workspace = useOptionalWorkspace();
 
-  useEffect(() => {
+  // Each open (or a different file or key) starts from a clean load.
+  const [requested, setRequested] = useState({ isOpen: false, id: item.id, key: metadataKey });
+  if (requested.isOpen !== isOpen || requested.id !== item.id || requested.key !== metadataKey) {
+    setRequested({ isOpen, id: item.id, key: metadataKey });
     if (isOpen && metadataKey && item.id) {
       setLoading(true);
       setError(null);
       setMetadata(null);
+    }
+  }
 
+  useEffect(() => {
+    if (isOpen && metadataKey && item.id) {
       const request = workspace?.scopedFetch
         ? workspace.scopedFetch(`/api/objects/${item.id}/metadata`)
         : fetch(`/api/objects/${item.id}/metadata`);
@@ -86,7 +93,7 @@ export function MetadataDialog({
   const renderSection = (
     title: string,
     icon: React.ReactNode,
-    fields: { label: string; value: any; suffix?: string }[],
+    fields: { label: string; value: string | number | null | undefined; suffix?: string }[],
   ) => {
     const validFields = fields.filter(
       (f) => f.value !== null && f.value !== undefined && f.value !== "",

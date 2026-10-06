@@ -25,7 +25,8 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({ mdxSource });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Preview failed";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

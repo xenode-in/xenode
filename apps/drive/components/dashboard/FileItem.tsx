@@ -86,6 +86,59 @@ function useStarToggle(item: ObjectData) {
   return { starred, toggle };
 }
 
+/**
+ * A row's locally decrypted name and tags. Cleared while they cannot be
+ * decrypted (locked, no key, nothing sealed); late results are discarded.
+ */
+function useDecryptedItemText(
+  item: ObjectData,
+  isUnlocked: boolean,
+  key: CryptoKey | null | undefined,
+) {
+  const [decryptedName, setDecryptedName] = useState<string | null>(null);
+  const [decryptedTags, setDecryptedTags] = useState<string[] | null>(null);
+  const isFolder =
+    item.contentType === "application/x-directory" || item.key.endsWith("/");
+  const sealedName = !isUnlocked || !key
+    ? undefined
+    : isFolder
+      ? item.encryptedDisplayName
+      : item.isEncrypted
+        ? item.encryptedName
+        : undefined;
+  const sealedTags = isUnlocked && key && item.tags?.length ? item.tags : undefined;
+  if (!sealedName && decryptedName !== null) setDecryptedName(null);
+  if (!sealedTags && decryptedTags !== null) setDecryptedTags(null);
+
+  useEffect(() => {
+    if (!sealedName || !key) return;
+    let cancelled = false;
+    void decryptMetadataString(sealedName, key, { fileId: item.id, purpose: "name" }).then(
+      (name) => {
+        if (!cancelled) setDecryptedName(name);
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [sealedName, key, item.id]);
+
+  useEffect(() => {
+    if (!sealedTags || !key) return;
+    let cancelled = false;
+    void Promise.all(
+      sealedTags.map((tag) => decryptMetadataString(tag, key, { fileId: item.id, purpose: "tags" })),
+    ).then((tags) => {
+      if (!cancelled) setDecryptedTags(tags);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [sealedTags, key, item.id]);
+
+  return { decryptedName, decryptedTags };
+}
+
 interface ItemProps {
   item: ObjectData;
   viewMode: "list" | "grid";
@@ -98,7 +151,7 @@ interface ItemProps {
   onCut?: (item: ObjectData) => void;
   isDownloading?: boolean;
   style?: React.CSSProperties;
-  dragHandleProps?: any;
+  dragHandleProps?: React.HTMLAttributes<HTMLElement>;
   isOverlay?: boolean;
   isSelected?: boolean;
   onSelect?: (item: ObjectData, e: React.MouseEvent) => void;
@@ -154,8 +207,11 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     const { isUnlocked } = useCrypto();
     // The record's metadata uses the key version it was created with.
     const activeMetadataKey = useWorkspaceSpaceKey().metadataKeyFor(item.spaceKeyVersion);
-    const [decryptedName, setDecryptedName] = useState<string | null>(null);
-    const [decryptedTags, setDecryptedTags] = useState<string[] | null>(null);
+    const { decryptedName, decryptedTags } = useDecryptedItemText(
+      item,
+      isUnlocked,
+      activeMetadataKey,
+    );
     const [visibilityRef, isVisible] = useIsVisible();
     const decryptedThumbnail = useThumbnail(
       isVisible ? item.thumbnail : undefined,
@@ -165,45 +221,6 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
     const [isMetaOpen, setIsMetaOpen] = useState(false);
     const { starred, toggle: toggleStar } = useStarToggle(item);
     const isCoarsePointer = useIsCoarsePointer();
-
-    useEffect(() => {
-      if (isUnlocked && activeMetadataKey) {
-        const isFolder =
-          item.contentType === "application/x-directory" ||
-          item.key.endsWith("/");
-        const nameToDecrypt = isFolder
-          ? item.encryptedDisplayName
-          : item.isEncrypted
-            ? item.encryptedName
-            : null;
-
-        if (nameToDecrypt) {
-          decryptMetadataString(nameToDecrypt, activeMetadataKey, { fileId: item.id, purpose: "name" }).then(
-            setDecryptedName,
-          );
-        } else {
-          setDecryptedName(null);
-        }
-
-        if (item.tags && item.tags.length > 0 && activeMetadataKey) {
-          Promise.all(
-            item.tags.map((t) => decryptMetadataString(t, activeMetadataKey, { fileId: item.id, purpose: "tags" })),
-          ).then(setDecryptedTags);
-        } else {
-          setDecryptedTags(null);
-        }
-      } else {
-        setDecryptedName(null);
-        setDecryptedTags(null);
-      }
-    }, [
-      item.isEncrypted,
-      item.encryptedName,
-      item.encryptedDisplayName,
-      item.tags,
-      isUnlocked,
-      activeMetadataKey,
-    ]);
 
     // Keys are opaque identities; a name exists only after local decryption.
     const name =
@@ -558,8 +575,11 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
     const { isUnlocked } = useCrypto();
     // The record's metadata uses the key version it was created with.
     const activeMetadataKey = useWorkspaceSpaceKey().metadataKeyFor(item.spaceKeyVersion);
-    const [decryptedName, setDecryptedName] = useState<string | null>(null);
-    const [decryptedTags, setDecryptedTags] = useState<string[] | null>(null);
+    const { decryptedName, decryptedTags } = useDecryptedItemText(
+      item,
+      isUnlocked,
+      activeMetadataKey,
+    );
     const [visibilityRef, isVisible] = useIsVisible();
     const decryptedThumbnail = useThumbnail(
       isVisible ? item.thumbnail : undefined,
@@ -569,45 +589,6 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
     const [isMetaOpen, setIsMetaOpen] = useState(false);
     const { starred, toggle: toggleStar } = useStarToggle(item);
     const isCoarsePointer = useIsCoarsePointer();
-
-    useEffect(() => {
-      if (isUnlocked && activeMetadataKey) {
-        const isFolder =
-          item.contentType === "application/x-directory" ||
-          item.key.endsWith("/");
-        const nameToDecrypt = isFolder
-          ? item.encryptedDisplayName
-          : item.isEncrypted
-            ? item.encryptedName
-            : null;
-
-        if (nameToDecrypt) {
-          decryptMetadataString(nameToDecrypt, activeMetadataKey, { fileId: item.id, purpose: "name" }).then(
-            setDecryptedName,
-          );
-        } else {
-          setDecryptedName(null);
-        }
-
-        if (item.tags && item.tags.length > 0 && activeMetadataKey) {
-          Promise.all(
-            item.tags.map((t) => decryptMetadataString(t, activeMetadataKey, { fileId: item.id, purpose: "tags" })),
-          ).then(setDecryptedTags);
-        } else {
-          setDecryptedTags(null);
-        }
-      } else {
-        setDecryptedName(null);
-        setDecryptedTags(null);
-      }
-    }, [
-      item.isEncrypted,
-      item.encryptedName,
-      item.encryptedDisplayName,
-      item.tags,
-      isUnlocked,
-      activeMetadataKey,
-    ]);
 
     // Keys are opaque identities; a name exists only after local decryption.
     const name =
@@ -1100,14 +1081,8 @@ export function FileItem(props: ItemProps & { isScrolling?: boolean }) {
   // If it's already mounted (or scrolling is false), it starts as ready.
   // This ensures we never replace an already-loaded row with a skeleton.
   const [isReady, setIsReady] = useState(!props.isScrolling);
-
-  useEffect(() => {
-    // Once scrolling stops, mark as ready so it loads the full component.
-    // It stays ready forever after this.
-    if (!props.isScrolling && !isReady) {
-      setIsReady(true);
-    }
-  }, [props.isScrolling, isReady]);
+  // Once scrolling stops, the row loads the full component and stays ready.
+  if (!props.isScrolling && !isReady) setIsReady(true);
 
   if (!isReady) {
     if (props.viewMode === "list") {

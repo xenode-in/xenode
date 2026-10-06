@@ -4,13 +4,14 @@
  * Tests that the daily cron correctly expires lapsed plans.
  */
 import { describe, it, expect, beforeEach } from "vitest";
+import { NextRequest } from "next/server";
 import Usage, { FREE_TIER_LIMIT_BYTES } from "@/models/Usage";
 import { makeUserId, createUsage, PRO_100_BYTES, PRO_500_BYTES, FREE_TIER_BYTES } from "../helpers/factories";
 
 const CRON_SECRET = "test-cron-secret";
 
 function makeCronReq() {
-  return new Request("http://localhost/api/cron/expire-plans", {
+  return new NextRequest("http://localhost/api/cron/expire-plans", {
     headers: { authorization: `Bearer ${CRON_SECRET}` },
   });
 }
@@ -21,18 +22,18 @@ describe("GAP-1 — Plan Expiry Cron", () => {
   });
 
   it("rejects cron request without CRON_SECRET header", async () => {
-    const req = new Request("http://localhost/api/cron/expire-plans");
+    const req = new NextRequest("http://localhost/api/cron/expire-plans");
     const { GET } = await import("@/app/api/cron/expire-plans/route");
-    const res = await GET(req as any);
+    const res = await GET(req);
     expect(res.status).toBe(401);
   });
 
   it("rejects cron request with wrong secret", async () => {
-    const req = new Request("http://localhost/api/cron/expire-plans", {
+    const req = new NextRequest("http://localhost/api/cron/expire-plans", {
       headers: { authorization: "Bearer wrong-secret" },
     });
     const { GET } = await import("@/app/api/cron/expire-plans/route");
-    const res = await GET(req as any);
+    const res = await GET(req);
     expect(res.status).toBe(401);
   });
 
@@ -47,7 +48,7 @@ describe("GAP-1 — Plan Expiry Cron", () => {
     });
 
     const { GET } = await import("@/app/api/cron/expire-plans/route");
-    const res = await GET(makeCronReq() as any);
+    const res = await GET(makeCronReq());
     const body = await res.json();
 
     expect(body.grantedGraceCount).toBe(1);
@@ -81,7 +82,7 @@ describe("GAP-1 — Plan Expiry Cron", () => {
     );
 
     const { GET } = await import("@/app/api/cron/expire-plans/route");
-    const res = await GET(makeCronReq() as any);
+    const res = await GET(makeCronReq());
     const body = await res.json();
 
     expect(body.expiredCount).toBe(1);
@@ -101,7 +102,7 @@ describe("GAP-1 — Plan Expiry Cron", () => {
     });
 
     const { GET } = await import("@/app/api/cron/expire-plans/route");
-    await GET(makeCronReq() as any);
+    await GET(makeCronReq());
 
     const usage = await Usage.findOne({ userId });
     expect(usage?.plan).toBe("pro");
@@ -149,7 +150,7 @@ describe("GAP-1 — Plan Expiry Cron", () => {
     );
 
     const { GET } = await import("@/app/api/cron/expire-plans/route");
-    const res = await GET(makeCronReq() as any);
+    const res = await GET(makeCronReq());
     const body = await res.json();
 
     expect(body.grantedGraceCount).toBe(2);

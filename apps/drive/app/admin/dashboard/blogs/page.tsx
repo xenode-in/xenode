@@ -20,10 +20,6 @@ export default function AdminBlogsPage() {
   const [deletingSlug, setDeletingSlug] = useState<string | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
-  useEffect(() => {
-    fetchPosts();
-  }, []);
-
   function fetchPosts() {
     setLoading(true);
     fetch("/api/admin/blogs")
@@ -35,6 +31,11 @@ export default function AdminBlogsPage() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }
+
+  useEffect(() => {
+    const timer = setTimeout(fetchPosts, 0);
+    return () => clearTimeout(timer);
+  }, []);
 
   async function handleDelete() {
     if (!deletingSlug) return;
@@ -48,8 +49,8 @@ export default function AdminBlogsPage() {
       
       setPosts(posts.filter(p => p.slug !== deletingSlug));
       setDeletingSlug(null);
-    } catch (err: any) {
-      alert(err.message);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to delete");
     } finally {
       setDeleteLoading(false);
     }
@@ -161,7 +162,7 @@ export default function AdminBlogsPage() {
               <h2 className="text-lg font-semibold text-white">Delete Post?</h2>
             </div>
             <p className="text-sm text-zinc-400 mb-6 leading-relaxed">
-              Are you sure you want to delete <span className="text-zinc-200 font-medium whitespace-nowrap overflow-hidden text-ellipsis inline-block max-w-[200px] align-bottom">"{posts.find(p => p.slug === deletingSlug)?.title}"</span>? This action cannot be undone.
+              Are you sure you want to delete <span className="text-zinc-200 font-medium whitespace-nowrap overflow-hidden text-ellipsis inline-block max-w-[200px] align-bottom">&ldquo;{posts.find(p => p.slug === deletingSlug)?.title}&rdquo;</span>? This action cannot be undone.
             </p>
             <div className="flex items-center gap-3">
               <button

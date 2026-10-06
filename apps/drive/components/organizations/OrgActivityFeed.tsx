@@ -90,10 +90,16 @@ export function OrgActivityFeed({ orgId }: { orgId: string }) {
     [orgId],
   );
 
-  useEffect(() => {
-    let active = true;
+  // Another organization's feed starts over (the first render already does).
+  const [feedOrgId, setFeedOrgId] = useState(orgId);
+  if (feedOrgId !== orgId) {
+    setFeedOrgId(orgId);
     setLoading(true);
     setError(null);
+  }
+
+  useEffect(() => {
+    let active = true;
     load(null)
       .then((data) => {
         if (!active) return;

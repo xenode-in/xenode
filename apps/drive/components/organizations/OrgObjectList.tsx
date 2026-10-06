@@ -104,7 +104,8 @@ export function OrgObjectList({ orgId, scope }: { orgId: string; scope: Scope })
   }, [orgId, scope]);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   // Decrypt each name with the organization key version it was created with.

@@ -66,14 +66,15 @@ export async function GET(
     return NextResponse.json({
       encryptedMetadata: object.encryptedMetadata || null,
     });
-  } catch (error: any) {
+  } catch (error) {
     if (isAuthzError(error)) {
       statusCode = error.status;
       errorMessage = error.message;
       return toJsonResponse(error);
     }
-    statusCode = error.message === "Unauthorized" ? 401 : 500;
-    errorMessage = error.message || "Internal server error";
+    const message = error instanceof Error ? error.message : "";
+    statusCode = message === "Unauthorized" ? 401 : 500;
+    errorMessage = message || "Internal server error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   } finally {
     logRequest({

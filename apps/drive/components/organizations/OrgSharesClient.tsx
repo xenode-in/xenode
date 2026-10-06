@@ -165,7 +165,8 @@ function SharedWithMe({ orgId }: { orgId: string }) {
   }, [orgId]);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   // Decrypt file names once the vault is unlocked.
@@ -452,7 +453,8 @@ function SharedOut({ orgId }: { orgId: string }) {
   }, [orgId]);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   // Decrypt each shared file's metadata with the organization key version it

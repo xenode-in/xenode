@@ -73,6 +73,7 @@ export default function AdminRefundDetailPage({
   const [refund, setRefund] = useState<RefundDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [openedAt] = useState(() => Date.now());
 
   const [approveNote, setApproveNote] = useState("");
   const [denyReason, setDenyReason] = useState("");
@@ -97,7 +98,8 @@ export default function AdminRefundDetailPage({
   }, [id]);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   async function approve() {
@@ -192,7 +194,7 @@ export default function AdminRefundDetailPage({
       (1000 * 60 * 60 * 24),
   );
   const windowExpired =
-    new Date(refund.eligibilityWindowEndsAt).getTime() < Date.now();
+    new Date(refund.eligibilityWindowEndsAt).getTime() < openedAt;
 
   return (
     <div className="max-w-5xl mx-auto space-y-5 text-white">

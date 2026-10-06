@@ -10,7 +10,7 @@ export interface ISubscriptionInvoice extends Document {
   billing_date: Date;
   usageAppliedAt?: Date | null;
   pdfUrl?: string;         // S3/B2 storage URL for the generated PDF invoice
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
 }

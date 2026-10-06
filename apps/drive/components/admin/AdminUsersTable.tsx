@@ -84,7 +84,8 @@ export function AdminUsersTable() {
   );
 
   useEffect(() => {
-    fetchUsers(1);
+    const timer = setTimeout(() => void fetchUsers(1), 0);
+    return () => clearTimeout(timer);
   }, [fetchUsers]);
 
   return (

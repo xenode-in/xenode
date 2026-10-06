@@ -41,7 +41,8 @@ export function useSubscription() {
   }
 
   useEffect(() => {
-    void refresh();
+    const timer = setTimeout(() => void refresh(), 0);
+    return () => clearTimeout(timer);
   }, []);
 
   return {

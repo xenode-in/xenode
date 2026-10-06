@@ -73,7 +73,8 @@ export function OrgSecurityClient({ orgId, canManage }: { orgId: string; canMana
   }, [orgId]);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   async function updatePolicy(key: PolicyKey, value: boolean) {

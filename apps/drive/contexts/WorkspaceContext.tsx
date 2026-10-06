@@ -168,10 +168,13 @@ export function WorkspaceProvider({
     useState<DriveScope>(defaultDriveScope);
 
   // When the active workspace itself changes (e.g. switching orgs via the
-  // switcher), snap the scope back to that workspace's default.
-  useEffect(() => {
+  // switcher), snap the scope back to that workspace's default before any
+  // child renders with the previous workspace's scope.
+  const [scopedDefault, setScopedDefault] = useState(defaultDriveScope);
+  if (scopedDefault !== defaultDriveScope) {
+    setScopedDefault(defaultDriveScope);
     setActiveDriveScope(defaultDriveScope);
-  }, [defaultDriveScope]);
+  }
 
   return (
     <WorkspaceValueProvider

@@ -37,9 +37,12 @@ export function NotificationBell() {
   }, []);
 
   useEffect(() => {
-    void loadCount();
+    const first = setTimeout(() => void loadCount(), 0);
     const timer = setInterval(() => void loadCount(), 60_000);
-    return () => clearInterval(timer);
+    return () => {
+      clearTimeout(first);
+      clearInterval(timer);
+    };
   }, [loadCount]);
 
   const loadList = useCallback(async () => {

@@ -64,7 +64,8 @@ export function OrgRequestsClient({ orgId }: { orgId: string; role: OrgRole }) {
   }, [orgId]);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   async function submitRequest() {

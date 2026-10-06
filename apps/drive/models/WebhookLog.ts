@@ -4,7 +4,7 @@ export interface IWebhookLog extends Document {
   eventId: string;
   eventType: string;
   gateway: "razorpay" | "payu" | "other";
-  payload: any;
+  payload: unknown;
   status: "pending" | "processed" | "failed" | "ignored";
   errorMessage?: string;
   createdAt: Date;

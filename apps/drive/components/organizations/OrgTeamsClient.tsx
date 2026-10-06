@@ -99,7 +99,8 @@ export function OrgTeamsClient({
   }, [loadTeams]);
 
   useEffect(() => {
-    void refresh();
+    const timer = setTimeout(() => void refresh(), 0);
+    return () => clearTimeout(timer);
   }, [refresh]);
 
   const loadMembers = useCallback(
@@ -113,7 +114,12 @@ export function OrgTeamsClient({
   );
 
   useEffect(() => {
-    if (openTeam) void loadMembers(openTeam.id).catch(() => setMembers([]));
+    if (!openTeam) return;
+    const timer = setTimeout(
+      () => void loadMembers(openTeam.id).catch(() => setMembers([])),
+      0,
+    );
+    return () => clearTimeout(timer);
   }, [openTeam, loadMembers]);
 
   // Every team key version this member holds, newest first.

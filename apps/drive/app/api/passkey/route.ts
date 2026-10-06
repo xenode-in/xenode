@@ -18,9 +18,10 @@ export async function GET(req: NextRequest) {
       createdAt: p.createdAt,
       lastUsedAt: p.updatedAt,
     })))
-  } catch (err: any) {
+  } catch (err) {
     console.error("Passkey list error:", err)
-    return NextResponse.json({ error: err.message || "Internal error" }, { status: err.message === "Unauthorized" ? 401 : 500 })
+    const message = err instanceof Error ? err.message : ""
+    return NextResponse.json({ error: message || "Internal error" }, { status: message === "Unauthorized" ? 401 : 500 })
   }
 }
 
@@ -37,8 +38,9 @@ export async function DELETE(req: NextRequest) {
     const deleted = await Passkey.deleteOne({ _id: id, userId })
 
     return NextResponse.json({ success: deleted.deletedCount > 0 })
-  } catch (err: any) {
+  } catch (err) {
     console.error("Passkey delete error:", err)
-    return NextResponse.json({ error: err.message || "Internal error" }, { status: err.message === "Unauthorized" ? 401 : 500 })
+    const message = err instanceof Error ? err.message : ""
+    return NextResponse.json({ error: message || "Internal error" }, { status: message === "Unauthorized" ? 401 : 500 })
   }
 }

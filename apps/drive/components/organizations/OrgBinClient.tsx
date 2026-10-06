@@ -103,7 +103,8 @@ export function OrgBinClient({ orgId }: { orgId: string }) {
   }, [orgId]);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   // Decrypt each name with the organization key version it was created with.

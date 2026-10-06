@@ -49,7 +49,8 @@ export function OnlyOfficeRuntimeStatus() {
   }, []);
 
   useEffect(() => {
-    void checkRuntime();
+    const timer = setTimeout(() => void checkRuntime(), 0);
+    return () => clearTimeout(timer);
   }, [checkRuntime]);
 
   const ready = runtime.status === "ready";

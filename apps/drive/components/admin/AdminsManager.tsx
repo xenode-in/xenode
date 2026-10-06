@@ -36,7 +36,10 @@ export function AdminsManager() {
     }
   }
 
-  useEffect(() => { loadAdmins(); }, []);
+  useEffect(() => {
+    const timer = setTimeout(() => void loadAdmins(), 0);
+    return () => clearTimeout(timer);
+  }, []);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();

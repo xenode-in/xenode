@@ -54,7 +54,8 @@ export default function RefundRequestPage() {
   }, []);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   async function submit(e: React.FormEvent) {

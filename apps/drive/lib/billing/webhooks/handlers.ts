@@ -31,10 +31,44 @@ import { notifyRefundCompleted } from "@/lib/email/notifications";
  * "replay" action re-dispatches the same event through here.
  */
 
+/** The Razorpay entity fields the handlers read. */
+export interface RazorpayEntity {
+  id?: string;
+  amount?: number;
+  currency?: string;
+  method?: string;
+  payment_id?: string;
+  subscription_id?: string;
+  plan_id?: string;
+  quantity?: number;
+  remaining_count?: number;
+  paid_count?: number;
+  total_count?: number;
+  current_start?: number;
+  current_end?: number;
+  short_url?: string;
+  phase?: string;
+  reason_code?: string;
+  status_reason?: string;
+  error_code?: string;
+  error_description?: string;
+  notes?: Record<string, string>;
+}
+
+/** A signature-verified Razorpay webhook body. */
+export interface RazorpayWebhookEvent {
+  id?: string;
+  event_id?: string;
+  event?: string;
+  payload?: Partial<
+    Record<"subscription" | "payment" | "refund" | "invoice" | "dispute", { entity?: RazorpayEntity }>
+  >;
+}
+
 export interface WebhookContext {
   eventId: string;
   eventType: string;
-  event: any;
+  event: RazorpayWebhookEvent;
   source: "razorpay" | "razorpay_subscription";
 }
 
@@ -53,7 +87,7 @@ interface SubscriptionSnapshot {
   paid_count: number | undefined;
 }
 
-function readSubscriptionSnapshot(entity: any): SubscriptionSnapshot {
+function readSubscriptionSnapshot(entity: RazorpayEntity | undefined): SubscriptionSnapshot {
   return {
     current_period_start:
       typeof entity?.current_start === "number"
@@ -68,7 +102,7 @@ function readSubscriptionSnapshot(entity: any): SubscriptionSnapshot {
   };
 }
 
-async function loadSubscription(entity: any) {
+async function loadSubscription(entity: RazorpayEntity | undefined) {
   const razorpaySubscriptionId =
     typeof entity?.id === "string" ? entity.id : null;
   if (!razorpaySubscriptionId) return null;
@@ -77,7 +111,7 @@ async function loadSubscription(entity: any) {
   // Atomic upsert: if the doc already exists return it as-is; if not, create
   // it from the Razorpay webhook payload notes. This handles the case where
   // the user paid but the browser crashed before /verify was called.
-  const notes = ((entity.notes as Record<string, string>) || {});
+  const notes = entity?.notes ?? {};
   const baseAmount = Number(notes.basePlanAmount) || 0;
   const firstCycleAmount = Number(notes.firstCycleAmount) || baseAmount;
 
@@ -95,7 +129,7 @@ async function loadSubscription(entity: any) {
         billingCycle: notes.billingCycle || "monthly",
         startDate: new Date(),
         endDate: new Date(),
-        total_count: entity.total_count ?? 360,
+        total_count: entity?.total_count ?? 360,
         autoRenew: true,
         gateway: "razorpay",
         offerApplied: notes.offerApplied === "true",
@@ -103,7 +137,7 @@ async function loadSubscription(entity: any) {
         paid_count: 0,
         cancelAtPeriodEnd: false,
         metadata: {
-          authorizationUrl: entity.short_url ?? null,
+          authorizationUrl: entity?.short_url ?? null,
           offerSource: notes.offerSource || null,
           offerId: notes.offerId || null,
           discountPercent: notes.discountPercent ? Number(notes.discountPercent) : null,
@@ -396,11 +430,11 @@ const handleRefundProcessed: Handler = async (ctx) => {
       },
     });
     return { status: "processed" };
-  } catch (error: any) {
+  } catch (error) {
     if (session.inTransaction()) {
       await session.abortTransaction();
     }
-    return { status: "failed", message: error?.message ?? "Refund failed" };
+    return { status: "failed", message: error instanceof Error ? error.message : "Refund failed" };
   } finally {
     session.endSession();
   }

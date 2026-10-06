@@ -92,7 +92,8 @@ export default function TicketDetailPage({
   }, [id]);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   async function submitReply(e: React.FormEvent) {

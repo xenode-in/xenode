@@ -125,11 +125,14 @@ export default function SharedWithMePage() {
     fetchShares();
   }, []);
 
+  // Locking drops every decrypted name.
+  if ((!isUnlocked || !privateKey) && Object.keys(decryptedNames).length) {
+    setDecryptedNames({});
+  }
+
   useEffect(() => {
-    if (!isUnlocked || !privateKey) {
-      setDecryptedNames({});
-      return;
-    }
+    if (!isUnlocked || !privateKey) return;
+    let cancelled = false;
 
     const run = async () => {
       const nextNames: Record<string, string> = {};
@@ -153,10 +156,13 @@ export default function SharedWithMePage() {
         }
       }
 
-      setDecryptedNames(nextNames);
+      if (!cancelled) setDecryptedNames(nextNames);
     };
 
-    run();
+    void run();
+    return () => {
+      cancelled = true;
+    };
   }, [shares, isUnlocked, privateKey]);
 
   if (loading) {

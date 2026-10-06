@@ -40,8 +40,9 @@ export async function POST(req: NextRequest) {
     const url = getPublicB2Url(PUBLIC_BUCKET_NAME, key);
 
     return NextResponse.json({ url });
-  } catch (error: any) {
+  } catch (error) {
     console.error("[POST /api/admin/upload]", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Upload failed";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

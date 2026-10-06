@@ -23,6 +23,10 @@ import {
 import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
 
+function setMuted(media: HTMLMediaElement | null, muted: boolean) {
+  if (media) media.muted = muted;
+}
+
 export interface SidecarAudioTrack {
   id: string;
   language: string;
@@ -96,59 +100,63 @@ export function useAudioTrackSyncer({
   // Start playing the decoded AudioBuffer in sync with the video
   const playSynced = useCallback(
     (audioBuffer: AudioBuffer) => {
-      const ctx = getAudioCtx();
-      if (ctx.state === "suspended") ctx.resume();
+      // Drift re-syncs restart playback the same way.
+      function start() {
+        const ctx = getAudioCtx();
+        if (ctx.state === "suspended") ctx.resume();
 
-      stopSidecar();
+        stopSidecar();
 
-      const source = ctx.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(gainNodeRef.current!);
-      sourceNodeRef.current = source;
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(gainNodeRef.current!);
+        sourceNodeRef.current = source;
 
-      const videoTime = videoElement?.currentTime ?? 0;
-      videoTimeRef.current = videoTime;
-      startedAtRef.current = ctx.currentTime;
+        const videoTime = videoElement?.currentTime ?? 0;
+        videoTimeRef.current = videoTime;
+        startedAtRef.current = ctx.currentTime;
 
-      // Start playback at the correct position in the audio buffer
-      const safeOffset = Math.min(videoTime, audioBuffer.duration);
-      source.start(0, safeOffset);
+        // Start playback at the correct position in the audio buffer
+        const safeOffset = Math.min(videoTime, audioBuffer.duration);
+        source.start(0, safeOffset);
 
-      // Keep audio in sync with video during seeks and buffering
-      syncIntervalRef.current = setInterval(() => {
-        if (!videoElement || !sourceNodeRef.current) return;
+        // Keep audio in sync with video during seeks and buffering
+        syncIntervalRef.current = setInterval(() => {
+          if (!videoElement || !sourceNodeRef.current) return;
 
-        // Current synchronization source of truth
-        const actualVideoTime = videoElement.currentTime;
+          // Current synchronization source of truth
+          const actualVideoTime = videoElement.currentTime;
 
-        /**
-         * Buffering detection:
-         * readyState < 3 (HAVE_FUTURE_DATA) means the video doesn't have enough data
-         * to play through the next few frames without stalling.
-         */
-        const isBuffering = videoElement.readyState < 3;
-        const isPaused = videoElement.paused || videoElement.ended;
-        const shouldBePlaying = !isPaused && !isBuffering;
+          /**
+           * Buffering detection:
+           * readyState < 3 (HAVE_FUTURE_DATA) means the video doesn't have enough data
+           * to play through the next few frames without stalling.
+           */
+          const isBuffering = videoElement.readyState < 3;
+          const isPaused = videoElement.paused || videoElement.ended;
+          const shouldBePlaying = !isPaused && !isBuffering;
 
-        // Sync AudioContext state
-        if (!shouldBePlaying && ctx.state === "running") {
-          ctx.suspend();
-        } else if (shouldBePlaying && ctx.state === "suspended") {
-          ctx.resume();
-        }
-
-        // Only check for drift and potentially re-sync if the video is healthy
-        if (shouldBePlaying) {
-          const expectedAudioTime =
-            ctx.currentTime - startedAtRef.current + videoTimeRef.current;
-          const drift = Math.abs(actualVideoTime - expectedAudioTime);
-
-          // If drift > 0.3s, re-sync by restarting the buffer source at current time
-          if (drift > 0.3) {
-            playSynced(audioBuffer);
+          // Sync AudioContext state
+          if (!shouldBePlaying && ctx.state === "running") {
+            ctx.suspend();
+          } else if (shouldBePlaying && ctx.state === "suspended") {
+            ctx.resume();
           }
-        }
-      }, 250);
+
+          // Only check for drift and potentially re-sync if the video is healthy
+          if (shouldBePlaying) {
+            const expectedAudioTime =
+              ctx.currentTime - startedAtRef.current + videoTimeRef.current;
+            const drift = Math.abs(actualVideoTime - expectedAudioTime);
+
+            // If drift > 0.3s, re-sync by restarting the buffer source at current time
+            if (drift > 0.3) {
+              start();
+            }
+          }
+        }, 250);
+      }
+      start();
     },
     [videoElement, stopSidecar],
   );
@@ -247,7 +255,7 @@ export function useAudioTrackSyncer({
 
       if (trackId === null) {
         // Re-enable native video audio
-        if (videoElement) videoElement.muted = false;
+        setMuted(videoElement, false);
         setActiveTrackId(null);
         return;
       }
@@ -258,11 +266,11 @@ export function useAudioTrackSyncer({
       setActiveTrackId(trackId);
 
       // Mute the video's native audio so sidecar takes over
-      if (videoElement) videoElement.muted = true;
+      setMuted(videoElement, true);
 
       if (!track.objectId) {
         // No sidecar stored yet — fall back to native
-        if (videoElement) videoElement.muted = false;
+        setMuted(videoElement, false);
         setActiveTrackId(null);
         return;
       }

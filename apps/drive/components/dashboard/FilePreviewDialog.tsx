@@ -78,21 +78,21 @@ import {
   DefaultVideoLayout,
   DefaultAudioLayout,
 } from "@vidstack/react/player/layouts/default";
+const KILL_SWITCH_REASON = "This renderer was disabled by the security kill switch";
+
 // ─── Zoomable Image ───────────────────────────────────────────────────────────
 
+/** Zoom/pan viewer. Callers key it by file: zoom resets per file but survives
+ *  the optimized→original `src` swap of an HD upgrade. */
 function ZoomableImage({
   src,
   alt,
-  resetKey,
   onZoomIn,
   onLoad,
   onError,
 }: {
   src: string;
   alt: string;
-  /** Reset zoom only when this changes (the file id), NOT when `src` swaps
-   *  optimized→original — so an HD upgrade keeps the current zoom. */
-  resetKey?: string;
   /** Fired when the user zooms in, so the parent can lazy-load the original. */
   onZoomIn?: () => void;
   onLoad?: () => void;
@@ -100,14 +100,18 @@ function ZoomableImage({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
+  // Handlers update the refs immediately; rendering reads the committed view.
   const scaleRef = useRef(1);
   const translateRef = useRef({ x: 0, y: 0 });
-  const [, forceRender] = useState(0);
+  const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
   const isDragging = useRef(false);
+  const [dragging, setDragging] = useState(false);
   const didDrag = useRef(false);
   const lastMouse = useRef({ x: 0, y: 0 });
   const onZoomInRef = useRef(onZoomIn);
-  onZoomInRef.current = onZoomIn;
+  useEffect(() => {
+    onZoomInRef.current = onZoomIn;
+  });
 
   const MIN_SCALE = 1;
   const MAX_SCALE = 8;
@@ -149,7 +153,7 @@ function ZoomableImage({
         onZoomInRef.current?.();
       }
 
-      forceRender((n) => n + 1);
+      setView({ scale: scaleRef.current, ...translateRef.current });
     },
     [],
   );
@@ -204,6 +208,7 @@ function ZoomableImage({
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     if (e.button !== 0) return;
     isDragging.current = true;
+    setDragging(true);
     didDrag.current = false;
     lastMouse.current = { x: e.clientX, y: e.clientY };
     e.preventDefault();
@@ -220,7 +225,7 @@ function ZoomableImage({
         x: translateRef.current.x + dx,
         y: translateRef.current.y + dy,
       };
-      forceRender((n) => n + 1);
+      setView({ scale: scaleRef.current, ...translateRef.current });
     }
   }, []);
 
@@ -229,6 +234,7 @@ function ZoomableImage({
       const wasDragging = isDragging.current;
       const wasDrag = didDrag.current;
       isDragging.current = false;
+      setDragging(false);
       didDrag.current = false;
 
       // Click-to-zoom: only if not dragged
@@ -241,6 +247,7 @@ function ZoomableImage({
 
   const handleMouseLeave = useCallback(() => {
     isDragging.current = false;
+    setDragging(false);
     didDrag.current = false;
   }, []);
 
@@ -248,21 +255,11 @@ function ZoomableImage({
     e.preventDefault();
     scaleRef.current = MIN_SCALE;
     translateRef.current = { x: 0, y: 0 };
-    forceRender((n) => n + 1);
+    setView({ scale: MIN_SCALE, x: 0, y: 0 });
   }, []);
 
-  // Reset zoom only when the underlying file changes (resetKey) — NOT when
-  // `src` swaps from the optimized to the original image, so an HD upgrade
-  // keeps the current zoom/pan. Falls back to `src` if no resetKey is given.
-  useEffect(() => {
-    scaleRef.current = MIN_SCALE;
-    translateRef.current = { x: 0, y: 0 };
-    forceRender((n) => n + 1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [resetKey ?? src]);
-
-  const scale = scaleRef.current;
-  const translate = translateRef.current;
+  const { scale } = view;
+  const translate = view;
   const isZoomed = scale > MIN_SCALE;
 
   return (
@@ -276,7 +273,7 @@ function ZoomableImage({
       onDoubleClick={handleDoubleClick}
       style={{
         cursor: isZoomed
-          ? isDragging.current
+          ? dragging
             ? "grabbing"
             : "grab"
           : "zoom-in",
@@ -290,7 +287,7 @@ function ZoomableImage({
         className="max-h-[calc(100dvh-8.5rem)] w-auto max-w-full object-contain pointer-events-none"
         style={{
           transform: `translate(${translate.x}px, ${translate.y}px) scale(${scale})`,
-          transition: isDragging.current ? "none" : "transform 0.15s ease-out",
+          transition: dragging ? "none" : "transform 0.15s ease-out",
           transformOrigin: "center center",
         }}
         onLoad={onLoad}
@@ -947,25 +944,30 @@ export function FilePreviewDialog({
       onClose();
     }
   }, [isOpen, isLockedOut, setModalOpen, onClose]);
+  // A renderer disabled by the kill switch while open falls back to download
+  // before the next commit; its media session and object URL are released
+  // once that fallback is committed.
+  if (
+    isOpen &&
+    disposition &&
+    !isDispositionRendererEnabled(disposition, rendererFlags)
+  ) {
+    setUrl(null);
+    setPreviewBlob(null);
+    setStreamOpts(null);
+    setStreamDek(null);
+    setIsVideoPreparing(false);
+    setDisposition({ action: "download-only", reason: KILL_SWITCH_REASON });
+  }
   useEffect(() => {
-    if (!isOpen || !disposition) return;
-    if (isDispositionRendererEnabled(disposition, rendererFlags)) return;
+    if (disposition?.reason !== KILL_SWITCH_REASON) return;
     mediaSessionRef.current?.close();
     mediaSessionRef.current = null;
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
     }
-    setUrl(null);
-    setPreviewBlob(null);
-    setStreamOpts(null);
-    setStreamDek(null);
-    setIsVideoPreparing(false);
-    setDisposition({
-      action: "download-only",
-      reason: "This renderer was disabled by the security kill switch",
-    });
-  }, [disposition, isOpen, rendererFlags]);
+  }, [disposition]);
 
   // Keyboard arrow navigation
   useEffect(() => {
@@ -994,14 +996,12 @@ export function FilePreviewDialog({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, isMinimized, hasPrevious, hasNext, onPrevious, onNext]);
 
-  useEffect(() => {
+  // Closing clears the preview before the next commit; its media session and
+  // object URL are released after it.
+  const [shownOpen, setShownOpen] = useState(isOpen);
+  if (shownOpen !== isOpen) {
+    setShownOpen(isOpen);
     if (!isOpen) {
-      mediaSessionRef.current?.close();
-      mediaSessionRef.current = null;
-      if (objectUrlRef.current) {
-        URL.revokeObjectURL(objectUrlRef.current);
-        objectUrlRef.current = null;
-      }
       setUrl(null);
       setPreviewBlob(null);
       setDisposition(null);
@@ -1016,15 +1016,29 @@ export function FilePreviewDialog({
       setIsVideoPreparing(false);
       setFetchedData(null);
     }
+  }
+  useEffect(() => {
+    if (isOpen) return;
+    mediaSessionRef.current?.close();
+    mediaSessionRef.current = null;
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
   }, [isOpen]);
 
   // Reset HD state whenever the file changes or the dialog closes, and revoke
   // the original-quality blob URL so it doesn't leak across navigations.
-  useEffect(() => {
-    mediaInspectionRef.current = null;
+  const hdScope = `${isOpen}:${file?.id ?? ""}`;
+  const [shownHdScope, setShownHdScope] = useState(hdScope);
+  if (shownHdScope !== hdScope) {
+    setShownHdScope(hdScope);
     setWantHd(false);
     setHdLoading(false);
     setHdUrl(null);
+  }
+  useEffect(() => {
+    mediaInspectionRef.current = null;
     hdRequestedRef.current = false;
     if (hdObjectUrlRef.current) {
       URL.revokeObjectURL(hdObjectUrlRef.current);
@@ -1032,10 +1046,19 @@ export function FilePreviewDialog({
     }
   }, [file?.id, isOpen]);
 
-  useEffect(() => {
+  // Another file, lock state or key starts without decrypted metadata.
+  const [nameScope, setNameScope] = useState({ file, isUnlocked, key: activeMetadataKey });
+  if (
+    nameScope.file !== file ||
+    nameScope.isUnlocked !== isUnlocked ||
+    nameScope.key !== activeMetadataKey
+  ) {
+    setNameScope({ file, isUnlocked, key: activeMetadataKey });
     setDecryptedName(null);
     setDecryptedContentType(null);
+  }
 
+  useEffect(() => {
     if (!file || !isUnlocked || !file.isEncrypted) {
       return;
     }
@@ -1921,8 +1944,8 @@ export function FilePreviewDialog({
         if (type.startsWith("image/")) {
           innerContent = (
             <ZoomableImage
+              key={file.id}
               src={wantHd && hdUrl ? hdUrl : url}
-              resetKey={file.id}
               alt={name}
               onZoomIn={canHd ? () => setWantHd(true) : undefined}
               onLoad={() => setIsVideoPreparing(false)}

@@ -26,7 +26,8 @@ export function Navbar() {
   const closeMenu = () => setIsMenuOpen(false);
 
   // Shared navigation links logic to avoid duplication
-  const NavLinks = ({ className = "" }: { className?: string }) => (
+  // A render helper, not a component: defining one inside Navbar would remount it.
+  const navLinks = (className = "") => (
     <div className={`group ${className}`}>
       {isHome && (
         <>
@@ -180,7 +181,7 @@ export function Navbar() {
 
         {/* Desktop Menu */}
         <div className="hidden md:flex items-center pl-6">
-          <NavLinks className="hidden md:flex items-center gap-6" />
+          {navLinks("hidden md:flex items-center gap-6")}
         </div>
 
         {/* Mobile Menu Toggle */}
@@ -204,7 +205,7 @@ export function Navbar() {
       {isMenuOpen && (
         <div className="absolute top-full left-0 right-0 border-b border-border shadow-2xl md:hidden p-6 animate-in slide-in-from-top-2 bg-background">
           <div className="flex flex-col gap-4">
-            <NavLinks className="flex flex-col gap-6" />
+            {navLinks("flex flex-col gap-6")}
           </div>
         </div>
       )}

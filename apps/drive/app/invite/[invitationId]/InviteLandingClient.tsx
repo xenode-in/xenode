@@ -261,7 +261,9 @@ function AuthenticatedActions({
   }, [invitationId]);
 
   useEffect(() => {
-    if (!canAcceptDirectly) void claim();
+    if (canAcceptDirectly) return;
+    const timer = setTimeout(() => void claim(), 0);
+    return () => clearTimeout(timer);
   }, [canAcceptDirectly, claim]);
 
   const act = async (action: "accept" | "reject") => {

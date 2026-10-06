@@ -68,11 +68,14 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
     return unwrapStoredFileKey(data, fileId, { privateKey }, true);
   }
 
+  // Locking (or an empty list) drops every decrypted name.
+  if ((!isUnlocked || !files.length) && Object.keys(decryptedNames).length) {
+    setDecryptedNames({});
+  }
+
   useEffect(() => {
-    if (!isUnlocked || !files.length) {
-      setDecryptedNames((prev) => (Object.keys(prev).length ? {} : prev));
-      return;
-    }
+    if (!isUnlocked || !files.length) return;
+    let cancelled = false;
 
     const decryptNames = async () => {
       const newNames: Record<string, string> = {};
@@ -95,12 +98,15 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
           }
         }
       }
-      if (Object.keys(newNames).length > 0) {
+      if (!cancelled && Object.keys(newNames).length > 0) {
         setDecryptedNames((prev) => ({ ...prev, ...newNames }));
       }
     };
 
-    decryptNames();
+    void decryptNames();
+    return () => {
+      cancelled = true;
+    };
   }, [files, isUnlocked]);
 
   if (files.length === 0) return null;
@@ -190,7 +196,7 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
                     className="hover:bg-accent cursor-pointer"
                     onClick={(e) => {
                       e.stopPropagation();
-                      startDownload(file as any, !!file.isEncrypted, privateKey, metadataKey);
+                      startDownload(file, !!file.isEncrypted, privateKey, metadataKey);
                     }}
                   >
                     <DownloadCloud className="w-4 h-4 mr-2" />
@@ -200,7 +206,7 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
                     className="hover:bg-accent cursor-pointer"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setShareFile(file as any);
+                      setShareFile(file);
                     }}
                   >
                     <Link2 className="w-4 h-4 mr-2" />

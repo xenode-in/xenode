@@ -38,8 +38,8 @@ export function verifyRazorpaySignature(
  * Standardized logging for payment activities.
  */
 export const paymentLogger = {
-  info: (msg: string, data?: any) => console.log(`[PAYMENT][INFO] ${msg}`, data || ""),
-  error: (msg: string, error?: any) => console.error(`[PAYMENT][ERROR] ${msg}`, error || ""),
+  info: (msg: string, data?: unknown) => console.log(`[PAYMENT][INFO] ${msg}`, data || ""),
+  error: (msg: string, error?: unknown) => console.error(`[PAYMENT][ERROR] ${msg}`, error || ""),
 };
 
 /**

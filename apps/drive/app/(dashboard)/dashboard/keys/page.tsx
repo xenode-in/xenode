@@ -75,7 +75,8 @@ export default function ApiKeysPage() {
   }, []);
 
   useEffect(() => {
-    fetchKeys();
+    const timer = setTimeout(() => void fetchKeys(), 0);
+    return () => clearTimeout(timer);
   }, [fetchKeys]);
 
   const handleCreate = async (e: React.FormEvent) => {

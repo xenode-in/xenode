@@ -63,7 +63,7 @@ export async function getAllPosts(): Promise<BlogPostMeta[]> {
   await dbConnect();
   const blogs = await Blog.find({}).sort({ date: -1 }).lean();
 
-  return blogs.map((blog: any) => ({
+  return blogs.map((blog) => ({
     slug: blog.slug,
     title: blog.title,
     description: blog.description,

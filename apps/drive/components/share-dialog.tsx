@@ -44,6 +44,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+const NO_MEMBERS: OrgMemberSuggestion[] = [];
+
 export interface ShareableFile {
   id: string;
   key: string;
@@ -122,8 +124,10 @@ export function ShareDialog({
   const [bundleName, setBundleName] = useState("");
   const [sharedWithInput, setSharedWithInput] = useState("");
   const [shareRole, setShareRole] = useState<ShareRole>("viewer");
-  const [orgMembers, setOrgMembers] = useState<OrgMemberSuggestion[]>([]);
-  const [orgMembersLoading, setOrgMembersLoading] = useState(false);
+  const [loadedMembers, setLoadedMembers] = useState<{
+    orgId: string;
+    members: OrgMemberSuggestion[];
+  } | null>(null);
 
   const driveScope = workspace?.driveScope;
   const orgId =
@@ -131,31 +135,34 @@ export function ShareDialog({
       ? driveScope.orgId
       : null;
 
-  useEffect(() => {
-    if (!open || !orgId) {
-      setOrgMembers([]);
-      return;
-    }
+  // Organization members load while the dialog is open in an org scope.
+  const membersOrgId = open ? orgId : null;
+  const orgMembers =
+    membersOrgId && loadedMembers?.orgId === membersOrgId
+      ? loadedMembers.members
+      : NO_MEMBERS;
+  const orgMembersLoading =
+    membersOrgId !== null && loadedMembers?.orgId !== membersOrgId;
 
+  useEffect(() => {
+    if (!membersOrgId) return;
     let cancelled = false;
-    setOrgMembersLoading(true);
-    fetch(`/api/orgs/${orgId}/members`)
+    fetch(`/api/orgs/${membersOrgId}/members`)
       .then(async (res) => {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || "Failed to load members");
-        if (!cancelled) setOrgMembers(data.members || []);
+        if (!cancelled) {
+          setLoadedMembers({ orgId: membersOrgId, members: data.members || [] });
+        }
       })
       .catch(() => {
-        if (!cancelled) setOrgMembers([]);
-      })
-      .finally(() => {
-        if (!cancelled) setOrgMembersLoading(false);
+        if (!cancelled) setLoadedMembers({ orgId: membersOrgId, members: [] });
       });
 
     return () => {
       cancelled = true;
     };
-  }, [open, orgId]);
+  }, [membersOrgId]);
 
   const completedRecipientEmails = useMemo(() => {
     const parts = sharedWithInput

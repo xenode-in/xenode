@@ -79,7 +79,8 @@ export default function AdminTicketDetailPage({
   }, [id]);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   async function updateField(field: "status" | "priority", value: string) {

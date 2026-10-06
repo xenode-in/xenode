@@ -65,10 +65,13 @@ export function OnlyOfficeSpreadsheetEditor({
   const saveInFlightRef = useRef(false);
   const [state, setState] = useState<SaveState>("loading");
   const [message, setMessage] = useState<string | null>(null);
+  const [workbookLoaded, setWorkbookLoaded] = useState(false);
 
   // Own the x2t client unless one was injected (tests / shared instance).
   const x2tClient = useMemo(() => x2t ?? new X2tClient(), [x2t]);
-  x2tRef.current = x2tClient;
+  useEffect(() => {
+    x2tRef.current = x2tClient;
+  }, [x2tClient]);
 
   const fail = useCallback(
     (code: string, msg?: string) => {
@@ -89,6 +92,7 @@ export function OnlyOfficeSpreadsheetEditor({
         const loaded = await adapter.loadBinary(objectId, controller.signal);
         if (cancelled) return;
         loadedRef.current = loaded;
+        setWorkbookLoaded(true);
         onLoaded?.(loaded);
 
         let bin: Uint8Array;
@@ -204,13 +208,11 @@ export function OnlyOfficeSpreadsheetEditor({
   );
 
   const requestSave = useCallback(() => {
-    const canRetryFailedSave = state === "failed" && loadedRef.current !== null;
+    const canRetryFailedSave = state === "failed" && workbookLoaded;
     if (state !== "dirty" && !canRetryFailedSave) return;
     frameRef.current?.requestSave(crypto.randomUUID());
-  }, [state]);
-  const canSave =
-    state === "dirty" ||
-    (state === "failed" && loadedRef.current !== null);
+  }, [state, workbookLoaded]);
+  const canSave = state === "dirty" || (state === "failed" && workbookLoaded);
 
   // Ctrl/Cmd+S -> explicit save through the bridge.
   useEffect(() => {

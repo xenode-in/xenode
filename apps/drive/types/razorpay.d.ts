@@ -1,3 +1,10 @@
+/** Checkout success response for a subscription payment. */
+export interface RazorpaySubscriptionResponse {
+  razorpay_payment_id: string;
+  razorpay_subscription_id: string;
+  razorpay_signature: string;
+}
+
 export interface RazorpayOptions {
   key: string;
   amount?: number;
@@ -7,7 +14,7 @@ export interface RazorpayOptions {
   image?: string;
   order_id?: string;
   subscription_id?: string;
-  handler: (response: any) => void | Promise<void>;
+  handler: (response: RazorpaySubscriptionResponse) => void | Promise<void>;
   prefill?: {
     name?: string;
     email?: string;
@@ -24,7 +31,7 @@ export interface RazorpayOptions {
 
 export interface RazorpayInstance {
   open: () => void;
-  on: (event: string, handler: (response: any) => void) => void;
+  on: (event: string, handler: (response: unknown) => void) => void;
 }
 
 declare global {

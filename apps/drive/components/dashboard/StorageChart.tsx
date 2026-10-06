@@ -34,7 +34,7 @@ export function StorageChart({ usedBytes, totalBytes }: StorageChartProps) {
     data[1].value = totalBytes;
   }
 
-  const onPieEnter = (_: any, index: number) => {
+  const onPieEnter = (_: unknown, index: number) => {
     setActiveIndex(index);
   };
 

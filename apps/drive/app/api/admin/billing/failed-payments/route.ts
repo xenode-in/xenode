@@ -5,6 +5,8 @@ import dbConnect from "@/lib/mongodb";
 import Payment from "@/models/Payment";
 import { User } from "@/models/User";
 
+type GatewayFailure = { payload?: { payment?: { entity?: { error_code?: string } } } };
+
 /**
  * GET /api/admin/billing/failed-payments
  *
@@ -78,7 +80,8 @@ export async function GET(request: NextRequest) {
         paymentId: r.payment_id,
         reason: r.notes ?? null,
         gatewayCode:
-          (r.gatewayResponse as any)?.payload?.payment?.entity?.error_code ??
+          (r.gatewayResponse as GatewayFailure | undefined)?.payload?.payment?.entity
+            ?.error_code ??
           null,
       };
     }),

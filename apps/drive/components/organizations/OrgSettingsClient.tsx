@@ -90,7 +90,8 @@ export function OrgSettingsClient({
   }, [orgId]);
 
   useEffect(() => {
-    void loadDomains();
+    const timer = setTimeout(() => void loadDomains(), 0);
+    return () => clearTimeout(timer);
   }, [loadDomains]);
 
   const addDomain = async () => {

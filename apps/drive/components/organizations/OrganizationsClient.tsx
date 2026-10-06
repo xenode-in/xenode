@@ -322,11 +322,13 @@ export function OrganizationsClient({ user, storageRegions }: { user: SessionUse
   }, [loadMyInvites, loadOrgs]);
 
   useEffect(() => {
-    void refresh();
+    const timer = setTimeout(() => void refresh(), 0);
+    return () => clearTimeout(timer);
   }, [refresh]);
 
   useEffect(() => {
-    void loadManagedOrg(manageOrgId);
+    const timer = setTimeout(() => void loadManagedOrg(manageOrgId), 0);
+    return () => clearTimeout(timer);
   }, [loadManagedOrg, manageOrgId]);
 
   const openCreate = () => {

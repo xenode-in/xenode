@@ -20,6 +20,29 @@ function formatBytes(bytes: number) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
 }
 
+const DAY_MS = 1000 * 60 * 60 * 24;
+
+/**
+ * Whether a paid plan has lapsed and the days left before its downgrade (the
+ * grace period end, else the expiry awaiting the nightly sweep).
+ */
+function planLapse(
+  usage: { isGracePeriod?: boolean; gracePeriodEndsAt?: Date; planExpiresAt?: Date } | null,
+  now = Date.now(),
+) {
+  const lapsed = Boolean(
+    usage?.planExpiresAt && new Date(usage.planExpiresAt).getTime() < now,
+  );
+  const downgradeAt =
+    usage?.isGracePeriod && usage.gracePeriodEndsAt
+      ? usage.gracePeriodEndsAt
+      : usage?.planExpiresAt;
+  const daysLeft = downgradeAt
+    ? Math.max(0, Math.ceil((new Date(downgradeAt).getTime() - now) / DAY_MS))
+    : 0;
+  return { lapsed, daysLeft };
+}
+
 const PLAN_DISPLAY_NAMES: Record<string, string> = {
   free: "Free Tier",
   basic: "Basic Plan",
@@ -110,23 +133,7 @@ export default async function BillingPage() {
   const planActivatedDate = formatDate(usage?.planActivatedAt);
   const planExpiryDate = formatDate(usage?.planExpiresAt);
 
-  const getDaysUntilDowngrade = () => {
-    // If they are in a grace period, the downgrade happens at gracePeriodEndsAt
-    if (usage?.isGracePeriod && usage?.gracePeriodEndsAt) {
-      const ms = new Date(usage.gracePeriodEndsAt).getTime() - Date.now();
-      return Math.max(0, Math.ceil(ms / (1000 * 60 * 60 * 24)));
-    }
-
-    if (!usage?.planExpiresAt) return 0;
-
-    // If they just naturally expired and are waiting for the midnight cron job sweep
-    // (meaning their planExpiresAt is in the past)
-    const ms = new Date(usage.planExpiresAt).getTime() - Date.now();
-    // If negative, it means they are currently expired and will be swept tonight (0 days left)
-    return Math.max(0, Math.ceil(ms / (1000 * 60 * 60 * 24)));
-  };
-
-  const daysLeft = getDaysUntilDowngrade();
+  const { lapsed: planLapsed, daysLeft } = planLapse(usage);
 
   return (
     <div className="space-y-8">
@@ -157,9 +164,7 @@ export default async function BillingPage() {
 
       {/* ── Grace Period Banner ── */}
       {((usage?.isGracePeriod && usage?.gracePeriodEndsAt) ||
-        (isPaidPlan &&
-          usage?.planExpiresAt &&
-          new Date(usage.planExpiresAt).getTime() < Date.now())) &&
+        (isPaidPlan && planLapsed)) &&
         (() => {
           // Halted subscriptions: the autopay mandate exists but the latest
           // charge failed. /api/subscriptions/create would 409 — route the user
@@ -291,8 +296,7 @@ export default async function BillingPage() {
                 </span>
                 <span
                   className={
-                    usage.isGracePeriod ||
-                    new Date(usage.planExpiresAt).getTime() < Date.now()
+                    usage.isGracePeriod || planLapsed
                       ? "text-destructive font-medium"
                       : "text-foreground"
                   }

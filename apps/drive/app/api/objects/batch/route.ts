@@ -145,7 +145,9 @@ export async function POST(request: NextRequest) {
 
     const docs = await StorageObject.find(query)
       .select(LIST_PROJECTION)
-      .lean<Array<Record<string, any>>>();
+      .lean<
+        Array<{ _id: unknown; thumbnail?: string; optimizedKey?: string; [field: string]: unknown }>
+      >();
 
     // Sign URLs in parallel. Two URLs per object (thumbnail + optimized)
     // so this is the dominant latency contributor — ~10-30ms each via
@@ -195,18 +197,19 @@ export async function POST(request: NextRequest) {
     // Returned as an object keyed by id so the client can do O(1)
     // lookups when merging into its cache, and gracefully ignores IDs
     // the server dropped (deleted, wrong bucket, malformed).
-    const items: Record<string, any> = {};
+    const items: Record<string, unknown> = {};
     for (const [id, doc] of signed) items[id] = doc;
 
     return NextResponse.json({ items }, { headers: { "Cache-Control": "private, no-store" } });
-  } catch (err: any) {
+  } catch (err) {
     if (isAuthzError(err)) {
       statusCode = err.status;
       errorMessage = err.message;
       return toJsonResponse(err);
     }
-    statusCode = err?.message === "Unauthorized" ? 401 : 500;
-    errorMessage = err?.message ?? "Internal error";
+    const message = err instanceof Error ? err.message : undefined;
+    statusCode = message === "Unauthorized" ? 401 : 500;
+    errorMessage = message ?? "Internal error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   }
 }

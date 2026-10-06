@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminSession } from "@/lib/admin/session";
 import dbConnect from "@/lib/mongodb";
 import WebhookLog from "@/models/WebhookLog";
-import { dispatchWebhookEvent } from "@/lib/billing/webhooks/handlers";
+import {
+  dispatchWebhookEvent,
+  type RazorpayWebhookEvent,
+} from "@/lib/billing/webhooks/handlers";
 import { BillingEventType, emitBillingEvent } from "@/lib/billing/events";
 
 /**
@@ -33,7 +36,7 @@ export async function POST(
     const result = await dispatchWebhookEvent({
       eventId: log.eventId,
       eventType: log.eventType,
-      event: log.payload,
+      event: log.payload as RazorpayWebhookEvent,
       source:
         log.gateway === "razorpay" ? "razorpay" : "razorpay_subscription",
     });

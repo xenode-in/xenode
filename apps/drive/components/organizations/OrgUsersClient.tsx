@@ -110,7 +110,8 @@ export function OrgUsersClient({ orgId, role }: { orgId: string; role: OrgRole }
   }, [orgId]);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   // Every organization key version this member holds, newest first.

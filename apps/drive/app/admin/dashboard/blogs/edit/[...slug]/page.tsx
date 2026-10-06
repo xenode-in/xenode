@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useEffect, useState, use, type ComponentProps } from "react";
 import BlogForm from "@/components/admin/BlogForm";
 import { Loader2 } from "lucide-react";
 
@@ -8,7 +8,9 @@ export default function EditBlogPage({ params }: { params: Promise<{ slug: strin
   const { slug } = use(params);
   const slugPath = slug.join("/");
 
-  const [post, setPost] = useState<any>(null);
+  const [post, setPost] = useState<
+    ComponentProps<typeof BlogForm>["initialData"] | null
+  >(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 

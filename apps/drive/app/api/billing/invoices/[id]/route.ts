@@ -46,17 +46,18 @@ export async function GET(
       const pdfBuffer = await generateInvoicePdfBuffer(id, session.user.id);
       const invoiceNumber = invoice.number || `XEN-INV-${id}`;
 
-      return new Response(pdfBuffer as any, {
+      return new Response(pdfBuffer as Uint8Array<ArrayBuffer>, {
         headers: {
           "Content-Type": "application/pdf",
           "Content-Disposition": `inline; filename="invoice_${invoiceNumber}.pdf"`,
           "Content-Length": String(pdfBuffer.byteLength),
         },
       });
-    } catch (err: any) {
+    } catch (err) {
       console.error("PDF generation error in API:", err);
+      const message = err instanceof Error ? err.message : "unknown error";
       return NextResponse.json(
-        { error: `Failed to generate PDF: ${err.message}` },
+        { error: `Failed to generate PDF: ${message}` },
         { status: 500 },
       );
     }

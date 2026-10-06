@@ -6,7 +6,10 @@ import {
   verifyRazorpaySignature,
   paymentLogger,
 } from "@/lib/payment/razorpayUtils";
-import { dispatchWebhookEvent } from "@/lib/billing/webhooks/handlers";
+import {
+  dispatchWebhookEvent,
+  type RazorpayWebhookEvent,
+} from "@/lib/billing/webhooks/handlers";
 import { BillingEventType, emitBillingEvent } from "@/lib/billing/events";
 
 /**
@@ -32,7 +35,7 @@ const SUBSCRIPTION_EVENT_PREFIXES = [
   "invoice.",
 ];
 
-function computeEventId(rawBody: string, parsed: any): string {
+function computeEventId(rawBody: string, parsed: RazorpayWebhookEvent | null): string {
   const explicit =
     (typeof parsed?.id === "string" && parsed.id) ||
     (typeof parsed?.event_id === "string" && parsed.event_id);
@@ -75,7 +78,7 @@ export async function POST(request: Request) {
     );
   }
 
-  let parsed: any;
+  let parsed: RazorpayWebhookEvent | null;
   try {
     parsed = JSON.parse(rawBody);
   } catch {
@@ -118,8 +121,8 @@ export async function POST(request: Request) {
   );
 
   // includeResultMetadata returns { value, lastErrorObject }
-  const inserted = !!(upsert as any)?.lastErrorObject?.upserted;
-  const log = (upsert as any)?.value ?? upsert;
+  const inserted = Boolean(upsert.lastErrorObject?.upserted);
+  const log = upsert.value;
 
   if (!inserted && log?.status === "processed") {
     paymentLogger.info(`Replay of processed webhook ${eventId} — short-circuit`);
@@ -131,7 +134,8 @@ export async function POST(request: Request) {
     const result = await dispatchWebhookEvent({
       eventId,
       eventType,
-      event: parsed,
+      // A verified body of `null` has no event type and is ignored.
+      event: parsed ?? {},
       source: "razorpay",
     });
 
@@ -152,14 +156,15 @@ export async function POST(request: Request) {
       );
     }
     return NextResponse.json({ success: true, handled: result.status });
-  } catch (error: any) {
+  } catch (error) {
     paymentLogger.error("Webhook dispatch threw", error);
+    const message = error instanceof Error ? error.message : undefined;
     await WebhookLog.updateOne(
       { eventId },
-      { $set: { status: "failed", errorMessage: error?.message } },
+      { $set: { status: "failed", errorMessage: message } },
     );
     return NextResponse.json(
-      { error: error?.message ?? "Internal error" },
+      { error: message ?? "Internal error" },
       { status: 500 },
     );
   }

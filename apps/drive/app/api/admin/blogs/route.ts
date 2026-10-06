@@ -41,7 +41,7 @@ export async function GET(req: NextRequest) {
     .sort({ date: -1 })
     .lean();
 
-  const formattedPosts = blogs.map((blog: any) => ({
+  const formattedPosts = blogs.map((blog) => ({
     slug: blog.slug,
     title: blog.title,
     date: blog.date.toISOString(),
@@ -139,10 +139,10 @@ export async function PUT(req: NextRequest) {
     }
 
     return NextResponse.json({ success: true, slug: newSlug });
-  } catch (err: any) {
+  } catch (err) {
     console.error("[PUT /api/admin/blogs]", err);
     return NextResponse.json(
-      { error: err.message || "Internal server error" },
+      { error: (err instanceof Error && err.message) || "Internal server error" },
       { status: 500 },
     );
   }
@@ -170,10 +170,10 @@ export async function DELETE(req: NextRequest) {
     }
 
     return NextResponse.json({ success: true });
-  } catch (err: any) {
+  } catch (err) {
     console.error("[DELETE /api/admin/blogs]", err);
     return NextResponse.json(
-      { error: err.message || "Internal server error" },
+      { error: (err instanceof Error && err.message) || "Internal server error" },
       { status: 500 },
     );
   }
@@ -257,10 +257,10 @@ export async function POST(req: NextRequest) {
     await blog.save();
 
     return NextResponse.json({ success: true, slug }, { status: 201 });
-  } catch (err: any) {
+  } catch (err) {
     console.error("[POST /api/admin/blogs]", err);
     return NextResponse.json(
-      { error: err.message || "Internal server error" },
+      { error: (err instanceof Error && err.message) || "Internal server error" },
       { status: 500 },
     );
   }

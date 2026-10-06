@@ -143,11 +143,14 @@ export function PreviewSection({
     [videos, images, audios],
   );
 
+  // Locking (or an empty list) drops every decrypted name.
+  if ((!isUnlocked || !allItems.length) && Object.keys(decryptedNames).length) {
+    setDecryptedNames({});
+  }
+
   useEffect(() => {
-    if (!isUnlocked || !allItems.length) {
-      setDecryptedNames((prev) => (Object.keys(prev).length ? {} : prev));
-      return;
-    }
+    if (!isUnlocked || !allItems.length) return;
+    let cancelled = false;
 
     const decryptNames = async () => {
       const newNames: Record<string, string> = {};
@@ -166,12 +169,15 @@ export function PreviewSection({
           }
         }
       }
-      if (Object.keys(newNames).length > 0) {
+      if (!cancelled && Object.keys(newNames).length > 0) {
         setDecryptedNames((prev) => ({ ...prev, ...newNames }));
       }
     };
 
-    decryptNames();
+    void decryptNames();
+    return () => {
+      cancelled = true;
+    };
   }, [allItems, isUnlocked]);
 
   const hasContent =

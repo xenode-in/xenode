@@ -40,7 +40,8 @@ export default function WebhookMonitorPage() {
   }, [status, eventType]);
 
   useEffect(() => {
-    void load();
+    const timer = setTimeout(() => void load(), 0);
+    return () => clearTimeout(timer);
   }, [load]);
 
   async function viewPayload(id: string) {

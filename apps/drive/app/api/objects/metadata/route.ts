@@ -139,14 +139,15 @@ export async function GET(request: NextRequest) {
     response.headers.set("Cache-Control", "private, max-age=30");
 
     return response;
-  } catch (err: any) {
+  } catch (err) {
     if (isAuthzError(err)) {
       statusCode = err.status;
       errorMessage = err.message;
       return toJsonResponse(err);
     }
-    statusCode = err?.message === "Unauthorized" ? 401 : 500;
-    errorMessage = err?.message ?? "Internal error";
+    const message = err instanceof Error ? err.message : undefined;
+    statusCode = message === "Unauthorized" ? 401 : 500;
+    errorMessage = message ?? "Internal error";
     return NextResponse.json({ error: errorMessage }, { status: statusCode });
   }
 }

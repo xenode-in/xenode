@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { MDXRemote } from "next-mdx-remote";
+import { MDXRemote, type MDXRemoteSerializeResult } from "next-mdx-remote";
 import { useMDXComponents } from "@/mdx-components";
 
 const PRESET_FOLDERS = ["announcements", "support", "updates", "guides", "security"];
@@ -53,13 +53,10 @@ export default function BlogForm({ initialData, mode }: BlogFormProps) {
   const [error, setError] = useState<string | null>(null);
   const [useCustomFolder, setUseCustomFolder] = useState(false);
   const [activeTab, setActiveTab] = useState<"edit" | "preview">("edit");
-  const [mdxSource, setMdxSource] = useState<any>(null);
+  const [mdxSource, setMdxSource] = useState<MDXRemoteSerializeResult | null>(
+    null,
+  );
   const [previewLoading, setPreviewLoading] = useState(false);
-
-  // Sync image preview if initialData changes (for lazy loading)
-  useEffect(() => {
-    if (initialData?.image) setImagePreview(initialData.image);
-  }, [initialData?.image]);
 
   function handleChange(
     e: React.ChangeEvent<
