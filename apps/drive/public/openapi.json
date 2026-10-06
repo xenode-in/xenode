@@ -2177,16 +2177,6 @@
       }
     },
 
-    "/api/admin/blogs/migrate": {
-      "post": {
-        "tags": ["Admin"],
-        "summary": "Migrate blog posts",
-        "responses": {
-          "200": { "description": "Migration completed" }
-        }
-      }
-    },
-
     "/api/admin/upload": {
       "post": {
         "tags": ["Admin"],

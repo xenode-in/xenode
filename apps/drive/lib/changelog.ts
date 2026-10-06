@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import matter from "gray-matter";
+import { parse } from "yaml";
 
 const CHANGELOG_PATH = path.join(process.cwd(), "content/changelog");
 
@@ -31,6 +31,18 @@ export interface ChangelogGroup {
   entries: ChangelogEntryMeta[];
 }
 
+/** Leading `---` YAML front matter (trusted repository files) and the body. */
+function parseFrontMatter(source: string) {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
+  const data: unknown = match ? parse(match[1]) : null;
+  return {
+    data: (data && typeof data === "object" ? data : {}) as Partial<
+      Record<keyof ChangelogEntryMeta, string>
+    >,
+    content: match ? source.slice(match[0].length) : source,
+  };
+}
+
 function getChangelogFiles(): string[] {
   try {
     if (!fs.existsSync(CHANGELOG_PATH)) {
@@ -53,7 +65,7 @@ export function getAllChangelogEntries(): ChangelogEntryMeta[] {
     const filePath = path.join(CHANGELOG_PATH, file);
     try {
       const source = fs.readFileSync(filePath, "utf-8");
-      const { data } = matter(source);
+      const { data } = parseFrontMatter(source);
       const slug = file.replace(".mdx", "");
 
       return [
@@ -92,7 +104,7 @@ export function getChangelogBySlug(slug: string): ChangelogEntry | null {
     return null;
   }
 
-  const { data, content } = matter(source);
+  const { data, content } = parseFrontMatter(source);
 
   return {
     slug,
