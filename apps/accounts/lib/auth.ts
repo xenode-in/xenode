@@ -67,14 +67,17 @@ export function resolveSocialProviders(
   };
 }
 
+/**
+ * ID tokens are issued only to the upserted first-party clients. Better Auth
+ * owns `azp` (it strips it from custom claims); products bind tokens by `aud`.
+ */
 export function firstPartyIdTokenClaims(
   metadata?: Record<string, unknown>,
-): { azp: string } {
-  const authorizedParty = metadata?.authorizedParty;
-  if (typeof authorizedParty !== "string") {
+): Record<string, never> {
+  if (typeof metadata?.authorizedParty !== "string") {
     throw new Error("OIDC client is missing its authorized party");
   }
-  return { azp: authorizedParty };
+  return {};
 }
 
 async function ensureRs256SigningKey() {

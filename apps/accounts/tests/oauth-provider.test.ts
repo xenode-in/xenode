@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { firstPartyIdTokenClaims } from "../lib/auth";
 
 describe("Accounts OAuth provider claims", () => {
-  it("binds an ID token to the registered first-party client", () => {
+  it("adds no reserved claims for a registered first-party client", () => {
     expect(
       firstPartyIdTokenClaims({ authorizedParty: "xenode-drive-web" }),
-    ).toEqual({ azp: "xenode-drive-web" });
+    ).toEqual({});
   });
 
   it("fails closed when a client lacks authorized-party metadata", () => {
