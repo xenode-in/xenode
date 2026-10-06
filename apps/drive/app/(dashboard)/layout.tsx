@@ -1,5 +1,4 @@
-import { getServerSession } from "@/lib/auth/session";
-import { redirect } from "next/navigation";
+import { requirePageSession } from "@/lib/auth/session";
 import type { Metadata } from "next";
 import { DashboardShell } from "@/components/dashboard/DashboardShell";
 import { listUserOrgs } from "@/lib/orgs/listUserOrgs";
@@ -26,11 +25,7 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const session = await getServerSession();
-
-  if (!session) {
-    redirect("/auth/login");
-  }
+  const session = await requirePageSession();
 
   // Email verification is enforced by the Accounts authority at sign-in —
   // Drive no longer hosts a verification flow.

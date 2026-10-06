@@ -1,4 +1,4 @@
-import { requireAuth } from "@/lib/auth/session";
+import { requirePageSession } from "@/lib/auth/session";
 import { DashboardClient } from "@/components/dashboard/DashboardClient";
 import { OrgHome } from "@/components/dashboard/OrgHome";
 import { isOrganizationFeatureEnabled, type OrgRole } from "@/lib/auth/organization";
@@ -6,7 +6,7 @@ import { assertOrgMember } from "@/lib/orgs/access";
 import { getOrgHomeSummary, type OrgHomeSummary } from "@/lib/orgs/home";
 
 export default async function DashboardPage() {
-  const session = await requireAuth();
+  const session = await requirePageSession();
 
   const activeOrgId =
     (session.session as { activeOrganizationId?: string | null })

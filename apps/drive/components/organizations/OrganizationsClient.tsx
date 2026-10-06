@@ -949,15 +949,15 @@ export function OrganizationsClient({ user, storageRegions }: { user: SessionUse
                     >
                       <Users className="h-4 w-4" />
                     </Button>
+                    {/* Files live in the active workspace: select it, then open them. */}
                     <Button
-                      asChild
                       size="sm"
                       variant="outline"
                       aria-label="Organization files"
+                      disabled={busy !== null}
+                      onClick={() => void switchScope(org.id)}
                     >
-                      <Link href={`/organizations/${org.id}/files`}>
-                        <Files className="h-4 w-4" />
-                      </Link>
+                      <Files className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
@@ -1114,11 +1114,14 @@ export function OrganizationsClient({ user, storageRegions }: { user: SessionUse
           <div className="space-y-6 px-4 pb-8">
             {manageOrg && (
               <div className="flex flex-wrap gap-2">
-                <Button asChild variant="outline" size="sm">
-                  <Link href={`/organizations/${manageOrg.id}/files`}>
-                    <Files className="h-4 w-4" />
-                    Files
-                  </Link>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={busy !== null}
+                  onClick={() => void switchScope(manageOrg.id)}
+                >
+                  <Files className="h-4 w-4" />
+                  Files
                 </Button>
                 <Button asChild variant="outline" size="sm">
                   <a href={accountsOrganizationsUrl}>

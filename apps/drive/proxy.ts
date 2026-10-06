@@ -1,6 +1,7 @@
 import { isCrossOriginProductRequest } from "@xenode/identity-core";
 import { randomBytes } from "node:crypto";
 import { driveContentSecurityPolicy } from "@/lib/security/csp";
+import { loginPath, RETURN_PATH_HEADER } from "@/lib/auth/return-path";
 import { getServerProductOrigin } from "@xenode/config";
 /**
  * Next.js Proxy configuration (replaces deprecated middleware file convention)
@@ -91,11 +92,8 @@ function authGate(req: NextRequest): NextResponse | null {
   if (isProtectedApi) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  // Kick off the Accounts OIDC flow; it lands back on /dashboard.
-  const loginUrl = req.nextUrl.clone();
-  loginUrl.pathname = "/auth/login";
-  loginUrl.search = "";
-  return NextResponse.redirect(loginUrl);
+  // Kick off the Accounts OIDC flow; it returns to the requested page.
+  return NextResponse.redirect(new URL(loginPath(pathname + req.nextUrl.search), req.nextUrl));
 }
 
 function routeRequest(req: NextRequest) {
@@ -193,6 +191,7 @@ export function proxy(req: NextRequest) {
   const policy = driveContentSecurityPolicy(nonce, pathname === "/checkout" || pathname.startsWith("/checkout/"));
   const requestHeaders = new Headers(req.headers);
   requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set(RETURN_PATH_HEADER, pathname + req.nextUrl.search);
   requestHeaders.set("content-security-policy", policy);
   requestHeaders.delete("content-security-policy-report-only");
   const routed = routeRequest(req);

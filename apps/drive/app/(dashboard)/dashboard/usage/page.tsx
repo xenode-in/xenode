@@ -1,4 +1,4 @@
-import { requireAuth } from "@/lib/auth/session";
+import { requirePageSession } from "@/lib/auth/session";
 import dbConnect from "@/lib/mongodb";
 import Usage from "@/models/Usage";
 import StorageObject from "@/models/StorageObject";
@@ -50,7 +50,7 @@ const CATEGORY_META = {
 };
 
 export default async function UsagePage() {
-  const session = await requireAuth();
+  const session = await requirePageSession();
   const userId = session.user.id;
 
   await dbConnect();

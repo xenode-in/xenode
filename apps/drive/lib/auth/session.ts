@@ -1,4 +1,5 @@
 import { headers as nextHeaders } from "next/headers";
+import { redirect } from "next/navigation";
 import { type NextRequest } from "next/server";
 import mongoose from "mongoose";
 import {
@@ -8,6 +9,7 @@ import {
 import dbConnect from "@/lib/mongodb";
 import { parseDriveSessionCookie } from "@/lib/auth/product-cookie";
 import { User } from "@/models/User";
+import { loginPath, RETURN_PATH_HEADER } from "@/lib/auth/return-path";
 
 export const DRIVE_SESSION_COOKIE = "xenode_drive_session";
 
@@ -137,13 +139,9 @@ export async function getServerSession(
 }
 
 /**
- * Require authentication — throws "Unauthorized" if no session found.
- *
- * In API routes, always pass the NextRequest:
+ * API routes: require authentication — throws "Unauthorized" if no session.
  *   const session = await requireAuth(request);
- *
- * In Server Components / Server Actions (no request object):
- *   const session = await requireAuth();
+ * Server pages and layouts use requirePageSession() instead.
  */
 export async function requireAuth(request?: NextRequest): Promise<DriveSession> {
   const session = await getServerSession(request);
@@ -151,4 +149,14 @@ export async function requireAuth(request?: NextRequest): Promise<DriveSession> 
     throw new Error("Unauthorized");
   }
   return session;
+}
+
+/**
+ * Server pages and layouts: without a session the browser is sent to sign in
+ * and back to the page it asked for (the proxy forwards that path).
+ */
+export async function requirePageSession(): Promise<DriveSession> {
+  const session = await getServerSession();
+  if (session) return session;
+  redirect(loginPath((await nextHeaders()).get(RETURN_PATH_HEADER)));
 }

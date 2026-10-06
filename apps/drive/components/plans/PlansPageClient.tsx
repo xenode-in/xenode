@@ -192,7 +192,8 @@ export default function PlansPageClient() {
   const handleSelect = (slug: string, name: string) => {
     if (!session) {
       toast.error("Please sign in first.");
-      router.push("/auth/login");
+      // Sign-in leaves the app for Accounts; a full navigation avoids an RSC fetch it would refuse.
+      window.location.assign(new URL("/auth/login", window.location.href));
       return;
     }
     // Yearly users switching to monthly: deferred to period end. Open the

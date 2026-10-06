@@ -1,5 +1,5 @@
 import { getPublicProductOrigin } from "@xenode/config/client";
-import { requireAuth } from "@/lib/auth/session";
+import { requirePageSession } from "@/lib/auth/session";
 import { Shield, User, Mail, Calendar, Palette, HardDrive, ExternalLink } from "lucide-react";
 import { ThemeSelector } from "@/components/settings/theme-selector";
 import { PreviewCacheSection } from "@/components/settings/PreviewCacheSection";
@@ -8,7 +8,7 @@ const ACCOUNTS_ORIGIN =
   getPublicProductOrigin("accounts");
 
 export default async function SettingsPage() {
-  const session = await requireAuth();
+  const session = await requirePageSession();
   const user = session.user;
 
   return (

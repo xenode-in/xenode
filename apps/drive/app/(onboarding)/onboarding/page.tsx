@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getServerSession } from "@/lib/auth/session";
+import { requirePageSession } from "@/lib/auth/session";
 import { OnboardingForm } from "@/app/(onboarding)/onboarding/OnboardingForm";
 
 export const metadata = {
@@ -8,11 +8,7 @@ export const metadata = {
 };
 
 export default async function OnboardingPage() {
-  const session = await getServerSession();
-
-  if (!session) {
-    redirect("/auth/login");
-  }
+  const session = await requirePageSession();
 
   // Email verification is enforced by the Accounts authority at sign-in.
 

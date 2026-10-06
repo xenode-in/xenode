@@ -319,7 +319,8 @@ function AuthenticatedActions({
           className="w-full"
           onClick={() => {
             setPostAuthRedirect(invitePath);
-            router.push("/auth/login");
+            // Sign-in leaves the app for Accounts; a full navigation avoids an RSC fetch it would refuse.
+            window.location.assign(new URL("/auth/login", window.location.href));
           }}
         >
           <LogIn className="h-4 w-4" />

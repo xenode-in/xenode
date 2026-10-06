@@ -1,16 +1,12 @@
 import { redirect } from "next/navigation";
-import { getServerSession } from "@/lib/auth/session";
+import { requirePageSession } from "@/lib/auth/session";
 
 export default async function OnboardingLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const session = await getServerSession();
-
-  if (!session) {
-    redirect("/auth/login");
-  }
+  const session = await requirePageSession();
 
   // If they are already onboarded, don't let them back in
   if (session.user.onboarded) {

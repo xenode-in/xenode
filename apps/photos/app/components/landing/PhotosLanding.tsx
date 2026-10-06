@@ -94,13 +94,13 @@ export function PhotosLanding({ signedIn }: { signedIn: boolean }) {
             FAQ
           </a>
         </nav>
-        <Link
+        <a
           href={primaryHref}
           className="inline-flex h-10 items-center gap-2 rounded-full bg-[#111714] px-5 text-sm font-semibold text-white transition hover:-translate-y-0.5 dark:bg-white dark:text-black"
         >
           {signedIn ? "Open Photos" : "Get started"}
           <ArrowRight size={15} />
-        </Link>
+        </a>
       </header>
 
       <main className="relative z-10">
@@ -122,13 +122,13 @@ export function PhotosLanding({ signedIn }: { signedIn: boolean }) {
               upload, organized around your memories, and readable only by you.
             </p>
             <div className="mt-9 flex flex-wrap items-center gap-3">
-              <Link
+              <a
                 href={primaryHref}
                 className="inline-flex h-13 items-center gap-2 rounded-full bg-[#111714] px-7 font-semibold text-white shadow-xl shadow-emerald-950/10 transition hover:-translate-y-0.5 dark:bg-white dark:text-black"
               >
                 {signedIn ? "Open your library" : "Start your private library"}
                 <ArrowRight size={17} />
-              </Link>
+              </a>
               <a
                 href="#privacy"
                 className="inline-flex h-13 items-center rounded-full border border-black/15 px-7 font-semibold transition hover:bg-black/5 dark:border-white/18 dark:hover:bg-white/5"
@@ -327,13 +327,13 @@ export function PhotosLanding({ signedIn }: { signedIn: boolean }) {
             <h2 className="mx-auto mt-5 max-w-3xl text-balance text-4xl font-medium tracking-[-0.05em] md:text-6xl">
               Give your photos a private place to live.
             </h2>
-            <Link
+            <a
               href={primaryHref}
               className="mt-9 inline-flex h-13 items-center gap-2 rounded-full bg-white px-7 font-semibold text-black transition hover:-translate-y-0.5"
             >
               {signedIn ? "Open Xenode Photos" : "Create your private library"}
               <ArrowRight size={17} />
-            </Link>
+            </a>
           </div>
         </section>
       </main>

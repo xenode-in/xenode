@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { requireAuth } from "@/lib/auth/session";
+import { requirePageSession } from "@/lib/auth/session";
 import { listUserTickets } from "@/lib/support/tickets";
 import { MessageSquare, Plus, RefreshCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -53,7 +53,7 @@ function timeAgo(date: Date): string {
 }
 
 export default async function SupportPage() {
-  const session = await requireAuth();
+  const session = await requirePageSession();
   const { rows } = await listUserTickets({ userId: session.user.id });
 
   return (

@@ -13,10 +13,20 @@ function request(host: string, pathname: string) {
 }
 
 describe("proxy office routing", () => {
-  it("keeps the configured root Drive host on its own login flow", () => {
+  it("keeps the configured root Drive host on its own login flow, returning to the page", () => {
     vi.stubEnv("DRIVE_ORIGIN", "https://xenode.in");
-    const response = proxy(request("xenode.in", "/dashboard"));
-    expect(response.headers.get("location")).toBe("https://xenode.in/auth/login");
+    const response = proxy(request("xenode.in", "/dashboard/files?folder=abc"));
+    expect(response.headers.get("location")).toBe(
+      "https://xenode.in/auth/login?next=%2Fdashboard%2Ffiles%3Ffolder%3Dabc",
+    );
+  });
+
+  it("forwards the requested page as the sign-in return path, overwriting client values", () => {
+    vi.stubEnv("DRIVE_ORIGIN", "https://xenode.in");
+    const response = proxy(new NextRequest("https://xenode.in/privacy?x=1", {
+      headers: { host: "xenode.in", "x-xenode-return-path": "https://evil.test/" },
+    }));
+    expect(response.headers.get("x-middleware-request-x-xenode-return-path")).toBe("/privacy?x=1");
   });
 
   it("checks API origins against DRIVE_ORIGIN even when the public alias differs", () => {

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSession } from "@/lib/auth/client";
 import { toast } from "sonner";
@@ -114,14 +113,14 @@ export default function PricingGrid({
   campaign,
   compact = false,
 }: Props) {
-  const router = useRouter();
   const { data: session } = useSession();
   const [cycle, setCycle] = useState<BillingCycle>("monthly");
 
   const handleSelectPlan = (slug: string) => {
     if (!session) {
       toast.error("Please sign in first to subscribe.");
-      router.push("/auth/login");
+      // Sign-in leaves the app for Accounts; a full navigation avoids an RSC fetch it would refuse.
+      window.location.assign(new URL("/auth/login", window.location.href));
       return;
     }
     window.location.assign(`/checkout?plan=${slug}&cycle=${cycle}`);

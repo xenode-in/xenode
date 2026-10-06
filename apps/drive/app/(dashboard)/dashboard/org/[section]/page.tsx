@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { requireAuth } from "@/lib/auth/session";
+import { requirePageSession } from "@/lib/auth/session";
 import { isOrganizationFeatureEnabled } from "@/lib/auth/organization";
 import { assertOrgMember } from "@/lib/orgs/access";
 import { OrgFilesClient } from "@/components/organizations/OrgFilesClient";
@@ -95,7 +95,7 @@ const SECTION_META: Record<string, { title: string; description: string }> = {
 };
 
 export default async function OrgSectionPage({ params }: PageProps) {
-  const session = await requireAuth();
+  const session = await requirePageSession();
   const { section } = await params;
 
   const activeOrgId =
