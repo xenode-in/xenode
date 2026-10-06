@@ -129,11 +129,27 @@ regional create-only uploads before release. See
 ```powershell
 npm ci
 npm run typecheck
+npm run lint
 npm run check:boundaries
 npm run test
 npm run test:security
 npm run build
+npm audit --audit-level=moderate
 ```
+
+CI (`.github/workflows/security.yml`) runs these in `verify`; `npm audit` is
+its own job, so an unpatched advisory stays red without skipping the others.
+`browser` runs Drive's Playwright checks (CSP enforcement, the sibling-origin
+API guard, production hydration) against a production build with a throwaway
+MongoDB service. `containers` validates the compose file, builds every image
+and checks that the editor and preview runtimes are framed only by Drive and
+keep their isolation headers. All CI values are synthetic.
+
+Locally, `npm run test:browser --workspace @xenode/drive` runs the browser
+checks (`PLAYWRIGHT_BROWSER_CHANNEL=chrome` uses an installed Chrome). The
+hydration check also needs `DRIVE_CSP_SMOKE_URL` pointing at a production
+build started from the repository root with a disposable database, so no
+developer env file is loaded.
 
 For schema changes, start from a clean database in this migration series. In
 particular, do not retain the historical `deletedAt_1` TTL index.

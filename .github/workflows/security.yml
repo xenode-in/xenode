@@ -9,6 +9,19 @@ permissions:
   contents: read
 
 jobs:
+  # Its own job so an unpatched advisory stays visible without skipping the
+  # other gates.
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      # Release gate: any published advisory (runtime or tooling) needs triage.
+      - run: npm audit --audit-level=moderate
+
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -19,9 +32,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      # Release gate: any published advisory (runtime or tooling) needs triage.
-      - run: npm audit --audit-level=moderate
       - run: npm run typecheck
+      - run: npm run lint
       - run: npm run check:boundaries
       - run: npm run test:security
       - run: npm run test
@@ -36,6 +48,124 @@ jobs:
           NEXT_PUBLIC_PHOTOS_ORIGIN: https://photos.xenode.in
           SAFE_PREVIEW_GLOBAL_ENABLED: "false"
           ONLYOFFICE_V2_ENABLED: "false"
+
+  # Native Chromium checks of CSP enforcement, the sibling-origin API guard and
+  # a production Drive build's hydration. Every value here is synthetic; no
+  # real secret, account or external service is used.
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      mongo:
+        image: mongo:8
+        ports:
+          - 27017:27017
+    env:
+      ACCOUNTS_ORIGIN: http://localhost:13001
+      DRIVE_ORIGIN: http://localhost:13000
+      PHOTOS_ORIGIN: http://localhost:13002
+      NEXT_PUBLIC_ACCOUNTS_ORIGIN: http://localhost:13001
+      NEXT_PUBLIC_DRIVE_ORIGIN: http://localhost:13000
+      NEXT_PUBLIC_PHOTOS_ORIGIN: http://localhost:13002
+      NEXT_PUBLIC_REALTIME_ORIGIN: http://localhost:13000
+      SAFE_PREVIEW_GLOBAL_ENABLED: "false"
+      ONLYOFFICE_V2_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/drive
+      - run: npm run build --workspace @xenode/drive
+      - name: Browser checks against the production build
+        env:
+          NODE_ENV: production
+          DRIVE_CSP_SMOKE_URL: http://localhost:13000
+          MONGODB_URI: mongodb://localhost:27017/xenode-browser-gate
+          MONGODB_LOGS_URI: mongodb://localhost:27017/xenode-browser-gate-logs
+          REDIS_URL: redis://localhost:6379
+          STORAGE_ENABLED_REGIONS: asia
+          S3_BUCKET_NAME: xenode-ci
+          S3_ENDPOINT: https://ci.r2.cloudflarestorage.com
+          S3_KEY_ID: ci-placeholder
+          S3_APPLICATION_KEY: ci-placeholder
+          PUBLIC_S3_BUCKET: xenode-ci-public
+          PUBLIC_S3_ENDPOINT: https://ci-public.r2.cloudflarestorage.com
+          DRIVE_SESSION_COOKIE_SECRET: ci-placeholder-drive-session-cookie-secret-0001
+          REALTIME_TICKET_SECRET: ci-placeholder-realtime-ticket-secret-0000000002
+          REALTIME_ALLOWED_ORIGIN: http://localhost:13000
+          ADMIN_USERNAME: ci-admin
+          ADMIN_PASSWORD: ci-placeholder-admin-password
+          ADMIN_JWT_SECRET: ci-placeholder-admin-jwt-secret-000000000000003
+          CRON_SECRET: ci-placeholder-cron-secret-000000000000000000004
+          RAZORPAY_KEY_ID: rzp_test_ci_placeholder
+          RAZORPAY_KEY_SECRET: ci-placeholder-razorpay-secret
+        # Started from the repository root so no developer env file is read.
+        run: |
+          npx next start apps/drive -p 13000 > drive.log 2>&1 &
+          for attempt in $(seq 60); do
+            curl -sf -o /dev/null http://localhost:13000/privacy && break
+            sleep 1
+          done
+          npm run test:browser --workspace @xenode/drive || { cat drive.log; exit 1; }
+
+  # The production image recipe and the static file runtimes. Values are
+  # synthetic: compose requires every variable it interpolates.
+  containers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ACCOUNTS_ORIGIN: https://accounts.xenode.test
+      DRIVE_ORIGIN: https://drive.xenode.test
+      PHOTOS_ORIGIN: https://photos.xenode.test
+      NEXT_PUBLIC_ONLYOFFICE_EDITOR_ORIGIN: https://edit.xenode.test
+      MONGODB_URI: mongodb://mongo.invalid:27017/xenode
+      MONGODB_LOGS_URI: mongodb://mongo.invalid:27017/xenode-logs
+      REDIS_URL: redis://redis.invalid:6379
+      S3_BUCKET_NAME: xenode-ci
+      S3_ENDPOINT: https://ci.r2.cloudflarestorage.com
+      S3_KEY_ID: ci-placeholder
+      S3_APPLICATION_KEY: ci-placeholder
+      PUBLIC_S3_BUCKET: xenode-ci-public
+      PUBLIC_S3_ENDPOINT: https://ci-public.r2.cloudflarestorage.com
+      BETTER_AUTH_SECRET: ci-placeholder-better-auth-secret-0000000000000001
+      DRIVE_SESSION_COOKIE_SECRET: ci-placeholder-drive-session-cookie-secret-0002
+      PHOTOS_SESSION_COOKIE_SECRET: ci-placeholder-photos-session-cookie-secret-03
+      REALTIME_TICKET_SECRET: ci-placeholder-realtime-ticket-secret-0000000004
+      CRON_SECRET: ci-placeholder-cron-secret-000000000000000000005
+      ADMIN_USERNAME: ci-admin
+      ADMIN_PASSWORD: ci-placeholder-admin-password
+      ADMIN_JWT_SECRET: ci-placeholder-admin-jwt-secret-000000000000006
+      RESEND_API_KEY: ci-placeholder
+      EMAIL_FROM: ci@xenode.test
+      RAZORPAY_KEY_ID: rzp_test_ci_placeholder
+      RAZORPAY_KEY_SECRET: ci-placeholder
+      RAZORPAY_WEBHOOK_SECRET: ci-placeholder
+      RAZORPAY_SUBSCRIPTION_WEBHOOK_SECRET: ci-placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+      - run: docker compose build
+      - name: Static runtimes are framed only by Drive and isolated
+        run: |
+          docker compose up -d editor preview
+          for port in 8080 8081; do
+            for attempt in $(seq 30); do
+              curl -sf -o /dev/null "http://localhost:$port/" && break
+              sleep 1
+            done
+            headers=$(curl -sI "http://localhost:$port/")
+            echo "$headers"
+            grep -qi "^content-security-policy:.*frame-ancestors $DRIVE_ORIGIN" <<<"$headers"
+            grep -qi "^cross-origin-embedder-policy: require-corp" <<<"$headers"
+            grep -qi "^cross-origin-resource-policy: same-site" <<<"$headers"
+            grep -qi "^x-content-type-options: nosniff" <<<"$headers"
+            test "$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:$port/")" = 405
+          done
+          docker compose down
 
   dependency-review:
     if: github.event_name == 'pull_request'
