@@ -14,11 +14,9 @@ import {
 
 export function PhotoTile({
   asset,
-  density,
   onOpen,
 }: {
   asset: TimelineAsset;
-  density: "comfortable" | "compact";
   onOpen(asset: TimelineAsset): void;
 }) {
   const selection = usePhotoSelection();
@@ -128,20 +126,11 @@ export function PhotoTile({
     <article
       ref={tile}
       className={cn(
-        "group relative isolate w-full overflow-hidden rounded-xl border bg-transparent transition duration-300 hover:-translate-y-0.5 hover:shadow-lg",
+        "group relative isolate size-full overflow-hidden rounded-xl border bg-transparent transition duration-300 hover:-translate-y-0.5 hover:shadow-lg",
         checked
           ? "border-primary ring-2 ring-primary/60 ring-offset-2 ring-offset-background"
           : "border-border/50",
-        density === "compact" && "aspect-square",
       )}
-      style={{
-        aspectRatio:
-          density === "comfortable"
-            ? asset.width && asset.height
-              ? `${asset.width} / ${asset.height}`
-              : "1 / 1"
-            : undefined,
-      }}
     >
       <button
         type="button"

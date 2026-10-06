@@ -10,8 +10,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { Button, cn } from "@xenode/ui";
-import { TimelineSection } from "./TimelineSection";
-import { Scrubber } from "./Scrubber";
+import { PhotoGrid } from "./PhotoGrid";
 
 export type TimelineAsset = {
   id: string;
@@ -47,10 +46,12 @@ export function Timeline({
   const [density, setDensity] = useState<"comfortable" | "compact">(
     "comfortable",
   );
-  const sectionRefs = useRef(new Map<string, HTMLElement>());
+  const loadingRef = useRef(false);
 
   const load = useCallback(
     async (next: string | null) => {
+      if (loadingRef.current) return;
+      loadingRef.current = true;
       setLoading(true);
       setError("");
       try {
@@ -87,12 +88,17 @@ export function Timeline({
             : "Could not load your photo timeline",
         );
       } finally {
+        loadingRef.current = false;
         setLoaded(true);
         setLoading(false);
       }
     },
     [spaceId],
   );
+  // Pages load as the grid nears its end; after a failure, only on retry.
+  const loadMore = useCallback(() => {
+    if (cursor && !error) void load(cursor);
+  }, [cursor, error, load]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(null), 0);
@@ -182,8 +188,25 @@ export function Timeline({
           </div>
           <h2 className="text-lg font-semibold">No matching photos</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Try a date, month, or media type.
+            {cursor
+              ? "No match among the photos loaded so far."
+              : "Try a date, month, or media type."}
           </p>
+          {cursor ? (
+            <Button
+              variant="outline"
+              className="mt-4 rounded-full"
+              disabled={loading}
+              onClick={() => void load(cursor)}
+            >
+              {loading ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <RefreshCw className="size-4" />
+              )}
+              Search older photos
+            </Button>
+          ) : null}
         </div>
       </div>
     );
@@ -194,6 +217,9 @@ export function Timeline({
       <div className="mb-5 flex items-center justify-between border-b border-border/50 pb-4">
         <p className="text-sm text-muted-foreground">
           {filtered.length} {filtered.length === 1 ? "item" : "items"}
+          {query.trim() && cursor
+            ? " among loaded photos · older photos load as you scroll"
+            : ""}
         </p>
         <div className="flex rounded-xl border border-border/60 bg-muted/50 p-1">
           <button
@@ -225,50 +251,28 @@ export function Timeline({
         </div>
       </div>
 
-      <div className="flex items-start gap-5">
-        <div className="min-w-0 flex-1 space-y-9">
-          {groups.map((group) => (
-            <TimelineSection
-              key={group.label}
-              ref={(element) => {
-                if (element) sectionRefs.current.set(group.label, element);
-                else sectionRefs.current.delete(group.label);
-              }}
-              group={group}
-              density={density}
-              onOpen={(asset) => onOpen(asset, filtered)}
-            />
-          ))}
-
-          {cursor ? (
-            <div className="flex justify-center pb-8 pt-2">
-              <Button
-                variant="outline"
-                className="rounded-full px-6"
-                disabled={loading}
-                onClick={() => void load(cursor)}
-              >
-                {loading ? (
-                  <Loader2 className="size-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="size-4" />
-                )}
-                Load older memories
-              </Button>
-            </div>
-          ) : null}
+      <PhotoGrid
+        groups={groups}
+        density={density}
+        onOpen={(asset) => onOpen(asset, filtered)}
+        onEndReached={loadMore}
+      />
+      {loading ? (
+        <div className="flex justify-center pb-8 pt-2">
+          <Loader2 className="size-5 animate-spin text-primary" />
         </div>
-
-        <Scrubber
-          groups={groups}
-          onChange={(label) =>
-            sectionRefs.current.get(label)?.scrollIntoView({
-              behavior: "smooth",
-              block: "start",
-            })
-          }
-        />
-      </div>
+      ) : error && cursor ? (
+        <div className="flex justify-center pb-8 pt-2">
+          <Button
+            variant="outline"
+            className="rounded-full px-6"
+            onClick={() => void load(cursor)}
+          >
+            <RefreshCw className="size-4" />
+            Load older memories
+          </Button>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -26,7 +26,12 @@ export async function GET(request: Request) {
 
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 100, 1), 200);
   const cursorText = url.searchParams.get("cursor");
-  const cursor = cursorText ? decodeTimelineCursor(cursorText) : null;
+  let cursor;
+  try {
+    cursor = cursorText ? decodeTimelineCursor(cursorText) : null;
+  } catch {
+    return Response.json({ error: "Invalid cursor" }, { status: 400 });
+  }
   const query: Record<string, unknown> = {
     spaceId: parsedSpaceId.data,
     status: "active",

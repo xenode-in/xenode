@@ -2,7 +2,6 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import nextConfig from "../next.config";
-import { getTimelineWindow } from "../lib/virtual-timeline";
 import {
   decryptPhotoFile,
   encryptPhotoFile,
@@ -18,18 +17,6 @@ function sourceFiles(directory: string): string[] {
 }
 
 describe("Photos app isolation", () => {
-  it("renders a bounded window for tens of thousands of assets", () => {
-    const window = getTimelineWindow({
-      itemCount: 50_000,
-      scrollTop: 400_000,
-      viewportHeight: 620,
-      columns: 6,
-      rowHeight: 152,
-    });
-    expect(window.totalRows).toBeGreaterThan(8_000);
-    expect(window.endIndex - window.startIndex).toBeLessThanOrEqual(66);
-  });
-
   it("keeps a strict per-app CSP without SharedArrayBuffer isolation", async () => {
     const rules = await nextConfig.headers?.();
     const headers = rules?.[0]?.headers ?? [];

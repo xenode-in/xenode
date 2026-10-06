@@ -6,11 +6,9 @@ import type { ReactNode } from "react";
 import {
   Album,
   Cloud,
-  HelpCircle,
   Images,
   LogOut,
   Search,
-  Settings,
   Sparkles,
   UserRound,
 } from "lucide-react";
@@ -61,29 +59,17 @@ export function PhotosShell({
             type="search"
             value={search}
             onChange={(event) => onSearch(event.target.value)}
-            placeholder="Search your photos"
+            placeholder={
+              view === "albums"
+                ? "Filter albums by name"
+                : "Filter by date or photo/video"
+            }
             className="h-11 w-full rounded-full border border-transparent bg-muted/80 pl-11 pr-4 text-sm outline-none transition focus:border-primary/30 focus:bg-card focus:ring-4 focus:ring-primary/10"
-            aria-label="Search photos"
+            aria-label={view === "albums" ? "Filter albums" : "Filter photos"}
           />
         </div>
 
         <div className="flex min-w-fit items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="hidden rounded-full md:inline-flex"
-            aria-label="Help"
-          >
-            <HelpCircle />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="hidden rounded-full md:inline-flex"
-            aria-label="Settings"
-          >
-            <Settings />
-          </Button>
           <Button variant="outline" size="icon" className="rounded-full" asChild>
             <a href={ACCOUNTS_ORIGIN} aria-label="Open Xenode Account">
               <UserRound />

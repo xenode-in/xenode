@@ -7,7 +7,6 @@ import { AlbumsList, type AlbumSummary } from "./AlbumsList";
 import { Lightbox } from "./Lightbox";
 import { PhotosShell } from "./PhotosShell";
 import { SelectionController, usePhotoSelection } from "./SelectionController";
-import { ShareDialog } from "./ShareDialog";
 import { Timeline, type TimelineAsset } from "./Timeline";
 import { UploadController } from "./UploadController";
 import { getClientPhotosSession } from "@/lib/client-session";
@@ -99,18 +98,15 @@ function PhotosAppInner() {
             />
           ) : null}
           {view === "timeline" && selectedIds.length ? (
-            <>
-              <AlbumEditor
-                spaceId={spaceId}
-                accountId={accountId}
-                selectedIds={selectedIds}
-                onCreated={() => {
-                  selection.clear();
-                  void loadAlbums(spaceId);
-                }}
-              />
-              <ShareDialog selectedIds={selectedIds} />
-            </>
+            <AlbumEditor
+              spaceId={spaceId}
+              accountId={accountId}
+              selectedIds={selectedIds}
+              onCreated={() => {
+                selection.clear();
+                void loadAlbums(spaceId);
+              }}
+            />
           ) : null}
         </>
       }

@@ -7,7 +7,12 @@
 
 const CACHE_NAME = "xenode-photos-ciphertext-cache-v1";
 const TTL_MS = 24 * 60 * 60 * 1000;
-const MAX_CACHE_BYTES = 500 * 1024 * 1024;
+const MAX_ENTRY_BYTES = 64 * 1024 * 1024;
+const MAX_CACHE_BYTES = 256 * 1024 * 1024;
+// Prune after this many new bytes (and on a tab's first write).
+const PRUNE_AFTER_BYTES = 16 * 1024 * 1024;
+let writtenSincePrune = PRUNE_AFTER_BYTES;
+let pruning: Promise<void> | null = null;
 
 function cacheUrl(key: string) {
   return `/_xenode-photos-cache/${encodeURIComponent(key)}`;
@@ -47,7 +52,7 @@ async function storeCiphertext(
   stream: ReadableStream<Uint8Array>,
   byteLength: number,
 ) {
-  if (!Number.isFinite(byteLength) || byteLength > MAX_CACHE_BYTES) return;
+  if (!Number.isFinite(byteLength) || byteLength > MAX_ENTRY_BYTES) return;
   try {
     const cache = await caches.open(CACHE_NAME);
     await cache.put(
@@ -60,12 +65,53 @@ async function storeCiphertext(
         },
       }),
     );
+    writtenSincePrune += byteLength;
+    if (writtenSincePrune >= PRUNE_AFTER_BYTES) void prunePhotoCiphertextCache();
   } catch {
     // Non-fatal: a failed cache write must not affect previewing.
   }
 }
 
-/** Fetch ciphertext from Cache Storage when available, otherwise B2. */
+/**
+ * Drop expired entries, then the oldest until the cache fits its budget.
+ * ponytail: oldest-written first (reads do not refresh); LRU if hit rate matters.
+ */
+export function prunePhotoCiphertextCache(
+  maxBytes = MAX_CACHE_BYTES,
+  now = Date.now(),
+) {
+  writtenSincePrune = 0;
+  pruning ??= (async () => {
+    try {
+      const cache = await caches.open(CACHE_NAME);
+      const entries: { request: Request; expiresAt: number; bytes: number }[] = [];
+      for (const request of await cache.keys()) {
+        const headers = (await cache.match(request))?.headers;
+        const expiresAt = Number(headers?.get("x-expires-at"));
+        const bytes = Number(headers?.get("x-content-length"));
+        if (expiresAt > now && Number.isSafeInteger(bytes) && bytes >= 0) {
+          entries.push({ request, expiresAt, bytes });
+        } else {
+          await cache.delete(request);
+        }
+      }
+      entries.sort((a, b) => a.expiresAt - b.expiresAt);
+      let total = entries.reduce((sum, entry) => sum + entry.bytes, 0);
+      for (const entry of entries) {
+        if (total <= maxBytes) break;
+        await cache.delete(entry.request);
+        total -= entry.bytes;
+      }
+    } catch {
+      // Cache Storage is optional.
+    } finally {
+      pruning = null;
+    }
+  })();
+  return pruning;
+}
+
+/** Fetch ciphertext from Cache Storage when available, otherwise R2. */
 export async function fetchCachedPhotoCiphertext(
   url: string,
   cacheKey: string,
