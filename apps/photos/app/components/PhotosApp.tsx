@@ -1,14 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Loader2, Trash2 } from "lucide-react";
+import { Button, toast } from "@xenode/ui";
 import { AlbumEditor } from "./AlbumEditor";
 import { AlbumView } from "./AlbumView";
 import { AlbumsList, type AlbumSummary } from "./AlbumsList";
 import { Lightbox } from "./Lightbox";
-import { PhotosShell } from "./PhotosShell";
+import { PhotosShell, type PhotosView } from "./PhotosShell";
 import { SelectionController, usePhotoSelection } from "./SelectionController";
 import { Timeline, type TimelineAsset } from "./Timeline";
+import { TrashView } from "./TrashView";
 import { UploadController } from "./UploadController";
+import { changePhotoAssets } from "./usePhotoPages";
 import { getClientPhotosSession } from "@/lib/client-session";
 import { openAlbumName } from "@/lib/album-name";
 import { usePhotosMetadataKey } from "./PhotosKeyAccess";
@@ -27,23 +31,40 @@ function PhotosAppInner() {
   const [accountId, setAccountId] = useState("");
   const metadataKey = usePhotosMetadataKey(spaceId);
   const [albumNames, setAlbumNames] = useState<Record<string, string>>({});
-  const [view, setView] = useState<"timeline" | "albums">("timeline");
+  const [view, setView] = useState<PhotosView>("timeline");
   const [search, setSearch] = useState("");
   const [lightbox, setLightbox] = useState<TimelineAsset | null>(null);
   const [previewAssets, setPreviewAssets] = useState<TimelineAsset[]>([]);
   const [albums, setAlbums] = useState<AlbumSummary[]>([]);
+  const [albumsCursor, setAlbumsCursor] = useState<string | null>(null);
+  const [albumsLoading, setAlbumsLoading] = useState(false);
   const [album, setAlbum] = useState<AlbumSummary | null>(null);
   const [timelineVersion, setTimelineVersion] = useState(0);
+  const [trashing, setTrashing] = useState(false);
 
-  const loadAlbums = useCallback(async (space: string) => {
-    const response = await fetch(
-      `/api/photos/albums?spaceId=${encodeURIComponent(space)}`,
-      { cache: "no-store" },
-    );
-    if (!response.ok) return;
-    const payload = (await response.json()) as { albums: AlbumSummary[] };
-    setAlbums(payload.albums);
-  }, []);
+  const loadAlbums = useCallback(
+    async (space: string, cursor: string | null = null) => {
+      setAlbumsLoading(true);
+      try {
+        const url = new URL("/api/photos/albums", window.location.origin);
+        url.searchParams.set("spaceId", space);
+        if (cursor) url.searchParams.set("cursor", cursor);
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) return;
+        const payload = (await response.json()) as {
+          albums: AlbumSummary[];
+          nextCursor: string | null;
+        };
+        setAlbums((current) =>
+          cursor ? [...current, ...payload.albums] : payload.albums,
+        );
+        setAlbumsCursor(payload.nextCursor);
+      } finally {
+        setAlbumsLoading(false);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     void getClientPhotosSession()
@@ -78,6 +99,29 @@ function PhotosAppInner() {
   }, [albums, metadataKey, spaceId]);
 
   const selectedIds = [...selection.selected];
+
+  async function moveToTrash() {
+    setTrashing(true);
+    try {
+      const { done, error } = await changePhotoAssets("trash", spaceId, selectedIds);
+      for (const id of done) selection.toggle(id);
+      if (done.length) {
+        setTimelineVersion((version) => version + 1);
+        toast.success(
+          `Moved ${done.length} ${done.length === 1 ? "item" : "items"} to trash`,
+        );
+      }
+      if (error) toast.error(error);
+    } finally {
+      setTrashing(false);
+    }
+  }
+
+  const openPreview = (asset: TimelineAsset, assets: TimelineAsset[]) => {
+    setPreviewAssets(assets);
+    setLightbox(asset);
+  };
+
   return (
     <PhotosShell
       view={view}
@@ -98,15 +142,31 @@ function PhotosAppInner() {
             />
           ) : null}
           {view === "timeline" && selectedIds.length ? (
-            <AlbumEditor
-              spaceId={spaceId}
-              accountId={accountId}
-              selectedIds={selectedIds}
-              onCreated={() => {
-                selection.clear();
-                void loadAlbums(spaceId);
-              }}
-            />
+            <>
+              <AlbumEditor
+                spaceId={spaceId}
+                accountId={accountId}
+                selectedIds={selectedIds}
+                onCreated={() => {
+                  selection.clear();
+                  void loadAlbums(spaceId);
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="rounded-full"
+                disabled={trashing}
+                onClick={() => void moveToTrash()}
+              >
+                {trashing ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Trash2 className="size-4" />
+                )}
+                Move to trash
+              </Button>
+            </>
           ) : null}
         </>
       }
@@ -117,10 +177,7 @@ function PhotosAppInner() {
           key={`${spaceId}:${timelineVersion}`}
           spaceId={spaceId}
           query={search}
-          onOpen={(asset, assets) => {
-            setPreviewAssets(assets);
-            setLightbox(asset);
-          }}
+          onOpen={openPreview}
         />
       ) : null}
       {spaceId && view === "albums" && !album ? (
@@ -129,11 +186,21 @@ function PhotosAppInner() {
           names={albumNames}
           query={search}
           onOpen={setAlbum}
+          hasMore={Boolean(albumsCursor)}
+          loadingMore={albumsLoading}
+          onLoadMore={() => void loadAlbums(spaceId, albumsCursor)}
         />
       ) : null}
       {album ? (
-        <AlbumView album={album} name={albumNames[album.albumId]} onBack={() => setAlbum(null)} />
+        <AlbumView
+          album={album}
+          name={albumNames[album.albumId]}
+          spaceId={spaceId}
+          onBack={() => setAlbum(null)}
+          onOpen={openPreview}
+        />
       ) : null}
+      {spaceId && view === "trash" ? <TrashView spaceId={spaceId} /> : null}
       <Lightbox
         asset={lightbox}
         assets={previewAssets}

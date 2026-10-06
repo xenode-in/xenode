@@ -1,6 +1,11 @@
 import { spaceIdSchema } from "@xenode/contracts";
 import { PhotoAlbumV2 } from "@xenode/database";
-import { isSealedAlbumName, PhotosService } from "@xenode/photos";
+import {
+  decodeTimelineCursor,
+  encodeTimelineCursor,
+  isSealedAlbumName,
+  PhotosService,
+} from "@xenode/photos";
 import { assertSpaceAction, resolveSpaceAccess, SpaceAuthorizationError, type SpaceAction } from "@xenode/spaces";
 import { MongoPhotosRepository } from "@/lib/photos-repository";
 import { getPhotosProductSession } from "@/lib/session";
@@ -31,10 +36,74 @@ export async function GET(request: Request) {
   if (!context) {
     return Response.json({ error: "Unauthorized or invalid Space" }, { status: 401 });
   }
-  const albums = await PhotoAlbumV2.find({ spaceId: context.spaceId })
-    .sort({ updatedAt: -1 })
-    .lean();
-  return Response.json({ albums });
+  const url = new URL(request.url);
+  const limit = Number(url.searchParams.get("limit") ?? 60);
+  let cursor;
+  try {
+    cursor = url.searchParams.get("cursor")
+      ? decodeTimelineCursor(url.searchParams.get("cursor")!)
+      : null;
+  } catch {
+    return Response.json({ error: "Invalid cursor" }, { status: 400 });
+  }
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+    return Response.json({ error: "Invalid limit" }, { status: 400 });
+  }
+  // Summaries carry a member count, not the (up to 10,000) member ids.
+  const rows: Array<{
+    albumId: string;
+    encryptedName: string;
+    coverPhotoAssetId?: string;
+    photoAssetCount: number;
+    updatedAt: Date;
+  }> = await PhotoAlbumV2.aggregate([
+    {
+      $match: {
+        spaceId: context.spaceId,
+        ...(cursor
+          ? {
+              $or: [
+                { updatedAt: { $lt: new Date(cursor.takenAt) } },
+                { updatedAt: new Date(cursor.takenAt), albumId: { $lt: cursor.id } },
+              ],
+            }
+          : {}),
+      },
+    },
+    { $sort: { updatedAt: -1, albumId: -1 } },
+    { $limit: limit + 1 },
+    {
+      $project: {
+        _id: 0,
+        albumId: 1,
+        encryptedName: 1,
+        updatedAt: 1,
+        coverPhotoAssetId: {
+          $ifNull: ["$coverPhotoAssetId", { $arrayElemAt: ["$photoAssetIds", 0] }],
+        },
+        photoAssetCount: { $size: "$photoAssetIds" },
+      },
+    },
+  ]);
+  const albums = rows.slice(0, limit);
+  const last = albums.at(-1);
+  return Response.json(
+    {
+      albums: albums.map(
+        ({ albumId, encryptedName, coverPhotoAssetId, photoAssetCount }) => ({
+          albumId,
+          encryptedName,
+          coverPhotoAssetId,
+          photoAssetCount,
+        }),
+      ),
+      nextCursor:
+        rows.length > limit && last
+          ? encodeTimelineCursor({ takenAt: last.updatedAt.toISOString(), id: last.albumId })
+          : null,
+    },
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
 }
 
 export async function POST(request: Request) {

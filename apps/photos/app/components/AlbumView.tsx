@@ -1,18 +1,41 @@
 "use client";
 
-import { ArrowLeft, Image as ImageIcon, LockKeyhole } from "lucide-react";
+import { useMemo } from "react";
+import {
+  ArrowLeft,
+  Image as ImageIcon,
+  Loader2,
+  LockKeyhole,
+  RefreshCw,
+} from "lucide-react";
 import { Button } from "@xenode/ui";
 import type { AlbumSummary } from "./AlbumsList";
+import { PhotoGrid } from "./PhotoGrid";
+import type { TimelineAsset } from "./Timeline";
+import { usePhotoPages } from "./usePhotoPages";
 
 export function AlbumView({
   album,
   name,
+  spaceId,
   onBack,
+  onOpen,
 }: {
   album: AlbumSummary;
   name?: string;
+  spaceId: string;
   onBack(): void;
+  onOpen(asset: TimelineAsset, assets: TimelineAsset[]): void;
 }) {
+  const { items, cursor, loaded, loading, error, load, loadMore } =
+    usePhotoPages(
+      `/api/photos/albums/${encodeURIComponent(album.albumId)}?spaceId=${encodeURIComponent(spaceId)}`,
+    );
+  const groups = useMemo(
+    () => [{ label: "", shortLabel: "", assets: items }],
+    [items],
+  );
+
   return (
     <section>
       <div className="mb-7 flex items-center gap-3">
@@ -34,35 +57,62 @@ export function AlbumView({
             <LockKeyhole className="size-4 text-muted-foreground" />
           </div>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            {album.photoAssetIds.length}{" "}
-            {album.photoAssetIds.length === 1 ? "photo" : "photos"}
+            {album.photoAssetCount}{" "}
+            {album.photoAssetCount === 1 ? "item" : "items"}
           </p>
         </div>
       </div>
 
-      {album.photoAssetIds.length ? (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-          {album.photoAssetIds.map((id, index) => (
-            <div
-              key={id}
-              className="group relative aspect-square overflow-hidden rounded-xl border border-border/50"
-              style={{
-                background: `linear-gradient(145deg, hsl(${205 + (index * 37) % 130} 55% 32%), hsl(${240 + (index * 19) % 100} 50% 14%))`,
-              }}
-            >
-              <div className="absolute inset-0 grid place-items-center text-white/55">
-                <ImageIcon className="size-8 transition group-hover:scale-110" />
-              </div>
-            </div>
-          ))}
+      {!loaded ? (
+        <div className="grid min-h-[45vh] place-items-center">
+          <Loader2 className="size-7 animate-spin text-primary" />
         </div>
-      ) : (
+      ) : error && !items.length ? (
+        <div className="grid min-h-[45vh] place-items-center text-center">
+          <div>
+            <p className="font-medium">{error}</p>
+            <Button
+              variant="outline"
+              className="mt-4 rounded-full"
+              onClick={() => void load(null)}
+            >
+              <RefreshCw className="size-4" />
+              Try again
+            </Button>
+          </div>
+        </div>
+      ) : !items.length && !cursor ? (
         <div className="grid min-h-[45vh] place-items-center rounded-3xl border border-dashed border-border text-center">
           <div>
             <ImageIcon className="mx-auto size-8 text-muted-foreground" />
             <p className="mt-3 font-medium">This album is empty</p>
           </div>
         </div>
+      ) : (
+        <>
+          <PhotoGrid
+            groups={groups}
+            density="comfortable"
+            onOpen={(asset) => onOpen(asset, items)}
+            onEndReached={loadMore}
+          />
+          {loading ? (
+            <div className="flex justify-center pb-8 pt-2">
+              <Loader2 className="size-5 animate-spin text-primary" />
+            </div>
+          ) : error && cursor ? (
+            <div className="flex justify-center pb-8 pt-2">
+              <Button
+                variant="outline"
+                className="rounded-full px-6"
+                onClick={() => void load(cursor)}
+              >
+                <RefreshCw className="size-4" />
+                Load more
+              </Button>
+            </div>
+          ) : null}
+        </>
       )}
     </section>
   );

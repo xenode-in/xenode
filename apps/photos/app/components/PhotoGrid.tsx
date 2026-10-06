@@ -88,7 +88,8 @@ export function PhotoGrid({
   const items = virtualizer.getVirtualItems();
   const lastIndex = items.at(-1)?.index ?? -1;
   useEffect(() => {
-    if (rows.length && lastIndex >= rows.length - 3) onEndReached?.();
+    // An empty grid has reached its end too (e.g. a page of trashed album items).
+    if (lastIndex >= rows.length - 3) onEndReached?.();
   }, [lastIndex, rows.length, onEndReached]);
 
   const headerRows = useMemo(

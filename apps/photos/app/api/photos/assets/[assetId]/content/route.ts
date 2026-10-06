@@ -21,10 +21,14 @@ export async function GET(
       spaceId,
       productId: "photos",
     });
+    // The owner can view trash until permanent deletion has been requested.
+    const trashed = new URL(request.url).searchParams.get("state") === "trashed";
     const asset = await PhotoAsset.findOne({
       assetId,
       spaceId,
-      status: "active",
+      ...(trashed
+        ? { status: "trashed", purgeRequestedAt: { $exists: false } }
+        : { status: "active" }),
     }).lean();
     if (
       !asset ||
@@ -38,7 +42,8 @@ export async function GET(
       createdByAccountId: session.accountId,
       productId: "photos",
       isEncrypted: true,
-      deletedAt: { $exists: false },
+      deletedAt: trashed ? { $type: "date" } : { $exists: false },
+      purgeState: { $exists: false },
     });
     if (
       !object ||

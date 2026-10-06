@@ -10,10 +10,18 @@ import {
   LogOut,
   Search,
   Sparkles,
+  Trash2,
   UserRound,
 } from "lucide-react";
 import { Button, cn } from "@xenode/ui";
 import { startPhotosLogout } from "@/lib/logout-client";
+
+export type PhotosView = "timeline" | "albums" | "trash";
+const VIEW_TITLES: Record<PhotosView, string> = {
+  timeline: "Photos",
+  albums: "Albums",
+  trash: "Trash",
+};
 
 const ACCOUNTS_ORIGIN =
   getPublicProductOrigin("accounts");
@@ -28,8 +36,8 @@ export function PhotosShell({
   actions,
   children,
 }: {
-  view: "timeline" | "albums";
-  onView(view: "timeline" | "albums"): void;
+  view: PhotosView;
+  onView(view: PhotosView): void;
   search: string;
   onSearch(value: string): void;
   actions: ReactNode;
@@ -59,10 +67,13 @@ export function PhotosShell({
             type="search"
             value={search}
             onChange={(event) => onSearch(event.target.value)}
+            disabled={view === "trash"}
             placeholder={
               view === "albums"
                 ? "Filter albums by name"
-                : "Filter by date or photo/video"
+                : view === "trash"
+                  ? "Trash cannot be filtered"
+                  : "Filter by date or photo/video"
             }
             className="h-11 w-full rounded-full border border-transparent bg-muted/80 pl-11 pr-4 text-sm outline-none transition focus:border-primary/30 focus:bg-card focus:ring-4 focus:ring-primary/10"
             aria-label={view === "albums" ? "Filter albums" : "Filter photos"}
@@ -102,6 +113,12 @@ export function PhotosShell({
               label="Albums"
               onClick={() => onView("albums")}
             />
+            <SideNavItem
+              active={view === "trash"}
+              icon={<Trash2 />}
+              label="Trash"
+              onClick={() => onView("trash")}
+            />
           </nav>
 
           <div className="mt-6 rounded-2xl border border-primary/10 bg-primary/[0.04] p-4">
@@ -134,7 +151,7 @@ export function PhotosShell({
         <div className="min-w-0 flex-1">
           <div className="border-b border-border/50 bg-background/80 px-4 py-3 md:hidden">
             <div className="flex rounded-xl bg-muted p-1">
-              {(["timeline", "albums"] as const).map((tab) => (
+              {(["timeline", "albums", "trash"] as const).map((tab) => (
                 <button
                   key={tab}
                   type="button"
@@ -146,7 +163,7 @@ export function PhotosShell({
                       : "text-muted-foreground",
                   )}
                 >
-                  {tab === "timeline" ? "Photos" : "Albums"}
+                  {VIEW_TITLES[tab]}
                 </button>
               ))}
             </div>
@@ -159,7 +176,7 @@ export function PhotosShell({
                   Private library
                 </p>
                 <h1 className="text-3xl font-semibold tracking-tight">
-                  {view === "timeline" ? "Photos" : "Albums"}
+                  {VIEW_TITLES[view]}
                 </h1>
               </div>
               <div className="flex flex-wrap items-center gap-2">{actions}</div>

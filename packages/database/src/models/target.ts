@@ -585,7 +585,7 @@ const photoAlbumSchema = new Schema<PhotoAlbumRecord>(
   },
   { timestamps: true, collection: "photoAlbumsV2" },
 );
-photoAlbumSchema.index({ spaceId: 1, updatedAt: -1 });
+photoAlbumSchema.index({ spaceId: 1, updatedAt: -1, albumId: -1 });
 photoAlbumSchema.index(
   { spaceId: 1, sourceRef: 1 },
   {

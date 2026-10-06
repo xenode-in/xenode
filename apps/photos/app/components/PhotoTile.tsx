@@ -20,12 +20,15 @@ export function PhotoTile({
   onOpen(asset: TimelineAsset): void;
 }) {
   const selection = usePhotoSelection();
-  const productCrypto = useProductCrypto();
   const checked = selection.selected.has(asset.id);
   const date = new Date(asset.takenAt);
   const tile = useRef<HTMLElement>(null);
-  const [previewUrl, setPreviewUrl] = useState("");
   const [previewRequested, setPreviewRequested] = useState(false);
+  const previewUrl = usePhotoThumbnail(
+    asset.id,
+    previewRequested && asset.mediaType === "image",
+    asset.status === "trashed",
+  );
 
   useEffect(() => {
     const element = tile.current;
@@ -41,86 +44,6 @@ export function PhotoTile({
     observer.observe(element);
     return () => observer.disconnect();
   }, [asset.mediaType, previewRequested]);
-
-  useEffect(() => {
-    if (!previewRequested || asset.mediaType !== "image") return;
-    let cancelled = false;
-    let createdUrl = "";
-    void (async () => {
-      const response = await fetch(
-        `/api/photos/assets/${encodeURIComponent(asset.id)}/content?variant=thumbnail`,
-        { credentials: "include", cache: "no-store" },
-      );
-      const descriptor = (await response.json().catch(() => ({}))) as {
-        accountId?: string;
-        contentType?: string;
-        encryptedDEK?: string;
-        error?: string;
-        iv?: string;
-        objectKey?: string;
-        spaceId?: string;
-        spaceKeyWrapIv?: string;
-        url?: string;
-        variant?: "thumbnail" | "optimized" | "original";
-      };
-      if (
-        !response.ok ||
-        !descriptor.url ||
-        !descriptor.accountId ||
-        !descriptor.spaceId ||
-        !descriptor.objectKey ||
-        !descriptor.encryptedDEK ||
-        !descriptor.iv ||
-        !descriptor.spaceKeyWrapIv
-      ) {
-        throw new Error(descriptor.error ?? "Photo preview unavailable");
-      }
-      const ciphertext = await fetchCachedPhotoCiphertext(
-        descriptor.url,
-        photoPreviewCacheKey({
-          accountId: descriptor.accountId,
-          objectKey: descriptor.objectKey,
-          spaceId: descriptor.spaceId,
-          variant: descriptor.variant ?? "thumbnail",
-        }),
-      );
-      const plaintext = await productCrypto.withProductKey(
-        descriptor.spaceId,
-        (productSpaceKey) =>
-          decryptPhotoFile(
-            ciphertext,
-            productSpaceKey,
-            {
-              accountId: descriptor.accountId!,
-              spaceId: descriptor.spaceId!,
-              objectKey: descriptor.objectKey!,
-            },
-            {
-              encryptedDEK: descriptor.encryptedDEK!,
-              iv: descriptor.iv!,
-              spaceKeyWrapIv: descriptor.spaceKeyWrapIv!,
-            },
-          ),
-      );
-      if (cancelled) return;
-      createdUrl = URL.createObjectURL(
-        new Blob([plaintext], {
-          type:
-            descriptor.contentType &&
-            descriptor.contentType !== "application/octet-stream"
-              ? descriptor.contentType
-              : detectImageType(new Uint8Array(plaintext)),
-        }),
-      );
-      setPreviewUrl(createdUrl);
-    })().catch(() => {
-      // Keep the encrypted placeholder when a preview cannot be loaded.
-    });
-    return () => {
-      cancelled = true;
-      if (createdUrl) URL.revokeObjectURL(createdUrl);
-    };
-  }, [asset.id, asset.mediaType, previewRequested, productCrypto]);
 
   return (
     <article
@@ -194,6 +117,96 @@ export function PhotoTile({
       </button>
     </article>
   );
+}
+
+/** Decrypted thumbnail of an asset as a blob URL, revoked on unmount. */
+export function usePhotoThumbnail(
+  assetId: string | undefined,
+  enabled: boolean,
+  trashed = false,
+) {
+  const productCrypto = useProductCrypto();
+  const [previewUrl, setPreviewUrl] = useState("");
+  useEffect(() => {
+    if (!enabled || !assetId) return;
+    let cancelled = false;
+    let createdUrl = "";
+    void (async () => {
+      const response = await fetch(
+        `/api/photos/assets/${encodeURIComponent(assetId)}/content?variant=thumbnail${trashed ? "&state=trashed" : ""}`,
+        { credentials: "include", cache: "no-store" },
+      );
+      const descriptor = (await response.json().catch(() => ({}))) as {
+        accountId?: string;
+        contentType?: string;
+        encryptedDEK?: string;
+        error?: string;
+        iv?: string;
+        objectKey?: string;
+        spaceId?: string;
+        spaceKeyWrapIv?: string;
+        url?: string;
+        variant?: "thumbnail" | "optimized" | "original";
+      };
+      if (
+        !response.ok ||
+        !descriptor.url ||
+        !descriptor.accountId ||
+        !descriptor.spaceId ||
+        !descriptor.objectKey ||
+        !descriptor.encryptedDEK ||
+        !descriptor.iv ||
+        !descriptor.spaceKeyWrapIv
+      ) {
+        throw new Error(descriptor.error ?? "Photo preview unavailable");
+      }
+      const ciphertext = await fetchCachedPhotoCiphertext(
+        descriptor.url,
+        photoPreviewCacheKey({
+          accountId: descriptor.accountId,
+          objectKey: descriptor.objectKey,
+          spaceId: descriptor.spaceId,
+          variant: descriptor.variant ?? "thumbnail",
+        }),
+      );
+      const plaintext = await productCrypto.withProductKey(
+        descriptor.spaceId,
+        (productSpaceKey) =>
+          decryptPhotoFile(
+            ciphertext,
+            productSpaceKey,
+            {
+              accountId: descriptor.accountId!,
+              spaceId: descriptor.spaceId!,
+              objectKey: descriptor.objectKey!,
+            },
+            {
+              encryptedDEK: descriptor.encryptedDEK!,
+              iv: descriptor.iv!,
+              spaceKeyWrapIv: descriptor.spaceKeyWrapIv!,
+            },
+          ),
+      );
+      if (cancelled) return;
+      createdUrl = URL.createObjectURL(
+        new Blob([plaintext], {
+          type:
+            descriptor.contentType &&
+            descriptor.contentType !== "application/octet-stream"
+              ? descriptor.contentType
+              : detectImageType(new Uint8Array(plaintext)),
+        }),
+      );
+      setPreviewUrl(createdUrl);
+    })().catch(() => {
+      // Keep the encrypted placeholder when a preview cannot be loaded.
+    });
+    return () => {
+      cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [assetId, enabled, trashed, productCrypto]);
+  return previewUrl;
 }
 
 function detectImageType(bytes: Uint8Array): string {

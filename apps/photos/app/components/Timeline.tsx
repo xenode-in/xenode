@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Grid3X3,
   ImageOff,
@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { Button, cn } from "@xenode/ui";
 import { PhotoGrid } from "./PhotoGrid";
+import { usePhotoPages } from "./usePhotoPages";
 
 export type TimelineAsset = {
   id: string;
@@ -21,6 +22,7 @@ export type TimelineAsset = {
   height?: number;
   storageObjectId?: string;
   previewUrl?: string;
+  status?: "active" | "trashed";
 };
 
 export type TimelineGroup = {
@@ -38,72 +40,11 @@ export function Timeline({
   query: string;
   onOpen(asset: TimelineAsset, assets: TimelineAsset[]): void;
 }) {
-  const [items, setItems] = useState<TimelineAsset[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
   const [density, setDensity] = useState<"comfortable" | "compact">(
     "comfortable",
   );
-  const loadingRef = useRef(false);
-
-  const load = useCallback(
-    async (next: string | null) => {
-      if (loadingRef.current) return;
-      loadingRef.current = true;
-      setLoading(true);
-      setError("");
-      try {
-        const url = new URL("/api/photos/timeline", window.location.origin);
-        url.searchParams.set("spaceId", spaceId);
-        url.searchParams.set("limit", "180");
-        if (next) url.searchParams.set("cursor", next);
-        const response = await fetch(url, { cache: "no-store" });
-        if (!response.ok) throw new Error("Could not load your photo timeline");
-        const payload = (await response.json()) as {
-          items: Array<
-            TimelineAsset & {
-              assetId?: string;
-              takenAt: string | Date;
-            }
-          >;
-          nextCursor: string | null;
-        };
-        const incoming = payload.items.map((item) => ({
-          ...item,
-          id: item.id ?? item.assetId ?? "",
-          takenAt: new Date(item.takenAt).toISOString(),
-        }));
-        setItems((current) => {
-          const merged = new Map(current.map((item) => [item.id, item]));
-          for (const item of incoming) merged.set(item.id, item);
-          return [...merged.values()];
-        });
-        setCursor(payload.nextCursor);
-      } catch (loadError) {
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : "Could not load your photo timeline",
-        );
-      } finally {
-        loadingRef.current = false;
-        setLoaded(true);
-        setLoading(false);
-      }
-    },
-    [spaceId],
-  );
-  // Pages load as the grid nears its end; after a failure, only on retry.
-  const loadMore = useCallback(() => {
-    if (cursor && !error) void load(cursor);
-  }, [cursor, error, load]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => void load(null), 0);
-    return () => window.clearTimeout(timer);
-  }, [load]);
+  const { items, cursor, loaded, loading, error, load, loadMore } =
+    usePhotoPages(`/api/photos/timeline?spaceId=${encodeURIComponent(spaceId)}`);
 
   const filtered = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();

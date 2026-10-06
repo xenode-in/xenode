@@ -45,6 +45,24 @@ No user browser, real account or cloud object is used.
 Local tests cover idempotency, role/Space/product rejection, restore/purge
 races, outstanding PUTs, provider/HEAD failures, cross-product references,
 album/accounting retirement, cursor ties and cron authentication. Parent
-retirement integration and the Photos UI/sharing/media work follow in later
-coding increments. Deployment, real R2 and live scheduler verification are
-owned by the user and remain release checks.
+retirement integration, sharing and media metadata follow in later increments.
+Deployment, real R2 and live scheduler verification are owned by the user and
+remain release checks.
+
+## Browsing and the web app
+
+- `GET /api/photos/timeline`, `GET /api/photos/trash` and
+  `GET /api/photos/albums/{albumId}` return cursor pages (at most 200). An album
+  page is an offset into the album's member list, in album order, with trashed
+  and other-Space members skipped. `GET /api/photos/albums` returns newest-first
+  summaries with a member count and a cover id (explicit, else the first
+  member), never the member list. Malformed cursors and limits return 400.
+- Asset content is served for active assets. `?state=trashed` serves a trashed
+  asset's encrypted previews to its owner until permanent deletion is requested.
+- The web app renders the timeline, albums and trash through one
+  window-virtualized grid that loads pages as its end comes into view. Photos
+  offers Move to trash; Trash offers Restore and, after confirmation, Delete
+  forever. Actions are sent in batches of at most 100 assets.
+- The search box filters the photos loaded so far by date or photo/video, and
+  offers to search older photos when nothing matches. Sharing, Help and Settings
+  are not offered until they have real flows.
