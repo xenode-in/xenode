@@ -21,7 +21,8 @@ export function driveContentSecurityPolicy(nonce: string, paymentPage: boolean) 
     "default-src 'self'", "base-uri 'none'", "object-src 'none'", "frame-ancestors 'none'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'wasm-unsafe-eval'${devEval}`,
     "script-src-attr 'none'", "style-src 'self' 'unsafe-inline'",
-    `img-src 'self' data: blob: https://lh3.googleusercontent.com https://avatars.githubusercontent.com ${assets.join(" ")}`,
+    // Profile pictures: OAuth avatars, and the Lorelei avatars Accounts offers.
+    `img-src 'self' data: blob: https://lh3.googleusercontent.com https://avatars.githubusercontent.com https://api.dicebear.com ${assets.join(" ")}`,
     "font-src 'self' data:", "media-src 'self' blob:", "worker-src 'self' blob:",
     `connect-src ${["'self'", accounts, socket, ...storage, ...analytics, ...payment].join(" ")}`,
     `frame-src ${[accounts, editor, preview, ...payment].join(" ")}`,

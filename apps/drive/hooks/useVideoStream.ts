@@ -2,15 +2,21 @@
  * hooks/useVideoStream.ts
  *
  * MSE fallback for encrypted chunked video/audio streaming.
- * Used when the Service Worker isn't available (e.g. Safari, SW disabled).
+ * Used when the Service Worker isn't available (e.g. private windows, SW disabled).
  *
- * Implements the same 3-chunk prefetch pipeline as the SW: while chunk N
- * is being appended to the SourceBuffer, chunks N+1…N+3 are already
- * being fetched and decrypted concurrently.
+ * Chunks are fetched and decrypted with a small prefetch window and streamed
+ * into a MediaSource (see lib/media/mseStream), so playback starts with the
+ * first chunk. Only formats MSE cannot play at all (e.g. WAV) are downloaded
+ * whole before playing.
  */
 
 import { useEffect, useRef, useState } from "react";
 import { decryptFilePart } from "@/lib/crypto/fileEncryption";
+import {
+  canStreamWithMse,
+  streamToMediaSource,
+  type MediaElementRef,
+} from "@/lib/media/mseStream";
 
 export interface VideoStreamOptions {
   /** The object id every chunk is bound to. */
@@ -21,6 +27,8 @@ export interface VideoStreamOptions {
   /** One IV per chunk; its length is the authenticated chunk count. */
   chunkIvs: string[];
   contentType: string;
+  /** Chunk 0 already decrypted (for preview inspection); reused, not refetched. */
+  firstChunk?: ArrayBuffer;
 }
 
 export interface VideoStreamState {
@@ -33,14 +41,14 @@ export interface VideoStreamState {
 
 const PREFETCH = 3;
 
-const MIME_CODEC_MAP: Record<string, string> = {
-  "video/mp4": 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"',
-  "video/webm": 'video/webm; codecs="vp9, opus"',
-};
-
+/**
+ * The player only gets a media element once it has a source, so this hook
+ * never waits for one: it produces the source. `mediaRef` is read lazily to
+ * pace buffering against the playhead.
+ */
 export function useVideoStream(
   opts: VideoStreamOptions | null,
-  videoElement: HTMLMediaElement | null,
+  mediaRef?: MediaElementRef,
 ): VideoStreamState {
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,38 +59,32 @@ export function useVideoStream(
   const blobUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!opts || !videoElement) return;
+    if (!opts) return;
 
     // Abort any previous stream session
     abortRef.current?.abort();
     const abort = new AbortController();
     abortRef.current = abort;
 
-    const timer = setTimeout(() => {
-      setBlobUrl(null);
-      setError(null);
-      setIsBuffering(true);
-      setProgress(0);
-    }, 0);
-
     const { fileId, urls, dek, chunkIvs, contentType } = opts;
     const chunkCount = chunkIvs.length;
 
-    // ── Determine MSE codec ────────────────────────────────────────────────
-    const mimeCodec = MIME_CODEC_MAP[contentType] ?? contentType;
-    const mseSupported =
-      typeof MediaSource !== "undefined" &&
-      MediaSource.isTypeSupported(mimeCodec);
+    const publish = (url: string) => {
+      if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = url;
+      setBlobUrl(url);
+    };
 
-    if (!mseSupported) {
-      // MSE not available → fall back to full download + blob URL
+    // Formats MSE cannot play are downloaded whole, then played.
+    const playFullDownload = () =>
       fullDecryptFallback(opts, abort.signal, setProgress)
         .then((url) => {
-          if (!abort.signal.aborted) {
-            blobUrlRef.current = url;
-            setBlobUrl(url);
-            setIsBuffering(false);
+          if (abort.signal.aborted) {
+            URL.revokeObjectURL(url);
+            return;
           }
+          publish(url);
+          setIsBuffering(false);
         })
         .catch((err) => {
           if (!abort.signal.aborted && err.name !== "AbortError") {
@@ -90,86 +92,73 @@ export function useVideoStream(
             setIsBuffering(false);
           }
         });
-      return () => cleanup(abort, blobUrlRef);
-    }
 
-    // ── MSE path with prefetch pipeline ────────────────────────────────────
-    (async () => {
+    // Chunk 0 gates the first frame, so it is fetched alone; PREFETCH chunks
+    // then stay in flight ahead of the consumer.
+    const inflight = new Map<number, Promise<ArrayBuffer>>();
+    const fetchAndDecrypt = async (i: number): Promise<ArrayBuffer> => {
+      const res = await fetch(urls[i], { signal: abort.signal });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const plain = await decryptFilePart(await res.arrayBuffer(), dek, chunkIvs[i], fileId, i, chunkCount);
+      setProgress(Math.round(((i + 1) / chunkCount) * 100));
+      return plain;
+    };
+    const startFetch = (j: number) => {
+      if (j >= chunkCount || inflight.has(j)) return;
+      const pending = fetchAndDecrypt(j);
+      pending.catch(() => undefined); // awaited by the consumer
+      inflight.set(j, pending);
+    };
+    const nextChunk = async (i: number) => {
+      let chunk: ArrayBuffer;
+      if (i === 0 && opts.firstChunk) {
+        chunk = opts.firstChunk.slice(0);
+      } else {
+        startFetch(i);
+        chunk = await inflight.get(i)!;
+      }
+      inflight.delete(i);
+      for (let j = i + 1; j <= i + PREFETCH; j++) startFetch(j);
+      return chunk;
+    };
+
+    const playStream = async () => {
       const ms = new MediaSource();
-      const url = URL.createObjectURL(ms);
-      blobUrlRef.current = url;
-      setBlobUrl(url);
+      publish(URL.createObjectURL(ms));
+      await streamToMediaSource({
+        ms,
+        contentType,
+        chunkCount,
+        nextChunk,
+        mediaRef,
+        signal: abort.signal,
+        onFirstData: () => setIsBuffering(false),
+      });
+    };
 
-      // Wait for sourceopen
-      await new Promise<void>((r) =>
-        ms.addEventListener("sourceopen", () => r(), { once: true }),
-      );
-      if (abort.signal.aborted) return;
-
-      const sb = ms.addSourceBuffer(mimeCodec);
-
-      // Helper: wait for SourceBuffer to finish updating
-      const waitForUpdate = () =>
-        new Promise<void>((r) =>
-          sb.addEventListener("updateend", () => r(), { once: true }),
-        );
-
-      // ── Prefetch pipeline ──────────────────────────────────────────────
-      const inflight = new Map<number, Promise<ArrayBuffer>>();
-
-      const fetchAndDecrypt = async (i: number): Promise<ArrayBuffer> => {
-        const res = await fetch(urls[i], { signal: abort.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const cipher = await res.arrayBuffer();
-        return decryptFilePart(cipher, dek, chunkIvs[i], fileId, i, chunkCount);
-      };
-
-      // Warm up pipeline
-      for (let i = 0; i < Math.min(PREFETCH, chunkCount); i++) {
-        inflight.set(i, fetchAndDecrypt(i));
+    // Reset first, then start: the MSE source URL is published synchronously
+    // and must not be cleared by the reset.
+    const timer = setTimeout(() => {
+      setBlobUrl(null);
+      setError(null);
+      setIsBuffering(true);
+      setProgress(0);
+      if (!canStreamWithMse(contentType)) {
+        void playFullDownload();
+        return;
       }
-
-      for (let i = 0; i < chunkCount; i++) {
-        if (abort.signal.aborted) return;
-
-        // Kick off next prefetch
-        const ahead = i + PREFETCH;
-        if (ahead < chunkCount && !inflight.has(ahead)) {
-          inflight.set(ahead, fetchAndDecrypt(ahead));
-        }
-
-        const plainChunk = await inflight.get(i)!;
-        inflight.delete(i);
-
-        if (abort.signal.aborted) return;
-
-        // First chunk ready → stop showing the loading spinner
-        if (i === 0) setIsBuffering(false);
-
-        // Update progress
-        setProgress(Math.round(((i + 1) / chunkCount) * 100));
-
-        // Wait for any pending update then append
-        if (sb.updating) await waitForUpdate();
-        sb.appendBuffer(plainChunk);
-        await waitForUpdate();
-      }
-
-      if (!abort.signal.aborted && ms.readyState === "open") {
-        ms.endOfStream();
-      }
-    })().catch((err) => {
-      if (!abort.signal.aborted && err.name !== "AbortError") {
-        setError(err.message ?? "Stream failed");
-      }
-      setIsBuffering(false);
-    });
+      playStream().catch((err) => {
+        if (abort.signal.aborted || err.name === "AbortError") return;
+        console.warn("[Preview] MSE could not stream this file; downloading it", err);
+        void playFullDownload();
+      });
+    }, 0);
 
     return () => {
       clearTimeout(timer);
       cleanup(abort, blobUrlRef);
     };
-  }, [opts, videoElement]);
+  }, [opts, mediaRef]);
 
   return { blobUrl, error, isBuffering, progress };
 }

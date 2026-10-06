@@ -69,15 +69,6 @@ import {
 } from "@/lib/file-security";
 import { SafePdfPreview } from "./SafePdfPreview";
 import { SafeTextPreview } from "./SafeTextPreview";
-import "@vidstack/react/player/styles/default/theme.css";
-import "@vidstack/react/player/styles/default/layouts/video.css";
-import "@vidstack/react/player/styles/default/layouts/audio.css";
-import { MediaPlayer as VidstackPlayer, MediaProvider } from "@vidstack/react";
-import {
-  defaultLayoutIcons,
-  DefaultVideoLayout,
-  DefaultAudioLayout,
-} from "@vidstack/react/player/layouts/default";
 const KILL_SWITCH_REASON = "This renderer was disabled by the security kill switch";
 
 // ─── Zoomable Image ───────────────────────────────────────────────────────────
@@ -430,8 +421,11 @@ interface FilePreviewDialogProps {
   directShareWrappedKey?: string;
   sharedItemId?: string;
   onDownload?: () => void;
+  /** Share pages: the sealed name a password-protected link reveals once opened. */
+  onSharedName?: (name: string) => void;
 }
 
+/** MSE/full-download fallback when the media Service Worker is unavailable. */
 const ChunkedStreamPlayer = ({
   opts,
   type,
@@ -451,25 +445,12 @@ const ChunkedStreamPlayer = ({
   privateKey?: CryptoKey | null;
   metadataKey?: CryptoKey | null;
 }) => {
-  const isAudio = type.startsWith("audio/");
-  const [videoElement, setVideoElement] = useState<HTMLMediaElement | null>(
-    null,
-  );
-
-  const { blobUrl, error } = useVideoStream(opts, videoElement);
-  const hasSidecars = (audioTracks?.filter((t) => t.objectId).length ?? 0) > 1;
-
-  const {
-    activeTrackId,
-    isLoading: trackLoading,
-    selectTrack,
-  } = useAudioTrackSyncer({
-    videoElement,
-    audioTracks: audioTracks ?? [],
-    dek: dek ?? null,
-    privateKey,
-    metadataKey,
-  });
+  // Read lazily by the stream to pace buffering; never gates its start.
+  const mediaRef = useRef<HTMLMediaElement | null>(null);
+  const onMediaElement = useCallback((element: HTMLMediaElement | null) => {
+    mediaRef.current = element;
+  }, []);
+  const { blobUrl, error } = useVideoStream(opts, mediaRef);
 
   useEffect(() => {
     onUrlChange(blobUrl);
@@ -483,7 +464,6 @@ const ChunkedStreamPlayer = ({
   }, [error, onReady]);
 
   if (error) {
-    if (onReady) onReady();
     return (
       <div className="flex h-full flex-col items-center justify-center p-4 text-center">
         <AlertCircle className="mb-2 h-8 w-8 text-destructive" />
@@ -491,71 +471,19 @@ const ChunkedStreamPlayer = ({
       </div>
     );
   }
+  if (!blobUrl) return null;
 
   return (
-    <div
-      className={cn(
-        "relative flex w-full flex-col items-center justify-center bg-black overflow-hidden aspect-video",
-        isAudio ? "p-4" : "",
-      )}
-    >
-      <VidstackPlayer
-        title="Encrypted Media"
-        src={blobUrl || ""}
-        onProviderSetup={(provider) => {
-          const mediaProvider = provider as {
-            video?: HTMLVideoElement;
-            audio?: HTMLAudioElement;
-          };
-          if (provider.type === "video") {
-            setVideoElement(mediaProvider.video ?? null);
-          } else if (provider.type === "audio") {
-            setVideoElement(mediaProvider.audio ?? null);
-          }
-        }}
-        onCanPlay={onReady}
-        viewType={isAudio ? "audio" : "video"}
-        className="w-full h-full max-h-[85vh] flex items-center justify-center outline-none"
-      >
-        <MediaProvider />
-        {isAudio ? (
-          <DefaultAudioLayout icons={defaultLayoutIcons} />
-        ) : (
-          <DefaultVideoLayout icons={defaultLayoutIcons} />
-        )}
-      </VidstackPlayer>
-
-      {/* Audio Track Selector — shown only when sidecar audio tracks exist */}
-      {hasSidecars && audioTracks && audioTracks.length > 1 && (
-        <div className="absolute bottom-16 right-3 z-20 flex items-center gap-1.5 rounded-lg bg-black/70 px-2 py-1.5 backdrop-blur-sm border border-white/10">
-          <span className="text-[10px] font-medium text-white/50 uppercase tracking-wider mr-1">
-            Audio
-          </span>
-          {audioTracks.map((track, idx) => (
-            <button
-              key={track.id}
-              onClick={() => selectTrack(idx === 0 ? null : track.id)}
-              disabled={trackLoading}
-              className={cn(
-                "rounded px-2 py-0.5 text-[11px] font-semibold transition-all duration-150",
-                (
-                  idx === 0
-                    ? activeTrackId === null
-                    : activeTrackId === track.id
-                )
-                  ? "bg-primary text-primary-foreground"
-                  : "text-white/70 hover:text-white hover:bg-white/10",
-              )}
-            >
-              {track.language?.toUpperCase() || `Track ${idx + 1}`}
-            </button>
-          ))}
-          {trackLoading && (
-            <span className="ml-1 h-3 w-3 animate-spin rounded-full border border-white/30 border-t-white" />
-          )}
-        </div>
-      )}
-    </div>
+    <MediaPlayer
+      url={blobUrl}
+      type={type}
+      onMediaElement={onMediaElement}
+      onReady={onReady}
+      audioTracks={audioTracks}
+      dek={dek}
+      privateKey={privateKey}
+      metadataKey={metadataKey}
+    />
   );
 };
 
@@ -563,6 +491,7 @@ const MediaPlayer = ({
   url,
   type,
   onReady,
+  onMediaElement,
   audioTracks,
   dek,
   privateKey,
@@ -571,6 +500,7 @@ const MediaPlayer = ({
   url: string;
   type: string;
   onReady?: () => void;
+  onMediaElement?: (element: HTMLMediaElement | null) => void;
   audioTracks?: SidecarAudioTrack[];
   dek?: CryptoKey | null;
   privateKey?: CryptoKey | null;
@@ -579,6 +509,13 @@ const MediaPlayer = ({
   const isAudio = type.startsWith("audio/");
   const [mediaElement, setMediaElement] = useState<HTMLMediaElement | null>(
     null,
+  );
+  const attachMedia = useCallback(
+    (element: HTMLMediaElement | null) => {
+      setMediaElement(element);
+      onMediaElement?.(element);
+    },
+    [onMediaElement],
   );
 
   const {
@@ -604,7 +541,7 @@ const MediaPlayer = ({
     >
       {isAudio ? (
         <audio
-          ref={setMediaElement}
+          ref={attachMedia}
           controls
           autoPlay
           className="w-full relative z-20 outline-none"
@@ -613,7 +550,7 @@ const MediaPlayer = ({
         />
       ) : (
         <video
-          ref={setMediaElement}
+          ref={attachMedia}
           controls
           autoPlay
           playsInline
@@ -834,6 +771,7 @@ export function FilePreviewDialog({
   directShareWrappedKey,
   sharedItemId,
   onDownload,
+  onSharedName,
 }: FilePreviewDialogProps) {
   const sourceContext: PreviewSourceContext =
     explicitSourceContext ??
@@ -1282,6 +1220,14 @@ export function FilePreviewDialog({
             );
           }
         }
+        if (sharedToken && shareKeyObj && data.shareEncryptedName && onSharedName) {
+          const sealedName = await decryptWithShareKey(
+            data.shareEncryptedName,
+            shareKeyObj,
+            { fileId, purpose: "name" },
+          ).catch(() => "");
+          if (sealedName && sealedName !== file.name && !cancelled) onSharedName(sealedName);
+        }
 
         if (
           type === "application/octet-stream" &&
@@ -1511,6 +1457,7 @@ export function FilePreviewDialog({
             chunkSize: data.chunkSize || 2 * 1024 * 1024,
             chunkIvs,
             contentType: approved.detectedMime,
+            firstChunk: firstPlaintext,
           });
           setIsVideoPreparing(true);
           setLoadingMessage("Fetching initial chunks...");
@@ -1628,6 +1575,7 @@ export function FilePreviewDialog({
     decryptedName,
     inspectForPreview,
     refreshRendererConfig,
+    onSharedName,
   ]);
 
   // ── HD / original-quality loader (owned image files) ─────────────────────
@@ -1798,7 +1746,9 @@ export function FilePreviewDialog({
   const canVersions = !sharedToken && !albumShareToken && !directShareId;
 
   const handleDownload = async () => {
-    if (directShareId) {
+    // Share pages own their download: it decrypts with the share key and
+    // counts against the link's download limit.
+    if (directShareId || sharedToken) {
       onDownload?.();
       return;
     }

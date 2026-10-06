@@ -135,6 +135,30 @@ export function ShareDialog({
       ? driveScope.orgId
       : null;
 
+  // The title shows the locally decrypted name: storage keys are opaque.
+  const titleKey = file
+    ? orgId
+      ? space.metadataKeyFor(file.spaceKeyVersion)
+      : metadataKey
+    : null;
+  const sealedTitle = file?.encryptedDisplayName || file?.encryptedName;
+  const [plainTitle, setPlainTitle] = useState<{ id: string; name: string } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!file || !sealedTitle || !titleKey) return;
+    let cancelled = false;
+    void decryptMetadataString(sealedTitle, titleKey, {
+      fileId: file.id,
+      purpose: "name",
+    }).then((name) => {
+      if (!cancelled && name !== "Encrypted File") setPlainTitle({ id: file.id, name });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [file, sealedTitle, titleKey]);
+
   // Organization members load while the dialog is open in an org scope.
   const membersOrgId = open ? orgId : null;
   const orgMembers =
@@ -624,7 +648,9 @@ export function ShareDialog({
   const hasEncryptedShareFiles = shareFiles.some((item) => item.isEncrypted);
   const displayName = isBundle
     ? `${shareFiles.length} files selected`
-    : file?.key.split("/").pop() ?? file?.key ?? "";
+    : plainTitle && plainTitle.id === file?.id
+      ? plainTitle.name
+      : "Encrypted file";
 
   return (
     <Dialog

@@ -293,9 +293,10 @@ async function decodeDownloadedThumbnail(
   if (!decryptionKey || !fileId) return null;
   const { decryptThumbnail } = await import("@/lib/crypto/fileEncryption");
   const dataUrl = await decryptThumbnail(new TextDecoder().decode(data), decryptionKey, fileId);
-  if (!dataUrl) return null;
-  const blob = await (await fetch(dataUrl)).blob();
-  return blob.type.startsWith("image/") ? blob : null;
+  // Decoded in memory: the page CSP's connect-src does not allow fetching data: URLs.
+  const match = /^data:(image\/[\w.+-]+);base64,([A-Za-z0-9+/]*={0,2})$/.exec(dataUrl);
+  if (!match) return null;
+  return new Blob([Uint8Array.from(atob(match[2]), (c) => c.charCodeAt(0))], { type: match[1] });
 }
 export const __thumbnailDecodeTestUtils =
   process.env.NODE_ENV === "test"

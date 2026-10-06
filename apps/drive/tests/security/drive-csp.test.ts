@@ -26,6 +26,10 @@ describe("enforced Drive page CSP", () => {
     expect(policy).toContain("wss://socket.csp.test"); expect(policy).toContain("https://analytics.csp.test");
     expect(policy).toContain("https://account.us.r2.cloudflarestorage.com");
     expect(policy).not.toContain("razorpay");
+    const directive = (name: string) => policy.split(`${name} `)[1].split(";")[0];
+    // Accounts profile pictures render in Drive; thumbnails decode in memory, not via fetch(data:).
+    expect(directive("img-src")).toContain("https://api.dicebear.com");
+    expect(directive("connect-src")).not.toContain("data:");
     expect(driveContentSecurityPolicy(nonce, true)).toContain("frame-src https://accounts.csp.test");
     expect(driveContentSecurityPolicy(nonce, true)).toContain("https://checkout.razorpay.com");
     vi.stubEnv("NEXT_PUBLIC_POSTHOG_HOST", "https://analytics.csp.test; script-src *");

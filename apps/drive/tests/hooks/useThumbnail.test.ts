@@ -105,7 +105,9 @@ describe("useThumbnail batcher", () => {
 });
 describe("thumbnail plaintext cache", () => {
   it("renders only a thumbnail sealed for this file, never plaintext", async () => {
-    vi.restoreAllMocks(); // data: URLs go through the real fetch
+    vi.restoreAllMocks();
+    // The page CSP blocks fetch(data:), so opening must never touch the network.
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
     expect(__thumbnailDecodeTestUtils).toBeDefined();
     const decode = __thumbnailDecodeTestUtils!.decodeDownloadedThumbnail;
     const bytes = (text: string) => new TextEncoder().encode(text).slice().buffer as ArrayBuffer;
@@ -119,6 +121,10 @@ describe("thumbnail plaintext cache", () => {
     await expect(decode(bytes("data:image/png;base64,iVBORw0KGgo="), key, "65f0000000000000000000aa")).resolves.toBeNull();
     const opened = await decode(bytes(sealed), key, "65f0000000000000000000aa");
     expect(opened?.type).toBe("image/png");
+    expect(new Uint8Array(await opened!.arrayBuffer())).toEqual(
+      new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("clears plaintext and rejects in-flight writes from an older generation", () => {

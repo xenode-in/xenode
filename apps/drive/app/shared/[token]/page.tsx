@@ -259,7 +259,7 @@ async function fetchSharedFileBlob({
   contentType?: string;
   endpoint: SharedFileEndpoint;
   onProgress?: (pct: number) => void;
-}): Promise<{ blob: Blob; fileName: string; contentType: string }> {
+}): Promise<{ blob: Blob; fileName: string; contentType: string; sealedName: string }> {
   const res = await fetch(`/api/share/${token}/${endpoint}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -271,10 +271,6 @@ async function fetchSharedFileBlob({
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Failed to load stream info");
 
-  const resolvedContentType =
-    contentType || data.contentType || target.contentType || "application/octet-stream";
-  const resolvedFileName =
-    fileName || data.fileName || target.fileName || target.name || "download";
   const shareEncryptedDEK = data.shareEncryptedDEK || target.shareEncryptedDEK;
   const shareKeyIv = data.shareKeyIv || target.shareKeyIv;
   // Shared content is always encrypted, and bound to its object id.
@@ -289,9 +285,25 @@ async function fetchSharedFileBlob({
     bytesToArrayBuffer(b64urlToBytes(shareKey)),
     { name: "AES-GCM" },
     false,
-    ["unwrapKey"],
+    ["decrypt", "unwrapKey"],
   );
   const dek = await unwrapShareFileKey(shareEncryptedDEK, shareKeyIv, shareKeyObj, fileId);
+  // A password-protected link reveals its sealed name and type only here.
+  const openSealed = (value: unknown, purpose: "name" | "content-type") =>
+    typeof value === "string" && value
+      ? decryptWithShareKey(value, shareKeyObj, { fileId, purpose }).catch(() => "")
+      : Promise.resolve("");
+  const [sealedName, sealedType] = await Promise.all([
+    openSealed(data.shareEncryptedName, "name"),
+    openSealed(data.shareEncryptedContentType, "content-type"),
+  ]);
+  const resolvedContentType =
+    sealedType ||
+    contentType ||
+    (data.shareEncryptedContentType ? undefined : data.contentType) ||
+    target.contentType ||
+    "application/octet-stream";
+  const resolvedFileName = sealedName || fileName || "download";
 
   let blob: Blob;
   if (data.chunkUrls) {
@@ -320,7 +332,7 @@ async function fetchSharedFileBlob({
     blob = await decryptFileContent(raw, dek, { iv: data.iv }, fileId, resolvedContentType);
   }
 
-  return { blob, fileName: resolvedFileName, contentType: resolvedContentType };
+  return { blob, fileName: resolvedFileName, contentType: resolvedContentType, sealedName };
 }
 
 function downloadBlob(blob: Blob, fileName: string) {
@@ -664,15 +676,39 @@ export default function SharedFilePage() {
     setDownloading(true);
     setError(null);
     try {
-      const { blob, fileName } = await fetchDownloadBlob(item);
+      const { blob, fileName, sealedName } = await fetchDownloadBlob(item);
       downloadBlob(blob, fileName);
       setDone(true);
+      // A password-protected link shows its real name once it has been opened.
+      if (sealedName && item) {
+        setDecryptedItems((prev) => ({
+          ...prev,
+          [item.id]: { ...prev[item.id], name: sealedName },
+        }));
+      } else if (sealedName) {
+        setDecryptedName(sealedName);
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Download failed");
     } finally {
       setDownloading(false);
     }
   }, [fetchDownloadBlob]);
+
+  const handleSharedName = useCallback(
+    (name: string) => {
+      if (previewItem) {
+        setDecryptedItems((prev) =>
+          prev[previewItem.id]?.name === name
+            ? prev
+            : { ...prev, [previewItem.id]: { ...prev[previewItem.id], name } },
+        );
+      } else {
+        setDecryptedName(name);
+      }
+    },
+    [previewItem],
+  );
 
   const handleDownloadAll = useCallback(async () => {
     if (!meta?.items?.length) return;
@@ -906,6 +942,8 @@ export default function SharedFilePage() {
           sharedItemId={previewItem?.id}
           shareKey={shareKey}
           password={password}
+          onDownload={() => void handleDownload(previewItem ?? undefined)}
+          onSharedName={handleSharedName}
         />
       )}
     </div>
