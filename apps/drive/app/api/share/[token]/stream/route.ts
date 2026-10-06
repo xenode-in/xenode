@@ -3,7 +3,7 @@ import dbConnect from "@/lib/mongodb";
 import ShareLink from "@/models/ShareLink";
 import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
-import { getSignedFileUrl } from "@/lib/b2/cdn";
+import { getSignedFileUrl, fileUrlLifetime } from "@/lib/b2/cdn";
 import { verifySharePassword } from "@/lib/share/password-protection";
 import { Space } from "@xenode/database/models";
 
@@ -22,10 +22,6 @@ interface Params {
  * Unlike /download, this route does NOT increment the downloadCount so that
  * previewing a file doesn't consume the user's download allowance.
  *
- * For non-encrypted files the client can hand this URL directly to a <video>
- * element so the browser handles byte-range requests and native streaming.
- * For encrypted files the client still needs to fetch → decrypt → blob-URL,
- * but at least the signed URL is obtained cheaply here.
  */
 export async function POST(req: NextRequest, { params }: Params) {
   const resolvedParams = await params;
@@ -45,7 +41,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       { status: 404 },
     );
 
-  if (link.expiresAt && new Date() > link.expiresAt)
+  if (link.expiresAt && new Date() >= link.expiresAt)
     return NextResponse.json(
       { error: "This link has expired" },
       { status: 410 },
@@ -92,12 +88,12 @@ export async function POST(req: NextRequest, { params }: Params) {
     );
     chunkUrls = await Promise.all(
       sortedChunks.map((chunk) =>
-        getSignedFileUrl(bucket.b2BucketId, chunk.key, 3600),
+        getSignedFileUrl(bucket.b2BucketId, chunk.key, fileUrlLifetime(link.expiresAt)),
       ),
     );
   } else {
     // 1-hour signed URL — enough for a preview session
-    signedUrl = await getSignedFileUrl(bucket.b2BucketId, object.key, 3600);
+    signedUrl = await getSignedFileUrl(bucket.b2BucketId, object.key, fileUrlLifetime(link.expiresAt));
   }
 
   return NextResponse.json({
@@ -120,5 +116,5 @@ export async function POST(req: NextRequest, { params }: Params) {
     chunkCount: object.chunkCount,
     chunkIvs: object.chunkIvs, // JSON string, parse on client
     thumbnail: selectedItem?.shareEncryptedThumbnail || link.shareEncryptedThumbnail || object.thumbnail,
-  });
+  }, { headers: { "Cache-Control": "private, no-store" } });
 }

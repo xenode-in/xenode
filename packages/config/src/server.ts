@@ -28,7 +28,6 @@ const serverEnvSchema = z
     BETTER_AUTH_SECRET: z.string().optional(),
     ADMIN_JWT_SECRET: z.string().min(1),
     REALTIME_TICKET_SECRET: mandatoryIndependentSecret,
-    CDN_SIGNING_SECRET: mandatoryIndependentSecret,
     REALTIME_ALLOWED_ORIGIN: z.string().refine(hasValidOrigins, {
       message: "REALTIME_ALLOWED_ORIGIN must contain exact http(s) origins",
     }),
@@ -37,7 +36,6 @@ const serverEnvSchema = z
   .superRefine((env, context) => {
     const independentSecrets = [
       ["REALTIME_TICKET_SECRET", env.REALTIME_TICKET_SECRET],
-      ["CDN_SIGNING_SECRET", env.CDN_SIGNING_SECRET],
     ] as const;
     for (const [key, value] of independentSecrets) {
       if (env.BETTER_AUTH_SECRET && value === env.BETTER_AUTH_SECRET) {
@@ -47,13 +45,6 @@ const serverEnvSchema = z
           message: `${key} must not reuse BETTER_AUTH_SECRET`,
         });
       }
-    }
-    if (env.REALTIME_TICKET_SECRET === env.CDN_SIGNING_SECRET) {
-      context.addIssue({
-        code: "custom",
-        path: ["CDN_SIGNING_SECRET"],
-        message: "CDN_SIGNING_SECRET must not reuse REALTIME_TICKET_SECRET",
-      });
     }
 
     if (env.NODE_ENV !== "production") return;

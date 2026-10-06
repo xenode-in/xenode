@@ -6,19 +6,14 @@ import {
   requireAccessContext,
   toJsonResponse,
 } from "@/lib/authz";
-import { getSignedFileUrl } from "@/lib/b2/cdn";
+import { getSignedFileUrl, fileUrlLifetime } from "@/lib/b2/cdn";
 import { logRequest } from "@/lib/logRequest";
-import {
-  folderResponseKey,
-  folderVersionKey,
-} from "@/lib/realtime/cache-keys";
-import { withRedis } from "@/lib/redis";
 
 export const dynamic = "force-dynamic";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
-import { folderListingId, parseFolderParam } from "@/lib/storage/folders";
+import { parseFolderParam } from "@/lib/storage/folders";
 
 const LIST_PROJECTION =
   "key spaceId syncVersion folderId ancestorIds size contentType encryptedContentType thumbnail tags position starred lastAccessedAt uploadSource createdAt " +
@@ -117,39 +112,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: errorMessage }, { status: statusCode });
     }
 
-    const canUseFolderCache =
-      folderId !== undefined &&
-      !before &&
-      !fetchAll &&
-      !deleted &&
-      !starredOnly &&
-      !excludeMobileBackup &&
-      !contentTypeFilter &&
-      !mediaCategoryFilter;
-    let cacheKey: string | null = null;
-
-    if (canUseFolderCache) {
-      const listingId = folderListingId(folderId);
-      const version =
-        (await withRedis((redis) =>
-          redis.get(folderVersionKey(ctx.spaceId, listingId)),
-        )) ?? "0";
-      cacheKey = folderResponseKey({
-        spaceId: ctx.spaceId,
-        folderId: listingId,
-        version,
-        limit,
-        sortBy: sortByParam,
-        sortDir: sortDirParam,
-      });
-      const cached = await withRedis((redis) => redis.get(cacheKey!));
-      if (cached) {
-        return NextResponse.json(JSON.parse(cached), {
-          headers: { "x-xenode-cache": "HIT" },
-        });
-      }
-    }
-
     const query: Record<string, unknown> = {
       bucketId,
       ...objectOwnershipClause(ctx),
@@ -231,34 +193,24 @@ export async function GET(request: NextRequest) {
     const baseObjects =
       hasNextPage ? rawObjects.slice(0, limit) : rawObjects;
 
-    // Pre-sign thumbnail and optimized-preview URLs at list time.
-    //
-    // generateFileToken() is time-windowed (rounded to the start of the
-    // current hour), so the URLs are byte-identical for every object key
-    // within the same hour — Azure CDN can cache them aggressively at the
-    // edge. Doing this here saves the client a round-trip per asset:
-    // before, the gallery used to call /api/objects/thumbnail?key=X for
-    // every single thumbnail (3000+ extra HTTP calls on a big library).
-    //
-    // The per-object signing cost is just two HMAC-SHA256s — well under
-    // 1ms at this scale and dwarfed by the Mongo round-trip we already
-    // paid above.
-    const objects = baseObjects.map((o) => {
+    // Sign only physical variants; inline metadata thumbnails already carry ciphertext.
+    const objects = await Promise.all(baseObjects.map(async (o) => {
       const out: typeof o & {
         thumbnailUrl?: string;
         optimizedUrl?: string;
       } = o;
-      if (o.thumbnail) {
-        out.thumbnailUrl = getSignedFileUrl(bucket.b2BucketId, o.thumbnail);
+      if (o.thumbnail?.startsWith("users/") || o.thumbnail?.startsWith("shares/")) {
+        out.thumbnailUrl = await getSignedFileUrl(bucket.b2BucketId, o.thumbnail, fileUrlLifetime(ctx.session?.session.expiresAt));
       }
       if (o.optimizedKey) {
-        out.optimizedUrl = getSignedFileUrl(
+        out.optimizedUrl = await getSignedFileUrl(
           bucket.b2BucketId,
           o.optimizedKey,
+          fileUrlLifetime(ctx.session?.session.expiresAt),
         );
       }
       return out;
-    });
+    }));
 
     // Cursor points to the last item in this page (not needed for fetchAll)
     let nextCursor = null;
@@ -281,15 +233,7 @@ export async function GET(request: NextRequest) {
       },
     };
 
-    if (cacheKey) {
-      await withRedis((redis) =>
-        redis.set(cacheKey!, JSON.stringify(responseBody), "EX", 30),
-      );
-    }
-
-    return NextResponse.json(responseBody, {
-      headers: { "x-xenode-cache": cacheKey ? "MISS" : "BYPASS" },
-    });
+    return NextResponse.json(responseBody, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error: unknown) {
     if (isAuthzError(error)) {
       statusCode = error.status;

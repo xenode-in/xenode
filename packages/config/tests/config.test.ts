@@ -8,7 +8,6 @@ const validServerEnv = {
   MONGODB_URI: "mongodb://localhost/test",
   ADMIN_JWT_SECRET: "b".repeat(48),
   REALTIME_TICKET_SECRET: "r".repeat(48),
-  CDN_SIGNING_SECRET: "c".repeat(48),
   REALTIME_ALLOWED_ORIGIN:
     "https://xenode.in,https://photos.xenode.in",
 };
@@ -36,7 +35,6 @@ describe("shared config", () => {
     ).toThrow();
     expect(getServerEnv({ ...validServerEnv, NODE_ENV: "production" })).toMatchObject({
       REALTIME_TICKET_SECRET: validServerEnv.REALTIME_TICKET_SECRET,
-      CDN_SIGNING_SECRET: validServerEnv.CDN_SIGNING_SECRET,
     });
   });
 
@@ -45,12 +43,6 @@ describe("shared config", () => {
       getServerEnv({
         ...validServerEnv,
         BETTER_AUTH_SECRET: validServerEnv.REALTIME_TICKET_SECRET,
-      }),
-    ).toThrow("must not reuse");
-    expect(() =>
-      getServerEnv({
-        ...validServerEnv,
-        CDN_SIGNING_SECRET: validServerEnv.REALTIME_TICKET_SECRET,
       }),
     ).toThrow("must not reuse");
     expect(() =>

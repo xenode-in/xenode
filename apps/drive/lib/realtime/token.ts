@@ -12,8 +12,7 @@ function ticketSecret(): string {
     throw new Error("REALTIME_TICKET_SECRET must be configured with at least 32 bytes");
   }
   if (
-    value === process.env.BETTER_AUTH_SECRET ||
-    value === process.env.CDN_SIGNING_SECRET
+    value === process.env.BETTER_AUTH_SECRET
   ) {
     throw new Error("REALTIME_TICKET_SECRET must be independent");
   }

@@ -8,7 +8,7 @@ import dbConnect from "@/lib/mongodb";
 import DirectShare from "@/models/DirectShare";
 import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
-import { getSignedFileUrl } from "@/lib/b2/cdn";
+import { getSignedFileUrl, fileUrlLifetime } from "@/lib/b2/cdn";
 import { canDownload, normalizeShareRole } from "@/lib/orgs/shareRoles";
 import { Space } from "@xenode/database/models";
 
@@ -58,10 +58,10 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     if (object.chunks && object.chunks.length > 0) {
       const sortedChunks = [...object.chunks].sort((a, b) => a.index - b.index);
       chunkUrls = await Promise.all(
-        sortedChunks.map((chunk) => getSignedFileUrl(bucket.b2BucketId, chunk.key, 3600)),
+        sortedChunks.map((chunk) => getSignedFileUrl(bucket.b2BucketId, chunk.key, fileUrlLifetime(ctx.session?.session.expiresAt))),
       );
     } else {
-      downloadUrl = await getSignedFileUrl(bucket.b2BucketId, object.key, 3600);
+      downloadUrl = await getSignedFileUrl(bucket.b2BucketId, object.key, fileUrlLifetime(ctx.session?.session.expiresAt));
     }
 
     await DirectShare.updateOne(
@@ -90,7 +90,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       chunkCount: object.chunkCount,
       chunkIvs: object.chunkIvs,
       thumbnail: share.shareEncryptedThumbnail || object.thumbnail,
-    });
+    }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error: unknown) {
     if (isAuthzError(error)) {
       return toJsonResponse(error);

@@ -1,3 +1,4 @@
+import { fileUrlLifetime } from "@/lib/b2/cdn";
 /**
  * POST /api/objects/batch
  * Body: { bucketId: string, ids: string[] }
@@ -155,11 +156,12 @@ export async function POST(request: NextRequest) {
         const id = String(doc._id);
 
         let thumbnailUrl: string | null = null;
-        if (doc.thumbnail) {
+        if (doc.thumbnail?.startsWith("users/") || doc.thumbnail?.startsWith("shares/")) {
           try {
             thumbnailUrl = await getSignedFileUrl(
               bucket.b2BucketId,
               doc.thumbnail,
+              fileUrlLifetime(ctx.session?.session.expiresAt),
             );
           } catch {
             // Non-fatal — thumbnail just won't render; client falls back
@@ -173,6 +175,7 @@ export async function POST(request: NextRequest) {
             optimizedUrl = await getSignedFileUrl(
               bucket.b2BucketId,
               doc.optimizedKey,
+              fileUrlLifetime(ctx.session?.session.expiresAt),
             );
           } catch {}
         }
@@ -195,7 +198,7 @@ export async function POST(request: NextRequest) {
     const items: Record<string, any> = {};
     for (const [id, doc] of signed) items[id] = doc;
 
-    return NextResponse.json({ items });
+    return NextResponse.json({ items }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (err: any) {
     if (isAuthzError(err)) {
       statusCode = err.status;

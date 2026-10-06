@@ -1,59 +1,44 @@
-import Bucket, { type IBucket } from "@/models/Bucket";
+import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import ShareLink from "@/models/ShareLink";
 import DirectShare from "@/models/DirectShare";
 import AlbumShareLink from "@/models/AlbumShareLink";
-import type { Types } from "mongoose";
+import { Space } from "@xenode/database/models";
+import type { AccessContext } from "@/lib/authz";
+import { bucketOwnershipClause, objectOwnershipClause } from "@/lib/authz";
+import { fileUrlLifetime } from "@/lib/b2/cdn";
 
-/**
- * Resolve the physical regional bucket that owns a public `shares/` thumbnail.
- * Share recipients may live in another region, so their session region cannot
- * be used to route these keys.
- */
-export async function resolveShareKeyBucket(
-  key: string,
-): Promise<IBucket | null> {
-  if (!key.startsWith("shares/")) return null;
-
-  const [publicShare, directShare] = await Promise.all([
-    ShareLink.findOne({
-      $or: [
-        { shareEncryptedThumbnail: key },
-        { "bundleItems.shareEncryptedThumbnail": key },
-      ],
-      isRevoked: false,
-    })
-      .select("bucketId")
-      .lean<{ bucketId: IBucket["_id"] } | null>(),
-    DirectShare.findOne({
-      shareEncryptedThumbnail: key,
-      isRevoked: false,
-    })
-      .select("bucketId")
-      .lean<{ bucketId: IBucket["_id"] } | null>(),
-  ]);
-
-  const directBucketId = publicShare?.bucketId ?? directShare?.bucketId;
-  if (directBucketId) return Bucket.findById(directBucketId);
-
-  const albumShare = await AlbumShareLink.findOne({
-    "items.shareEncryptedThumbnail": key,
-    isRevoked: false,
-  })
-    .select("items")
-    .lean<{
-      items: Array<{
-        objectId: Types.ObjectId;
-        shareEncryptedThumbnail?: string;
-      }>;
-    } | null>();
-  const item = albumShare?.items.find(
-    (candidate) => candidate.shareEncryptedThumbnail === key,
-  );
-  if (!item) return null;
-
-  const object = await StorageObject.findById(item.objectId)
-    .select("bucketId")
-    .lean<{ bucketId: IBucket["_id"] } | null>();
-  return object ? Bucket.findById(object.bucketId) : null;
+/** Key-only thumbnail access never bypasses a password, expiry or recipient gate. */
+export async function resolveThumbnailAccess(key: string, ctx: AccessContext | null) {
+  let objectId: unknown;
+  let expiresAt: Date | undefined;
+  if (key.startsWith("shares/")) {
+    const publicLink = await ShareLink.findOne({
+      isRevoked: false, isPasswordProtected: false,
+      $or: [{ shareEncryptedThumbnail: key }, { "bundleItems.shareEncryptedThumbnail": key }],
+    });
+    if (publicLink && (!publicLink.maxDownloads || publicLink.downloadCount < publicLink.maxDownloads) &&
+        (!publicLink.expiresAt || publicLink.expiresAt.getTime() > Date.now())) {
+      objectId = publicLink.bundleItems?.find(item => item.shareEncryptedThumbnail === key)?.objectId ?? publicLink.objectId;
+      expiresAt = publicLink.expiresAt;
+    } else {
+      const direct = ctx ? await DirectShare.findOne({ isRevoked: false, shareEncryptedThumbnail: key, "recipients.recipientUserId": ctx.accountId }) : null;
+      if (direct) objectId = direct.objectId;
+      else {
+        const album = await AlbumShareLink.findOne({ isRevoked: false, isPasswordProtected: false, "items.shareEncryptedThumbnail": key });
+        if (!album || (album.expiresAt && album.expiresAt.getTime() <= Date.now()) || (album.maxViews && album.viewCount >= album.maxViews)) return null;
+        objectId = album.items.find(item => item.shareEncryptedThumbnail === key)?.objectId;
+        expiresAt = album.expiresAt;
+      }
+    }
+  } else if (!ctx) return null;
+  const object = await StorageObject.findOne({
+    ...(objectId ? { _id: objectId } : { thumbnail: key, ...objectOwnershipClause(ctx!) }),
+    productId: "drive", deletedAt: null, purgeState: { $exists: false },
+  }).select("bucketId spaceId").lean();
+  if (!object || !await Space.exists({ _id: object.spaceId, status: "active" })) return null;
+  const bucket = await Bucket.findOne({ _id: object.bucketId, ...(!key.startsWith("shares/") ? bucketOwnershipClause(ctx!) : {}) });
+  if (!bucket) return null;
+  const deadline = expiresAt && ctx?.session?.session.expiresAt ? new Date(Math.min(expiresAt.getTime(), ctx.session.session.expiresAt.getTime())) : expiresAt ?? ctx?.session?.session.expiresAt;
+  return { bucket, expiresIn: fileUrlLifetime(deadline) };
 }

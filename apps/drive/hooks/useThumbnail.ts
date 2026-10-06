@@ -1,34 +1,5 @@
-/**
- * useThumbnail — fetches, decrypts, and blob-URL-caches a single thumbnail.
- *
- * Architecture (two stages):
- *
- *   Stage 1 — URL batch (50 ms coalesce):
- *     All useThumbnail calls within 50ms are coalesced into one
- *     POST /api/objects/thumbnail/batch request. The server does pure HMAC
- *     signing (~5ms, no B2 I/O) and returns { urls: { key: proxyUrl } }.
- *     The proxy URL routes through /api/files/ which has CDN caching.
- *
- *   Stage 2 — Controlled download (max 5 concurrent):
- *     Each signed proxy URL is downloaded via fetch() with a semaphore
- *     capping concurrent requests at MAX_CONCURRENT_DOWNLOADS=5.
- *     The browser streams bytes from /api/files/ → B2 (keepalive reused).
- *     Unlimited concurrency (Promise.all(50)) caused network congestion
- *     and 8s load times; 5-at-a-time completes in ~1-2s.
- *
- * Full flow per thumbnail:
- *   1. Check Dexie LRU cache — if hit, return blob URL immediately.
- *   2. Queue the B2 key for URL batch (50 ms coalesce window).
- *   3. Batch fires → server returns HMAC proxy URLs for all queued keys.
- *   4. Acquire semaphore slot (max 5 concurrent).
- *   5. GET the proxy URL → /api/files/ validates HMAC → streams from B2.
- *   6. If `enc:` prefix detected, decrypt with the provided CryptoKey.
- *   7. Store resulting Blob in Dexie (with LRU eviction at MAX_THUMBNAILS).
- *   8. Release semaphore slot; return blob URL via setState → re-render.
- *
- * CDN note: /api/files/ sets Cache-Control: public, max-age=3600 and the
- * HMAC URL is time-windowed (same URL for entire 1h block), so CDN edge
- * nodes cache the bytes — subsequent loads cost ~0ms.
+/** Visible thumbnail URLs are coalesced and fetched directly from R2.
+ * Decrypted thumbnails live only in the bounded memory cache.
  */
 
 import { useState, useEffect, useRef } from "react";
@@ -59,7 +30,7 @@ const MAX_CONCURRENT_DOWNLOADS = 10;
 // ─────────────────────────────────────────────────────────────────────────────
 // Module-level concurrency semaphore
 //
-// Limits simultaneous GET /api/files/ requests so the server is not flooded
+// Limits simultaneous direct R2 GET requests so the server is not flooded
 // with 50 connections at once. Queue is FIFO; slots released in finally blocks.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -379,7 +350,7 @@ export function useThumbnail(
     }
 
     let cancelled = false;
-    // AbortController cancels the in-flight GET /api/files/ fetch when the
+    // AbortController cancels the in-flight direct R2 GET fetch when the
     // tile scrolls out of view or thumbnail prop changes before download completes.
     const abortCtrl = new AbortController();
     const cacheGeneration = getThumbnailCacheGeneration();
@@ -409,7 +380,7 @@ export function useThumbnail(
         );
         if (cancelled) return;
 
-        // ── 3. Download via proxy with concurrency limit ─────────────────
+        // ── 3. Download directly from R2 with concurrency limit ─────────────────
         await acquireSlot(abortCtrl.signal);
         if (cancelled) {
           releaseSlot();
@@ -459,7 +430,7 @@ export function useThumbnail(
 
     return () => {
       cancelled = true;
-      // Abort any in-flight GET /api/files/ request for this thumbnail.
+      // Abort any in-flight direct R2 GET request for this thumbnail.
       // Fires when: thumbnail → undefined (tile left viewport), deps changed.
       // We intentionally do NOT revoke objectUrlRef here — the blob URL must
       // stay valid so the already-rendered <img> doesn't flash/break.

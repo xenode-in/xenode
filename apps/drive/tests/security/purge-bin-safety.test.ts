@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Space, DriveSyncTombstone, queueDriveBinPurge, restoreDriveBin, cleanupDriveBinObject, getDatabase, BIN_PURGE_LEASE_MS } from "@xenode/database";
 const { deleted, ctx } = vi.hoisted(() => ({ deleted: vi.fn(), ctx: vi.fn() }));
 vi.mock("@/lib/b2/objects", () => ({ deleteObjects: deleted }));
-vi.mock("@/lib/b2/cdn", () => ({ getSignedFileUrl: vi.fn(async (_bucket: string, key: string) => `https://cdn.example.test/${key}`) }));
+vi.mock("@/lib/b2/cdn", async (original) => ({ ...await original<typeof import("@/lib/b2/cdn")>(), getSignedFileUrl: vi.fn(async (_bucket: string, key: string) => `https://cdn.example.test/${key}`) }));
 vi.mock("@/lib/authz", async (original) => ({ ...await original<typeof import("@/lib/authz")>(), requireAccessContext: ctx }));
 vi.mock("@/lib/realtime/publish", () => ({ publishSyncEvent: vi.fn(async () => {}) }));
 import { GET as cron } from "@/app/api/cron/purge-bin/route";

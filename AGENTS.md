@@ -133,7 +133,10 @@ key, never the raw Space key. Browser code reads keys through
   `encryptedDEK`, IVs, and chunks are ciphertext-only server fields.
 - Browser clients upload/download directly to Cloudflare R2 using its
   S3-compatible API. Next.js signs URLs and records metadata but never proxies
-  file bytes. Do not add provider-specific B2 version APIs or endpoints.
+  file bytes. Ciphertext GET capabilities live at most 300 seconds, are bounded
+  by session/share expiry and use private no-store responses; Range stays
+  unsigned for browser seeking (docs/gpt-6-astra-audit/40-direct-ciphertext-downloads.md).
+  Do not add provider-specific B2 version APIs or endpoints.
 - `STORAGE_ENABLED_REGIONS` is a shared non-secret list of enabled pools.
   Products validate complete, distinct provisioning at runtime startup; Accounts
   advertises that list without receiving storage credentials. Unknown bucket

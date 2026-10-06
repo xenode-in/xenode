@@ -460,15 +460,29 @@
 
     "/api/objects/{id}/content": {
       "get": {
-        "tags": ["Objects"],
-        "summary": "Get file content / stream URL",
+        "tags": [
+          "Objects"
+        ],
+        "summary": "Issue direct ciphertext URLs for current content or a retained version",
         "parameters": [
-          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
-          "200": { "description": "File content or stream URL" },
-          "404": { "description": "Not found" }
-        }
+          "200": {
+            "description": "Direct ciphertext URL manifest"
+          },
+          "404": {
+            "description": "Not found"
+          }
+        },
+        "description": "Authorizes the Drive Space and returns objectId, optional url or ordered chunkUrls. No file bytes pass through Next. URLs live at most 300 seconds and no longer than the ProductSession. Response is private, no-store. Multipart retained versions use the same manifest. Range requests go directly to R2."
       }
     },
 
@@ -1019,29 +1033,53 @@
 
     "/api/share/{token}/download": {
       "post": {
-        "tags": ["Link Shares"],
+        "tags": [
+          "Link Shares"
+        ],
         "summary": "Download shared file",
-        "description": "Validates access (password if required) and returns a signed download URL. For a bundle, omitted itemId selects the first surviving item.",
+        "description": "Validates access (password if required) and returns a signed download URL. For a bundle, omitted itemId selects the first surviving item. Returns direct R2 GET URLs lasting at most 300 seconds, rounded down to the link expiry. Responses are private, no-store. Downloads atomically consume the allowance; previews do not consume it.",
         "parameters": [
-          { "name": "token", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
-          "200": { "description": "Download URL returned" },
-          "404": { "description": "Share not found" }
+          "200": {
+            "description": "Download URL returned"
+          },
+          "404": {
+            "description": "Share not found"
+          }
         }
       }
     },
 
     "/api/share/{token}/stream": {
       "post": {
-        "tags": ["Link Shares"],
+        "tags": [
+          "Link Shares"
+        ],
         "summary": "Stream shared file",
-        "description": "Returns a streaming URL for preview/playback of shared content.",
+        "description": "Returns a streaming URL for preview/playback of shared content. Returns direct R2 GET URLs lasting at most 300 seconds, rounded down to the link expiry. Responses are private, no-store. Downloads atomically consume the allowance; previews do not consume it.",
         "parameters": [
-          { "name": "token", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
-          "200": { "description": "Stream URL returned" }
+          "200": {
+            "description": "Stream URL returned"
+          }
         }
       }
     },
@@ -1581,20 +1619,7 @@
       }
     },
 
-    "/api/files/{bucket}/{...key}": {
-      "get": {
-        "tags": ["Objects"],
-        "summary": "Get file by bucket and key path",
-        "description": "Direct file access via bucket name and full key path.",
-        "parameters": [
-          { "name": "bucket", "in": "path", "required": true, "schema": { "type": "string" } },
-          { "name": "...key", "in": "path", "required": true, "schema": { "type": "string" } }
-        ],
-        "responses": {
-          "200": { "description": "File data or download URL" }
-        }
-      }
-    },
+
 
     "/api/objects/upload-status": {
       "get": {

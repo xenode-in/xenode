@@ -3,7 +3,7 @@ import dbConnect from "@/lib/mongodb";
 import ShareLink from "@/models/ShareLink";
 import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
-import { getSignedFileUrl } from "@/lib/b2/cdn";
+import { getSignedFileUrl, fileUrlLifetime } from "@/lib/b2/cdn";
 import { verifySharePassword } from "@/lib/share/password-protection";
 import { Space } from "@xenode/database/models";
 
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       { status: 404 },
     );
 
-  if (link.expiresAt && new Date() > link.expiresAt)
+  if (link.expiresAt && new Date() >= link.expiresAt)
     return NextResponse.json(
       { error: "This link has expired" },
       { status: 410 },
@@ -69,9 +69,6 @@ export async function POST(req: NextRequest, { params }: Params) {
   if (!bucket)
     return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
 
-  // Increment download count (non-blocking)
-  ShareLink.findByIdAndUpdate(link._id, { $inc: { downloadCount: 1 } }).exec();
-
   let downloadUrl = "";
   let chunkUrls: string[] | undefined = undefined;
 
@@ -81,13 +78,23 @@ export async function POST(req: NextRequest, { params }: Params) {
     );
     chunkUrls = await Promise.all(
       sortedChunks.map((chunk) =>
-        getSignedFileUrl(bucket.b2BucketId, chunk.key, 3600),
+        getSignedFileUrl(bucket.b2BucketId, chunk.key, fileUrlLifetime(link.expiresAt)),
       ),
     );
   } else {
-    // Generate a short-lived signed URL (1 hour) using your existing cdn utility
-    downloadUrl = await getSignedFileUrl(bucket.b2BucketId, object.key, 3600);
+    // The capability is bounded by the link deadline.
+    downloadUrl = await getSignedFileUrl(bucket.b2BucketId, object.key, fileUrlLifetime(link.expiresAt));
   }
+
+  const now = new Date();
+  const claimed = await ShareLink.findOneAndUpdate({
+    _id: link._id, isRevoked: false, __v: link.__v,
+    $and: [
+      { $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }] },
+      { $or: [{ maxDownloads: null }, { maxDownloads: 0 }, { $expr: { $lt: ["$downloadCount", "$maxDownloads"] } }] },
+    ],
+  }, { $inc: { downloadCount: 1 } });
+  if (!claimed) return NextResponse.json({ error: "Share changed, expired or download limit reached" }, { status: 410 });
 
   return NextResponse.json({
     // Content and file-key wraps are bound to this id.
@@ -109,5 +116,5 @@ export async function POST(req: NextRequest, { params }: Params) {
     chunkCount: object.chunkCount,
     chunkIvs: object.chunkIvs,
     thumbnail: selectedItem?.shareEncryptedThumbnail || link.shareEncryptedThumbnail || object.thumbnail,
-  });
+  }, { headers: { "Cache-Control": "private, no-store" } });
 }

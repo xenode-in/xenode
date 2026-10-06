@@ -5,7 +5,7 @@ import {
   requireAccessContext,
   toJsonResponse,
 } from "@/lib/authz";
-import { getSignedFileUrl } from "@/lib/b2/cdn";
+import { getSignedFileUrl, fileUrlLifetime } from "@/lib/b2/cdn";
 import dbConnect from "@/lib/mongodb";
 import {
   loadOrgBucket,
@@ -82,21 +82,21 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       ? await dbQuery.lean()
       : await dbQuery.limit(limit + 1).lean();
     const hasNextPage = fetchAll ? false : rawObjects.length > limit;
-    const objects = (hasNextPage ? rawObjects.slice(0, limit) : rawObjects).map(
-      (object) => {
+    const objects = await Promise.all((hasNextPage ? rawObjects.slice(0, limit) : rawObjects).map(
+      async (object) => {
         const out: typeof object & {
           thumbnailUrl?: string;
           optimizedUrl?: string;
         } = object;
-        if (object.thumbnail) {
-          out.thumbnailUrl = getSignedFileUrl(bucket.b2BucketId, object.thumbnail);
+        if (object.thumbnail?.startsWith("users/") || object.thumbnail?.startsWith("shares/")) {
+          out.thumbnailUrl = await getSignedFileUrl(bucket.b2BucketId, object.thumbnail, fileUrlLifetime(ctx.session?.session.expiresAt));
         }
         if (object.optimizedKey) {
-          out.optimizedUrl = getSignedFileUrl(bucket.b2BucketId, object.optimizedKey);
+          out.optimizedUrl = await getSignedFileUrl(bucket.b2BucketId, object.optimizedKey, fileUrlLifetime(ctx.session?.session.expiresAt));
         }
         return out;
       },
-    );
+    ));
 
     return NextResponse.json({
       objects,
@@ -105,7 +105,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         hasNextPage,
         nextCursor: null,
       },
-    });
+    }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     if (isAuthzError(error)) {
       return toJsonResponse(error);

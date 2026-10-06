@@ -17,8 +17,7 @@ export async function createPhotosRealtimeToken(args: {
     throw new Error("REALTIME_TICKET_SECRET must be at least 32 bytes");
   }
   if (
-    secret === process.env.BETTER_AUTH_SECRET ||
-    secret === process.env.CDN_SIGNING_SECRET
+    secret === process.env.BETTER_AUTH_SECRET
   ) {
     throw new Error("REALTIME_TICKET_SECRET must be independent");
   }

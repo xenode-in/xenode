@@ -57,3 +57,5 @@ Start with [the executive summary](00-executive-summary.md), then [the migration
 - **Confirmed source behavior** means the execution path was inspected. **Reproduced** means an indicated check ran. **Conditional** means impact depends on configuration, existing data, or deployment. **Not verified** is not a passing result.
 
 Paths in the reports are repository-relative unless explicitly identified as installed dependency source. Findings apply to the audited working tree; uncommitted features are not represented as already merged. No application implementation, migrations, dependencies, or deployment configuration were changed during this audit. No live database migrations, billing actions, or destructive storage operations were performed.
+
+- [40 — Direct ciphertext downloads](40-direct-ciphertext-downloads.md)

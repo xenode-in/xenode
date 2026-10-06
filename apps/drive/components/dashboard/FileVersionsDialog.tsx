@@ -21,12 +21,12 @@ import {
 import { toast } from "sonner";
 import { useOptionalCrypto } from "@/contexts/CryptoContext";
 import {
-  decryptFileContent,
   unwrapSpaceFileKey,
   unwrapUserFileKey,
 } from "@/lib/crypto/fileEncryption";
 import { useOptionalWorkspace } from "@/contexts/WorkspaceContext";
 import { useWorkspaceSpaceKey } from "@/lib/orgs/useWorkspaceSpaceKey";
+import { downloadCiphertextBlob } from "@/lib/crypto/direct-download";
 import { REVISION_HEADER } from "@/lib/storage/revisions";
 
 interface VersionEntry {
@@ -168,7 +168,7 @@ export function FileVersionsDialog({
         const data = await res.json().catch(() => ({}));
         throw new Error(data.error || "Failed to fetch version");
       }
-      const cipher = await res.arrayBuffer();
+      const urls = await res.json();
       const type = v.contentType || "application/octet-stream";
 
       // Every version of a file is bound to the same object id.
@@ -188,8 +188,8 @@ export function FileVersionsDialog({
         if (!privateKey) throw new Error("Unlock your vault to download this version");
         dek = await unwrapUserFileKey(v.encryptedDEK, privateKey, fileId);
       }
-      const blob = await decryptFileContent(
-        cipher,
+      const blob = await downloadCiphertextBlob(
+        urls,
         dek,
         v.chunkIvs ? { chunkIvs: v.chunkIvs, chunkSize: v.chunkSize } : { iv: v.iv },
         fileId,

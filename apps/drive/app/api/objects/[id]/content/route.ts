@@ -10,7 +10,7 @@ import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
 import { getDownloadUrl } from "@/lib/b2/objects";
-import { activeStorageBucketName } from "@/lib/storage/region-context";
+import { fileUrlLifetime } from "@/lib/b2/cdn";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
 
 export const dynamic = "force-dynamic";
@@ -53,6 +53,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     // Serve a specific historical version when `?version=` is supplied.
+    let chunksToServe = object.chunks;
     let keyToServe = isPreview && object.optimizedKey ? object.optimizedKey : object.key;
     if (versionId) {
       const version = (object.versions || []).find((v) => v.versionId === versionId);
@@ -63,41 +64,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         return NextResponse.json({ error: "Version deletion is pending" }, { status: 409 });
       }
       keyToServe = version.key;
+      chunksToServe = version.chunks;
     }
 
-    const signedUrl = await getDownloadUrl(activeStorageBucketName(ctx.region), keyToServe);
-    const upstreamHeaders: Record<string, string> = {};
-    const rangeHeader = request.headers.get("Range");
-    if (rangeHeader) upstreamHeaders["Range"] = rangeHeader;
-
-    const upstream = await fetch(signedUrl, { headers: upstreamHeaders });
-
-    if (!upstream.ok && upstream.status !== 206) {
-      return NextResponse.json(
-        { error: "Failed to fetch file from storage" },
-        { status: 502 },
-      );
-    }
-
-    const headers = new Headers();
-    headers.set(
-      "Content-Type",
-      upstream.headers.get("Content-Type") ?? "application/octet-stream",
-    );
-
-    const contentLength = upstream.headers.get("Content-Length");
-    if (contentLength) headers.set("Content-Length", contentLength);
-
-    const contentRange = upstream.headers.get("Content-Range");
-    if (contentRange) headers.set("Content-Range", contentRange);
-    headers.set("Accept-Ranges", "bytes");
-    headers.set("Access-Control-Allow-Origin", "*");
-    headers.set("Cache-Control", "private, no-store");
-
-    const status = upstream.status === 206 ? 206 : 200;
-
-    // Stream directly — no arrayBuffer()
-    return new NextResponse(upstream.body, { status, headers });
+    const lifetime = fileUrlLifetime(ctx.session?.session.expiresAt);
+    const chunked = (!isPreview || !!versionId) && chunksToServe?.length;
+    const chunkUrls = chunked ? await Promise.all([...chunksToServe!].sort((a, b) => a.index - b.index).map(part => getDownloadUrl(bucket.b2BucketId, part.key, lifetime))) : undefined;
+    const url = chunkUrls ? undefined : await getDownloadUrl(bucket.b2BucketId, keyToServe, lifetime);
+    return NextResponse.json({ objectId: String(object._id), versionId, url, chunkUrls }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error: unknown) {
     if (isAuthzError(error)) {
       return toJsonResponse(error);

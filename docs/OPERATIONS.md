@@ -12,7 +12,7 @@
 ## Required secrets
 
 Generate distinct values for `BETTER_AUTH_SECRET`, `ADMIN_JWT_SECRET`,
-`REALTIME_TICKET_SECRET`, `CDN_SIGNING_SECRET`, `CRON_SECRET`,
+`REALTIME_TICKET_SECRET`, `CRON_SECRET`,
 `DRIVE_SESSION_COOKIE_SECRET` and `PHOTOS_SESSION_COOKIE_SECRET`. Only Accounts
 holds `BETTER_AUTH_SECRET`; where a shared development env provides it, reusing it
 for realtime/CDN signing is rejected by configuration validation.
@@ -52,7 +52,7 @@ reads:
 | Service | Secrets |
 | --- | --- |
 | accounts | `BETTER_AUTH_SECRET`, OAuth client secrets, `RESEND_API_KEY` |
-| drive | `DRIVE_SESSION_COOKIE_SECRET`, `REALTIME_TICKET_SECRET`, `CDN_SIGNING_SECRET`, `CRON_SECRET`, `ADMIN_*`, R2 keys, Razorpay, `RESEND_API_KEY` |
+| drive | `DRIVE_SESSION_COOKIE_SECRET`, `REALTIME_TICKET_SECRET`, `CRON_SECRET`, `ADMIN_*`, R2 keys, Razorpay, `RESEND_API_KEY` |
 | photos | `PHOTOS_SESSION_COOKIE_SECRET`, `REALTIME_TICKET_SECRET`, `CRON_SECRET`, R2 keys |
 | cron | `CRON_SECRET` |
 
@@ -154,3 +154,12 @@ is performed automatically by onboarding or application startup.
 Better Auth 1.7 changed its account identity and OAuth provider schemas. Accounts
 created by earlier development builds are not backfilled; reset the disposable
 database and sign up again after upgrading.
+
+## Private ciphertext downloads
+
+Use the [direct GET contract](gpt-6-astra-audit/40-direct-ciphertext-downloads.md).
+Configure exact-origin R2 CORS for GET/HEAD/PUT, Range and If-None-Match, exposing
+ETag/Content-Length/Content-Range/Accept-Ranges. Verify no-store response
+overrides, deadline expiry and encrypted seeking in each enabled pool. Private
+buckets must not have public domains/r2.dev enabled. Ignored environment files
+may discard CDN_SIGNING_SECRET/AZURE_CDN_URL; startup no longer uses them.

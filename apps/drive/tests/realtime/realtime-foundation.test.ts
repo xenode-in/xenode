@@ -1,6 +1,5 @@
 import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
-import { generateFileToken, verifyFileToken } from "@/lib/b2/cdn";
 import {
   createSyncEvent,
   toSyncObjectSnapshot,
@@ -14,7 +13,6 @@ import {
 
 const originalEnv = {
   REALTIME_TICKET_SECRET: process.env.REALTIME_TICKET_SECRET,
-  CDN_SIGNING_SECRET: process.env.CDN_SIGNING_SECRET,
   BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
 };
 
@@ -27,7 +25,6 @@ function restore(name: keyof typeof originalEnv) {
 describe("realtime foundation", () => {
   afterEach(() => {
     restore("REALTIME_TICKET_SECRET");
-    restore("CDN_SIGNING_SECRET");
     restore("BETTER_AUTH_SECRET");
   });
 
@@ -75,7 +72,6 @@ describe("realtime foundation", () => {
 
   it("issues a 60-second ticket bound to account, product, Space, session, origin and session expiry", async () => {
     process.env.REALTIME_TICKET_SECRET = "r".repeat(48);
-    process.env.CDN_SIGNING_SECRET = "c".repeat(48);
     process.env.BETTER_AUTH_SECRET = "a".repeat(48);
     const sessionExpiresAt = new Date(Date.now() + 3_600_000);
     const { token, expiresAt } = await createRealtimeToken({
@@ -109,7 +105,6 @@ describe("realtime foundation", () => {
 
   it("rejects missing, weak, or reused realtime and CDN secrets", async () => {
     process.env.BETTER_AUTH_SECRET = "a".repeat(48);
-    process.env.CDN_SIGNING_SECRET = "c".repeat(48);
     delete process.env.REALTIME_TICKET_SECRET;
     await expect(
       createRealtimeToken({
@@ -135,8 +130,6 @@ describe("realtime foundation", () => {
     ).rejects.toThrow("independent");
 
     process.env.REALTIME_TICKET_SECRET = "r".repeat(48);
-    process.env.CDN_SIGNING_SECRET = process.env.REALTIME_TICKET_SECRET;
-    expect(() => generateFileToken("bucket", "key")).toThrow("independent");
   });
 
 
@@ -207,11 +200,4 @@ describe("realtime foundation", () => {
     expect(parseRealtimeEvent("{invalid")).toBeNull();
   });
 
-  it("signs CDN URLs only with the independent CDN secret", () => {
-    process.env.BETTER_AUTH_SECRET = "a".repeat(48);
-    process.env.REALTIME_TICKET_SECRET = "r".repeat(48);
-    process.env.CDN_SIGNING_SECRET = "c".repeat(48);
-    const { exp, sig } = generateFileToken("bucket", "key", 60);
-    expect(verifyFileToken("bucket", "key", exp, sig)).toBe(true);
-  });
 });

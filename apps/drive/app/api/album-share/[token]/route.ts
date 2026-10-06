@@ -7,7 +7,7 @@ import PhotoAlbum from "@/models/PhotoAlbum";
 import { Space } from "@xenode/database/models";
 import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
-import { getSignedFileUrl } from "@/lib/b2/cdn";
+import { getSignedFileUrl, fileUrlLifetime } from "@/lib/b2/cdn";
 import { verifyAlbumSharePassword } from "@/lib/share/album-password";
 import { areActiveSharedObjects } from "@/lib/orgs/activeSharedObject";
 
@@ -149,7 +149,7 @@ export async function POST(req: NextRequest, { params }: Params) {
           thumbnailUrl = await getSignedFileUrl(
             bucket.b2BucketId,
             item.shareEncryptedThumbnail,
-            3600,
+            fileUrlLifetime(link.expiresAt),
           );
         } catch {
           thumbnailUrl = null;
@@ -175,5 +175,5 @@ export async function POST(req: NextRequest, { params }: Params) {
   return NextResponse.json({
     shareEncryptedAlbumName: link.shareEncryptedAlbumName ?? null,
     items: items.filter(Boolean),
-  });
+  }, { headers: { "Cache-Control": "private, no-store" } });
 }

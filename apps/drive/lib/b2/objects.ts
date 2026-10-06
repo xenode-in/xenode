@@ -142,21 +142,9 @@ export async function getObjectMetadata(
   };
 }
 
-/**
- * Generate a URL for downloading an object.
- * If AZURE_CDN_URL is set, returns a signed proxy URL routed through Azure CDN
- * (private-bucket safe — token validated server-side before B2 access).
- * Otherwise falls back to a short-lived pre-signed B2 URL.
- */
-export async function getDownloadUrl(
-  bucketName: string,
-  key: string,
-  expiresIn: number = 3600,
-  version?: string,
-): Promise<string> {
-  // Always route through our proxy so we can benefit from AZURE_CDN_URL
-  // or handle custom stream processing (like range requests) uniformly.
-  return getSignedFileUrl(bucketName, key, expiresIn, version);
+/** Direct, short-lived R2 ciphertext GET URL. */
+export async function getDownloadUrl(bucketName: string, key: string, expiresIn = 300): Promise<string> {
+  return getSignedFileUrl(bucketName, key, expiresIn);
 }
 
 /**

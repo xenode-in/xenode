@@ -5,7 +5,7 @@ import AlbumShareLink from "@/models/AlbumShareLink";
 import PhotoAlbum from "@/models/PhotoAlbum";
 import StorageObject from "@/models/StorageObject";
 import Bucket from "@/models/Bucket";
-import { getSignedFileUrl } from "@/lib/b2/cdn";
+import { getSignedFileUrl, fileUrlLifetime } from "@/lib/b2/cdn";
 import { verifyAlbumSharePassword } from "@/lib/share/album-password";
 import { Space } from "@xenode/database/models";
 
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Link not found or revoked" }, { status: 404 });
   }
 
-  if (link.expiresAt && new Date() > link.expiresAt) {
+  if (link.expiresAt && new Date() >= link.expiresAt) {
     return NextResponse.json({ error: "This link has expired" }, { status: 410 });
   }
 
@@ -80,11 +80,11 @@ export async function POST(req: NextRequest, { params }: Params) {
     const sortedChunks = [...object.chunks].sort((a, b) => a.index - b.index);
     chunkUrls = await Promise.all(
       sortedChunks.map((chunk) =>
-        getSignedFileUrl(bucket.b2BucketId, chunk.key, 3600),
+        getSignedFileUrl(bucket.b2BucketId, chunk.key, fileUrlLifetime(link.expiresAt)),
       ),
     );
   } else {
-    streamUrl = await getSignedFileUrl(bucket.b2BucketId, object.key, 3600);
+    streamUrl = await getSignedFileUrl(bucket.b2BucketId, object.key, fileUrlLifetime(link.expiresAt));
   }
 
   return NextResponse.json({
@@ -104,5 +104,5 @@ export async function POST(req: NextRequest, { params }: Params) {
     chunkSize: object.chunkSize,
     chunkCount: object.chunkCount,
     chunkIvs: object.chunkIvs,
-  });
+  }, { headers: { "Cache-Control": "private, no-store" } });
 }

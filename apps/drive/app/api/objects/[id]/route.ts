@@ -5,6 +5,7 @@ import { logRequest } from "@/lib/logRequest";
 import dbConnect from "@/lib/mongodb";
 import Bucket from "@/models/Bucket";
 import StorageObject from "@/models/StorageObject";
+import { fileUrlLifetime } from "@/lib/b2/cdn";
 import { getDownloadUrl } from "@/lib/b2/objects";
 import { DriveUploadCommitError } from "@xenode/database";
 import { enforceStorageAccess } from "@/lib/subscriptions/service";
@@ -90,14 +91,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     if (isChunked) {
       const sortedChunks = [...(object.chunks || [])].sort((a, b) => a.index - b.index);
       chunkUrls = await Promise.all(
-        sortedChunks.map((chunk) => getDownloadUrl(bucket.b2BucketId, chunk.key))
+        sortedChunks.map((chunk) => getDownloadUrl(bucket.b2BucketId, chunk.key, fileUrlLifetime(ctx.session?.session.expiresAt)))
       );
     } else {
       url = await getDownloadUrl(
         bucket.b2BucketId, 
         keyToUse!, 
-        3600, 
-        object.iv
+        fileUrlLifetime(ctx.session?.session.expiresAt)
       );
     }
 
@@ -139,7 +139,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         contentType: s.contentType,
         encryptedContentType: s.encryptedContentType
       })),
-    });
+    }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error: unknown) {
     if (error instanceof Error && error.message === "Unauthorized") {
       statusCode = 401;

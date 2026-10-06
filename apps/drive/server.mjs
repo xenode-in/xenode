@@ -26,16 +26,7 @@ function requiredIndependentSecret(name) {
 }
 
 const ticketSecret = requiredIndependentSecret("REALTIME_TICKET_SECRET");
-const cdnSigningSecret = requiredIndependentSecret("CDN_SIGNING_SECRET");
-if (
-  ticketSecret === cdnSigningSecret ||
-  ticketSecret === process.env.BETTER_AUTH_SECRET ||
-  cdnSigningSecret === process.env.BETTER_AUTH_SECRET
-) {
-  throw new Error(
-    "REALTIME_TICKET_SECRET, CDN_SIGNING_SECRET, and BETTER_AUTH_SECRET must be distinct",
-  );
-}
+if (ticketSecret === process.env.BETTER_AUTH_SECRET) throw new Error("REALTIME_TICKET_SECRET must be independent");
 
 const allowedOrigins = parseRealtimeAllowedOrigins(
   process.env.REALTIME_ALLOWED_ORIGIN,

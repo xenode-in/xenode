@@ -58,13 +58,18 @@ export async function GET(
         { status: 409 },
       );
     }
+    const expiresIn = Math.min(300, Math.floor((new Date(session.expiresAt).getTime() - Date.now()) / 1000));
+    if (expiresIn < 1) return Response.json({ error: "Session expired" }, { status: 401 });
     const url = await getSignedUrl(
       storage.client,
       new GetObjectCommand({
         Bucket: storage.bucket.b2BucketId,
         Key: content.objectKey,
+        ResponseCacheControl: "private, no-store",
+        ResponseContentType: "application/octet-stream",
+        ResponseContentDisposition: "attachment",
       }),
-      { expiresIn: 300 },
+      { expiresIn },
     );
     return Response.json({
       url,
@@ -77,7 +82,7 @@ export async function GET(
       contentType: content.contentType,
       variant: content.variant,
       mediaType: asset.mediaType,
-    });
+    }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return Response.json(
       {
