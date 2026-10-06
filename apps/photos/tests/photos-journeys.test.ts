@@ -60,6 +60,12 @@ async function click(label: string) {
   await act(async () => button(label).click());
   await settle();
 }
+async function select(assetId: string) {
+  const toggle = host.querySelector<HTMLButtonElement>(`article[data-asset-id="${assetId}"] button[aria-pressed]`);
+  if (!toggle) throw new Error(`No tile ${assetId}`);
+  await act(async () => toggle.click());
+  await settle();
+}
 const tiles = () => host.querySelectorAll("article").length;
 
 beforeEach(async () => {
@@ -121,24 +127,28 @@ afterEach(async () => {
 describe("Photos product journeys", () => {
   it("moves a photo to trash, restores it and deletes another forever", async () => {
     expect(tiles()).toBe(3);
-    await click("Select a1");
+    await select("a1");
+    const toggle = host.querySelector(`article[data-asset-id="a1"] button[aria-pressed]`)!;
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(toggle.getAttribute("aria-label")).toMatch(/^Select (image|video) from /);
+    expect(host.textContent).toContain("1 selected");
     await click("Move to trash");
     expect(posts).toEqual([{ path: "/api/photos/assets/trash", body: { assetIds: ["a1"] } }]);
     expect(tiles()).toBe(2); // the timeline reloaded without it
 
     await click("Trash");
     expect(tiles()).toBe(1);
-    await click("Select a1");
+    await select("a1");
     await click("Restore");
     expect(posts.at(-1)).toEqual({ path: "/api/photos/assets/restore", body: { assetIds: ["a1"] } });
     expect(host.textContent).toContain("Trash is empty");
 
     await click("Photos");
     expect(tiles()).toBe(3);
-    await click("Select a3");
+    await select("a3");
     await click("Move to trash");
     await click("Trash");
-    await click("Select a3");
+    await select("a3");
     await click("Delete forever"); // opens the confirmation
     expect(posts.at(-1)?.path).toBe("/api/photos/assets/trash");
     const confirm = [...document.querySelectorAll("[role=dialog] button")].find(
@@ -160,7 +170,7 @@ describe("Photos product journeys", () => {
     await settle();
     expect(gets).toContain("/api/photos/albums/album-1");
     expect(tiles()).toBe(2);
-    expect(button("Select a2")).toBeTruthy();
+    expect(host.querySelector(`article[data-asset-id="a2"] button[aria-pressed]`)).toBeTruthy();
 
     for (const missing of ["Help", "Settings"]) {
       expect(() => button(missing)).toThrow();

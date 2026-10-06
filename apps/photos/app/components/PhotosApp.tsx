@@ -143,6 +143,17 @@ function PhotosAppInner() {
           ) : null}
           {view === "timeline" && selectedIds.length ? (
             <>
+              <span className="text-sm text-muted-foreground" role="status">
+                {selectedIds.length} selected
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                className="rounded-full"
+                onClick={() => selection.clear()}
+              >
+                Clear
+              </Button>
               <AlbumEditor
                 spaceId={spaceId}
                 accountId={accountId}

@@ -48,6 +48,7 @@ export function PhotoTile({
   return (
     <article
       ref={tile}
+      data-asset-id={asset.id}
       className={cn(
         "group relative isolate size-full overflow-hidden rounded-xl border bg-transparent transition duration-300 hover:-translate-y-0.5 hover:shadow-lg",
         checked
@@ -107,7 +108,8 @@ export function PhotoTile({
             ? "border-primary bg-primary opacity-100"
             : "border-white/70 bg-black/25 opacity-0 hover:bg-black/45 group-hover:opacity-100",
         )}
-        aria-label={checked ? `Deselect ${asset.id}` : `Select ${asset.id}`}
+        aria-label={`Select ${asset.mediaType} from ${date.toLocaleDateString()}`}
+        aria-pressed={checked}
       >
         {checked ? (
           <Check className="size-4" />

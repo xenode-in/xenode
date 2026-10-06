@@ -184,9 +184,8 @@ function GroupHeader({ group }: { group: TimelineGroup }) {
             ? "border-primary bg-primary text-primary-foreground"
             : "border-border bg-card text-transparent hover:border-primary/60",
         )}
-        aria-label={
-          allSelected ? `Deselect ${group.label}` : `Select ${group.label}`
-        }
+        aria-label={`Select ${group.label}`}
+        aria-pressed={allSelected ? true : partlySelected ? "mixed" : false}
       >
         {allSelected ? (
           <Check className="size-3" />

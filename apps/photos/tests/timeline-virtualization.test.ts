@@ -33,7 +33,7 @@ async function settle() {
 }
 const mountedTiles = () => [...host.querySelectorAll("article")];
 const mountedIds = () =>
-  mountedTiles().map((tile) => tile.querySelector("button[aria-label^='Select']")?.getAttribute("aria-label"));
+  mountedTiles().map((tile) => tile.dataset.assetId);
 
 beforeEach(async () => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -86,7 +86,7 @@ describe("virtualized Photos timeline", () => {
     const firstWindow = mountedIds();
     expect(firstWindow.length).toBeGreaterThan(0);
     expect(firstWindow.length).toBeLessThanOrEqual(40);
-    expect(firstWindow[0]).toBe("Select asset-0000");
+    expect(firstWindow[0]).toBe("asset-0000");
 
     // Each scroll to the bottom reveals the end of the grid and loads one page.
     for (let page = 2; page <= PAGES; page++) {
@@ -100,11 +100,11 @@ describe("virtualized Photos timeline", () => {
 
     expect(host.textContent).toContain(`${PAGE * PAGES} items`);
     const lastWindow = mountedIds();
-    expect(lastWindow).not.toContain("Select asset-0000");
-    expect(lastWindow).toContain(`Select asset-${String(PAGE * PAGES - 1).padStart(4, "0")}`);
+    expect(lastWindow).not.toContain("asset-0000");
+    expect(lastWindow).toContain(`asset-${String(PAGE * PAGES - 1).padStart(4, "0")}`);
     expect(lastWindow.length).toBeLessThanOrEqual(40);
 
     await scrollTo(0);
-    expect(mountedIds()[0]).toBe("Select asset-0000");
+    expect(mountedIds()[0]).toBe("asset-0000");
   });
 });

@@ -692,3 +692,9 @@ Commit: `71c940b`.
 - The 2FA page's "Trust this browser for 30 days" defaulted to on; skipping the second factor is now opt-in. The Devices page can sign a single Drive/Photos session out (the existing `DELETE /api/product-sessions`), the Vault password change confirms on the page instead of silently returning to the hub (and can be repeated without a reload), the recovery-phrase form drops the previous password error, and the account menu and authenticator-code fields have accessible names.
 - Not reproduced: once, a password change appeared to sign out the current Accounts session; repeated browser and API runs keep the rotated session valid.
 - Validation: typecheck 16/16, boundaries, all 15 test workspaces (Accounts 20 files / 153 tests); browser: signed-out pages redirect to `/login?next=…`, per-product sign-out, TOTP enrolment without a re-unlock, Vault password change confirmation.
+
+## 0ZAT — Second browser journey: Photos (phase 5)
+
+- Photo selection buttons were named with raw asset ids ("Select 6c327e8e-…") and exposed no state. They are named like their Open buttons ("Select image from 01/10/2026") with `aria-pressed`; day-group toggles report `mixed` when partly selected. Tests identify tiles by a `data-asset-id` attribute instead of the accessible name.
+- The library toolbar now shows how many items are selected and can clear the selection; the delete-forever confirmation reads "Delete 1 item permanently?".
+- Validation: typecheck 16/16, boundaries, all 15 test workspaces (Photos 54 tests, the journey test asserting the pressed state, readable name and count); checked in the built-in browser.

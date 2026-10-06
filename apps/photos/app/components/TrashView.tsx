@@ -140,7 +140,9 @@ export function TrashView({ spaceId }: { spaceId: string }) {
       <Dialog open={confirming} onOpenChange={setConfirming}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete {selected.length} permanently?</DialogTitle>
+            <DialogTitle>
+              Delete {selected.length === 1 ? "1 item" : `${selected.length} items`} permanently?
+            </DialogTitle>
             <DialogDescription>
               The encrypted originals and previews are erased from storage. This
               cannot be undone.
