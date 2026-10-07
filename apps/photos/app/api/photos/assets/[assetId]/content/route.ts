@@ -87,6 +87,14 @@ export async function GET(
       contentType: content.contentType,
       variant: content.variant,
       mediaType: asset.mediaType,
+      // A chunked video original can be read (and played) chunk by chunk.
+      ...(content.variant === "original" &&
+        typeof object.chunkIvs === "string" &&
+        typeof object.chunkSize === "number" && {
+          size: object.size,
+          chunkSize: object.chunkSize,
+          chunkIvs: JSON.parse(object.chunkIvs) as string[],
+        }),
     }, { headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return Response.json(

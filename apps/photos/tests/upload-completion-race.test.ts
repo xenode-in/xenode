@@ -158,6 +158,33 @@ afterAll(async () => {
 });
 
 describe("Photos completion race safety", () => {
+  it("stores a chunked video original's layout only when it fits the ciphertext", async () => {
+    const { optimizedKey, optimizedSize, optimizedContentType, optimizedEncryptedDEK, optimizedIV,
+      optimizedSpaceKeyWrapIv, thumbnailKey, thumbnailSize, thumbnailContentType, thumbnailEncryptedDEK,
+      thumbnailIV, thumbnailSpaceKeyWrapIv, ...image } = body("video-asset");
+    void [optimizedKey, optimizedSize, optimizedContentType, optimizedEncryptedDEK, optimizedIV,
+      optimizedSpaceKeyWrapIv, thumbnailKey, thumbnailSize, thumbnailContentType, thumbnailEncryptedDEK,
+      thumbnailIV, thumbnailSpaceKeyWrapIv];
+    const iv = "A".repeat(16);
+    const video = { ...image, mediaType: "video" as const, originalContentType: "video/mp4", iv, chunkSize: 1_048_576, chunkIvs: [iv] };
+    await PhotoUpload.create({
+      uploadId: video.uploadId, assetId: video.assetId, accountId, spaceId, bucketId, mediaType: "video",
+      original: { key: video.objectKey, size: video.size }, status: "pending", expiresAt: new Date(Date.now() + 60_000),
+    });
+    for (const bad of [
+      { chunkIvs: [iv, iv] },
+      { chunkSize: 4096 },
+      { chunkIvs: ["not base64!"] },
+      { iv: "B".repeat(16) },
+    ]) {
+      expect((await complete(request("complete", { ...video, ...bad }))).status).toBe(400);
+    }
+    expect((await complete(request("complete", video))).status).toBe(201);
+    const asset = await PhotoAsset.findOne({ assetId: "video-asset" }).lean();
+    const object = await getDatabase().collection("storageobjects").findOne({ _id: new (getMongoose().Types.ObjectId)(asset!.storageObjectId) });
+    expect(object).toMatchObject({ chunkSize: 1_048_576, chunkCount: 1, chunkIvs: JSON.stringify([iv]) });
+  });
+
   it("stores only a sealed original name on the asset", async () => {
     await reserve(body("named-asset"));
     const plain = await complete(request("complete", { ...body("named-asset"), encryptedMetadata: "holiday.jpg" }));

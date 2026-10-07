@@ -137,4 +137,24 @@ describe("trashed photo previews", () => {
     await PhotoAsset.updateOne({ assetId: "binned" }, { $set: { purgeRequestedAt: new Date() } });
     expect((await read("&state=trashed")).status).toBe(404);
   });
+
+  it("describes a chunked video original's layout so it can stream", async () => {
+    const ObjectId = getMongoose().Types.ObjectId;
+    const objectId = new ObjectId(), bucketId = new ObjectId();
+    mocks.storage.mockResolvedValue({ client: {}, bucket: { _id: bucketId, b2BucketId: "photo-bucket" } });
+    await PhotoAsset.create({
+      assetId: "clip", spaceId, status: "active", mediaType: "video",
+      takenAt: new Date(), uploadSource: "web", createdByAccountId: owner, storageObjectId: String(objectId),
+    });
+    await getDatabase().collection("storageobjects").insertOne({
+      _id: objectId, bucketId, spaceId, productId: "photos", createdByAccountId: owner, isEncrypted: true,
+      key: "users/album-owner/clip", size: 116, encryptedDEK: "wrapped", iv: "A".repeat(16), spaceKeyWrapIv: "wrap-iv",
+      originalContentType: "video/mp4", chunkSize: 1_048_576, chunkCount: 1, chunkIvs: JSON.stringify(["A".repeat(16)]),
+    });
+    const read = (variant: string) =>
+      content(get(`assets/clip/content?variant=${variant}`), { params: Promise.resolve({ assetId: "clip" }) });
+    expect(await (await read("original")).json()).toMatchObject({
+      size: 116, chunkSize: 1_048_576, chunkIvs: ["A".repeat(16)], contentType: "video/mp4",
+    });
+  });
 });

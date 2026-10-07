@@ -33,7 +33,9 @@ import {
 } from "@xenode/ui";
 import { useProductCrypto } from "@xenode/crypto-react";
 import type { TimelineAsset } from "./Timeline";
-import { decryptPhotoFile } from "@/lib/photo-encryption";
+import { canStreamWithMse } from "@xenode/media-processing/mse-stream";
+import { decryptPhotoFile, decryptPhotoVideo, unwrapPhotoDEK } from "@/lib/photo-encryption";
+import { streamChunkedVideo } from "@/lib/video-stream";
 import { openPhotoName } from "@/lib/album-name";
 import { usePhotosMetadataKey } from "./PhotosKeyAccess";
 import {
@@ -55,6 +57,20 @@ type ContentDescriptor = {
   spaceKeyWrapIv?: string;
   url?: string;
   variant?: ContentVariant | "thumbnail";
+  /** Chunked video originals only (see lib/photo-encryption). */
+  size?: number;
+  chunkSize?: number;
+  chunkIvs?: string[];
+};
+
+type ReadyDescriptor = ContentDescriptor & {
+  url: string;
+  accountId: string;
+  spaceId: string;
+  objectKey: string;
+  encryptedDEK: string;
+  iv: string;
+  spaceKeyWrapIv: string;
 };
 
 function ZoomablePhoto({
@@ -443,10 +459,11 @@ function LightboxContent({
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState("");
   const objectUrlRef = useRef("");
+  const videoRef = useRef<HTMLVideoElement>(null);
   const variant: ContentVariant =
     wantOriginal || asset.mediaType === "video" ? "original" : "optimized";
 
-  const decryptVariant = useCallback(
+  const loadDescriptor = useCallback(
     async (requestedVariant: ContentVariant) => {
       const response = await fetch(
         `/api/photos/assets/${encodeURIComponent(asset.id)}/content?variant=${requestedVariant}`,
@@ -465,6 +482,22 @@ function LightboxContent({
       ) {
         throw new Error(descriptor.error ?? "Preview unavailable");
       }
+      return descriptor as ReadyDescriptor;
+    },
+    [asset.id],
+  );
+
+  const unwrapKey = useCallback(
+    (descriptor: ReadyDescriptor) =>
+      productCrypto.withProductKey(descriptor.spaceId, (productSpaceKey) =>
+        unwrapPhotoDEK(productSpaceKey, descriptor, descriptor),
+      ),
+    [productCrypto],
+  );
+
+  const decryptVariant = useCallback(
+    async (requestedVariant: ContentVariant) => {
+      const descriptor = await loadDescriptor(requestedVariant);
       const ciphertext = await fetchCachedPhotoCiphertext(
         descriptor.url,
         photoPreviewCacheKey({
@@ -474,51 +507,83 @@ function LightboxContent({
           variant: descriptor.variant ?? requestedVariant,
         }),
       );
-      const plaintext = await productCrypto.withProductKey(
-        descriptor.spaceId,
-        (productSpaceKey) =>
-          decryptPhotoFile(
+      const parts: BlobPart[] = descriptor.chunkIvs && descriptor.chunkSize
+        ? await decryptPhotoVideo(
             ciphertext,
-            productSpaceKey,
-            {
-              accountId: descriptor.accountId!,
-              spaceId: descriptor.spaceId!,
-              objectKey: descriptor.objectKey!,
-            },
-            {
-              encryptedDEK: descriptor.encryptedDEK!,
-              iv: descriptor.iv!,
-              spaceKeyWrapIv: descriptor.spaceKeyWrapIv!,
-            },
-          ),
-      );
+            await unwrapKey(descriptor),
+            descriptor.objectKey,
+            descriptor.chunkSize,
+            descriptor.chunkIvs,
+          )
+        : [
+            await productCrypto.withProductKey(descriptor.spaceId, (productSpaceKey) =>
+              decryptPhotoFile(ciphertext, productSpaceKey, descriptor, descriptor),
+            ),
+          ];
+      const head = new Uint8Array(await new Blob(parts.slice(0, 1)).slice(0, 16).arrayBuffer());
       return {
-        blob: new Blob([plaintext], {
+        blob: new Blob(parts, {
           type:
             descriptor.contentType &&
             descriptor.contentType !== "application/octet-stream"
               ? descriptor.contentType
               : asset.mediaType === "video"
                 ? "video/mp4"
-                : detectImageType(new Uint8Array(plaintext)),
+                : detectImageType(head),
         }),
         contentType: descriptor.contentType ?? "",
       };
     },
-    [asset.id, asset.mediaType, productCrypto],
+    [asset.mediaType, loadDescriptor, productCrypto, unwrapKey],
   );
 
   useEffect(() => {
     let cancelled = false;
-    void decryptVariant(variant)
-      .then(({ blob }) => {
-        if (cancelled) return;
-        if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
-        const nextUrl = URL.createObjectURL(blob);
-        objectUrlRef.current = nextUrl;
-        setDisplayUrl(nextUrl);
-        setLoadedVariant(variant);
-      })
+    const abort = new AbortController();
+    const show = (url: string) => {
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = url;
+      setDisplayUrl(url);
+      setLoadedVariant(variant);
+    };
+    const showWhole = async () => {
+      const { blob } = await decryptVariant(variant);
+      if (!cancelled) show(URL.createObjectURL(blob));
+    };
+    // A chunked video plays as its chunks arrive; anything else (or a browser
+    // that cannot stream this file) is decrypted whole first.
+    const streamVideo = async () => {
+      const descriptor = await loadDescriptor("original");
+      const contentType = descriptor.contentType ?? "video/mp4";
+      if (!descriptor.chunkIvs || !descriptor.chunkSize || !descriptor.size || !canStreamWithMse(contentType)) {
+        return false;
+      }
+      const dek = await unwrapKey(descriptor);
+      if (cancelled) return true;
+      let started = false;
+      const stream = streamChunkedVideo({
+        video: { ...descriptor, contentType, size: descriptor.size, chunkSize: descriptor.chunkSize, chunkIvs: descriptor.chunkIvs },
+        dek,
+        refreshUrl: async () => (await loadDescriptor("original")).url,
+        mediaRef: videoRef,
+        signal: abort.signal,
+        onFirstData: () => {
+          started = true;
+          if (!cancelled) setLoading(false);
+        },
+      });
+      show(stream.src);
+      await stream.done.catch(async (streamError: unknown) => {
+        if (cancelled || abort.signal.aborted) return;
+        if (started) throw streamError;
+        console.warn("[Photos] Could not stream this video; decrypting it whole", streamError);
+        await showWhole();
+      });
+      return true;
+    };
+    void (async () => {
+      if (!(asset.mediaType === "video" && (await streamVideo()))) await showWhole();
+    })()
       .catch((loadError: unknown) => {
         if (!cancelled) {
           setError(
@@ -531,8 +596,9 @@ function LightboxContent({
       });
     return () => {
       cancelled = true;
+      abort.abort();
     };
-  }, [decryptVariant, variant]);
+  }, [asset.mediaType, decryptVariant, loadDescriptor, unwrapKey, variant]);
 
   useEffect(
     () => () => {
@@ -590,6 +656,7 @@ function LightboxContent({
       {displayUrl ? (
         asset.mediaType === "video" ? (
           <video
+            ref={videoRef}
             src={displayUrl}
             className="size-full object-contain"
             controls

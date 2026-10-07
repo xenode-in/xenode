@@ -4,7 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 import nextConfig from "../next.config";
 import {
   decryptPhotoFile,
+  decryptPhotoVideo,
+  decryptPhotoVideoChunk,
   encryptPhotoFile,
+  encryptPhotoVideo,
+  unwrapPhotoDEK,
 } from "../lib/photo-encryption";
 import { fitImageWithin } from "../lib/image-derivatives";
 
@@ -110,6 +114,38 @@ describe("Photos app isolation", () => {
       encrypted,
     );
     expect(new TextDecoder().decode(plaintext)).toBe("private-photo-bytes");
+  });
+
+  it("seals videos in chunks that open one by one and only in place", async () => {
+    const productKey = await crypto.subtle.importKey(
+      "raw", crypto.getRandomValues(new Uint8Array(32)), { name: "AES-GCM" }, false, ["encrypt", "decrypt"],
+    );
+    const context = {
+      accountId: "account_1",
+      spaceId: "space_personal_account_1",
+      objectKey: "users/account_1/fedcba9876543210fedcba9876543210",
+    };
+    const source = new Uint8Array(2.5 * 1024 * 1024).map((_, index) => index % 251);
+    const encrypted = await encryptPhotoVideo(new Blob([source]), productKey, context);
+    expect(encrypted.chunkIvs).toHaveLength(3);
+    expect(encrypted.iv).toBe(encrypted.chunkIvs[0]);
+    expect(encrypted.body.size).toBe(source.byteLength + 3 * 16);
+
+    const dek = await unwrapPhotoDEK(productKey, context, encrypted);
+    const ciphertext = await encrypted.body.arrayBuffer();
+    const whole = await decryptPhotoVideo(ciphertext, dek, context.objectKey, encrypted.chunkSize, encrypted.chunkIvs);
+    expect(Buffer.from(await new Blob(whole).arrayBuffer()).equals(Buffer.from(source))).toBe(true);
+
+    const sealed = encrypted.chunkSize + 16;
+    const last = await decryptPhotoVideoChunk(ciphertext.slice(2 * sealed), dek, context.objectKey, encrypted.chunkIvs, 2);
+    expect(Buffer.from(last).equals(Buffer.from(source.subarray(2 * encrypted.chunkSize)))).toBe(true);
+    // A chunk opened at another index, or under another object, is refused.
+    await expect(
+      decryptPhotoVideoChunk(ciphertext.slice(0, sealed), dek, context.objectKey, [encrypted.chunkIvs[0], encrypted.chunkIvs[0]], 1),
+    ).rejects.toThrow();
+    await expect(
+      decryptPhotoVideoChunk(ciphertext.slice(0, sealed), dek, "users/account_1/other", encrypted.chunkIvs, 0),
+    ).rejects.toThrow();
   });
 
   it("bounds thumbnail and optimized dimensions without upscaling", () => {

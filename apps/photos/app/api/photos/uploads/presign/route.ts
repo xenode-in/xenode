@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { fileCiphertextBytes } from "@xenode/crypto-core";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { PhotoUpload } from "@xenode/database";
@@ -43,7 +44,8 @@ export async function POST(request: Request) {
     !/^[A-Za-z0-9_-]{8,128}$/u.test(body.assetId) ||
     !Number.isSafeInteger(fileSize) ||
     fileSize <= 16 ||
-    fileSize > MAX_DIRECT_UPLOAD_BYTES + 16
+    // Videos are sealed in chunks, one tag per chunk.
+    fileSize > fileCiphertextBytes(MAX_DIRECT_UPLOAD_BYTES)
   ) {
     return Response.json(
       { error: "Invalid file size or file exceeds the 250 MB web limit" },

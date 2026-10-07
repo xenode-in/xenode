@@ -14,11 +14,13 @@ import {
 } from "@xenode/upload-engine";
 import { getClientPhotosSession } from "@/lib/client-session";
 import { createImageDerivatives } from "@/lib/image-derivatives";
-import { encryptPhotoFile } from "@/lib/photo-encryption";
+import { fileCiphertextBytes } from "@xenode/crypto-core";
+import { encryptPhotoFile, encryptPhotoVideo } from "@/lib/photo-encryption";
 import { sealPhotoName } from "@/lib/album-name";
 import { usePhotosMetadataKey } from "./PhotosKeyAccess";
 
 const MAX_WEB_UPLOAD_BYTES = 250 * 1024 * 1024;
+const sizeOf = (body: ArrayBuffer | Blob) => body instanceof Blob ? body.size : body.byteLength;
 
 export function UploadController({
   spaceId,
@@ -76,7 +78,11 @@ export function UploadController({
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
               assetId: input.id,
-              fileSize: preparation.uploadSource.size + 16,
+              // Videos are sealed in chunks (one tag each) so they can stream.
+              fileSize:
+                preparation.mediaType === "video"
+                  ? fileCiphertextBytes(preparation.uploadSource.size)
+                  : preparation.uploadSource.size + 16,
               mediaType: input.contentType,
               optimizedSize: derivatives
                 ? derivatives.optimized.blob.size + 16
@@ -118,7 +124,7 @@ export function UploadController({
           const encrypted = await productCrypto.withProductKey(
             spaceId,
             async (productSpaceKey) => ({
-              original: await encryptPhotoFile(
+              original: await (preparation.mediaType === "video" ? encryptPhotoVideo : encryptPhotoFile)(
                 preparation.uploadSource,
                 productSpaceKey,
                 {
@@ -194,24 +200,28 @@ export function UploadController({
                   assetId: input.id,
                   bucketId: presign.bucketId,
                   objectKey: presign.original.objectKey,
-                  size: encrypted.original.body.byteLength,
+                  size: sizeOf(encrypted.original.body),
                   originalContentType: input.contentType,
                   mediaType: preparation.mediaType,
                   encryptedDEK: encrypted.original.encryptedDEK,
                   iv: encrypted.original.iv,
                   spaceKeyWrapIv: encrypted.original.spaceKeyWrapIv,
+                  ...("chunkIvs" in encrypted.original && {
+                    chunkSize: encrypted.original.chunkSize,
+                    chunkIvs: encrypted.original.chunkIvs,
+                  }),
                   encryptedMetadata: metadataKey
                     ? await sealPhotoName(input.name, input.id, metadataKey, session.accountId, spaceId)
                     : undefined,
                   optimizedKey: presign.optimized?.objectKey,
-                  optimizedSize: encrypted.optimized?.body.byteLength,
+                  optimizedSize: encrypted.optimized && sizeOf(encrypted.optimized.body),
                   optimizedContentType: derivatives?.optimized.contentType,
                   optimizedEncryptedDEK: encrypted.optimized?.encryptedDEK,
                   optimizedIV: encrypted.optimized?.iv,
                   optimizedSpaceKeyWrapIv:
                     encrypted.optimized?.spaceKeyWrapIv,
                   thumbnailKey: presign.thumbnail?.objectKey,
-                  thumbnailSize: encrypted.thumbnail?.body.byteLength,
+                  thumbnailSize: encrypted.thumbnail && sizeOf(encrypted.thumbnail.body),
                   thumbnailContentType: derivatives?.thumbnail.contentType,
                   thumbnailEncryptedDEK: encrypted.thumbnail?.encryptedDEK,
                   thumbnailIV: encrypted.thumbnail?.iv,

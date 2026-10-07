@@ -4,16 +4,19 @@ import {
 } from "@xenode/database";
 import { personalSpaceId, resolveSpaceAccess } from "@xenode/spaces";
 import { isSealedPhotoMetadata } from "@xenode/photos";
+import { FILE_CHUNK_BYTES, fileChunkRange, fileCiphertextBytes } from "@xenode/crypto-core";
 import { getPhotosProductSession } from "@/lib/session";
 import { getPhotosStorageContext } from "@/lib/storage-server";
 
-const MAX_ENCRYPTED_UPLOAD_BYTES = 250 * 1024 * 1024 + 16;
+const MAX_ENCRYPTED_UPLOAD_BYTES = fileCiphertextBytes(250 * 1024 * 1024);
 const MAX_ENCRYPTED_DERIVATIVE_BYTES = 25 * 1024 * 1024 + 16;
 
 type CompleteBody = {
   uploadId?: unknown;
   assetId?: unknown;
   bucketId?: unknown;
+  chunkIvs?: unknown;
+  chunkSize?: unknown;
   encryptedDEK?: unknown;
   encryptedMetadata?: unknown;
   height?: unknown;
@@ -67,6 +70,7 @@ export async function POST(request: Request) {
     ? parseVariant(body, "thumbnail", MAX_ENCRYPTED_DERIVATIVE_BYTES)
     : null;
   const isImage = body?.mediaType === "image";
+  const layout = body && original ? chunkLayout(body, original.size) : null;
   if (
     !body ||
     typeof body.uploadId !== "string" ||
@@ -87,6 +91,7 @@ export async function POST(request: Request) {
         thumbnail.contentType !== "image/jpeg")) ||
     (body.mediaType === "video" &&
       !original.contentType.startsWith("video/")) ||
+    layout === "invalid" ||
     (body.encryptedMetadata !== undefined &&
       !isSealedPhotoMetadata(body.encryptedMetadata, personalSpaceId(session.accountId), session.accountId))
   ) {
@@ -189,6 +194,7 @@ export async function POST(request: Request) {
         aspectRatio: typeof body.width === "number" && typeof body.height === "number" &&
           body.width > 0 && body.height > 0 ? body.width / body.height : undefined,
         revision: 1,
+        ...layout,
       },
       asset: {
         mediaType: body.mediaType as "image" | "video",
@@ -205,6 +211,32 @@ export async function POST(request: Request) {
     }
     return Response.json({ error: "Could not complete upload" }, { status: 500 });
   }
+}
+
+/**
+ * A video original sealed in chunks (`xenode-file/1`, see
+ * lib/photo-encryption): its chunk size, count and IVs, which must account for
+ * exactly the stored ciphertext. Null for a single sealed blob.
+ */
+function chunkLayout(body: CompleteBody, size: number) {
+  if (body.chunkSize === undefined && body.chunkIvs === undefined) return null;
+  const ivs = body.chunkIvs;
+  if (
+    body.mediaType !== "video" ||
+    body.chunkSize !== FILE_CHUNK_BYTES ||
+    !Array.isArray(ivs) ||
+    ivs.length !== Math.ceil(size / (FILE_CHUNK_BYTES + 16)) ||
+    ivs.some((iv) => typeof iv !== "string" || !/^[A-Za-z0-9+/]{16}$/u.test(iv)) ||
+    body.iv !== ivs[0]
+  ) {
+    return "invalid";
+  }
+  try {
+    fileChunkRange(size, ivs.length - 1, ivs.length, FILE_CHUNK_BYTES);
+  } catch {
+    return "invalid";
+  }
+  return { chunkSize: FILE_CHUNK_BYTES, chunkCount: ivs.length, chunkIvs: JSON.stringify(ivs) };
 }
 
 function parseVariant(

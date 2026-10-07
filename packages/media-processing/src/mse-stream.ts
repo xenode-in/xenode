@@ -1,13 +1,14 @@
 /**
- * Streams decrypted media chunks into a MediaSource when the media Service
- * Worker is unavailable. MP4 (progressive or fragmented) is remuxed into
- * per-track fragments with mp4box as chunks arrive; byte-stream formats MSE
- * accepts natively (WebM, MP3) are appended as-is. Buffering is paced against
- * the playhead and played data is evicted, so long files stay under the MSE
- * quota.
+ * Streams decrypted media chunks into a MediaSource. MP4 (progressive or
+ * fragmented) is remuxed into per-track fragments with mp4box, reading the
+ * chunk holding whichever byte mp4box asks for next — so a file whose index
+ * (`moov`) sits after its media data starts after reading its first and last
+ * chunks, not the whole file. Byte-stream formats MSE accepts natively (WebM,
+ * MP3) are appended in order. Buffering is paced against the playhead and
+ * played data is evicted, so long files stay under the MSE quota.
  *
- * ponytail: playback is sequential — seeking back into evicted data or far
- * ahead waits on the feed; the Service Worker path supports random access.
+ * ponytail: playback moves forward only — seeking back into evicted data or
+ * far ahead waits on the feed; add sample-accurate seeking if users scrub.
  */
 import { createFile, MP4BoxBuffer } from "mp4box";
 
@@ -31,6 +32,44 @@ export function canStreamWithMse(contentType: string): boolean {
   if (ISO_BMFF_TYPES.has(contentType)) return true;
   const mime = NATIVE_MSE_TYPES[contentType];
   return Boolean(mime && MediaSource.isTypeSupported(mime));
+}
+
+/**
+ * Wraps `load(index)` so a read that follows the previous one in order, once
+ * its chunk arrives, starts loading the next `ahead` chunks; a read takes the
+ * in-flight load when there is one. Reading ahead waits for in-order reads so
+ * an MP4 whose `moov` trails its media spends its first reads on chunk 0 and
+ * the last chunk alone. The last few chunks read are kept, since parsing then
+ * returns to chunk 0.
+ */
+export function prefetchingReader(
+  load: (index: number) => Promise<ArrayBuffer>,
+  chunkCount: number,
+  ahead = 3,
+): (index: number) => Promise<ArrayBuffer> {
+  const inflight = new Map<number, Promise<ArrayBuffer>>();
+  const recent = new Map<number, ArrayBuffer>();
+  let previous = -2;
+  const start = (index: number) => {
+    if (index >= chunkCount || inflight.has(index) || recent.has(index)) return;
+    const pending = load(index);
+    pending.catch(() => undefined); // awaited by the reader
+    inflight.set(index, pending);
+  };
+  return async (index) => {
+    const inOrder = index === previous + 1;
+    previous = index;
+    const kept = recent.get(index);
+    if (kept) return kept.slice(0);
+    start(index);
+    const pending = inflight.get(index)!;
+    inflight.delete(index);
+    const chunk = await pending;
+    recent.set(index, chunk.slice(0));
+    if (recent.size > ahead + 1) recent.delete(recent.keys().next().value!);
+    if (inOrder) for (let next = index + 1; next <= index + ahead; next++) start(next);
+    return chunk;
+  };
 }
 
 function bufferedAhead(media: HTMLMediaElement): number {
@@ -111,19 +150,21 @@ function openMediaSource(ms: MediaSource): Promise<void> {
 }
 
 /**
- * Feeds `nextChunk(0..chunkCount-1)` into `ms`. Resolves once the stream has
- * ended; rejects when the browser cannot play this file through MSE.
+ * Feeds a file of `chunkCount` decrypted chunks (each `chunkSize` bytes but
+ * the last) into `ms`. Resolves once the stream has ended; rejects when the
+ * browser cannot play this file through MSE.
  */
 export async function streamToMediaSource(input: {
   ms: MediaSource;
   contentType: string;
   chunkCount: number;
-  nextChunk: (index: number) => Promise<ArrayBuffer>;
+  chunkSize: number;
+  readChunk: (index: number) => Promise<ArrayBuffer>;
   mediaRef?: MediaElementRef;
   signal: AbortSignal;
   onFirstData?: () => void;
 }): Promise<void> {
-  const { ms, contentType, chunkCount, nextChunk, mediaRef, signal } = input;
+  const { ms, contentType, chunkCount, chunkSize, readChunk, mediaRef, signal } = input;
   await openMediaSource(ms);
   if (signal.aborted) return;
 
@@ -155,7 +196,7 @@ export async function streamToMediaSource(input: {
     for (let i = 0; i < chunkCount; i++) {
       await waitForRoom(mediaRef, signal);
       if (signal.aborted) return;
-      append(await nextChunk(i));
+      append(await readChunk(i));
     }
     end();
     fed = true;
@@ -198,7 +239,10 @@ export async function streamToMediaSource(input: {
         const lane: Lane = { sb: ms.addSourceBuffer(mime), queue: [], ended: false };
         attach(lane);
         lanes.push(lane);
-        file.setSegmentOptions(track.id, lane, { nbSamples: 100 });
+        // Small segments, not cut at keyframes: the first frame needs one
+        // segment of every track, and a keyframe interval can be many seconds.
+        // MSE only needs a keyframe first, which the file's first sample is.
+        file.setSegmentOptions(track.id, lane, { nbSamples: 30, rapAlignement: false });
       }
       for (const init of file.initializeSegmentation("per-track")) {
         const lane = init.user as Lane;
@@ -219,20 +263,28 @@ export async function streamToMediaSource(input: {
     pump(lane);
   };
 
-  let offset = 0;
-  await Promise.race([
-    feed(
-      (chunk) => {
-        file.appendBuffer(MP4BoxBuffer.fromArrayBuffer(chunk, offset));
-        offset += chunk.byteLength;
-      },
-      () => {
-        file.flush();
-        // flush() marks the final segment of each track as last.
-        for (const lane of lanes) lane.ended = true;
-      },
-    ),
-    finished,
-  ]);
+  // Read wherever mp4box needs bytes next. A chunk may be read twice (its
+  // buffered data can be dropped while mp4box parses ahead), never more.
+  const reads = new Map<number, number>();
+  const feedIso = async () => {
+    let want = 0;
+    while (!signal.aborted && !(lanes.length && lanes.every((lane) => lane.ended))) {
+      let index = Math.floor(want / chunkSize);
+      while (index < chunkCount && (reads.get(index) ?? 0) >= 2) index++;
+      if (index >= chunkCount) break;
+      if (lanes.length) await waitForRoom(mediaRef, signal);
+      if (signal.aborted) return;
+      const chunk = await readChunk(index);
+      reads.set(index, (reads.get(index) ?? 0) + 1);
+      const next = file.appendBuffer(MP4BoxBuffer.fromArrayBuffer(chunk, index * chunkSize));
+      want = Number.isSafeInteger(next) && next >= 0 ? next : (index + 1) * chunkSize;
+    }
+    file.flush();
+    // flush() marks the final segment of each track as last.
+    for (const lane of lanes) lane.ended = true;
+    fed = true;
+    maybeEnd();
+  };
+  await Promise.race([feedIso(), finished]);
   return finished;
 }

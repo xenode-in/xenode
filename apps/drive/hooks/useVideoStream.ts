@@ -5,7 +5,7 @@
  * Used when the Service Worker isn't available (e.g. private windows, SW disabled).
  *
  * Chunks are fetched and decrypted with a small prefetch window and streamed
- * into a MediaSource (see lib/media/mseStream), so playback starts with the
+ * into a MediaSource (see @xenode/media-processing/mse-stream), so playback starts with the
  * first chunk. Only formats MSE cannot play at all (e.g. WAV) are downloaded
  * whole before playing.
  */
@@ -14,9 +14,10 @@ import { useEffect, useRef, useState } from "react";
 import { decryptFilePart } from "@/lib/crypto/fileEncryption";
 import {
   canStreamWithMse,
+  prefetchingReader,
   streamToMediaSource,
   type MediaElementRef,
-} from "@/lib/media/mseStream";
+} from "@xenode/media-processing/mse-stream";
 
 export interface VideoStreamOptions {
   /** The object id every chunk is bound to. */
@@ -38,8 +39,6 @@ export interface VideoStreamState {
   /** 0–100 — tracks how many chunks have been fetched + decrypted */
   progress: number;
 }
-
-const PREFETCH = 3;
 
 /**
  * The player only gets a media element once it has a source, so this hook
@@ -93,34 +92,16 @@ export function useVideoStream(
           }
         });
 
-    // Chunk 0 gates the first frame, so it is fetched alone; PREFETCH chunks
-    // then stay in flight ahead of the consumer.
-    const inflight = new Map<number, Promise<ArrayBuffer>>();
-    const fetchAndDecrypt = async (i: number): Promise<ArrayBuffer> => {
+    // Chunk 0 gates the first frame, so it is fetched alone (or reused); the
+    // reader then keeps the next chunks in flight ahead of the consumer.
+    const readChunk = prefetchingReader(async (i) => {
+      if (i === 0 && opts.firstChunk) return opts.firstChunk.slice(0);
       const res = await fetch(urls[i], { signal: abort.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const plain = await decryptFilePart(await res.arrayBuffer(), dek, chunkIvs[i], fileId, i, chunkCount);
       setProgress(Math.round(((i + 1) / chunkCount) * 100));
       return plain;
-    };
-    const startFetch = (j: number) => {
-      if (j >= chunkCount || inflight.has(j)) return;
-      const pending = fetchAndDecrypt(j);
-      pending.catch(() => undefined); // awaited by the consumer
-      inflight.set(j, pending);
-    };
-    const nextChunk = async (i: number) => {
-      let chunk: ArrayBuffer;
-      if (i === 0 && opts.firstChunk) {
-        chunk = opts.firstChunk.slice(0);
-      } else {
-        startFetch(i);
-        chunk = await inflight.get(i)!;
-      }
-      inflight.delete(i);
-      for (let j = i + 1; j <= i + PREFETCH; j++) startFetch(j);
-      return chunk;
-    };
+    }, chunkCount);
 
     const playStream = async () => {
       const ms = new MediaSource();
@@ -129,7 +110,8 @@ export function useVideoStream(
         ms,
         contentType,
         chunkCount,
-        nextChunk,
+        chunkSize: opts.chunkSize,
+        readChunk,
         mediaRef,
         signal: abort.signal,
         onFirstData: () => setIsBuffering(false),
