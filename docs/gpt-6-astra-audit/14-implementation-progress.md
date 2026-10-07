@@ -721,3 +721,9 @@ Commit: `71c940b`.
 - Accounts Usage showed Buckets, Egress and Downloads, which nothing writes (one system bucket; downloads go straight to storage), so they were always 0. They are removed until they are metered.
 - The file toolbar overflowed sideways with a selection at mid widths; it wraps. The tag field has a label.
 - Validation: typecheck 16/16, boundaries, all 15 test workspaces; browser: fresh tags found immediately, Open in Drive switches workspace, Activity/Audit show upload and Bin entries, a request submits and is denied, Usage shows only real counters.
+
+## 0ZAX — Third browser journey: Photos (phase 3)
+
+- Photos never stored a file's original name, so every download was `xenode-image-<uuid>.jpg`. Uploads now seal `{assetId, name}` as a crypto-core envelope of the new type `photo-metadata` under the Space's Photos metadata key, in the asset's existing `encryptedMetadata`. Completion accepts only an envelope sealed for this Space and account (`isSealedPhotoMetadata`; plaintext is refused), and the Lightbox downloads under the opened name. Because the asset id is inside the plaintext, a name moved to another photo does not open. Photos uploaded before this keep the old download name.
+- "Open Drive" opened Drive's marketing page; it opens the Drive dashboard. The gallery density toggle exposes `aria-pressed`.
+- Validation: typecheck 16/16, boundaries, all 15 test workspaces (Photos web 55 tests, including plaintext refusal and sealed storage on completion; the photos package checks that neither envelope type passes the other's validator); browser: a new upload downloads as `round2-sunset.jpg` and the API serves only the envelope.

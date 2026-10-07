@@ -23,6 +23,8 @@ export type TimelineAsset = {
   storageObjectId?: string;
   previewUrl?: string;
   status?: "active" | "trashed";
+  /** The original file name, sealed (see lib/album-name). */
+  encryptedMetadata?: string;
 };
 
 export type TimelineGroup = {
@@ -173,6 +175,7 @@ export function Timeline({
                 : "text-muted-foreground",
             )}
             aria-label="Comfortable gallery"
+            aria-pressed={density === "comfortable"}
           >
             <LayoutGrid className="size-4" />
           </button>
@@ -186,6 +189,7 @@ export function Timeline({
                 : "text-muted-foreground",
             )}
             aria-label="Compact gallery"
+            aria-pressed={density === "compact"}
           >
             <Grid3X3 className="size-4" />
           </button>

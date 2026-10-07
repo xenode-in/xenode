@@ -34,6 +34,8 @@ import {
 import { useProductCrypto } from "@xenode/crypto-react";
 import type { TimelineAsset } from "./Timeline";
 import { decryptPhotoFile } from "@/lib/photo-encryption";
+import { openPhotoName } from "@/lib/album-name";
+import { usePhotosMetadataKey } from "./PhotosKeyAccess";
 import {
   fetchCachedPhotoCiphertext,
   photoPreviewCacheKey,
@@ -433,6 +435,7 @@ function LightboxContent({
   toolbarElement: HTMLDivElement | null;
 }) {
   const productCrypto = useProductCrypto();
+  const metadataKey = usePhotosMetadataKey(asset.spaceId);
   const [displayUrl, setDisplayUrl] = useState(asset.previewUrl ?? "");
   const [loadedVariant, setLoadedVariant] = useState<ContentVariant | null>(null);
   const [wantOriginal, setWantOriginal] = useState(asset.mediaType === "video");
@@ -551,10 +554,12 @@ function LightboxContent({
       const downloadUrl = URL.createObjectURL(blob);
       const anchor = document.createElement("a");
       anchor.href = downloadUrl;
-      anchor.download = `xenode-${asset.mediaType}-${asset.id}.${extensionFor(
-        contentType,
-        fileExtension,
-      )}`;
+      const originalName = metadataKey
+        ? await openPhotoName(asset.encryptedMetadata, asset.id, metadataKey, asset.spaceId)
+        : null;
+      anchor.download =
+        originalName ??
+        `xenode-${asset.mediaType}-${asset.id}.${extensionFor(contentType, fileExtension)}`;
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
@@ -566,7 +571,7 @@ function LightboxContent({
     } finally {
       setDownloading(false);
     }
-  }, [asset.id, asset.mediaType, decryptVariant, fileExtension]);
+  }, [asset, decryptVariant, fileExtension, metadataKey]);
 
   const toggleOriginal = () => {
     setLoading(true);

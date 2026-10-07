@@ -15,6 +15,8 @@ import {
 import { getClientPhotosSession } from "@/lib/client-session";
 import { createImageDerivatives } from "@/lib/image-derivatives";
 import { encryptPhotoFile } from "@/lib/photo-encryption";
+import { sealPhotoName } from "@/lib/album-name";
+import { usePhotosMetadataKey } from "./PhotosKeyAccess";
 
 const MAX_WEB_UPLOAD_BYTES = 250 * 1024 * 1024;
 
@@ -27,6 +29,7 @@ export function UploadController({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const productCrypto = useProductCrypto();
+  const metadataKey = usePhotosMetadataKey(spaceId);
   const [status, setStatus] = useState("");
   const [uploading, setUploading] = useState(false);
 
@@ -197,6 +200,9 @@ export function UploadController({
                   encryptedDEK: encrypted.original.encryptedDEK,
                   iv: encrypted.original.iv,
                   spaceKeyWrapIv: encrypted.original.spaceKeyWrapIv,
+                  encryptedMetadata: metadataKey
+                    ? await sealPhotoName(input.name, input.id, metadataKey, session.accountId, spaceId)
+                    : undefined,
                   optimizedKey: presign.optimized?.objectKey,
                   optimizedSize: encrypted.optimized?.body.byteLength,
                   optimizedContentType: derivatives?.optimized.contentType,

@@ -10,6 +10,7 @@ export type EnvelopeType =
   | "file-dek"
   | "metadata-key"
   | "album-name"
+  | "photo-metadata"
   | "upload-journal";
 
 export interface EnvelopeContext {

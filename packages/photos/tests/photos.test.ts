@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isSealedAlbumName,
+  isSealedPhotoMetadata,
   PhotosService,
   PhotosUploadPolicy,
   photoQueryKey,
@@ -71,6 +72,10 @@ describe("Photos domain", () => {
     expect(isSealedAlbumName(sealed({ type: "file-dek" }), "space_1", "acct_1")).toBe(false);
     expect(isSealedAlbumName(sealed({ productId: "drive" }), "space_1", "acct_1")).toBe(false);
     expect(isSealedAlbumName(sealed({ ciphertext: "short" }), "space_1", "acct_1")).toBe(false);
+    // Photo names use their own envelope type; neither validator takes the other's.
+    expect(isSealedPhotoMetadata(sealed({ type: "photo-metadata" }), "space_1", "acct_1")).toBe(true);
+    expect(isSealedPhotoMetadata(sealed(), "space_1", "acct_1")).toBe(false);
+    expect(isSealedAlbumName(sealed({ type: "photo-metadata" }), "space_1", "acct_1")).toBe(false);
   });
 
   it("rejects cross-Space album assets", async () => {

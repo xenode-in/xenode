@@ -3,6 +3,7 @@ import {
   PhotoAsset, PhotoUpload, PhotoUploadCommitError, commitPhotoUpload, getMongoose,
 } from "@xenode/database";
 import { personalSpaceId, resolveSpaceAccess } from "@xenode/spaces";
+import { isSealedPhotoMetadata } from "@xenode/photos";
 import { getPhotosProductSession } from "@/lib/session";
 import { getPhotosStorageContext } from "@/lib/storage-server";
 
@@ -14,6 +15,7 @@ type CompleteBody = {
   assetId?: unknown;
   bucketId?: unknown;
   encryptedDEK?: unknown;
+  encryptedMetadata?: unknown;
   height?: unknown;
   iv?: unknown;
   mediaType?: unknown;
@@ -84,7 +86,9 @@ export async function POST(request: Request) {
         !thumbnail ||
         thumbnail.contentType !== "image/jpeg")) ||
     (body.mediaType === "video" &&
-      !original.contentType.startsWith("video/"))
+      !original.contentType.startsWith("video/")) ||
+    (body.encryptedMetadata !== undefined &&
+      !isSealedPhotoMetadata(body.encryptedMetadata, personalSpaceId(session.accountId), session.accountId))
   ) {
     return Response.json({ error: "Invalid upload completion" }, { status: 400 });
   }
@@ -191,6 +195,7 @@ export async function POST(request: Request) {
         takenAt,
         width: typeof body.width === "number" && body.width > 0 ? Math.round(body.width) : undefined,
         height: typeof body.height === "number" && body.height > 0 ? Math.round(body.height) : undefined,
+        encryptedMetadata: body.encryptedMetadata as string | undefined,
       },
     });
     return Response.json({ asset: result.asset }, { status: result.created ? 201 : 200 });

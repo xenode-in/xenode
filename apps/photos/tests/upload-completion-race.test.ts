@@ -158,6 +158,20 @@ afterAll(async () => {
 });
 
 describe("Photos completion race safety", () => {
+  it("stores only a sealed original name on the asset", async () => {
+    await reserve(body("named-asset"));
+    const plain = await complete(request("complete", { ...body("named-asset"), encryptedMetadata: "holiday.jpg" }));
+    expect(plain.status).toBe(400);
+
+    const sealed = JSON.stringify({
+      accountId, spaceId, productId: "photos", keyId: "photos-metadata", keyVersion: 1,
+      type: "photo-metadata", formatVersion: 2, algorithm: "AES-256-GCM", aadVersion: 1,
+      ciphertext: "q".repeat(32), iv: "i".repeat(16), createdAt: "2026-10-07T00:00:00.000Z", status: "active",
+    });
+    expect((await complete(request("complete", { ...body("named-asset"), encryptedMetadata: sealed }))).status).toBe(201);
+    expect((await PhotoAsset.findOne({ assetId: "named-asset" }).lean())?.encryptedMetadata).toBe(sealed);
+  });
+
   it("keeps the winning asset when another completion loses its unique ID", async () => {
     await reserve(body());
     let releaseHeads!: () => void;

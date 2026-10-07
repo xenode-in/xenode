@@ -134,7 +134,7 @@ export function PhotosShell({
 
           <div className="mt-auto space-y-1 border-t border-border/60 pt-4">
             <Button variant="ghost" className="w-full justify-start rounded-xl" asChild>
-              <a href={DRIVE_ORIGIN}>
+              <a href={`${DRIVE_ORIGIN}/dashboard`}>
                 <Cloud className="mr-2 size-4" />
                 Open Drive
               </a>

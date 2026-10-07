@@ -25,6 +25,7 @@ export async function commitPhotoUpload(input: {
     takenAt: Date;
     width?: number;
     height?: number;
+    encryptedMetadata?: string;
   };
 }) {
   try {

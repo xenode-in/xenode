@@ -56,6 +56,24 @@ export function isSealedAlbumName(
   spaceId: string,
   accountId: string,
 ): value is string {
+  return isSealedPhotosEnvelope(value, spaceId, accountId, "album-name");
+}
+
+/** A photo's original name, sealed like an album name (see apps/photos/lib/album-name). */
+export function isSealedPhotoMetadata(
+  value: unknown,
+  spaceId: string,
+  accountId: string,
+): value is string {
+  return isSealedPhotosEnvelope(value, spaceId, accountId, "photo-metadata");
+}
+
+function isSealedPhotosEnvelope(
+  value: unknown,
+  spaceId: string,
+  accountId: string,
+  type: "album-name" | "photo-metadata",
+): value is string {
   if (typeof value !== "string" || value.length > 4096) return false;
   let envelope: Record<string, unknown>;
   try {
@@ -70,7 +88,7 @@ export function isSealedAlbumName(
     envelope.algorithm === "AES-256-GCM" &&
     envelope.aadVersion === 1 &&
     envelope.status === "active" &&
-    envelope.type === "album-name" &&
+    envelope.type === type &&
     envelope.productId === "photos" &&
     envelope.keyId === "photos-metadata" &&
     envelope.keyVersion === 1 &&
