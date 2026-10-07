@@ -9,6 +9,7 @@ import {
 } from "@/lib/subscriptions/service";
 import { changePlanSchema } from "@/lib/billing/validation/schemas";
 import { parseJson, jsonError, BillingError } from "@/lib/billing/http";
+import { isRazorpaySDKError } from "@/lib/payment/razorpayUtils";
 import { findActiveSubscription } from "@/lib/billing/subscriptions";
 import { calculateProration } from "@/lib/billing/proration";
 import {
@@ -129,11 +130,23 @@ export async function POST(request: NextRequest) {
 
     // Apply change via Razorpay. Note: PATCH /v1/subscriptions/:id per docs.
     // The razorpay-node SDK's `update()` maps to PATCH internally.
-    await razorpay.subscriptions.update(sub.subscription_id, {
-      plan_id: newRazorpayPlanId,
-      schedule_change_at: effective === "immediate" ? "now" : "cycle_end",
-      customer_notify: true,
-    } as never);
+    try {
+      await razorpay.subscriptions.update(sub.subscription_id, {
+        plan_id: newRazorpayPlanId,
+        schedule_change_at: effective === "immediate" ? "now" : "cycle_end",
+        customer_notify: true,
+      } as never);
+    } catch (error) {
+      // Razorpay cannot change the plan of a UPI AutoPay subscription.
+      if (isRazorpaySDKError(error) && /payment mode is upi/i.test(error.error?.description ?? "")) {
+        throw new BillingError(
+          409,
+          "UPI AutoPay subscriptions can't change plan. Cancel this subscription and choose the new plan once it ends.",
+          "plan_change_unsupported_upi",
+        );
+      }
+      throw error;
+    }
 
     sub.metadata = {
       ...sub.metadata,

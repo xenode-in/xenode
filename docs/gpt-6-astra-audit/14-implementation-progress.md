@@ -758,3 +758,12 @@ The local Razorpay keys are placeholders, so Razorpay's hosted checkout cannot r
 - `npm run cron:*` read a per-app env file that no longer exists and offered a removed PayU job; it reads the repo-root `.env.local` and offers `cron:reconcile` instead.
 - Tests: the webhook route itself (signature, single application, replay) and the gateway-error mapping.
 - Not testable here: Razorpay's hosted checkout and the `/api/subscriptions/verify` round trip need real `rzp_test_` keys and Razorpay's test UPI/cards.
+
+## 0ZBB — Payments test with Razorpay test-mode keys
+
+Razorpay test-mode keys were copied into the local env (from the v1 project) and the local pricing config now points at the test-mode plans (`plan_SwnL…`, the set the v1 config uses; prices match). A real test-mode checkout ran end to end in the built-in browser: Basic monthly → Razorpay subscription created → UPI test payment → `/api/subscriptions/verify` (signature with the key secret, subscription fetched from Razorpay) → success page; Basic 100 GB active, payment and invoice XEN-2026-00003 (PDF) recorded; a real cancellation is scheduled for period end in Razorpay; the reconcile cron finds no drift.
+
+- Razorpay refuses plan changes for UPI AutoPay subscriptions ("subscriptions cannot be updated when payment mode is upi"), and UPI is the main method. The change-plan route now answers 409 `plan_change_unsupported_upi` with a plain explanation, and the Plans dialog shows errors in the dialog (a toast sat under its overlay, so the failure was silent). A real upgrade path for UPI subscribers needs a product decision (e.g. cancel and start a new subscription now, with or without credit).
+- If verification failed after Razorpay took the payment, the error was thrown inside Razorpay's callback, outside any handler: the button stayed on "Processing…" with no message. It now tells the user the payment went through and the plan will update (webhook or reconcile).
+- The success page welcomed every buyer to "Xenode Pro" and promised a confirmation email that nothing sends; it names the bought plan and points to the invoice in Billing.
+- Seen and not changed: Razorpay rejects the placeholder phone 9876543210 that the checkout form accepts (users type their own); Razorpay test cards need the card-saving OTP for recurring use, UPI QR completes on its own in test mode.

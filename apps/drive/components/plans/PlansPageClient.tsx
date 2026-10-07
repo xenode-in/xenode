@@ -161,6 +161,7 @@ export default function PlansPageClient() {
     deferred: boolean;
   } | null>(null);
   const [deferredSwitchLoading, setDeferredSwitchLoading] = useState(false);
+  const [deferredSwitchError, setDeferredSwitchError] = useState("");
 
   useEffect(() => {
     fetch("/api/admin/pricing/plans-public")
@@ -202,12 +203,14 @@ export default function PlansPageClient() {
     // confirm modal instead of routing to checkout (which would 409 with an
     // existing active subscription anyway).
     if (isDeferredYearlyToMonthly) {
+      setDeferredSwitchError("");
       setDeferredSwitchPlan({ slug, name, deferred: true });
       return;
     }
     // A subscriber changes plan on the existing subscription; checkout would
     // refuse a second one.
     if (hasActiveSubscription && !isGracePeriod && !isPlanExpired) {
+      setDeferredSwitchError("");
       setDeferredSwitchPlan({ slug, name, deferred: false });
       return;
     }
@@ -217,6 +220,7 @@ export default function PlansPageClient() {
   const confirmDeferredSwitch = async () => {
     if (!deferredSwitchPlan || deferredSwitchLoading) return;
     setDeferredSwitchLoading(true);
+    setDeferredSwitchError("");
     try {
       const res = await fetch("/api/subscriptions/change-plan", {
         method: "POST",
@@ -242,7 +246,10 @@ export default function PlansPageClient() {
       // Reload state so the UI reflects the scheduled change.
       router.push("/dashboard/billing");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Something went wrong");
+      // Shown in the dialog: a toast would sit under its overlay.
+      setDeferredSwitchError(
+        err instanceof Error ? err.message : "Something went wrong",
+      );
     } finally {
       setDeferredSwitchLoading(false);
     }
@@ -633,6 +640,12 @@ export default function PlansPageClient() {
                 </div>
               </>
             )}
+
+            {deferredSwitchError ? (
+              <p className="mt-4 text-sm text-destructive" role="alert">
+                {deferredSwitchError}
+              </p>
+            ) : null}
 
             <div className="mt-6 flex items-center justify-end gap-2">
               <button

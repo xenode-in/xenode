@@ -67,15 +67,26 @@ export default function SubscribeButton({
           razorpay_subscription_id: string;
           razorpay_signature: string;
         }) => {
-          const verifyResponse = await fetch("/api/subscriptions/verify", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(response),
-          });
-
-          const verifyData = await verifyResponse.json();
-          if (!verifyResponse.ok) {
-            throw new Error(verifyData.error || "Subscription verification failed");
+          // Razorpay calls this after payment, outside startSubscription's
+          // try: a failure here must still reach the user.
+          try {
+            const verifyResponse = await fetch("/api/subscriptions/verify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(response),
+            });
+            const verifyData = await verifyResponse.json().catch(() => ({}));
+            if (!verifyResponse.ok) {
+              throw new Error(verifyData.error || "Subscription verification failed");
+            }
+          } catch (verifyError) {
+            onError?.(
+              `${verifyError instanceof Error ? verifyError.message : "Subscription verification failed"}. ` +
+                "Your payment went through; your plan will update shortly, or contact support.",
+            );
+            setSubmitting(false);
+            onSettled?.();
+            return;
           }
 
           router.refresh();

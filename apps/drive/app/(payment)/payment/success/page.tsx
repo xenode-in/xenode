@@ -54,7 +54,7 @@ export default async function PaymentSuccessPage({
             Payment Successful
           </h1>
           <p className="text-muted-foreground">
-            Your plan is now active. Welcome to Xenode Pro.
+            Your plan is now active.{plan ? ` Welcome to Xenode ${plan}.` : ""}
           </p>
         </div>
 
@@ -96,7 +96,7 @@ export default async function PaymentSuccessPage({
 
         {/* Footer note */}
         <p className="mt-6 text-center text-xs text-muted-foreground">
-          A confirmation email has been sent to your registered address.
+          Your invoice is available under Billing.
         </p>
       </div>
     </div>
