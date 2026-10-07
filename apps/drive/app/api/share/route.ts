@@ -134,13 +134,14 @@ export async function POST(req: NextRequest) {
     if (password) shareData.passwordHash = await bcrypt.hash(password, 12);
     if (expiresIn) shareData.expiresAt = new Date(Date.now() + Number(expiresIn) * 3_600_000);
     if (maxDownloads) shareData.maxDownloads = Number(maxDownloads);
+    // Bundles carry per-item keys but still need the owner's copy of the share key.
+    if (typeof ownerEncryptedShareKey === "string" && ownerEncryptedShareKey.length > 0) {
+      shareData.ownerEncryptedShareKey = ownerEncryptedShareKey;
+    }
     if (shareEncryptedDEK) {
       shareData.shareEncryptedDEK = shareEncryptedDEK;
       shareData.shareKeyIv = shareKeyIv;
       shareData.shareEncryptedName = shareEncryptedName;
-      if (ownerEncryptedShareKey) {
-        shareData.ownerEncryptedShareKey = ownerEncryptedShareKey;
-      }
       if (shareEncryptedContentType) {
         shareData.shareEncryptedContentType = shareEncryptedContentType;
       }

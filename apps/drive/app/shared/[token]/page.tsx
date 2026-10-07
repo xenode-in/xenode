@@ -636,7 +636,7 @@ export default function SharedFilePage() {
   );
 
   const fetchDownloadBlob = useCallback(
-    async (item?: ShareMetaItem) => {
+    async (item?: ShareMetaItem, endpoint: SharedFileEndpoint = "download") => {
       if (!meta) throw new Error("Share metadata is not loaded.");
       const target = item || meta;
       const itemMeta = item ? getResolvedItemMeta(item) : undefined;
@@ -657,7 +657,7 @@ export default function SharedFilePage() {
           itemMeta?.contentType ||
           decryptedContentType ||
           target.contentType,
-        endpoint: "download",
+        endpoint,
         onProgress: setDownloadProgress,
       });
     },
@@ -719,8 +719,12 @@ export default function SharedFilePage() {
       const zip = new JSZip();
       const usedNames = new Map<string, number>();
 
-      for (const item of meta.items) {
-        const { blob, fileName } = await fetchDownloadBlob(item);
+      // One "Download all" is one download of the link: the last file claims
+      // it (claiming first would lock out the rest at the limit), the others
+      // are fetched like previews.
+      const last = meta.items.length - 1;
+      for (const [index, item] of meta.items.entries()) {
+        const { blob, fileName } = await fetchDownloadBlob(item, index === last ? "download" : "stream");
         const baseName = fileName || "download";
         const count = usedNames.get(baseName) || 0;
         usedNames.set(baseName, count + 1);

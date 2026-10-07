@@ -83,7 +83,7 @@ export default function SharedWithMeDetailPage() {
     let active = true;
 
     const resolveMetadata = async () => {
-      const fallbackName = share.objectId.key.split("/").pop() || share.objectId.key;
+      const fallbackName = "Encrypted file";
       const fallbackType = share.objectId.contentType || "application/octet-stream";
 
       if (
@@ -148,9 +148,7 @@ export default function SharedWithMeDetailPage() {
       isEncrypted: share.objectId.isEncrypted,
       encryptedName: undefined,
       name:
-        resolvedName ||
-        share.objectId.key.split("/").pop() ||
-        share.objectId.key,
+        resolvedName || "Encrypted file",
       mediaCategory: share.objectId.mediaCategory,
     };
   }, [share, resolvedContentType, resolvedName]);
@@ -192,7 +190,7 @@ export default function SharedWithMeDetailPage() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = resolvedName || share?.objectId.key.split("/").pop() || "download";
+      a.download = resolvedName || "download";
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -235,7 +233,7 @@ export default function SharedWithMeDetailPage() {
             </Button>
           </div>
           <h1 className="text-2xl font-bold tracking-tight">
-            {resolvedName || share.objectId.key.split("/").pop() || share.objectId.key}
+            {resolvedName || "Encrypted file"}
           </h1>
           <p className="text-muted-foreground">
             Shared by {share.owner?.name || share.owner?.email || "Unknown"}

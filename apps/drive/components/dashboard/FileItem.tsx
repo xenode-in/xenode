@@ -350,6 +350,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
           >
             <Checkbox
               checked={!!isSelected}
+              aria-label={`Select ${name}`}
               onCheckedChange={() => {}}
               onClick={(e) => {
                 e.stopPropagation();
@@ -489,6 +490,7 @@ export const FileRow = forwardRef<HTMLTableRowElement, ItemProps>(
           </div>
           <MetadataDialog
             item={item}
+            name={decryptedName}
             isOpen={isMetaOpen}
             onOpenChange={setIsMetaOpen}
             metadataKey={activeMetadataKey}
@@ -737,6 +739,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
         >
           <Checkbox
             checked={!!isSelected}
+            aria-label={`Select ${name}`}
             onCheckedChange={() => {}}
             onClick={(e) => {
               e.stopPropagation();
@@ -896,6 +899,7 @@ export const FileCard = forwardRef<HTMLDivElement, ItemProps>(
 
           <MetadataDialog
             item={item}
+            name={decryptedName}
             isOpen={isMetaOpen}
             onOpenChange={setIsMetaOpen}
             metadataKey={activeMetadataKey}

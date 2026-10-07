@@ -52,6 +52,7 @@ describe("bundle share names", () => {
     expect(created.status).toBeLessThan(300);
     const stored = await ShareLink.findOne({ token: TOKEN }).lean();
     expect(stored?.shareEncryptedBundleName).toBe("sealed-name");
+    expect(stored?.ownerEncryptedShareKey).toBe("owner-copy");
     expect(JSON.stringify(stored)).not.toContain("Tax returns");
 
     const served = await (await readLink(call("GET"), params)).json();

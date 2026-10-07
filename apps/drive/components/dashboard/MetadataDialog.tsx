@@ -35,10 +35,13 @@ interface MetadataDialogProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   metadataKey: CryptoKey | null;
+  /** The decrypted file name, when the caller has it. */
+  name?: string | null;
 }
 
 export function MetadataDialog({
   item,
+  name,
   isOpen,
   onOpenChange,
   metadataKey,
@@ -130,7 +133,7 @@ export function MetadataDialog({
             <DialogTitle>File Metadata</DialogTitle>
           </div>
           <DialogDescription className="text-muted-foreground/60">
-            {metadata?.name || item.key.split("/").pop() || "Encrypted Metadata"}
+            {metadata?.name || name || "Encrypted file"}
           </DialogDescription>
         </DialogHeader>
 
@@ -208,7 +211,7 @@ export function MetadataDialog({
               </span>
               <div className="grid grid-cols-2 gap-x-4 gap-y-2 bg-secondary/30 p-3 rounded-lg border border-border/50 w-full text-left">
                 <span className="text-xs text-muted-foreground">Original Name</span>
-                <span className="text-xs font-medium text-foreground truncate text-right">{item.key.split("/").pop()}</span>
+                <span className="text-xs font-medium text-foreground truncate text-right">{name || "Encrypted file"}</span>
                 <span className="text-xs text-muted-foreground">Size</span>
                 <span className="text-xs font-medium text-foreground truncate text-right">{formatBytes(item.size)}</span>
               </div>

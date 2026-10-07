@@ -110,9 +110,7 @@ const ROLE_LABEL: Record<ShareRole, string> = {
   editor: "Editor",
 };
 
-function fallbackName(row: WithMeRow): string {
-  return row.object?.key.split("/").pop() || "Encrypted file";
-}
+const FALLBACK_NAME = "Encrypted file";
 
 export function OrgSharesClient({
   orgId,
@@ -178,7 +176,7 @@ function SharedWithMe({ orgId }: { orgId: string }) {
       for (const row of rows) {
         if (!row.object?.isEncrypted || !row.shareEncryptedName || !row.wrappedShareKey) {
           resolved[row.id] = {
-            name: fallbackName(row),
+            name: FALLBACK_NAME,
             contentType: row.object?.contentType || "application/octet-stream",
           };
           continue;
@@ -200,7 +198,7 @@ function SharedWithMe({ orgId }: { orgId: string }) {
           resolved[row.id] = { name, contentType };
         } catch {
           resolved[row.id] = {
-            name: fallbackName(row),
+            name: FALLBACK_NAME,
             contentType: row.object?.contentType || "application/octet-stream",
           };
         }
@@ -234,7 +232,7 @@ function SharedWithMe({ orgId }: { orgId: string }) {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = resolved?.name || fallbackName(row);
+      a.download = resolved?.name || FALLBACK_NAME;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -270,7 +268,7 @@ function SharedWithMe({ orgId }: { orgId: string }) {
 
   if (loading) return <OrgLoading />;
 
-  const previewName = preview ? names[preview.id]?.name || fallbackName(preview) : "";
+  const previewName = preview ? names[preview.id]?.name || FALLBACK_NAME : "";
   const previewFile =
     preview && preview.object
       ? {
@@ -320,7 +318,7 @@ function SharedWithMe({ orgId }: { orgId: string }) {
       ) : (
         <ul className="divide-y divide-border/60 rounded-xl border border-border bg-card">
           {rows.map((row) => {
-            const name = names[row.id]?.name || fallbackName(row);
+            const name = names[row.id]?.name || FALLBACK_NAME;
             return (
               <li key={row.id} className="flex items-center gap-3 px-4 py-3">
                 <button

@@ -695,6 +695,7 @@ export function ShareDialog({
                 <div className="flex gap-2">
                   <Input
                     readOnly
+                    aria-label="Share link"
                     value={shareUrl}
                     className="h-8 font-mono text-[11px] bg-secondary/50 border-border"
                   />
@@ -756,11 +757,12 @@ export function ShareDialog({
           <div className="space-y-4">
             {isBundle && (
               <div className="space-y-1.5">
-                <Label className="flex items-center gap-1.5 text-sm font-medium">
+                <Label htmlFor="share-bundle-name" className="flex items-center gap-1.5 text-sm font-medium">
                   <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
                   Bundle name
                 </Label>
                 <Input
+                  id="share-bundle-name"
                   type="text"
                   placeholder={`${shareFiles.length} shared files`}
                   value={bundleName}
@@ -771,11 +773,12 @@ export function ShareDialog({
             )}
 
             <div className="space-y-1.5">
-              <Label className="flex items-center gap-1.5 text-sm font-medium">
+              <Label htmlFor="share-with" className="flex items-center gap-1.5 text-sm font-medium">
                 <Users className="h-3.5 w-3.5 text-muted-foreground" /> Share
                 with users
               </Label>
               <Input
+                id="share-with"
                 type="text"
                 placeholder={
                   orgId
@@ -853,7 +856,7 @@ export function ShareDialog({
                   value={shareRole}
                   onValueChange={(value) => setShareRole(value as ShareRole)}
                 >
-                  <SelectTrigger className="h-9 bg-secondary/50 border-border">
+                  <SelectTrigger aria-label="Permission" className="h-9 bg-secondary/50 border-border">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent
@@ -883,7 +886,7 @@ export function ShareDialog({
                 Expiry
               </Label>
               <Select value={expiresIn} onValueChange={setExpiresIn}>
-                <SelectTrigger className="h-9 bg-secondary/50 border-border">
+                <SelectTrigger aria-label="Link expiry" className="h-9 bg-secondary/50 border-border">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent position="popper" className="bg-card border-border z-[200]">
@@ -897,10 +900,11 @@ export function ShareDialog({
             </div>
 
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium">
+              <Label htmlFor="share-max-downloads" className="text-sm font-medium">
                 Max Downloads (optional)
               </Label>
               <Input
+                id="share-max-downloads"
                 type="number"
                 placeholder="Unlimited"
                 min="1"
@@ -916,11 +920,12 @@ export function ShareDialog({
                   <Lock className="h-3.5 w-3.5 text-muted-foreground" />{" "}
                   Password Protect
                 </Label>
-                <Switch checked={usePass} onCheckedChange={setUsePass} />
+                <Switch checked={usePass} onCheckedChange={setUsePass} aria-label="Password protect" />
               </div>
               {usePass && (
                 <Input
                   type="password"
+                  aria-label="Link password"
                   placeholder="Set a password"
                   value={pass}
                   onChange={(e) => setPass(e.target.value)}

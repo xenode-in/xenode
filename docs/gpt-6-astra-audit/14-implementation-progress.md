@@ -698,3 +698,16 @@ Commit: `71c940b`.
 - Photo selection buttons were named with raw asset ids ("Select 6c327e8e-…") and exposed no state. They are named like their Open buttons ("Select image from 01/10/2026") with `aria-pressed`; day-group toggles report `mixed` when partly selected. Tests identify tiles by a `data-asset-id` attribute instead of the accessible name.
 - The library toolbar now shows how many items are selected and can clear the selection; the delete-forever confirmation reads "Delete 1 item permanently?".
 - Validation: typecheck 16/16, boundaries, all 15 test workspaces (Photos 54 tests, the journey test asserting the pressed state, readable name and count); checked in the built-in browser.
+
+## 0ZAU — Vault-unlock carry-over kept Better Auth's cookie deletions
+
+- The phase-4 TOTP fix re-serialized Better Auth's response through `NextResponse`, which dropped `Max-Age=0` from its cookie deletions, so replaced session cookies survived. The unlock cookie is now appended to the original response's headers (`withVaultUnlockCookie`); a test checks both cookies.
+
+## 0ZAV — Third browser journey: Drive sharing (phase 1)
+
+- Multi-file links never stored the owner's copy of the share key (`ownerEncryptedShareKey` was saved only inside the single-file branch). The owner could not copy, name or manage any new bundle, and the error advised recreating it, which failed the same way. The key is now stored for every link; the bundle-name test asserts it. Bundles created before this cannot be recovered and should be revoked and recreated.
+- Edit share and Manage users threw "Invalid share role" for public links, which have no recipients; the role defaults to viewer there. Revoke used a native `confirm()` and now uses the styled confirmation.
+- One bundle "Download all" counted a download per file against the link's limit. The last file claims the single download (claiming first would lock the rest out at the limit); the others are fetched like previews.
+- Manage bundle listed files by storage key, and several views (Shared, Shared with me, org shares, Details) fell back to the storage key as a file name. They show the decrypted name or "Encrypted file".
+- The share dialog's fields have labels.
+- Validation: typecheck 16/16, boundaries, all 15 test workspaces (Drive 88 files / 635 tests); in the built-in browser a new bundle shows its name, copies its exact key, renames (the public page follows), counts one download per Download all, and revokes through the dialog.

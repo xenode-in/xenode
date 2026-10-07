@@ -31,6 +31,16 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   AlertCircle,
   Copy,
   Edit3,
@@ -172,6 +182,7 @@ export default function SharedPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [revokingId, setRevokingId] = useState<string | null>(null);
+  const [revokeRow, setRevokeRow] = useState<ShareRow | null>(null);
   const [copyingId, setCopyingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [editRow, setEditRow] = useState<ShareRow | null>(null);
@@ -292,6 +303,16 @@ export default function SharedPage() {
             /* the item-count label stays */
           }
         }
+        // Bundle files are listed by name (keyed by object id) in Manage bundle.
+        for (const { objectId: object } of row.bundleItems ?? []) {
+          if (object?.isEncrypted && object.encryptedName && !nextNames[object._id]) {
+            nextNames[object._id] = await decryptMetadataString(
+              object.encryptedName,
+              metadataKey,
+              { fileId: object._id, purpose: "name" },
+            ).catch(() => "");
+          }
+        }
         if (!row.isBundle && row.objectId.isEncrypted && row.objectId.encryptedName) {
           try {
             nextNames[row.id] = await decryptMetadataString(
@@ -386,13 +407,7 @@ export default function SharedPage() {
   }
 
   const revokeShare = async (row: ShareRow) => {
-    const message =
-      row.type === "public"
-        ? "Are you sure you want to revoke this public link?"
-        : "Are you sure you want to revoke this direct share?";
-
-    if (!confirm(message)) return;
-
+    setRevokeRow(null);
     setRevokingId(row.id);
     try {
       const endpoint =
@@ -476,7 +491,7 @@ export default function SharedPage() {
     );
     setMaxDownloads(row.maxDownloads ? String(row.maxDownloads) : "");
     setSharedWithInput(row.sharedWith.join(", "));
-    setAccessType(normalizeShareRole(row.recipients?.[0]?.accessType));
+    setAccessType(normalizeShareRole(row.recipients?.[0]?.accessType ?? "viewer"));
   };
 
   const saveEdit = async () => {
@@ -525,7 +540,7 @@ export default function SharedPage() {
   const openUsers = (row: ShareRow) => {
     setUsersRow(row);
     setSharedWithInput(row.sharedWith.join(", "));
-    setAccessType(normalizeShareRole(row.recipients?.[0]?.accessType));
+    setAccessType(normalizeShareRole(row.recipients?.[0]?.accessType ?? "viewer"));
   };
 
   const openBundle = (row: ShareRow) => {
@@ -742,9 +757,7 @@ export default function SharedPage() {
                 const displayName =
                   row.isBundle
                     ? decryptedNames[row.id] || `${row.bundleItemCount || 0} shared files`
-                    : decryptedNames[row.id] ||
-                      row.objectId.key.split("/").pop() ||
-                      row.objectId.key;
+                    : decryptedNames[row.id] || "Encrypted file";
                 const displaySize = row.isBundle
                   ? row.bundleSize || row.objectId.size
                   : row.objectId.size;
@@ -899,9 +912,10 @@ export default function SharedPage() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                          onClick={() => revokeShare(row)}
+                          onClick={() => setRevokeRow(row)}
                           disabled={revokingId === row.id}
                           title="Revoke share"
+                          aria-label="Revoke share"
                         >
                           {revokingId === row.id ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -918,6 +932,30 @@ export default function SharedPage() {
           </Table>
         </div>
       )}
+
+      <AlertDialog open={!!revokeRow} onOpenChange={(open) => !open && setRevokeRow(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {revokeRow?.type === "public" ? "Revoke public link?" : "Revoke direct share?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {revokeRow?.type === "public"
+                ? "Anyone with this link loses access immediately."
+                : "The recipients lose access immediately."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => revokeRow && revokeShare(revokeRow)}
+            >
+              Revoke
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={!!editRow} onOpenChange={(open) => !open && setEditRow(null)}>
         <DialogContent>
@@ -1018,9 +1056,7 @@ export default function SharedPage() {
                   const object = item.objectId;
                   if (!object) return null;
                   const isIncluded = bundleItemIds.has(object._id);
-                  const name =
-                    object.key.split("/").filter(Boolean).pop() ||
-                    `File ${index + 1}`;
+                  const name = decryptedNames[object._id] || `File ${index + 1}`;
                   return (
                     <div
                       key={object._id}

@@ -216,9 +216,7 @@ export default function SharedWithMePage() {
             <TableBody>
               {shares.map((share) => {
                 const displayName =
-                  decryptedNames[share._id] ||
-                  share.objectId.key.split("/").pop() ||
-                  share.objectId.key;
+                  decryptedNames[share._id] || "Encrypted file";
 
                 return (
                   <TableRow key={share._id}>
@@ -308,9 +306,7 @@ export default function SharedWithMePage() {
                 isEncrypted: preview.objectId.isEncrypted,
                 encryptedName: undefined,
                 name:
-                  decryptedNames[preview._id] ||
-                  preview.objectId.key.split("/").pop() ||
-                  preview.objectId.key,
+                  decryptedNames[preview._id] || "Encrypted file",
                 mediaCategory: preview.objectId.mediaCategory,
               }
             : null
