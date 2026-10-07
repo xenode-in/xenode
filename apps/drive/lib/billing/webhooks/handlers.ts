@@ -15,6 +15,7 @@ import { syncOrgSubscriptionState } from "@/lib/orgs/billing/service";
 import { syncBillingSubscriptionState } from "@/lib/billing/subscriptions";
 import { SUBSCRIPTION_GRACE_PERIOD_MS } from "@/lib/subscriptions/constants";
 import { getPlanByRazorpayPlanIdFromDB } from "@/lib/config/getPricingConfig";
+import { getRecurringPlanContext } from "@/lib/subscriptions/service";
 import { BillingEventType, emitBillingEvent } from "@/lib/billing/events";
 import { findRefundRequestForWebhook } from "@/lib/refunds/processor";
 import { addReply } from "@/lib/support/tickets";
@@ -755,6 +756,20 @@ const handleSubscriptionUpdated: Handler = async (ctx) => {
           }
         : {}),
     };
+  }
+  // The billing page shows the next charge from these; a plan applied here
+  // (scheduled, or changed in Razorpay) must not keep the old price.
+  const updatedAccountId = typeof sub.accountId === "string" ? sub.accountId : "";
+  if (planApplied && sub.planSlug && !updatedAccountId.startsWith("org:")) {
+    const pricing = await getRecurringPlanContext(sub.planSlug, sub.billingCycle).catch(() => null);
+    if (pricing) {
+      sub.metadata = {
+        ...sub.metadata,
+        basePlanAmount: pricing.baseAmountPaise,
+        basePlanAmountINR: pricing.baseAmountPaise / 100,
+        planName: pricing.plan.name,
+      };
+    }
   }
   await sub.save();
 

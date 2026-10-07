@@ -91,9 +91,14 @@ export default async function BillingPage() {
         .sort({ createdAt: -1 })
         .lean(),
     ]);
-    if (subscription?.subscription_id) {
+    // Every payment keeps its invoice, including those of a cancelled or
+    // earlier subscription (the "Manage" card above shows only a live one).
+    const paymentIds = payments
+      .map((payment) => payment.payment_id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0);
+    if (paymentIds.length) {
       invoices = await SubscriptionInvoice.find({
-        subscription_id: subscription.subscription_id,
+        payment_id: { $in: paymentIds },
       })
         .sort({ billing_date: -1 })
         .limit(50)
@@ -117,9 +122,6 @@ export default async function BillingPage() {
   const storageLimit = usage?.storageLimitBytes
     ? formatBytes(usage.storageLimitBytes)
     : "1 TB";
-  const egressLimit = usage?.egressLimitBytes
-    ? formatBytes(usage.egressLimitBytes)
-    : "500 GB";
 
   const formatDate = (date: Date | null | undefined) => {
     if (!date) return null;
@@ -276,14 +278,6 @@ export default async function BillingPage() {
             <span className="text-muted-foreground">Storage Limit</span>
             <span className="text-foreground">{storageLimit} included</span>
           </div>
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">Egress Limit</span>
-            <span className="text-foreground">{egressLimit} / month</span>
-          </div>
-          <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">API Requests</span>
-            <span className="text-foreground">Unlimited</span>
-          </div>
           {isPaidPlan && planActivatedDate && (
             <>
               <div className="flex items-center justify-between text-sm">
@@ -292,7 +286,11 @@ export default async function BillingPage() {
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">
-                  {usage.autopayActive ? "Renews On" : "Expired On"}
+                  {usage.autopayActive
+                    ? "Renews On"
+                    : planLapsed
+                      ? "Expired On"
+                      : "Ends On"}
                 </span>
                 <span
                   className={

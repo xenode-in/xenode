@@ -18,7 +18,7 @@ import type { BillingCycle } from "@/types/pricing";
 import { getActiveCampaign } from "@/lib/billing/campaigns";
 
 export const metadata = {
-  title: "Checkout | Xenode",
+  title: "Checkout",
   robots: "noindex",
 };
 

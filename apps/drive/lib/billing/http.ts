@@ -56,8 +56,9 @@ export function jsonError(error: unknown) {
   // Surface Razorpay SDK errors as 4xx with their description, not as 500.
   // The SDK rejects with { statusCode, error: { code, description, field } }.
   if (isRazorpaySDKError(error)) {
+    // Only a described 4xx is about the request; anything else is the gateway.
     const status =
-      error.statusCode && error.statusCode >= 400 && error.statusCode < 500
+      error.error && error.statusCode && error.statusCode >= 400 && error.statusCode < 500
         ? error.statusCode
         : 502;
     return NextResponse.json(

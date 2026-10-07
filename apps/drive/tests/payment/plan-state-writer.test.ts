@@ -195,6 +195,24 @@ describe("canonical billing entitlement writes", () => {
     expect((await SubscriptionInvoice.findById(first._id))?.usageAppliedAt).toBeInstanceOf(Date);
   });
 
+  it("a plan applied by subscription.updated takes its quota and its price", async () => {
+    const userId = await user();
+    const sub = await subscription(userId);
+    await activate(sub);
+    const plus = await getPlanBySlugFromDB("plus");
+    const plusMonthly = plus!.pricing.find((entry) => entry.cycle === "monthly")!;
+    const result = await dispatchWebhookEvent({
+      eventId: `evt_update_${sub.subscription_id}`, eventType: "subscription.updated", source: "razorpay_subscription",
+      event: { payload: { subscription: { entity: { id: sub.subscription_id, plan_id: plusMonthly.razorpayPlanId } } } },
+    });
+    expect(result.status).toBe("processed");
+    const updated = await Subscription.findById(sub._id).lean();
+    expect(updated?.planSlug).toBe("plus");
+    // The billing page's "Next charge" reads these.
+    expect(updated?.metadata).toMatchObject({ basePlanAmount: plusMonthly.priceINR * 100, planName: plus!.name });
+    expect((await Usage.findOne({ userId }))?.storageLimitBytes).toBe(plus!.storageLimitBytes);
+  });
+
   it("refunds the bound subscription, keeps byte counters and does not refund twice", async () => {
     const sub = await subscription(await user());
     await activate(sub);

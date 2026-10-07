@@ -3,12 +3,13 @@
  * scripts/cron-trigger.mjs
  *
  * Cross-platform helper to call Xenode cron endpoints locally.
- * Reads CRON_SECRET and APP_URL from .env.local automatically.
+ * Reads CRON_SECRET and APP_URL from the monorepo-root .env.local (the one
+ * env file all three apps load) automatically.
  *
  * Usage:
  *   node scripts/cron-trigger.mjs expire-plans
  *   node scripts/cron-trigger.mjs purge-bin
- *   node scripts/cron-trigger.mjs charge-recurring
+ *   node scripts/cron-trigger.mjs reconcile-subscriptions
  */
 
 import { readFileSync } from "fs";
@@ -17,7 +18,7 @@ import { fileURLToPath } from "url";
 
 // ── Load .env.local ──────────────────────────────────────────────────────────
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const envPath = resolve(__dirname, "..", ".env.local");
+const envPath = resolve(__dirname, "..", "..", "..", ".env.local");
 
 try {
   const lines = readFileSync(envPath, "utf8").split("\n");
@@ -60,10 +61,10 @@ const JOBS = {
     path: "/api/cron/cleanup-orphans",
     description: "Delete orphaned B2 blobs from abandoned/incomplete uploads",
   },
-  "charge-recurring": {
-    method: "POST",
-    path: "/api/payment/payu/charge-recurring",
-    description: "Trigger PayU auto-renewals for active mandates",
+  "reconcile-subscriptions": {
+    method: "GET",
+    path: "/api/cron/reconcile-subscriptions",
+    description: "Re-sync subscriptions with Razorpay (missed webhooks)",
   },
 };
 

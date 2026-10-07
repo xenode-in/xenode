@@ -304,9 +304,15 @@ export default function PricingGrid({
                   {/* CTA — glassmorphism shimmer on hover */}
                   <button
                     onClick={() => handleSelectPlan(plan.slug)}
+                    // Only plans with a Razorpay plan for this cycle can be subscribed to.
+                    disabled={
+                      !plan.pricing.find((entry) => entry.cycle === cycle)
+                        ?.razorpayPlanId
+                    }
                     className={cn(
                       "relative w-full py-3 px-4 rounded-xl text-sm font-medium overflow-hidden mb-8",
                       "transition-all duration-300 active:scale-[0.98]",
+                      "disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100",
                       isPop ? POPULAR_BUTTON : DEFAULT_BUTTON,
                     )}
                     style={{
@@ -323,7 +329,12 @@ export default function PricingGrid({
                           "linear-gradient(110deg, transparent 30%, rgba(255,255,255,0.35) 50%, transparent 70%)",
                       }}
                     />
-                    <span className="relative">Get {plan.name}</span>
+                    <span className="relative">
+                      {plan.pricing.find((entry) => entry.cycle === cycle)
+                        ?.razorpayPlanId
+                        ? `Get ${plan.name}`
+                        : "Not available yet"}
+                    </span>
                   </button>
 
                   <hr className="border-t border-gray-200/70 dark:border-white/5 mb-7" />

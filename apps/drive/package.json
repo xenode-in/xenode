@@ -16,7 +16,7 @@
     "cron:expire": "node scripts/cron-trigger.mjs expire-plans",
     "cron:purge-bin": "node scripts/cron-trigger.mjs purge-bin",
     "cron:cleanup-orphans": "node scripts/cron-trigger.mjs cleanup-orphans",
-    "cron:charge": "node scripts/cron-trigger.mjs charge-recurring",
+    "cron:reconcile": "node scripts/cron-trigger.mjs reconcile-subscriptions",
     "seed:storage-buckets": "node --env-file-if-exists=../../.env.local --import tsx scripts/seed-storage-buckets.ts",
     "postinstall": "node scripts/copy-worker-assets.mjs",
     "test:browser": "playwright test"

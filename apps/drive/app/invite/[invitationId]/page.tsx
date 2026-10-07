@@ -4,7 +4,7 @@ import { InviteLandingClient } from "./InviteLandingClient";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "Organization invitation | Xenode",
+  title: "Organization invitation",
 };
 
 export default async function InvitePage({

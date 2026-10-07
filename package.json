@@ -28,7 +28,7 @@
     "cron:expire": "npm run cron:expire --workspace @xenode/drive",
     "cron:purge-bin": "npm run cron:purge-bin --workspace @xenode/drive",
     "cron:cleanup-orphans": "npm run cron:cleanup-orphans --workspace @xenode/drive",
-    "cron:charge": "npm run cron:charge --workspace @xenode/drive",
+    "cron:reconcile": "npm run cron:reconcile --workspace @xenode/drive",
     "onlyoffice:verify-sources": "node scripts/onlyoffice/verify-sources.mjs",
     "onlyoffice:build-client": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/onlyoffice/build-client.ps1",
     "onlyoffice:build-x2t": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/onlyoffice/build-x2t.ps1",

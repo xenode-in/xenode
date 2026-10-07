@@ -3,7 +3,7 @@ import { requirePageSession } from "@/lib/auth/session";
 import { OnboardingForm } from "@/app/(onboarding)/onboarding/OnboardingForm";
 
 export const metadata = {
-  title: "Onboarding | Xenode",
+  title: "Onboarding",
   description: "Set up your Xenode preferences",
 };
 

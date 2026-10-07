@@ -744,3 +744,17 @@ Commit: `71c940b`.
 - The MSE streamer moved from Drive to `@xenode/media-processing/mse-stream` and is shared. For MP4 it now reads the chunk holding whichever byte mp4box asks for, so a file whose `moov` trails its media (common for phone recordings) starts after its first and last chunks; read-ahead waits for in-order reads and recent chunks are kept for the jump back. Segments are no longer cut only at keyframes, so the first frame does not wait for a whole GOP.
 - Measured on 60-second 720p test files (19 chunks): fast-start MP4 plays after 1 chunk in 1.3 s, moov-at-end MP4 and MOV after 2 chunks in 1.8–1.9 s, previously a full 19.8 MB download; the MOV played to the end at 4× with no stall. Drive's MSE fallback still starts after its first chunk.
 - Validation: typecheck 16/16, boundaries, all 15 test workspaces (Photos web 58: chunk round trip, reordered/moved chunks refused, layout validation, descriptor; media-processing: read-ahead and re-read).
+
+## 0ZBA — Payments test (local, placeholder Razorpay keys)
+
+The local Razorpay keys are placeholders, so Razorpay's hosted checkout cannot run. Everything on Xenode's side was exercised: plans and checkout pages, every route up to its Razorpay call, and the webhook path with Razorpay-shaped events signed with the configured webhook secret (bad signature → 401; authenticated → activated Pro 500 GB → charged (invoice XEN-2026-00001, PDF) → duplicate event replayed without a second invoice → updated to Plus 1 TB → halted (7-day grace banner) → charged → updated to Max → full refund → free 5 GB, subscription cancelled, payment refunded). The expiry cron refuses calls without the cron secret.
+
+- A subscriber could not change plan: the Plans page sent every plan choice to checkout, which refuses a second subscription ("An active or pending subscription already exists"). A subscriber's choice now opens a confirmation and calls `/api/subscriptions/change-plan` (immediate; yearly→monthly stays deferred to period end).
+- Basic (no Razorpay plan) was offered as "Get Basic" and led to a checkout that could not start; plans without a Razorpay plan for the chosen cycle now show "Not available yet" on /pricing and /plans.
+- A plan applied by `subscription.updated` (a scheduled change, or one made in Razorpay) kept the old price and name, so "Next charge" showed the previous plan's amount; the handler now refreshes them (test fails without the change).
+- After a subscription was cancelled or refunded, its invoices lost their numbers and PDF links (the billing page looked invoices up only for the live subscription); they are now found by the user's payments.
+- A Razorpay reply without a JSON error body (an HTML 404, an outage) surfaced as "Internal server error" (500); it is now "Payment gateway error" (502), while a described 4xx still passes through.
+- The billing page showed an "Egress Limit" and "API Requests: Unlimited", neither of which is metered or enforced; removed. A halted plan's end date was labelled "Expired On"; it reads "Ends On" until it has lapsed. Six page titles repeated the site suffix ("Checkout | Xenode | Xenode").
+- `npm run cron:*` read a per-app env file that no longer exists and offered a removed PayU job; it reads the repo-root `.env.local` and offers `cron:reconcile` instead.
+- Tests: the webhook route itself (signature, single application, replay) and the gateway-error mapping.
+- Not testable here: Razorpay's hosted checkout and the `/api/subscriptions/verify` round trip need real `rzp_test_` keys and Razorpay's test UPI/cards.

@@ -153,10 +153,12 @@ export default function PlansPageClient() {
   const [loading, setLoading] = useState(true);
   const [cycle, setCycle] = useState<BillingCycle>("monthly");
 
-  // Yearly→Monthly switch confirmation modal state.
+  // Plan change on an active subscription, confirmed in a modal: immediate,
+  // or deferred to period end for a yearly→monthly switch.
   const [deferredSwitchPlan, setDeferredSwitchPlan] = useState<{
     slug: string;
     name: string;
+    deferred: boolean;
   } | null>(null);
   const [deferredSwitchLoading, setDeferredSwitchLoading] = useState(false);
 
@@ -200,7 +202,13 @@ export default function PlansPageClient() {
     // confirm modal instead of routing to checkout (which would 409 with an
     // existing active subscription anyway).
     if (isDeferredYearlyToMonthly) {
-      setDeferredSwitchPlan({ slug, name });
+      setDeferredSwitchPlan({ slug, name, deferred: true });
+      return;
+    }
+    // A subscriber changes plan on the existing subscription; checkout would
+    // refuse a second one.
+    if (hasActiveSubscription && !isGracePeriod && !isPlanExpired) {
+      setDeferredSwitchPlan({ slug, name, deferred: false });
       return;
     }
     window.location.assign(`/checkout?plan=${slug}&cycle=${cycle}`);
@@ -215,18 +223,20 @@ export default function PlansPageClient() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           newPlanSlug: deferredSwitchPlan.slug,
-          newBillingCycle: "monthly",
-          effective: "period_end",
+          newBillingCycle: deferredSwitchPlan.deferred ? "monthly" : cycle,
+          effective: deferredSwitchPlan.deferred ? "period_end" : "immediate",
         }),
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Failed to schedule plan change");
+        throw new Error(data.error || "Failed to change plan");
       }
       toast.success(
-        data.effectiveAt
-          ? `Switch to Monthly scheduled for ${new Date(data.effectiveAt).toLocaleDateString()}.`
-          : "Switch to Monthly scheduled at end of your current period.",
+        !deferredSwitchPlan.deferred
+          ? `You're now on ${deferredSwitchPlan.name}.`
+          : data.effectiveAt
+            ? `Switch to Monthly scheduled for ${new Date(data.effectiveAt).toLocaleDateString()}.`
+            : "Switch to Monthly scheduled at end of your current period.",
       );
       setDeferredSwitchPlan(null);
       // Reload state so the UI reflects the scheduled change.
@@ -379,6 +389,11 @@ export default function PlansPageClient() {
                 !isPlanExpired;
               const sameCycleAsCurrent =
                 plan.slug === currentPlan && cycle === currentCycle;
+              // Only plans with a Razorpay plan for this cycle can be subscribed to.
+              const purchasable = Boolean(
+                plan.pricing.find((entry) => entry.cycle === cycle)
+                  ?.razorpayPlanId,
+              );
 
               return (
                 <motion.div
@@ -469,7 +484,7 @@ export default function PlansPageClient() {
                     {/* CTA — glassmorphism shimmer on hover */}
                     <button
                       onClick={() => handleSelect(plan.slug, plan.name)}
-                      disabled={isCurrentPlan}
+                      disabled={isCurrentPlan || !purchasable}
                       className={cn(
                         "relative w-full py-3 px-4 rounded-xl text-sm font-medium overflow-hidden mb-8",
                         "transition-all duration-300 active:scale-[0.98]",
@@ -492,17 +507,19 @@ export default function PlansPageClient() {
                         />
                       )}
                       <span className="relative">
-                        {sameCycleAsCurrent
-                          ? isGracePeriod || isPlanExpired
-                            ? "Renew Plan"
-                            : "Current Plan"
-                          : isDeferredYearlyToMonthly
-                            ? plan.slug === currentPlan
-                              ? "Schedule switch to Monthly"
-                              : `Schedule ${plan.name} (Monthly)`
-                            : plan.slug === currentPlan
-                              ? `Switch to ${cycle === "yearly" ? "Annual" : "Monthly"}`
-                              : `Get ${plan.name}`}
+                        {!purchasable && !isCurrentPlan
+                          ? "Not available yet"
+                          : sameCycleAsCurrent
+                            ? isGracePeriod || isPlanExpired
+                              ? "Renew Plan"
+                              : "Current Plan"
+                            : isDeferredYearlyToMonthly
+                              ? plan.slug === currentPlan
+                                ? "Schedule switch to Monthly"
+                                : `Schedule ${plan.name} (Monthly)`
+                              : plan.slug === currentPlan
+                                ? `Switch to ${cycle === "yearly" ? "Annual" : "Monthly"}`
+                                : `Get ${plan.name}`}
                       </span>
                     </button>
 
@@ -546,7 +563,7 @@ export default function PlansPageClient() {
         </motion.p>
       </main>
 
-      {/* Confirmation modal: yearly user switching to monthly (deferred). */}
+      {/* Confirmation modal: plan change on an active subscription. */}
       {deferredSwitchPlan && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
@@ -559,47 +576,63 @@ export default function PlansPageClient() {
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-lg font-semibold text-foreground">
-              Switch to {deferredSwitchPlan.name} Monthly?
+              {deferredSwitchPlan.deferred
+                ? `Switch to ${deferredSwitchPlan.name} Monthly?`
+                : `Change to ${deferredSwitchPlan.name} (${cycle === "yearly" ? "Annual" : "Monthly"})?`}
             </h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Your current annual plan will continue as-is until it ends
-              {currentPeriodEnd ? (
-                <>
-                  {" "}
-                  on{" "}
-                  <strong className="text-foreground">
-                    {new Date(currentPeriodEnd).toLocaleDateString(undefined, {
-                      year: "numeric",
-                      month: "long",
-                      day: "numeric",
-                    })}
-                  </strong>
-                </>
-              ) : null}
-              . After that, you&apos;ll move to {deferredSwitchPlan.name}{" "}
-              Monthly billing.
-            </p>
-
-            <div className="mt-4 rounded-lg bg-muted/40 border border-border px-4 py-3 text-xs text-muted-foreground space-y-1">
-              <p>
-                <strong className="text-foreground">What this means:</strong>
+            {!deferredSwitchPlan.deferred ? (
+              <p className="mt-2 text-sm text-muted-foreground">
+                Your subscription moves to {deferredSwitchPlan.name} now, with
+                its storage. Your next charge uses the new price.
               </p>
-              <ul className="list-disc list-inside space-y-1 pl-1">
-                <li>
-                  You keep your annual plan and benefits until the end date
-                  above.
-                </li>
-                <li>No refund is issued — you paid for the full year.</li>
-                <li>
-                  On the renewal date, you&apos;ll be charged monthly going
-                  forward.
-                </li>
-                <li>
-                  You can cancel the scheduled change anytime before it takes
-                  effect.
-                </li>
-              </ul>
-            </div>
+            ) : (
+              <>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Your current annual plan will continue as-is until it ends
+                  {currentPeriodEnd ? (
+                    <>
+                      {" "}
+                      on{" "}
+                      <strong className="text-foreground">
+                        {new Date(currentPeriodEnd).toLocaleDateString(
+                          undefined,
+                          {
+                            year: "numeric",
+                            month: "long",
+                            day: "numeric",
+                          },
+                        )}
+                      </strong>
+                    </>
+                  ) : null}
+                  . After that, you&apos;ll move to {deferredSwitchPlan.name}{" "}
+                  Monthly billing.
+                </p>
+
+                <div className="mt-4 rounded-lg bg-muted/40 border border-border px-4 py-3 text-xs text-muted-foreground space-y-1">
+                  <p>
+                    <strong className="text-foreground">
+                      What this means:
+                    </strong>
+                  </p>
+                  <ul className="list-disc list-inside space-y-1 pl-1">
+                    <li>
+                      You keep your annual plan and benefits until the end date
+                      above.
+                    </li>
+                    <li>No refund is issued — you paid for the full year.</li>
+                    <li>
+                      On the renewal date, you&apos;ll be charged monthly going
+                      forward.
+                    </li>
+                    <li>
+                      You can cancel the scheduled change anytime before it
+                      takes effect.
+                    </li>
+                  </ul>
+                </div>
+              </>
+            )}
 
             <div className="mt-6 flex items-center justify-end gap-2">
               <button
@@ -616,7 +649,13 @@ export default function PlansPageClient() {
                 disabled={deferredSwitchLoading}
                 className="rounded-lg bg-foreground text-background px-4 py-2 text-sm font-medium hover:opacity-90 disabled:opacity-50"
               >
-                {deferredSwitchLoading ? "Scheduling…" : "Confirm switch"}
+                {deferredSwitchLoading
+                  ? deferredSwitchPlan.deferred
+                    ? "Scheduling…"
+                    : "Changing…"
+                  : deferredSwitchPlan.deferred
+                    ? "Confirm switch"
+                    : "Change plan"}
               </button>
             </div>
           </div>

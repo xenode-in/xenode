@@ -73,6 +73,8 @@ export function cleanNotes(
 /**
  * Identifies an error thrown by the razorpay-node SDK. Errors typically have:
  *   { statusCode: number, error: { code, description, field? } }
+ * but a reply without a JSON error body (an HTML 404/5xx, an outage) leaves
+ * `error` undefined, which is still a gateway failure.
  */
 export interface RazorpaySDKError {
   statusCode?: number;
@@ -89,8 +91,10 @@ export function isRazorpaySDKError(e: unknown): e is RazorpaySDKError {
   const inner = obj.error;
   return (
     typeof obj.statusCode === "number" &&
-    typeof inner === "object" &&
-    inner !== null &&
-    typeof (inner as Record<string, unknown>).description === "string"
+    !(e instanceof Error) &&
+    (inner === undefined ||
+      (typeof inner === "object" &&
+        inner !== null &&
+        typeof (inner as Record<string, unknown>).description === "string"))
   );
 }

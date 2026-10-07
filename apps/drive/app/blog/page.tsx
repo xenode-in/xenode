@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export const metadata: Metadata = {
-  title: "Blog | Xenode",
+  title: "Blog",
   description:
     "Insights, security deep-dives, and product updates from the Xenode team. Learn about encrypted cloud storage, privacy, and security.",
   keywords: [
