@@ -26,7 +26,14 @@ interface AccessRequestRow {
   createdAt: string;
 }
 
-const RESOURCE_TYPES = ["object", "bucket", "team", "org_membership"] as const;
+// Storage buckets are internal (one system bucket), so members never pick one.
+const RESOURCE_LABELS: Record<string, string> = {
+  object: "A file or folder",
+  team: "A team",
+  org_membership: "A different role",
+  bucket: "Storage",
+};
+const REQUESTABLE = ["object", "team", "org_membership"] as const;
 
 async function readJson<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => ({}));
@@ -45,7 +52,6 @@ export function OrgRequestsClient({ orgId }: { orgId: string; role: OrgRole }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [resourceType, setResourceType] = useState<string>("object");
-  const [resourceId, setResourceId] = useState("");
   const [note, setNote] = useState("");
 
   const load = useCallback(async () => {
@@ -77,12 +83,10 @@ export function OrgRequestsClient({ orgId }: { orgId: string; role: OrgRole }) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             resourceType,
-            resourceId: resourceId.trim() || null,
-            note: note.trim() || null,
+            note: note.trim(),
           }),
         }),
       );
-      setResourceId("");
       setNote("");
       toast.success("Access request submitted");
       await load();
@@ -119,7 +123,7 @@ export function OrgRequestsClient({ orgId }: { orgId: string; role: OrgRole }) {
         <p className="mt-1 text-sm text-muted-foreground">
           {canTriage
             ? "Review and act on access requests from your team."
-            : "Ask for access to a resource; an admin will review it."}
+            : "Ask an admin for access; once approved, they share it with you."}
         </p>
       </div>
 
@@ -127,28 +131,25 @@ export function OrgRequestsClient({ orgId }: { orgId: string; role: OrgRole }) {
         <h2 className="mb-3 text-sm font-medium">Request access</h2>
         <div className="flex flex-col gap-2 sm:flex-row">
           <Select value={resourceType} onValueChange={setResourceType}>
-            <SelectTrigger className="sm:w-44">
+            <SelectTrigger className="sm:w-44" aria-label="What you need access to">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {RESOURCE_TYPES.map((t) => (
+              {REQUESTABLE.map((t) => (
                 <SelectItem key={t} value={t}>
-                  {t.replace("_", " ")}
+                  {RESOURCE_LABELS[t]}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
           <Input
-            value={resourceId}
-            onChange={(e) => setResourceId(e.target.value)}
-            placeholder="Resource id (optional)"
-          />
-          <Input
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder="Note (optional)"
+            aria-label="Details"
+            placeholder="Which one, and why you need it"
+            maxLength={500}
           />
-          <Button onClick={submitRequest} disabled={busy !== null}>
+          <Button onClick={submitRequest} disabled={busy !== null || !note.trim()}>
             {busy === "create" ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
@@ -178,7 +179,7 @@ export function OrgRequestsClient({ orgId }: { orgId: string; role: OrgRole }) {
               <li key={r.id} className="flex items-center justify-between gap-3 px-4 py-3">
                 <div className="min-w-0">
                   <p className="text-sm text-foreground">
-                    {r.resourceType.replace("_", " ")}
+                    {RESOURCE_LABELS[r.resourceType] ?? r.resourceType}
                     {r.resourceId && (
                       <span className="ml-1 text-xs text-muted-foreground">#{r.resourceId}</span>
                     )}
@@ -195,6 +196,8 @@ export function OrgRequestsClient({ orgId }: { orgId: string; role: OrgRole }) {
                         size="icon"
                         className="h-8 w-8 text-primary hover:bg-primary/10"
                         onClick={() => decide(r.id, "approve")}
+                        aria-label="Approve request"
+                        title="Approve request"
                         disabled={busy !== null}
                       >
                         {busy === `approve-${r.id}` ? (
@@ -208,6 +211,8 @@ export function OrgRequestsClient({ orgId }: { orgId: string; role: OrgRole }) {
                         size="icon"
                         className="h-8 w-8 text-destructive hover:bg-destructive/10"
                         onClick={() => decide(r.id, "deny")}
+                        aria-label="Deny request"
+                        title="Deny request"
                         disabled={busy !== null}
                       >
                         <X className="h-3.5 w-3.5" />

@@ -10,6 +10,7 @@ import { activeStorageBucketName } from "@/lib/storage/region-context";
 import { HeadObjectCommand } from "@aws-sdk/client-s3";
 import { publishSyncEvent, toSyncObjectSnapshot } from "@/lib/realtime/publish";
 import { folderListingId, spaceStorageRoot } from "@/lib/storage/folders";
+import { ActivityAction, emitActivity } from "@/lib/orgs/activity";
 
 export const dynamic = "force-dynamic";
 const MAX_CHUNKS = 4096;
@@ -205,6 +206,12 @@ export async function POST(request: NextRequest) {
     const committed = StorageObject.hydrate(result.object);
     if (result.created) {
       await emitObjectChange(ctx.userId, committed).catch((error) => console.error("Upload realtime notification failed:", error));
+      if (ctx.organizationId) {
+        await emitActivity({
+          orgId: ctx.organizationId, action: ActivityAction.FILE_UPLOADED, actorUserId: ctx.userId,
+          target: { type: "object", id: String(committed._id) },
+        });
+      }
     }
     return NextResponse.json({ object: committed }, { status: result.created ? 201 : 200 });
   } catch (error) {

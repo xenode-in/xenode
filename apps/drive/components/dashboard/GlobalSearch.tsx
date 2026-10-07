@@ -20,7 +20,7 @@ export function GlobalSearch() {
   const [open, setOpen] = useState(false);
 
   // Initialize sync
-  const { isSyncing, searchSnapshot, unlocked } = useSyncManager();
+  const { isSyncing, searchSnapshot, unlocked, sync } = useSyncManager();
   const { openPreview } = usePreview();
 
   const results = useMemo(() => {
@@ -46,7 +46,10 @@ export function GlobalSearch() {
               placeholder={
                 isSyncing ? "Syncing index..." : "Search files securely..."
               }
+              aria-label="Search files"
               value={query}
+              // Catch up on edits made since the last periodic sync.
+              onFocus={() => void sync()?.catch(() => {})}
               onChange={(e) => { setQuery(e.target.value); setOpen(Boolean(e.target.value.trim())); }}
               className="pl-9 bg-accent/50 border-none focus-visible:ring-1 w-full"
             />

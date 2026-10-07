@@ -19,7 +19,7 @@ export default async function OrganizationsPage() {
               <div className="button-row" style={{ justifyContent: "space-between" }}><h2>{organization.name}</h2><span className="badge">{organization.role}</span></div>
               <p className="muted">{organization.slug ? `@${organization.slug}` : "Private organization"}</p>
               <p className="fine-print">{organization.joinedAt ? `Joined ${new Date(organization.joinedAt).toLocaleDateString("en-IN")}` : "Active membership"}</p>
-              <a className="button button-secondary" href={`${driveOrigin}/dashboard/org`} style={{ display: "inline-block", textDecoration: "none" }}>Open in Drive</a>
+              <a className="button button-secondary" href={`${driveOrigin}/dashboard/org?org=${encodeURIComponent(organization.id)}`} style={{ display: "inline-block", textDecoration: "none" }}>Open in Drive</a>
             </article>
           )) : <div className="empty" style={{ gridColumn: "1 / -1" }}>You are not a member of an organization. Your personal Space remains available in Drive and Photos.</div>}
         </section>

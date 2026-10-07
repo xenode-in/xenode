@@ -2,6 +2,7 @@ import { binDriveObjects } from "@xenode/database";
 import type { AccessContext } from "@/lib/authz/space-context";
 import { removeObjectsFromAlbums } from "@/lib/albums/cleanup";
 import { publishSyncEvent } from "@/lib/realtime/publish";
+import { ActivityAction, emitActivity } from "@/lib/orgs/activity";
 import { folderListingId, isFolderObject } from "@/lib/storage/folders";
 import DirectShare from "@/models/DirectShare";
 import ShareLink from "@/models/ShareLink";
@@ -32,5 +33,13 @@ export async function binObjectsInSpace(ctx: AccessContext, objectIds: unknown) 
     invalidateFolders: primaries.map((object) => object.folderId ?? null),
     invalidateRecent: true,
   });
+  if (ctx.organizationId) {
+    for (const object of primaries) {
+      await emitActivity({
+        orgId: ctx.organizationId, action: ActivityAction.FILE_DELETED, actorUserId: ctx.userId,
+        target: { type: isFolderObject(object) ? "folder" : "object", id: String(object._id) },
+      });
+    }
+  }
   return { binnedCount: binnedIds.length, objectIds: binnedIds.map(String) };
 }

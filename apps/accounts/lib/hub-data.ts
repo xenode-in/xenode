@@ -128,13 +128,10 @@ export async function loadUsage(accountId: string) {
       userId: string;
       accountId?: string | null;
       totalStorageBytes?: number;
-      totalEgressBytes?: number;
       totalObjects?: number;
-      totalBuckets?: number;
       storageLimitBytes?: number | null;
       plan?: string;
       uploadCount?: number;
-      downloadCount?: number;
       lastActiveAt?: Date | null;
     }>("usages").findOne({
       $or: [{ userId: accountId }, { accountId }],
@@ -159,11 +156,8 @@ export async function loadUsage(accountId: string) {
     planExpiresAt: billing?.expiresAt?.toISOString() ?? null,
     storageBytes: usage?.totalStorageBytes ?? 0,
     storageLimitBytes: usage?.storageLimitBytes ?? 5 * 1024 ** 3,
-    egressBytes: usage?.totalEgressBytes ?? 0,
     objects: usage?.totalObjects ?? 0,
-    buckets: usage?.totalBuckets ?? 0,
     uploads: usage?.uploadCount ?? 0,
-    downloads: usage?.downloadCount ?? 0,
     lastActiveAt: usage?.lastActiveAt?.toISOString() ?? null,
     activeProducts: productSessions.sort(),
     organizations: organizationCount,

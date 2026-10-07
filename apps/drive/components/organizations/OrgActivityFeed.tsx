@@ -15,6 +15,7 @@ import {
   CreditCard,
   Users2,
   Loader2,
+  Trash2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { formatDate } from "@/lib/utils";
@@ -45,7 +46,7 @@ const ACTION_META: Record<string, { label: string; icon: LucideIcon }> = {
   "domain.verification_failed": { label: "Domain verification failed", icon: ShieldAlert },
   "bucket.created": { label: "Space created", icon: FolderPlus },
   "file.uploaded": { label: "File uploaded", icon: Upload },
-  "file.deleted": { label: "File deleted", icon: Upload },
+  "file.deleted": { label: "Moved to Bin", icon: Trash2 },
   "billing.checkout_started": { label: "Checkout started", icon: CreditCard },
   "billing.seats_changed": { label: "Seats changed", icon: CreditCard },
 };

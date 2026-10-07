@@ -711,3 +711,13 @@ Commit: `71c940b`.
 - Manage bundle listed files by storage key, and several views (Shared, Shared with me, org shares, Details) fell back to the storage key as a file name. They show the decrypted name or "Encrypted file".
 - The share dialog's fields have labels.
 - Validation: typecheck 16/16, boundaries, all 15 test workspaces (Drive 88 files / 635 tests); in the built-in browser a new bundle shows its name, copies its exact key, renames (the public page follows), counts one download per Download all, and revokes through the dialog.
+
+## 0ZAW — Third browser journey: search, organizations and Accounts (phase 2)
+
+- Search lagged edits by up to a minute: the index is rebuilt only by the periodic sync. Focusing the search box now runs the (cursor-based, incremental) sync, so a tag, rename or upload is searchable as soon as the user goes to search (measured: one change synced in 15 ms, result shown in about 0.1 s).
+- Accounts' "Open in Drive" linked to `/dashboard/org` without the organization, landing on the personal dashboard when another workspace was active. It links to `/dashboard/org?org=<id>`; Drive checks membership, switches through `POST /api/orgs/active` and opens the files (non-members go to the dashboard).
+- Organization Activity and Audit Logs never recorded file events (`file.uploaded`/`file.deleted` were defined but not emitted). Upload completion and moving to the Bin in an organization or team Space now record them (object id only; names stay sealed).
+- The Requests form exposed raw resource types (`object`, `bucket`) and a free-text resource id. It now asks what (a file or folder, a team, a different role) and why; approve/deny buttons have names.
+- Accounts Usage showed Buckets, Egress and Downloads, which nothing writes (one system bucket; downloads go straight to storage), so they were always 0. They are removed until they are metered.
+- The file toolbar overflowed sideways with a selection at mid widths; it wraps. The tag field has a label.
+- Validation: typecheck 16/16, boundaries, all 15 test workspaces; browser: fresh tags found immediately, Open in Drive switches workspace, Activity/Audit show upload and Bin entries, a request submits and is denied, Usage shows only real counters.

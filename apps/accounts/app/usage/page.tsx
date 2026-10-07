@@ -20,10 +20,7 @@ export default async function UsagePage() {
         </section>
         <section className="grid grid-3" style={{ marginTop: 16 }}>
           <article className="card"><span className="muted">Objects</span><div className="stat-value">{usage.objects.toLocaleString()}</div></article>
-          <article className="card"><span className="muted">Buckets</span><div className="stat-value">{usage.buckets.toLocaleString()}</div></article>
-          <article className="card"><span className="muted">Egress</span><div className="stat-value">{bytesLabel(usage.egressBytes)}</div></article>
           <article className="card"><span className="muted">Uploads</span><div className="stat-value">{usage.uploads.toLocaleString()}</div></article>
-          <article className="card"><span className="muted">Downloads</span><div className="stat-value">{usage.downloads.toLocaleString()}</div></article>
           <article className="card"><span className="muted">Organizations</span><div className="stat-value">{usage.organizations.toLocaleString()}</div></article>
         </section>
         <section className="card" style={{ marginTop: 16 }}>

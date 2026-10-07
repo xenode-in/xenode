@@ -290,7 +290,7 @@ function Toolbar({
   return (
     <div
       data-no-deselect
-      className="flex items-center gap-2 px-4 py-2 shrink-0 min-h-[52px]"
+      className="flex flex-wrap items-center gap-2 px-4 py-2 shrink-0 min-h-[52px]"
     >
       <Checkbox
         checked={
@@ -2235,6 +2235,7 @@ export function FilesBrowser() {
             <Input
               value={newTag}
               onChange={(e) => setNewTag(e.target.value)}
+              aria-label="New tag"
               placeholder="Add a tag..."
               className="bg-secondary/50 border-border focus:border-primary"
               onKeyDown={(e) => {
