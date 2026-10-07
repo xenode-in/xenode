@@ -1,5 +1,8 @@
 import { CryptoProvider } from "@/contexts/CryptoContext";
+import type { Metadata } from "next";
 import { requirePageSession } from "@/lib/auth/session";
+
+export const metadata: Metadata = { title: "Organizations" };
 
 export default async function OrganizationsLayout({
   children,
