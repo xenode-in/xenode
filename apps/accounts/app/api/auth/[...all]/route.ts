@@ -1,6 +1,5 @@
 import { getServerProductOrigin } from "@xenode/config";
 import { toNextJsHandler } from "better-auth/next-js";
-import { NextResponse } from "next/server";
 import { getAccountsAuth } from "@/lib/auth";
 import { authorizationInteraction } from "@/lib/second-factor-policy";
 import {
@@ -13,8 +12,7 @@ import { POST as changeSignInPassword } from "@/app/api/account/password/change/
 import {
   createVaultUnlockToken,
   hasVaultUnlockConfirmation,
-  VAULT_UNLOCK_COOKIE,
-  vaultUnlockCookieAttributes,
+  withVaultUnlockCookie,
 } from "@/lib/vault-unlock-session";
 
 /**
@@ -36,13 +34,10 @@ async function verifyTotpKeepingVaultUnlock(request: Request): Promise<Response>
     ? await auth.api.getSession({ headers: new Headers({ cookie: issued }), query: { disableCookieCache: true } })
     : null;
   if (!after || after.user.id !== before.user.id || after.session.id === before.session.id) return response;
-  const carried = new NextResponse(response.body, response);
-  carried.cookies.set(
-    VAULT_UNLOCK_COOKIE,
+  return withVaultUnlockCookie(
+    response,
     await createVaultUnlockToken({ accountId: after.user.id, sessionId: after.session.id }),
-    vaultUnlockCookieAttributes(),
   );
-  return carried;
 }
 
 function rejectsResourceIndicator(request: Request): boolean {

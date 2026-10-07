@@ -1,5 +1,6 @@
 import { getServerProductOrigin } from "@xenode/config";
 import { jwtVerify, SignJWT } from "jose";
+import { NextResponse } from "next/server";
 
 export const VAULT_UNLOCK_COOKIE = "xenode_vault_unlocked";
 export const VAULT_UNLOCK_TTL_SECONDS = 30 * 60;
@@ -45,6 +46,18 @@ export function vaultUnlockCookieAttributes() {
     path: "/",
     maxAge: VAULT_UNLOCK_TTL_SECONDS,
   };
+}
+
+/**
+ * `response` plus the unlock-confirmation cookie. Existing Set-Cookie headers
+ * are passed through untouched (re-serializing them drops deletions' Max-Age=0).
+ */
+export function withVaultUnlockCookie(response: Response, token: string): Response {
+  const cookie = new NextResponse(null);
+  cookie.cookies.set(VAULT_UNLOCK_COOKIE, token, vaultUnlockCookieAttributes());
+  const headers = new Headers(response.headers);
+  headers.append("set-cookie", cookie.headers.get("set-cookie")!);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
 export async function createVaultUnlockToken(params: {
