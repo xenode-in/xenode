@@ -36,10 +36,6 @@ interface StarredObject {
   decryptedName?: string;
 }
 
-function getFileName(key: string) {
-  return key.split("/").pop() || key;
-}
-
 function Thumb({ item }: { item: StarredObject }) {
   const { metadataKey } = useCrypto();
   const [ref, isVisible] = useIsVisible();
@@ -105,7 +101,7 @@ export default function StarredPage() {
       const raw: StarredObject[] = data.objects ?? [];
       const withNames = await Promise.all(
         raw.map(async (o) => {
-          let decryptedName = getFileName(o.key);
+          let decryptedName = "Encrypted file";
           const enc = o.encryptedDisplayName || o.encryptedName;
           if (enc && metadataKey) {
             try {

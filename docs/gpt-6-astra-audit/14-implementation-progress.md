@@ -727,3 +727,12 @@ Commit: `71c940b`.
 - Photos never stored a file's original name, so every download was `xenode-image-<uuid>.jpg`. Uploads now seal `{assetId, name}` as a crypto-core envelope of the new type `photo-metadata` under the Space's Photos metadata key, in the asset's existing `encryptedMetadata`. Completion accepts only an envelope sealed for this Space and account (`isSealedPhotoMetadata`; plaintext is refused), and the Lightbox downloads under the opened name. Because the asset id is inside the plaintext, a name moved to another photo does not open. Photos uploaded before this keep the old download name.
 - "Open Drive" opened Drive's marketing page; it opens the Drive dashboard. The gallery density toggle exposes `aria-pressed`.
 - Validation: typecheck 16/16, boundaries, all 15 test workspaces (Photos web 55 tests, including plaintext refusal and sealed storage on completion; the photos package checks that neither envelope type passes the other's validator); browser: a new upload downloads as `round2-sunset.jpg` and the API serves only the envelope.
+
+## 0ZAY — Third browser journey: Bin, Trash, Overview and preview (phase 4)
+
+- Photos Trash still listed photos already deleted forever (their erasure is queued while upload links stay valid). Those can be neither restored (409) nor purged again and their thumbnails are refused, so they showed as blank tiles. The listing now excludes `purgeRequestedAt`, as the content route and retention cron already do; the lifecycle test fails without the change.
+- Overview preview cards and the recent-files table fell back to the sealed name's ciphertext, then the storage key, and Starred to the storage key; they show the decrypted name or "Encrypted file". The cards were clickable `div`s and are buttons now (keyboard-reachable, named by their visible text).
+- The file preview offered Download only for images and media, not for PDFs or text, and sized every file in MB ("0.00 MB" for 613 bytes); it now offers Download whenever the content is loaded and uses `formatBytes`.
+- The Bin confirms restores and names each row checkbox after its item; the theme picker exposes `aria-pressed`; Photos album cards drop the positional "Private collection N" subtitle.
+- Checked with no change needed: phone-width (375 px) layouts of every Drive, Accounts and Photos page have no sideways scroll; Bin and Trash restore; Starred; version history; Photos albums.
+- Validation: typecheck 16/16, boundaries, all 15 test workspaces; each change re-checked in the built-in browser.

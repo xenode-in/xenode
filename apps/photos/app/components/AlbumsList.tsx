@@ -97,7 +97,7 @@ export function AlbumsList({
                   {names[album.albumId] ?? "Encrypted album"}
                 </p>
                 <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                  Private collection {index + 1}
+                  Private album
                 </p>
               </div>
               <ArrowRight className="size-4 text-muted-foreground transition group-hover:translate-x-1 group-hover:text-primary" />

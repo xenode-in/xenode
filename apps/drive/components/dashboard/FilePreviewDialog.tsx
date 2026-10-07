@@ -25,7 +25,7 @@ import {
   History,
   Play,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatBytes } from "@/lib/utils";
 
 import { useOptionalDownload } from "@/contexts/DownloadContext";
 import { useOptionalCrypto } from "@/contexts/CryptoContext";
@@ -601,9 +601,6 @@ function fileNameFromKey(key: string) {
   return part || key;
 }
 
-function formatMB(bytes: number) {
-  return (bytes / 1024 / 1024).toFixed(2);
-}
 function getPreviewRuntimeProfile(): {
   budget: ResourceBudget;
   capabilities: BrowserCapabilities;
@@ -2171,14 +2168,14 @@ export function FilePreviewDialog({
                 </DialogPrimitive.Title>
                 {!isMinimized && (
                   <DialogPrimitive.Description className="truncate text-xs text-muted-foreground mt-0.5">
-                    {formatMB(file.size)} MB • {type}
+                    {formatBytes(file.size)} • {type}
                     {(isEncrypted || file.isEncrypted) && " • e2e encrypted"}
                   </DialogPrimitive.Description>
                 )}
               </div>
 
               <div className="flex shrink-0 items-center gap-1">
-                {url && !isMinimized && (
+                {(url || previewBlob) && !isMinimized && (
                   <div className="flex items-center gap-1.5 mr-1">
                     {canHd && (
                       <Button

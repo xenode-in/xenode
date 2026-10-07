@@ -44,7 +44,9 @@ export function ThemeSelector() {
       {themes.map((item) => (
         <button
           key={item.id}
+          type="button"
           onClick={() => setTheme(item.id)}
+          aria-pressed={mounted && theme === item.id}
           className={cn(
             "group relative flex cursor-pointer flex-col gap-2 rounded-lg border p-2 text-left transition-all hover:bg-accent",
             mounted && theme === item.id ? "border-primary" : "border-border",

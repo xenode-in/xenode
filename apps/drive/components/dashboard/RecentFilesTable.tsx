@@ -39,10 +39,6 @@ interface ObjectData {
   encryptedDisplayName?: string;
 }
 
-function getFileName(key: string) {
-  return key.split("/").pop() || key;
-}
-
 interface RecentFilesTableProps {
   files: ObjectData[];
 }
@@ -147,9 +143,7 @@ export function RecentFilesTable({ files }: RecentFilesTableProps) {
                 {getFileIcon(file.contentType, "w-4 h-4", file.mediaCategory)}
               </div>
               <span className="text-sm text-foreground truncate">
-                {decryptedNames[file.id] ||
-                  file.encryptedName ||
-                  getFileName(file.key)}
+                {decryptedNames[file.id] || "Encrypted file"}
               </span>
             </div>
 

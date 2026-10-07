@@ -20,6 +20,8 @@ export async function GET(request: Request) {
       spaceId: ctx.spaceId,
       createdByAccountId: ctx.accountId,
       status: "trashed",
+      // Deleted forever: erasure is queued and the item can no longer be restored.
+      purgeRequestedAt: { $exists: false },
       ...(cursor
         ? {
             $or: [

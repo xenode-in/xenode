@@ -215,6 +215,7 @@ export default function BinPage() {
       });
       if (!res.ok) throw new Error("Restore failed");
       dropFromList(new Set(ids));
+      toast.success(ids.length === 1 ? "1 item restored" : `${ids.length} items restored`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Restore failed");
     } finally {
@@ -389,7 +390,7 @@ export default function BinPage() {
                       <Checkbox
                         checked={selected.has(item._id)}
                         onCheckedChange={() => toggle(item._id)}
-                        aria-label="Select row"
+                        aria-label={`Select ${item.decryptedName}`}
                       />
                     </TableCell>
                     <TableCell>

@@ -26,10 +26,6 @@ interface PreviewSectionProps {
   audios: ObjectData[];
 }
 
-function getFileName(key: string) {
-  return key.split("/").pop() || key;
-}
-
 // ─── Individual card components so each can call useThumbnail ─────────────────
 
 function VideoCard({
@@ -45,14 +41,15 @@ function VideoCard({
   const thumbUrl = useThumbnail(video.thumbnail, metadataKey, video.id);
 
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
-      className="relative rounded-xl overflow-hidden bg-card border border-border aspect-video group cursor-pointer hover:border-primary/40 transition-colors"
+      className="relative block w-full text-left rounded-xl overflow-hidden bg-card border border-border aspect-video group cursor-pointer hover:border-primary/40 transition-colors"
     >
       {thumbUrl ? (
         <img
           src={thumbUrl}
-          alt={getFileName(video.key)}
+          alt=""
           className="w-full h-full object-cover"
         />
       ) : (
@@ -75,15 +72,13 @@ function VideoCard({
       {/* File name */}
       <div className="absolute bottom-3 left-3 right-3">
         <p className="text-white text-sm font-medium truncate">
-          {decryptedName ||
-            video.encryptedName ||
-            getFileName(video.key)}
+          {decryptedName || "Encrypted file"}
         </p>
         <p className="text-white/60 text-xs">
           {formatBytes(video.size)}
         </p>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -100,14 +95,15 @@ function ImageCard({
   const thumbUrl = useThumbnail(image.thumbnail, metadataKey, image.id);
 
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
-      className="relative rounded-xl overflow-hidden bg-card border border-border aspect-video group cursor-pointer hover:border-primary/40 transition-colors"
+      className="relative block w-full text-left rounded-xl overflow-hidden bg-card border border-border aspect-video group cursor-pointer hover:border-primary/40 transition-colors"
     >
       {thumbUrl ? (
         <img
           src={thumbUrl}
-          alt={getFileName(image.key)}
+          alt=""
           className="w-full h-full object-cover"
         />
       ) : (
@@ -115,15 +111,13 @@ function ImageCard({
       )}
       <div className="absolute bottom-1 left-2 right-2">
         <p className="text-white text-xs font-medium truncate drop-shadow">
-          {decryptedName ||
-            image.encryptedName ||
-            getFileName(image.key)}
+          {decryptedName || "Encrypted file"}
         </p>
         <p className="text-white/60 text-[10px]">
           {formatBytes(image.size)}
         </p>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -229,9 +223,11 @@ export function PreviewSection({
 
           {/* Audio waveform row */}
           {featuredAudio && (
-            <div
+            <button
+              type="button"
               onClick={() => openPreview(featuredAudio, { sourceContext: "owned", intent: "preview" })}
-              className="bg-card border border-border rounded-xl px-4 py-3 flex items-center gap-3 cursor-pointer hover:border-primary/40 transition-colors"
+              aria-label={`Play ${decryptedNames[featuredAudio.id] || "audio file"}`}
+              className="w-full bg-card border border-border rounded-xl px-4 py-3 flex items-center gap-3 cursor-pointer hover:border-primary/40 transition-colors"
             >
               <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
                 <Play className="w-3.5 h-3.5 text-primary ml-0.5" />
@@ -252,7 +248,7 @@ export function PreviewSection({
               <span className="text-xs text-muted-foreground font-mono shrink-0">
                 {formatBytes(featuredAudio.size)}
               </span>
-            </div>
+            </button>
           )}
 
           {/* If only audio, no images — show audio more prominently */}

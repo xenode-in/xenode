@@ -331,6 +331,12 @@ describe("Photos transactional trash and permanent cleanup", () => {
         )
       ).status,
     ).toBe(400);
+    // Deleted forever: no longer listed, since it can be neither restored nor purged again.
+    await PhotoAsset.updateOne({ assetId: "asset0" }, { $set: { purgeRequestedAt: new Date() } });
+    const remaining = await (
+      await list(new Request(`http://localhost/trash?spaceId=${spaceId}`))
+    ).json();
+    expect(remaining.items.map((item: { assetId: string }) => item.assetId)).toEqual(["asset"]);
   });
   it("authenticates retention cron and purges only expired trash", async () => {
     const f = await fixture();
