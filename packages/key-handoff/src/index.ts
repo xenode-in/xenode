@@ -1,3 +1,5 @@
+export { fetchHandoffResponse, createHandoffAttempt } from "./consume";
+
 export interface HandoffBinding {
   transactionId: string;
   accountId: string;

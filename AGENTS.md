@@ -89,7 +89,9 @@ The ARK must never leave Accounts or be returned by a server route.
 Drive and Photos receive only their ProductSpaceKey through
 `@xenode/key-handoff`. Handoffs are one-time, expire, and bind account, product,
 client, origin, Space, transaction, and destination public-key fingerprint.
-Product keys stay in browser memory and are cleared on lock/logout. Accounts
+Product keys stay in browser memory and are cleared on lock/logout.
+Interactive Accounts handoffs use the shared bounded consumer while the product
+tab stays mounted; never weaken COOP/COEP to retain a popup opener. Accounts
 browser-device wraps require explicit consent and an authenticated 30-day
 deadline; expiry, login-session trust, second-factor trust and passkey unlock
 are separate policies (docs/gpt-6-astra-audit/43-vault-device-trust.md).

@@ -151,6 +151,28 @@ hydration check also needs `DRIVE_CSP_SMOKE_URL` pointing at a production
 build started from the repository root with a disposable database, so no
 developer env file is loaded.
 
+The browser suite also checks one-use handoff completion with a real isolated
+Chrome page and a cross-origin Accounts fixture whose opener is null. It uses
+synthetic marker data and needs no provider, storage or database.
+
+For the optional full local Drive/Photos journey, start all three products with
+a disposable replica-set database and synthetic configuration. Onboard a test
+account through Accounts, leaving browser trust off, and keep the library empty.
+Set `LOCAL_PRODUCT_JOURNEY=1`, `BROWSER_TEST_EMAIL`,
+`BROWSER_TEST_LOGIN_PASSWORD`, and `BROWSER_TEST_VAULT_PASSWORD` in the test
+process, then run `npm run test:browser --workspace @xenode/drive`.
+`BROWSER_TEST_DRIVE_ORIGIN` and `BROWSER_TEST_PHOTOS_ORIGIN` default to localhost
+ports 3000/3002 and must remain loopback URLs. The test signs in, performs both
+real Accounts broker exchanges without an opener, verifies the unlocked pages,
+and visits Albums/Trash. It never uploads, deletes or pays. Screenshots and
+failure traces are written under Drive's ignored `test-results/` directory.
+This fixture requires a freshly authenticated synthetic identity and does not
+replace live R2, renderer, passkey hardware, revocation or scheduler checks.
+For a new verified synthetic account with no Vault, also set
+`BROWSER_TEST_ONBOARD=1`; the fixture completes the six onboarding steps using
+the configured default pool and saves its synthetic recovery PDF in the ignored
+test output directory. The local journey checks phone-width layouts at 375 px.
+
 For schema changes, start from a clean database in this migration series. In
 particular, do not retain the historical `deletedAt_1` TTL index.
 

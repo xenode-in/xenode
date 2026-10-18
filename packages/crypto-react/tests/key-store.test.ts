@@ -52,6 +52,33 @@ describe("ProductKeyStore", () => {
     expect(store.has("space_1")).toBe(false);
   });
 
+  it("does not install a key when the interactive attempt is cancelled during import", async () => {
+    const store = new ProductKeyStore("drive");
+    const controller = new AbortController();
+    const key = await importProductKey(new Uint8Array(32).fill(5));
+    let complete!: (key: CryptoKey) => void;
+    const pending = store.unlock("space_1", () => new Promise<CryptoKey>((resolve) => {
+      complete = resolve;
+    }), controller.signal);
+    controller.abort();
+    complete(key);
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(store.has("space_1")).toBe(false);
+  });
+
+  it("does not start loading for an already cancelled attempt", async () => {
+    const store = new ProductKeyStore("photos");
+    const controller = new AbortController();
+    controller.abort();
+    let loaded = false;
+    await expect(store.unlock("space_1", async () => {
+      loaded = true;
+      return importProductKey(new Uint8Array(32).fill(6));
+    }, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(loaded).toBe(false);
+    expect(store.has("space_1")).toBe(false);
+  });
+
   it("refuses any durable product or ARK key while retaining the explicit browser-device seam", async () => {
     const key = await importProductKey(new Uint8Array(32).fill(4));
     await expect(savePersistedKey("drive", "space_1", key)).rejects.toThrow(

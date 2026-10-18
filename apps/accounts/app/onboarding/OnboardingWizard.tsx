@@ -527,6 +527,7 @@ export function OnboardingWizard({
                       className={`onb-theme-card${
                         themeChoice === value ? " is-selected" : ""
                       }`}
+                      aria-pressed={themeChoice === value}
                       onClick={() => setTheme(value)}
                     >
                       <Icon size={22} />
@@ -598,10 +599,12 @@ export function OnboardingWizard({
                 <h1>Pick an avatar</h1>
                 <p className="lede">Choose one of these, or upload your own.</p>
                 <div className="onb-avatars">
-                  {avatars.map((a) => (
+                  {avatars.map((a, index) => (
                     <button
                       key={a.id}
                       type="button"
+                      aria-label={`Choose avatar ${index + 1}`}
+                      aria-pressed={avatarUrl === a.url}
                       className={`onb-avatar${
                         avatarUrl === a.url ? " is-selected" : ""
                       }`}
@@ -614,6 +617,7 @@ export function OnboardingWizard({
                   <button
                     type="button"
                     className="onb-avatar onb-avatar-upload"
+                    aria-label="Upload a custom avatar"
                     onClick={() => fileInput.current?.click()}
                   >
                     +

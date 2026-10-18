@@ -439,7 +439,9 @@ export default function KeyHandoffBrokerPage() {
         },
         binding.destinationOrigin,
       );
-      setStatus("Verified. Returning control to the product…");
+      setStatus(mode === "popup"
+        ? `Key delivered. Return to Xenode ${binding.productId === "drive" ? "Drive" : "Photos"}.`
+        : "Verified. Returning control to the product…");
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Key handoff failed.";

@@ -48,6 +48,23 @@ with HKDF, encrypts the product bundle with AES-GCM and binding AAD, and stores
 only the sealed response. Consumption is one-time. Cross-account, cross-product,
 wrong-Space, expired, replayed, and destination-mismatch requests fail closed.
 
+Drive's isolated pages cannot retain a cross-origin Accounts opener reference
+([browser behavior](https://developer.chrome.com/blog/coop-restrict-properties)).
+Interactive unlock therefore opens an ordinary Accounts tab with
+`noopener noreferrer`. After the user's click, the originating product tab uses
+`@xenode/key-handoff`'s authenticated consume helper to wait for the sealed
+handoff. It retries only the existing ambiguous 410 response, once per second
+for at most two minutes; other failures stop immediately. The full original
+binding is sent on every request. This does not extend a server grant's expiry,
+relax its one-time consumption, or persist product or ephemeral keys.
+
+Only one interactive consumer runs per attempt. Automatic iframe completion
+still uses its exact-origin message; messages cannot race an active interactive
+consumer. Lock, scope changes, retry and unmount cancel waiting. A late response
+cannot install a key after cancellation. Accounts tells the user to return to
+the product tab after delivery. COOP/COEP, origin/framing rules and the ARK
+boundary remain enforced.
+
 ## Recovery
 
 Vault recovery and password changes belong to Accounts. Products must link to

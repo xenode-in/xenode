@@ -23,6 +23,8 @@ import {
   consumeProductKeyBundle,
   createOneTimeHandoffStore,
   createProductHandoffRequest,
+  fetchHandoffResponse,
+  createHandoffAttempt,
   parseSealedHandoff,
   type PendingHandoff,
   type SealedHandoff,
@@ -248,6 +250,11 @@ function DriveKeyAccess({
     accountId && spaceId ? "checking" : "miss",
   );
   const handoffInFlight = useRef(false);
+  const interactiveAttempt = useRef(createHandoffAttempt());
+  useEffect(() => {
+    const attempt = interactiveAttempt.current;
+    return () => attempt.cancel();
+  }, [accountId, spaceId]);
   const [isModalOpen, setModalOpen] = useState(false);
   const accountsOrigin = new URL(
     getPublicProductOrigin("accounts"),
@@ -256,17 +263,11 @@ function DriveKeyAccess({
     Boolean(spaceId && sharingKeys) && productCrypto.isUnlocked(spaceId);
 
   const consumeRequest = useCallback(
-    async (request: PendingHandoff): Promise<boolean> => {
+    async (request: PendingHandoff, signal?: AbortSignal): Promise<boolean> => {
       const transactionId = request.binding.transactionId;
-      const response = await fetch(
-        `/api/key-handoffs/${encodeURIComponent(transactionId)}/consume`,
-        {
-          method: "POST",
-          credentials: "include",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(request.binding),
-        },
-      );
+      const response = await fetchHandoffResponse(request.binding, {
+        signal, waitForCreation: Boolean(signal),
+      });
       if (response.status === 410) {
         throw new Error("The one-time handoff expired. Please try again.");
       }
@@ -279,6 +280,7 @@ function DriveKeyAccess({
         throw new Error(payload.error ?? "Handoff consumption failed.");
       }
       const sealed = parseSealedHandoff(payload.ciphertext);
+      signal?.throwIfAborted();
       if (
         payload.ephemeralPublicKeyFingerprint !==
           request.destinationKeyFingerprint ||
@@ -292,9 +294,11 @@ function DriveKeyAccess({
       await unlockProductKey(spaceId, {
         transactionId,
         sealed,
-      } satisfies UnlockPayload);
+      } satisfies UnlockPayload, signal);
+      signal?.throwIfAborted();
       setStatus("Drive is ready.");
       setBrokerUrl(null);
+      setInteractionUrl(null);
       setUnlockError(false);
       handoffInFlight.current = false;
       setCacheState("ready");
@@ -419,6 +423,7 @@ function DriveKeyAccess({
       }
 
       if (data.type === "xenode:key-handoff-error") {
+        interactiveAttempt.current.cancel();
         pending.current.delete(data.transactionId);
         handoffInFlight.current = false;
         setBrokerUrl(null);
@@ -428,6 +433,8 @@ function DriveKeyAccess({
         return;
       }
 
+      // The interactive attempt owns consumption; do not race its one-use RPC.
+      if (interactiveAttempt.current.active) return;
       setInteractionUrl(null);
       setStatus("Opening the one-time encrypted handoff…");
       void consumeRequest(request).catch((error) => {
@@ -444,6 +451,7 @@ function DriveKeyAccess({
   }, [accountsOrigin, consumeRequest, pending]);
 
   const lock = useCallback(async () => {
+    interactiveAttempt.current.cancel();
     invalidateHandoffs();
     if (accountId) {
       window.sessionStorage.setItem(`xenode:vault-lock:${accountId}`, "1");
@@ -500,19 +508,27 @@ function DriveKeyAccess({
           productName="Drive"
           status={status}
           brokerUrl={brokerUrl}
+          accountsUrl={interactionUrl}
           onOpenAccounts={
             interactionUrl
               ? () => {
-                  window.open(
-                    interactionUrl,
-                    "xenode-vault-unlock",
-                    "popup=yes,width=620,height=760",
-                  );
+                  const id = new URL(interactionUrl).searchParams.get("transactionId");
+                  const request = id ? pending.current.get(id) : undefined;
+                  if (!request) return;
+                  interactiveAttempt.current.start((signal) => consumeRequest(request, signal), (error) => {
+                    pending.current.delete(request.binding.transactionId);
+                    handoffInFlight.current = false;
+                    setInteractionUrl(null);
+                    setUnlockError(true);
+                    setStatus(error instanceof Error && error.name !== "TimeoutError"
+                      ? error.message : "The unlock attempt timed out. Please try again.");
+                  });
                 }
               : undefined
           }
           error={unlockError}
           onRetry={() => {
+            interactiveAttempt.current.cancel();
             handoffInFlight.current = false;
             setBrokerUrl(null);
             setInteractionUrl(null);

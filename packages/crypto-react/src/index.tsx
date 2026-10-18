@@ -30,7 +30,7 @@ export interface ProductCryptoContextValue {
   isUnlocked(spaceId: string): boolean;
   /** Check this tab's memory only; a fresh tab requires a new handoff. */
   restore(spaceId: string): Promise<boolean>;
-  unlock(spaceId: string, handoffCiphertext: unknown): Promise<void>;
+  unlock(spaceId: string, handoffCiphertext: unknown, signal?: AbortSignal): Promise<void>;
   /** Forget a space (or all) in memory and clear any legacy key records. */
   lock(spaceId?: string): Promise<void>;
   withProductKey<T>(
@@ -89,7 +89,7 @@ export function ProductCryptoProvider({
   }, []);
 
   const unlock = useCallback(
-    async (spaceId: string, ciphertext: unknown) => {
+    async (spaceId: string, ciphertext: unknown, signal?: AbortSignal) => {
       await store.current.unlock(spaceId, async () => {
         const raw = await unwrapHandoff(productId, spaceId, ciphertext);
         try {
@@ -97,7 +97,7 @@ export function ProductCryptoProvider({
         } finally {
           raw.fill(0);
         }
-      });
+      }, signal);
       setVersion((value) => value + 1);
     },
     [productId, unwrapHandoff],

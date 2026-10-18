@@ -19,10 +19,12 @@ export class ProductKeyStore {
     this.keys.set(spaceId, key);
   }
 
-  /** A lock or logout invalidates an in-flight handoff before it can install a key. */
-  async unlock(spaceId: string, load: () => Promise<CryptoKey>): Promise<void> {
+  /** Lock, logout or attempt cancellation prevents an in-flight key install. */
+  async unlock(spaceId: string, load: () => Promise<CryptoKey>, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     const generation = this.generation;
     const key = await load();
+    signal?.throwIfAborted();
     if (generation !== this.generation) {
       throw new Error("ProductSpaceKey was locked during unlock");
     }

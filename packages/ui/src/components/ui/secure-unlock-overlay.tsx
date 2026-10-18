@@ -9,6 +9,7 @@ export interface SecureUnlockOverlayProps {
   error?: boolean;
   onRetry?: () => void;
   onOpenAccounts?: () => void;
+  accountsUrl?: string | null;
 }
 
 export function SecureUnlockOverlay({
@@ -18,6 +19,7 @@ export function SecureUnlockOverlay({
   error = false,
   onRetry,
   onOpenAccounts,
+  accountsUrl,
 }: SecureUnlockOverlayProps) {
   return (
     <div
@@ -72,15 +74,17 @@ export function SecureUnlockOverlay({
               {status}
             </p>
             {!error ? (
-              onOpenAccounts ? (
-                <button
-                  type="button"
+              accountsUrl ? (
+                <a
+                  href={accountsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   onClick={onOpenAccounts}
                   className="mx-auto mt-7 inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-sm font-medium text-primary-foreground transition hover:opacity-90"
                 >
                   <ShieldCheck className="size-4" />
                   Unlock in Xenode Accounts
-                </button>
+                </a>
               ) : (
                 <div className="mx-auto mt-7 flex w-fit items-center gap-1.5">
                   {[0, 1, 2].map((index) => (
