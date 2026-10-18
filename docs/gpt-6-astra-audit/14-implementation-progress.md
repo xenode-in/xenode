@@ -767,3 +767,9 @@ Razorpay test-mode keys were copied into the local env (from the v1 project) and
 - If verification failed after Razorpay took the payment, the error was thrown inside Razorpay's callback, outside any handler: the button stayed on "Processing…" with no message. It now tells the user the payment went through and the plan will update (webhook or reconcile).
 - The success page welcomed every buyer to "Xenode Pro" and promised a confirmation email that nothing sends; it names the bought plan and points to the invoice in Billing.
 - Seen and not changed: Razorpay rejects the placeholder phone 9876543210 that the checkout form accepts (users type their own); Razorpay test cards need the card-saving OTP for recurring use, UPI QR completes on its own in test mode.
+
+## 0ZBC — Current development SDK advisory patched
+
+- Resumed against `4199e12`, including Claude's 0ZAG–0ZBB changes; the old uncommitted Photos work is already on the branch and was not replayed. Refreshed the registry/audit on 2026-10-18. `@modelcontextprotocol/sdk` 1.29.0, reached through the development shadcn CLI, was newly affected by [GHSA-6qxp-vccf-f47h](https://github.com/modelcontextprotocol/typescript-sdk/security/advisories/GHSA-6qxp-vccf-f47h). Updated just that compatible transitive dependency to 1.32.1; no forced downgrade or runtime/auth code change.
+- Full audit decreases from nine to eight high entries; the remaining chain is the unpatched braces advisory (latest published braces remains 3.0.3). `npm audit --omit=dev` still reports five entries through the eslint-config workspace's production dependency graph; it is not a clean runtime-audit result. The audit CI gate remains visible and unchanged.
+- Validation: explicit root typecheck 16/16, all-workspace lint 16/16 with no errors (existing warnings retained), and Git whitespace checks pass. No provider, payment or deployment action was performed; the user owns deployment and live release checks.
