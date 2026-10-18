@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MongoMemoryReplSet } from "mongodb-memory-server";
 import { AuditEvent, Space, SpaceProductKey, UserVault, connectDatabase, disconnectDatabaseForTests, getDatabase } from "@xenode/database";
-import { encodeBase64Url, generateAccountRootKey, openEnvelope, sealEnvelope } from "@xenode/crypto-core";
+import { browserDeviceKeyId, BROWSER_DEVICE_TRUST_MAX_AGE_MS, encodeBase64Url, generateAccountRootKey, openEnvelope, sealEnvelope } from "@xenode/crypto-core";
 import { personalSpaceId } from "@xenode/spaces/ids";
 import type { VaultBootstrapPayload } from "../lib/vault-bootstrap-payload";
 
@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({ getSession: vi.fn(), guard: vi.fn() }));
 vi.mock("@/lib/auth", () => ({ getAccountsAuth: async () => ({ api: { getSession: mocks.getSession } }) }));
 vi.mock("@/lib/api-session", () => ({ authorizeAccountsApiRequest: mocks.guard }));
 import { POST } from "../app/api/vault/bootstrap/route";
+import * as deviceRoute from "../app/api/vault/devices/route";
+import { VAULT_CLIENT_HEADER, VAULT_CLIENT_VERSION } from "../lib/vault-protocol";
 import * as vaultRoute from "../app/api/vault/route";
 import * as keyRoute from "../app/api/space-product-keys/route";
 
@@ -159,10 +161,12 @@ describe("atomic Vault bootstrap", () => {
   it("accepts only an explicitly supplied browser-device envelope bound to this account", async () => {
     const deviceId = "12345678-1234-1234-1234-123456789abc";
     const wrappingKey = generateAccountRootKey();
+    const created = new Date();
+    const expiresAt = new Date(created.getTime() + BROWSER_DEVICE_TRUST_MAX_AGE_MS).toISOString();
     try {
       material.payload.deviceEnvelopes = [{
-        ...(await sealEnvelope(material.ark, wrappingKey, { accountId, keyId: `ark:device:${deviceId}`, keyVersion: 1, type: "device" })),
-        kdfParams: { algorithm: "browser-device-aes-gcm", deviceId, deviceName: "Test browser", createdAt: new Date().toISOString() },
+        ...(await sealEnvelope(material.ark, wrappingKey, { accountId, keyId: browserDeviceKeyId(deviceId, expiresAt), keyVersion: 1, type: "device" }, created)),
+        kdfParams: { algorithm: "browser-device-aes-gcm", deviceId, deviceName: "Test browser", createdAt: created.toISOString(), expiresAt },
       }];
       expect((await POST(request())).status).toBe(201);
       expect((await UserVault.findOne({ accountId }).lean())?.deviceEnvelopes).toHaveLength(1);
@@ -203,5 +207,57 @@ describe("atomic Vault bootstrap", () => {
   it("has no standalone Vault or product-key replacement handler", () => {
     expect(vaultRoute).not.toHaveProperty("PUT");
     expect(keyRoute).not.toHaveProperty("PUT");
+  });
+});
+
+
+async function browserWrap(created = new Date(), lifetime = BROWSER_DEVICE_TRUST_MAX_AGE_MS) {
+  const deviceId = crypto.randomUUID(), expiresAt = new Date(created.getTime() + lifetime).toISOString();
+  const key = generateAccountRootKey();
+  try {
+    return { ...await sealEnvelope(material.ark, key, { accountId, keyId: browserDeviceKeyId(deviceId, expiresAt), keyVersion: 1, type: "device" }, created),
+      kdfParams: { algorithm: "browser-device-aes-gcm" as const, deviceId, deviceName: "Test browser", createdAt: created.toISOString(), expiresAt } };
+  } finally { key.fill(0); }
+}
+function deviceRequest(envelope: unknown, expectedVaultRevision = 1) {
+  return new Request(`${origin}/api/vault/devices`, { method: "POST", headers: { origin, "content-type": "application/json", "idempotency-key": "device-enroll-operation-001" }, body: JSON.stringify({ envelope, expectedVaultRevision }) });
+}
+describe("browser-device enrollment lifetime", () => {
+  it("reads BSON timestamps, prunes expired browser wraps and preserves passkey wrappers", async () => {
+    expect((await POST(request())).status).toBe(201);
+    const expired = await browserWrap(new Date(Date.now() - 31 * 86400_000));
+    const passkey = { ...expired, keyId: "ark:account-passkey:existing", kdfParams: { algorithm: "webauthn-prf-hkdf-sha256", credentialIdHash: "existing" } };
+    await UserVault.updateOne({ accountId }, { $set: { deviceEnvelopes: [...Array.from({ length: 49 }, () => expired), passkey] } });
+    const envelope = await browserWrap();
+    expect((await deviceRoute.POST(deviceRequest(envelope))).status).toBe(201);
+    const stored = await UserVault.findOne({ accountId }).lean();
+    expect(stored?.deviceEnvelopes).toHaveLength(2);
+    const response = await vaultRoute.GET(new Request(`${origin}/api/vault`, { headers: { [VAULT_CLIENT_HEADER]: VAULT_CLIENT_VERSION } }));
+    const payload = await response.json();
+    expect(payload.vault.deviceEnvelopes.map((entry: { keyId: string }) => entry.keyId)).toEqual([passkey.keyId, envelope.keyId]);
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    expect((await deviceRoute.POST(deviceRequest(envelope))).status).toBe(200);
+    expect((await UserVault.findOne({ accountId }))?.deviceEnvelopes).toHaveLength(2);
+  });
+  it.each(["expired", "unbounded", "overlong", "future"])("rejects %s trust on enrollment and bootstrap", async invalid => {
+    const created = invalid === "expired" ? new Date(Date.now() - 31 * 86400_000) : invalid === "future" ? new Date(Date.now() + 10 * 60_000) : new Date();
+    const envelope = await browserWrap(created, invalid === "overlong" ? BROWSER_DEVICE_TRUST_MAX_AGE_MS + 1 : BROWSER_DEVICE_TRUST_MAX_AGE_MS);
+    const candidate = invalid === "unbounded" ? { ...envelope, kdfParams: { ...envelope.kdfParams, expiresAt: undefined } } : envelope;
+    expect((await POST(request({ ...material.payload, deviceEnvelopes: [candidate] }))).status).toBe(400);
+    expect(await UserVault.countDocuments()).toBe(0);
+    expect((await POST(request())).status).toBe(201);
+    expect((await deviceRoute.POST(deviceRequest(candidate))).status).toBe(400);
+    expect((await UserVault.findOne({ accountId }))?.deviceEnvelopes).toHaveLength(0);
+  });
+  it("hides expired browser wraps on read but keeps protective revocation available", async () => {
+    expect((await POST(request())).status).toBe(201);
+    const expired = await browserWrap(new Date(Date.now() - 31 * 86400_000));
+    await UserVault.updateOne({ accountId }, { $set: { deviceEnvelopes: [expired] } });
+    const response = await vaultRoute.GET(new Request(`${origin}/api/vault`, { headers: { [VAULT_CLIENT_HEADER]: VAULT_CLIENT_VERSION } }));
+    expect((await response.json()).vault.deviceEnvelopes).toEqual([]);
+    expect((await UserVault.findOne({ accountId }))?.deviceEnvelopes).toHaveLength(1);
+    expect((await deviceRoute.DELETE(new Request(`${origin}/api/vault/devices?keyId=${encodeURIComponent(expired.keyId)}`, { method: "DELETE" }))).status).toBe(200);
+    expect(mocks.guard).toHaveBeenLastCalledWith(expect.any(Request));
+    expect((await UserVault.findOne({ accountId }))?.deviceEnvelopes).toHaveLength(0);
   });
 });

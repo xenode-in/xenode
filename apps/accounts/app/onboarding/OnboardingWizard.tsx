@@ -391,7 +391,7 @@ export function OnboardingWizard({
                           setTrustBrowser(event.target.checked)
                         }
                       />
-                      Trust this browser to unlock after later sign-ins. Leave
+                      Trust this browser to unlock for 30 days after later sign-ins. Leave
                       this unchecked on a shared device.
                     </label>
                   </div>

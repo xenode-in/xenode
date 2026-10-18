@@ -52,6 +52,7 @@ export interface BrowserDeviceWrappingParams {
   deviceId: string;
   deviceName: string;
   createdAt: string;
+  expiresAt: string;
 }
 
 export interface WebAuthnPrfWrappingParams {

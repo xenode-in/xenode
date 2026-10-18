@@ -1,4 +1,4 @@
-import { decodeBase64Url, type CryptoEnvelope, type Argon2idParams } from "@xenode/crypto-core";
+import { isActiveBrowserDeviceEnvelope, decodeBase64Url, type CryptoEnvelope, type Argon2idParams } from "@xenode/crypto-core";
 import { personalSpaceId } from "@xenode/spaces/ids";
 import { isAccountEnvelope, isPasswordEnvelope, isVaultEnvelope } from "./vault-validation";
 
@@ -40,15 +40,7 @@ export function isVaultBootstrapPayload(value: unknown, accountId: string): valu
     !sealed(body.wrappedSharingPrivateKey) || !isAccountEnvelope(body.wrappedSharingPrivateKey, accountId, "sharing-private-key") ||
     body.wrappedSharingPrivateKey.keyId !== "sharing-private-key" || body.wrappedSharingPrivateKey.kdfParams !== undefined ||
     !Array.isArray(body.deviceEnvelopes) || body.deviceEnvelopes.length > 1 ||
-    !body.deviceEnvelopes.every((envelope) => {
-      if (!sealed(envelope, 48) || !isAccountEnvelope(envelope, accountId, "device")) return false;
-      const kdf = envelope.kdfParams as Record<string, unknown> | undefined;
-      return !!kdf && onlyFields(kdf, ["algorithm", "deviceId", "deviceName", "createdAt"]) &&
-        kdf.algorithm === "browser-device-aes-gcm" && typeof kdf.deviceId === "string" &&
-        /^[a-f0-9-]{36}$/u.test(kdf.deviceId) && envelope.keyId === `ark:device:${kdf.deviceId}` &&
-        typeof kdf.deviceName === "string" && kdf.deviceName.length <= 200 &&
-        typeof kdf.createdAt === "string" && Number.isFinite(Date.parse(kdf.createdAt));
-    }) || typeof body.sharingPublicKey !== "string" || body.sharingPublicKey.length < 100 ||
+    !body.deviceEnvelopes.every(envelope => sealed(envelope, 48) && isActiveBrowserDeviceEnvelope(envelope, accountId)) || typeof body.sharingPublicKey !== "string" || body.sharingPublicKey.length < 100 ||
     body.sharingPublicKey.length > 2000 || !/^[A-Za-z0-9_-]+$/u.test(body.sharingPublicKey) ||
     !body.productEnvelopes || typeof body.productEnvelopes !== "object" ||
     !onlyFields(body.productEnvelopes, ["drive", "photos"])) return false;

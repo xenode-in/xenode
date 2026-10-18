@@ -1,8 +1,8 @@
+import { isActiveBrowserDeviceEnvelope, isBrowserDeviceWrap } from "@xenode/crypto-core";
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { ACCOUNTS_RATE_LIMITS } from "@/lib/sensitive-actions";
 import { AuditEvent, UserVault, connectDatabase } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
-import { isAccountEnvelope } from "@/lib/vault-validation";
 
 async function sessionFor(request: Request) {
   const auth = await getAccountsAuth();
@@ -25,9 +25,9 @@ export async function POST(request: Request) {
   const envelope = body?.envelope;
   if (
     !body ||
-    !Number.isInteger(body.expectedVaultRevision) ||
-    !isAccountEnvelope(envelope, session.user.id, "device") ||
-    !envelope.keyId.startsWith("ark:device:")
+    typeof body.expectedVaultRevision !== "number" ||
+    !Number.isSafeInteger(body.expectedVaultRevision) || body.expectedVaultRevision < 1 ||
+    !isActiveBrowserDeviceEnvelope(envelope, session.user.id)
   ) {
     return Response.json({ error: "Invalid device envelope" }, { status: 400 });
   }
@@ -35,7 +35,8 @@ export async function POST(request: Request) {
   await connectDatabase();
   const prior = await UserVault.findOne({ accountId: session.user.id }).lean();
   if (!prior) return Response.json({ error: "Vault not found" }, { status: 404 });
-  const duplicate = prior.deviceEnvelopes.some(
+  const active = prior.deviceEnvelopes.filter(value => !isBrowserDeviceWrap(value) || isActiveBrowserDeviceEnvelope(value, session.user.id));
+  const duplicate = active.some(
     (value) =>
       value &&
       typeof value === "object" &&
@@ -45,7 +46,7 @@ export async function POST(request: Request) {
   if (duplicate) {
     return Response.json({ vaultRevision: prior.vaultRevision, idempotent: true });
   }
-  if (prior.deviceEnvelopes.length >= 50) {
+  if (active.length >= 50) {
     return Response.json({ error: "Device limit reached" }, { status: 409 });
   }
   const vault = await UserVault.findOneAndUpdate(
@@ -54,9 +55,8 @@ export async function POST(request: Request) {
       vaultRevision: Number(body.expectedVaultRevision),
     },
     {
-      $push: { deviceEnvelopes: envelope },
+      $set: { deviceEnvelopes: [...active, envelope], lastMutationId: idempotencyKey },
       $inc: { vaultRevision: 1 },
-      $set: { lastMutationId: idempotencyKey },
     },
     { new: true, runValidators: true },
   );

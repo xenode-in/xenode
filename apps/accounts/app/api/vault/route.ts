@@ -1,3 +1,4 @@
+import { isActiveBrowserDeviceEnvelope, isBrowserDeviceWrap } from "@xenode/crypto-core";
 import { authorizeAccountsApiRequest } from "@/lib/api-session";
 import { UserVault, connectDatabase } from "@xenode/database";
 import { getAccountsAuth } from "@/lib/auth";
@@ -31,5 +32,5 @@ export async function GET(request: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   await connectDatabase();
   const vault = await UserVault.findOne({ accountId: session.user.id }).lean();
-  return Response.json({ accountId: session.user.id, vault: vault ?? null });
+  return Response.json({ accountId: session.user.id, vault: vault ? { ...vault, deviceEnvelopes: vault.deviceEnvelopes.filter(value => !isBrowserDeviceWrap(value) || isActiveBrowserDeviceEnvelope(value, session.user.id)) } : null }, { headers: { "Cache-Control": "private, no-store" } });
 }

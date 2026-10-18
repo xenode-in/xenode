@@ -53,3 +53,10 @@ wrong-Space, expired, replayed, and destination-mismatch requests fail closed.
 Vault recovery and password changes belong to Accounts. Products must link to
 Accounts rather than implement local vault setup, recovery, or PBKDF2 formats.
 After lock/logout, product key stores and decrypted caches are cleared.
+
+## Browser device trust
+
+An explicitly consented Accounts device wrap expires after 30 days. Its deadline
+is bound by the existing envelope AAD. This is separate from login sessions,
+trusted second factors and passkeys. See the
+[device trust contract](gpt-6-astra-audit/43-vault-device-trust.md).

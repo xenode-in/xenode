@@ -63,3 +63,5 @@ Paths in the reports are repository-relative unless explicitly identified as ins
 - [41 — Enforced Drive CSP](41-drive-content-security-policy.md)
 
 - [42 — Photos lifecycle and API origin boundary](42-photos-lifecycle.md)
+
+- [43 — Accounts Vault browser trust](43-vault-device-trust.md)

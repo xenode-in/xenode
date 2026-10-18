@@ -172,7 +172,7 @@ export function VaultUnlockGate({
               />
               <span>
                 <strong className="vault-unlock-trust-title">
-                  Trust this browser
+                  Trust this browser for 30 days
                 </strong>
                 <small>
                   Unlock silently after future Google or GitHub sign-ins on

@@ -15,7 +15,8 @@ The JSON body contains exactly:
 - `passwordMode: "separate"` and an account-bound Argon2id `passwordEnvelope`;
 - an account-bound `recoveryEnvelope`;
 - `deviceEnvelopes`, empty by default or containing one explicitly consented
-  browser-device envelope;
+  browser-device envelope with a bounded, authenticated 30-day deadline
+  ([device trust contract](43-vault-device-trust.md));
 - the public RSA `sharingPublicKey` and ARK-wrapped `wrappedSharingPrivateKey`;
 - `productEnvelopes: { drive, photos }`, each bound to this account's canonical
   personal Space, product, key identity and initial key version 1.
